@@ -1,0 +1,91 @@
+#!/bin/bash
+#
+# Version: 0.1.0
+# Author : Ozan L. Z. Kiratli
+# email  : ozankiratli@protonmail.com
+#
+# Wrapper script for PoolSeqFlow
+# Usage: ./PoolSeqFlow {install|run|resume|clean}
+#  install      - creates the conda environment using environment.yml
+#  run          - runs the pipeline from scratch
+#  resume       - resumes a previous pipeline run
+#  clean        - cleans the Nextflow work directory
+#  reset        - cleans the Nextflow work directory and deletes all output files. (Use with caution!)
+#  uninstall    - removes the conda environment
+
+set -e
+eval "$(conda shell.bash hook)"
+
+VERSION="0.1.0"
+
+usage() {
+    echo "Usage: $0 {install|run|resume|clean|reset|version}"
+    exit 1
+}
+
+if [ "$#" -ne 1 ]; then
+    usage
+fi
+
+COMMAND=$1
+ENV_NAME="PoolSeqFlow"   # Change this to match your conda environment name
+ENV_FILE="install/environment.yml"  # Make sure this file exists in the project root
+
+case $COMMAND in
+    install)
+        echo "Installing conda environment..."
+        if conda env list | grep -q "$ENV_NAME"; then
+            echo "Environment '$ENV_NAME' already exists."
+        else
+            conda env create -f "$ENV_FILE"
+        fi
+        echo "Installation complete."
+        conda activate "$ENV_NAME"
+        conda upgrade --all -y
+        conda deactivate
+        ;;
+    run)
+        echo "Running pipeline..."
+        conda activate "$ENV_NAME"
+        nextflow run poolseqflow.nf 
+        wait
+        conda deactivate
+        ;;
+    resume)
+        echo "Resuming pipeline..."
+        conda activate "$ENV_NAME"
+        nextflow run poolseqflow.nf -resume
+        wait
+        conda deactivate
+        ;;
+    clean)
+        echo "Cleaning Nextflow work directory..."
+        conda activate "$ENV_NAME"  
+        nextflow clean -f || true
+        wait
+        conda deactivate 
+        wait
+        echo "Removing directories and log files"
+        rm -rf work .nextflow*
+        echo "Cleaned."
+        ;;
+    reset) 
+        echo "Resetting pipeline..."
+        rm -rf work .nextflow*
+        projectDir=$(grep -m 1 projectDir parameters.config | cut -d '=' -f 2 | sed 's/"//g;s|/| |g' | awk '{print $NF}')
+        rm -rf $projectDir/Reports $projectDir/Logs $projectDir/Output $projectDir/Reference $projectDir/PoolSeqFlow_* 
+        echo "Reset complete."
+        ;;
+    version)
+        echo "PoolSeqFlow"
+        echo "v$VERSION"
+        ;;
+    uninstall)
+        echo "Uninstalling conda environment..."
+        conda deactivate
+        conda env remove -n "$ENV_NAME"
+        ;;
+    *)
+        usage
+        ;;
+esac

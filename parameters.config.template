@@ -1,0 +1,157 @@
+params {
+    //main parameters
+    mainDir         = 'Project'
+    dataSource      = 'Data'
+    readPattern     = "*_R{1,2}.fq.gz"
+    referenceFile   = 'dmel-all-chromosome-r6.61.fasta.gz'
+    gffFile         = 'dmel-all-r6.61.gff.gz'
+    rgTagsFile      = 'RGTags.csv'
+    poolSize        = 100
+    threads         = 4
+
+    referencePath   = "${mainDir}/${params.referenceFile}"
+    gffPath         = "${mainDir}/${params.gffFile}"
+
+    // directories
+    dir {
+        data            = "${mainDir}/${params.dataSource}"
+        outputs         = "${mainDir}/Output"
+        references      = "${mainDir}/Reference"
+        scripts         = "${mainDir}/scripts"
+        reports         = "${mainDir}/Reports"
+        bin             = "${mainDir}/bin"
+        logs            = "${mainDir}/Logs"
+        snpEff          = "${params.dir.references}/snpEff"
+
+        output {
+            aligned         = "${params.dir.outputs}/Aligned"
+            ready           = "${params.dir.outputs}/Ready"
+            trimmed         = "${params.dir.outputs}/Trimmed"
+            unpaired        = "${params.dir.outputs}/Unpaired"
+            vcf             = "${params.dir.outputs}/VCF"
+            freq            = "${params.dir.outputs}/Frequencies"
+            reports         = "${params.dir.outputs}/Reports"
+            temp            = "${params.dir.outputs}/Temp"
+
+            report {
+                align           = "${params.dir.output.reports}/Align"
+                coverage        = "${params.dir.output.reports}/Coverage"
+                fastqc          = "${params.dir.output.reports}/Fastqc"
+                trim            = "${params.dir.output.reports}/Trim"
+            }
+        }
+
+        report {
+            align           = "${params.dir.reports}/Align"
+            coverage        = "${params.dir.reports}/Coverage"
+            fastqc          = "${params.dir.reports}/Fastqc"
+            trim            = "${params.dir.reports}/Trim"
+            clean           = "${params.dir.reports}/Clean"
+        }
+    }
+
+    // setting reference and data full paths
+    reference       = "${params.dir.references}/${params.referenceFile.replace('.gz', '')}"
+    gff             = "${params.dir.references}/${params.gffFile.replace('.gz', '')}" 
+    reads           = "${params.dir.data}/${params.readPattern}"
+
+    // java parameters
+    java {
+        heapSize        = '-Xmx8g'
+        garbageCollect  = '-XX:ParallelGCThreads=4'
+        options         = "${params.java.heapSize} ${params.java.garbageCollect}"
+    }
+
+    // fastqc parameters
+    fastqc {
+        threads         = 2
+        memory          = "2G"
+        options         = "-t ${params.fastqc.threads} --memory ${params.fastqc.memory}"
+    }
+    
+    // trim_galore parameters
+    trim_galore {
+        threads         = 4
+        quality         = 25
+        adapter1        = 'AATGATACGGCGACCACCGAGATCTACACTCTTTCCCTACACGACGCTCTTCCGATCT'
+        adapter2        = 'GATCGGAAGAGCACACGTCTGAACTCCAGTCACATCACGATCTCGTATGCCGTCTTCTGCTTG'
+        options         = "--cores ${params.trim_galore.threads} --fastqc --fastqc_args \"${params.fastqc.options}\" --paired --retain_unpaired -q ${params.trim_galore.quality} -a ${params.trim_galore.adapter1} -a2 ${params.trim_galore.adapter2}"
+    }
+    
+    cutadapt {
+        threads        = 2   // 0 means autodetect
+        at_gc_error    = 0.025 
+        min_length     = 50
+        options        = "--cores ${params.cutadapt.threads}" 
+        //options        = "--cores ${params.cutadapt.threads} -q ${params.trim_galore.quality} --minimum-length ${params.cutadapt.min_length}" 
+    }
+
+    // BWA parameters
+    bwa {
+        threads         = 8
+        minScoreOutput  = 30
+        batchSize       = 10000000
+        options         = "-t ${params.bwa.threads} -K ${params.bwa.batchSize} -T ${params.bwa.minScoreOutput}"
+    }
+    
+    // Samtools parameters
+    samtools {
+        threads         =  "${params.threads - 1}"
+        filter          = "0xF0C"       // See `man samtools-flags` for more information
+        required        = "0x2"         // See `man samtools-flags` for more information
+        mapq            = 30
+        rgTagsFile      = "${params.mainDir}/${params.rgTagsFile}"
+    }
+
+
+    // bcftools parameters
+    bcftools {
+        scaleMapQ       = 50
+        baseQualMin     = 30
+        varQualMin      = 30
+        maxDepth        = 2000
+        mpileupOptions  = "-B -C ${params.bcftools.scaleMapQ} -q ${params.bcftools.baseQualMin} -Q ${params.bcftools.varQualMin} -d ${params.bcftools.maxDepth} -a AD,DP,SP,INFO/AD -Ou"
+
+        callOptions         = "-m -A -v -Ov"  
+    }
+
+    // VCF parameters
+    vcf {
+        fileName        = 'Test'
+    }
+
+    // vcf Filtering parameters
+    vcftools {
+        minDP           = 100
+        minQUAL         = 30
+        maxMissing      = 1.0
+    }
+    
+    // Filter False Positives parameters
+    filterFalsePositives {
+        sensitivity     = 1.0 / (2 * params.poolSize)
+        sampleThreshold = 0.2
+    }   
+
+    // SNPEff parameters
+    snpEff {
+        db              = 'dmel-all-r6.61'  // Drosophila melanogaster database
+        config          = "snpEff.config"
+        buildOptions    = "-gff3 -noCheckCds -noCheckProtein -v"
+        options         = "-v -stats ${params.dir.reports}/snpeff_summary.html"
+    }
+    
+    // Add software commands
+    software {
+        java            = 'java'
+        cutadapt        = 'cutadapt'
+        fastqc          = 'fastqc'
+        trim_galore     = 'trim_galore'
+        samtools        = 'samtools'
+        bamtools        = 'bamtools'
+        bwa             = 'bwa'
+        bcftools        = 'bcftools'
+        vcftools        = 'vcftools'
+        snpEff          = 'snpEff'
+    }   
+}
