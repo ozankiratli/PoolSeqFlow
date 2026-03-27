@@ -4,7 +4,7 @@
 
 [![Nextflow](https://img.shields.io/badge/nextflow-%E2%89%A523.05.0-brightgreen.svg)](https://www.nextflow.io/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19245612.svg)](https://doi.org/10.5281/zenodo.19245612)
 
 > **Platform note:** PoolSeqFlow is developed and tested on **Linux and macOS**. Windows is not supported — the resume logic relies on symbolic links and Unix-style paths that are not compatible with native Windows filesystems.
 
@@ -357,7 +357,7 @@ Annotates the variant VCF with **SnpEff** using the reference GFF. Enable with `
 
 If you use PoolSeqFlow in your research, please cite:
 
-> Kiratli, O. L. Z. (2026). *PoolSeqFlow: A Nextflow pipeline for allele frequency analysis from pooled Illumina sequencing data*. GitHub. https://github.com/ozankiratli/PoolSeqFlow. DOI: [10.5281/zenodo.XXXXXXX](https://doi.org/10.5281/zenodo.XXXXXXX)
+> Kiratli, O. L. Z. (2026). *PoolSeqFlow: A Nextflow pipeline for allele frequency analysis from pooled Illumina sequencing data*. GitHub. https://github.com/ozankiratli/PoolSeqFlow. DOI: [10.5281/zenodo.19245612](https://doi.org/10.5281/zenodo.19245612)
 
 ---
 
