@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ## [1.0.0] - 2026-03-26 — Initial Public Release
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19245612.svg)](https://doi.org/10.5281/zenodo.19245612)
+
 ### Added
 
 **Core pipeline (Nextflow DSL2)**
