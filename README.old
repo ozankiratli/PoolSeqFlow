@@ -1,0 +1,366 @@
+# PoolSeqFlow
+
+A Nextflow based pipeline for NGS data analysis specific for pool sequencing, including specialized read trimming, alignment, and variant calling.
+
+[![Nextflow](https://img.shields.io/badge/nextflow-%E2%89%A523.05.0-brightgreen.svg)](https://www.nextflow.io/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
+## Features
+
+- Automated and easy-to-use pipeline for poos sequencing data analysis.
+- Customizable configuration for different data sources and computational resources.
+- Detailed reports, logs, and visualizations for each step of the analysis.
+- Modular design with separate steps for trimming, alignment, variant calling, and annotation.
+- Trimming reads using `trim_galore`.
+- Automated analysis of `fastqc` reports and smart clipping using `cutadapt` to ensure the highest-quality reads.
+- Alignment of reads to the reference genome using `bwa`.
+- Cleaning up alignment files using `samtools` and `picard`.
+- Generating quality reports using `bamtools` and `samtools`.
+- Variant calling using `bcftools`.
+- Annotating variants using `snpEff`.
+- Converting VCF files to allele frequency tables with customized tools to filter and format the data.
+
+## Prerequisites
+
+- Conda or Miniconda installed
+- Git (optional)
+
+## Quick Start
+
+1. Clone or download this repository and navigate to the directory, then make the script executable:
+
+    ```bash
+    git clone <repository-url>
+    cd PoolSeqFlow
+    chmod +x PoolSeqFlow
+    ```
+
+2. Configure your analysis:
+   - Edit `parameters.config` to set your data paths
+     - `mainDir`: Path to the main directory that contains your data, reference files, and read group tags, and where the pipeline will output results.
+     - `dataSource`: Path to your data directory, should a subdirectory of `mainDir` (e.g., `"Data"`)
+     - `refGenome`: Path to your reference genome file
+     - `refGFF`: Path to your reference genome annotation file
+     - `poolSize`: Pool size for your samples
+     - Make sure to edit adapter sequences under `trim_galore.adapter1` and `trim_galore.adapter2`
+   - Edit `RGTags.csv` to set your read group tags
+   - Adjust computational resources in `nextflow.config`
+
+3. Setup the environment using the wrapper script. This will create a conda environment and install the required dependencies:
+
+    ```bash
+    ./PoolSeqFlow install
+    ```
+
+4. Run the pipeline:
+
+    ```bash
+    ./PoolSeqFlow run
+    ```
+
+5. If you need to re-run the pipeline, use the `resume` flag:
+
+    ```bash
+    ./PoolSeqFlow resume
+    ```
+
+6. To clean up the nextflow directories, use the `clean` flag:
+
+    ```bash
+    ./PoolSeqFlow clean
+    ```
+
+7. To delete all progress before restarting the pipeline, use the `reset` flag:
+
+    ```bash
+    ./PoolSeqFlow reset
+    ```
+
+## Directory Structure
+
+The main directory (`mainDir` in the `parameters.config`) should be organized as follows:
+
+```console
+.
+├── bin/
+│   ├── createDepthFile.sh
+│   ├── depth2freq.awk
+│   └── MajorAlleleToRef.py
+│  
+├── install/
+│   ├── environment.yml
+│   ├── install.sh
+│   └── test-install.sh
+│  
+├── scripts/
+│   ├── 0_verify_environment.nf     (checks for the folder structure and environment)
+│   ├── 1_build_dictionaries.nf     (creates dictionaries for different tools used in the pipeline)
+│   ├── 2_trim_reads.nf             (trims and clips reads using trim_galore and cutadapt)
+│   ├── 3_align.nf                  (aligns reads to the reference genome using bwa)     
+│   ├── 4_clean.nf                  (cleans up the alignment files using samtools and picard)
+│   ├── 5_reports.nf                (generates quality reports using bamtools and samtools)
+│   ├── 6_variant_call.nf           (calls variants using bcftools) 
+│   ├── 7_vcf2freq.nf               (converts VCF files to allele frequency tables) 
+│   └── 8_annotate_variants.nf      (annotates variants using snpEff)
+│  
+├── nextflow.config
+├── parameters.config
+├── poolseqflow.nf
+└── README.md
+
+```
+
+## Output Structure
+
+Results will be organized in the following directories:
+
+- `Output/`: Main output directory
+  - `Aligned/`: BAM files
+  - `VCF/`: Variant calls
+  - `Reports/`: Quality reports
+  - `Frequencies/`: Allele frequencies
+  - `Trimmed/`: Trimmed FASTQ files
+  - `Unpaired/`: Unpaired FASTQ files
+
+## Configuration
+
+### Directory Setup
+
+Create a project directory (`projectDir` in the `parameters.config`) structure as follows:
+
+```console
+.
+├── Data/
+│   ├── Sample1_R1.fastq.gz
+│   ├── Sample1_R2.fastq.gz
+│   ├── Sample2_R1.fastq.gz
+│   ├── Sample2_R2.fastq.gz
+│   └── ...
+├── RGTags.csv
+├── Ref.fa.gz
+├── Ref.gff.gz
+│ 
+│   [ The folders below are generated by the pipeline ]
+│   [ They can be directed to different directories using params.config] 
+│ 
+├── Logs/ 
+│   ├── O_verify_environment
+│   │   └── ...
+│   ├── 1_verify_environment
+│   │   └── ...
+│   └── ...
+├── Reference/ 
+│   ├── Ref.fasta
+│   ├── Ref.fasta.[amb,ann,bwt,fai,pac,sa]
+│   └── snpEff/  
+└── Output
+    ├── Unpaired
+    ├── Trimmed 
+    ├── Aligned
+    ├── Ready
+    ├── VCF
+    ├── Frequeuncies
+    └── Reports
+```
+
+### Data Setup
+
+1. Place your FASTQ files in the data directory
+2. Update `parameters.config`:
+
+```nextflow
+params {
+    dataSource = "path/to/data"
+    poolSize = <your-pool-size>
+    // ...other parameters
+}
+```
+
+### RGTag Configuration
+
+Edit `parameters.config` to set the read group tags file:
+
+```nextflow
+params {
+    rgTagFile = "RGTags.csv" // Or any other filename
+}
+```
+
+Create a CSV file in your main directory of analys
+
+### Read Group Tags
+
+The pipeline uses SAM/BAM read group tags to maintain sample metadata. These tags are specified in a CSV file with the following format:
+
+```csv
+ID,PL,PU,LB,SM,CN,DS,DT,FO
+Sample1,ILLUMINA,Unit1,Lib1,Sample1,Center1,Description1,2024-03-07,FASTQ
+```
+
+#### Accepted RG Tags
+
+| Tag | Name                  | Description                                    | Example                                   |
+|-----|-----------------------|------------------------------------------------|-------------------------------------------|
+| ID  | Read Group Identifier | **Required**. Unique identifier for read group | `Sample1`                                 |
+| PL  | Platform              | Sequencing platform/technology                 | `ILLUMINA`, `OXFORD_NANOPORE`, `PACBIO`   |
+| PU  | Platform Unit         | Platform unit (flowcell-barcode.lane)          | `Unit1`, `HWI-ST1276:89:D108DACXX:1:1101` |
+| LB  | Library               | Library identifier                             | `Lib1`, `RNA-Seq_Library1`                |
+| SM  | Sample                | Sample identifier                              | `Sample1`, `Patient123`                   |
+| CN  | Center                | Sequencing center producing the data           | `BGI`, `Broad`                            |
+| DS  | Description           | Description of the read group                  | `WGS_Sample1_Rep1`                        |
+| DT  | Date                  | Date the run was produced (ISO8601)            | `2024-03-07`                              |
+| FO  | Flow Order            | Flow order array for bases                     | `FASTQ`                                   |
+
+#### Rules
+
+- All specified tags must be filled (no empty values)
+- Only the tags listed above are accepted
+- The `ID` tag must match your sample pair_id on the filename
+- CSV header must use exact tag names as shown above
+- Tags can be in any order in the CSV file, using ID as the first column is a good practice
+
+#### Example RGTags.csv
+
+```csv
+ID,SM,LB,DS,FO,PL,PU
+Sample11,TP1,Rep1,TP1Rep1,FASTQ,ILLUMINA,Unit1
+Sample12,TP1,Rep2,TP1Rep2,FASTQ,ILLUMINA,Unit1
+```
+
+### Resource Configuration
+
+Adjust computational resources in `nextflow.config`:
+
+```nextflow
+process {
+    cpus = 8
+    memory = '16 GB'
+}
+```
+
+## Step by Step
+
+### Step 0: Verify Environment
+
+This step checks for the folder structure and environment:
+There are 5 checks in this step:
+
+1. Check if the reference genome exists
+2. Check if the reference genome annotation exists
+3. Check if the data folder exists and is not empty
+4. Check if the read group tags file exists and is in the correct format
+5. Check if the software dependencies are installed
+
+If any of these checks fail, the pipeline will stop. The user will need to fix the issue and restart the pipeline. A report is generated in the Reports folder, with file name `0_verify_environment.txt`.
+
+### Step 1: Build Dictionaries
+
+This step creates dictionaries for different tools used in the pipeline:
+
+1. BWA
+2. Samtools
+3. Picard Tools
+4. SnpEff
+
+The dictionaries are saved in the `References/` directory.
+
+At the end of this step, the presence of the files generated will be checked and the pipeline will stop if there is a problem with dictionary generation. A report is generated in the `Reports/` directory, with file name `1_build_dictionaries.txt`.
+
+### Step 2: Trim Reads
+
+This step trims and clips reads using `trim_galore` and `cutadapt`. After trimming the script automatically checks the fastqc file, and calculates how much clipping is necessary to ensure A/T and G/C ratios are within the set limits in the `parameters.config` file. The trimmed reads are saved in the `Trimmed/` directory.
+
+### Step 3: Align Reads
+
+This step aligns reads to the reference genome using `bwa`. The aligned reads are saved in the `Aligned/` directory.
+
+### Step 4: Clean Up Alignments
+
+This step cleans up the alignment files using `samtools`. The cleaned alignment files are saved in the `Ready/` directory for snp calling.
+
+#### Clean Up Steps
+
+1. Name sort BAM files using `samtools sort`
+2. Fix mate information using `samtools fixmate`
+3. Coordinate sort BAM files using `samtools sort`
+4. Mark and remove duplicates using `samtools markdup`
+5. Add read groups using `samtools addreplacerg`
+6. Clean up alignment files using `samtools view`
+7. Index cleaned BAM files using `samtools index`
+
+#### Information about step 6
+
+- This step is done using `samtools view`. The current implementation is designed to remove any reads that are non wanted with (`-F 0xF0c`), and require paired reads (`-f 0x2`). The flags can be found using `man samtools flags`.
+
+| Parameter            | Default | Description                    |
+|----------------------|---------|--------------------------------|
+| `samFlags.filter`    | `0xF0C` | Removes problematic alignments |
+| `samFlags.required`  | `0x2`   | Required alignment properties  |
+
+#### Filter Flag Components (0xF0C)
+
+- `0x004` (4) - Unmapped read
+- `0x008` (8) - Mate unmapped
+- `0x100` (256) - Secondary alignment
+- `0x200` (512) - Failed QC
+- `0x400` (1024) - PCR/Optical duplicate
+- `0x800` (2048) - Supplementary alignment
+
+#### Required Flag Components (0x2)
+
+- `0x2` (2) - Properly paired reads
+
+To modify filtering behavior, adjust these values in `parameters.config`.
+
+```nextflow
+params {
+    samFlags.filter = 0xF0C
+    samFlags.required = 0x2
+    ...
+}
+```
+
+### Step 5: Generate Reports
+
+This step generates alignment and coverage reports using `bamtools` and `samtools`. The reports are saved in the `Reports/` directory.
+
+### Step 6: Call Variants
+
+This step calls variants using `bcftools`. The variant calls are saved in the `VCF/` directory.
+
+The resulting VCF files have AD and DP fields for each sample. The VCF files are annotated using `snpEff` in the next step.  
+
+### Step 7: Convert VCF to Frequency Table
+
+This step converts VCF files to allele frequency tables. The frequency tables are saved in the `Frequencies/` directory.
+
+During this conversion, there are 4 steps:
+
+1. Modify the VCF file to have the major allele as the reference allele, and update the DP (total depth) field from AD (allelic depth) counts.
+2. Filter the VCF file according to the pool size to remove variants with frequency less than 1/2*(pool size)
+3. Depth and quality filter VCF file
+4. Split VCF into SNP and INDEL VCF files
+5. Convert the VCF files to allele frequency tables
+
+### Step 8: Annotate Variants
+
+This step annotates variants using `snpEff`. The annotated VCF files are saved in the `VCF/` directory.
+
+
+## Troubleshooting
+
+Common issues and solutions:
+
+1. **Environment creation fails**: Try updating conda first
+
+   ```bash
+   conda update -n base conda
+   ```
+
+2. **Missing dependencies**: Check conda environment is activated
+
+   ```bash
+   conda activate PoolSeqFlow
+   ```
+
+3. **Pipeline errors**: Check the `.nextflow.log` file

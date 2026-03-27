@@ -52,3 +52,4 @@ plugins-prod
 /test-module
 /results
 /x/*
+export-environment.sh
