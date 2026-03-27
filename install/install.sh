@@ -12,4 +12,3 @@ fi
 
 # Activate environment
 conda activate PoolSeqFlow
-conda update --all -y
