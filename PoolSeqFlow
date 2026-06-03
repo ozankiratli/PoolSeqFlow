@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Version: 0.1.0
+# Version: 1.0.1
 # Author : Ozan L. Z. Kiratli
 # email  : ozankiratli@protonmail.com
 #
@@ -16,7 +16,7 @@
 set -e
 eval "$(conda shell.bash hook)"
 
-VERSION="0.1.0"
+VERSION="1.0.1"
 
 usage() {
     echo "Usage: $0 {install|run|resume|clean|reset|version}"

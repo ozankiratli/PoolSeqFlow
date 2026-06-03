@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
+## [1.0.1] - 2026-06-02
+
+### Fixed
+- Removed `conda update --all` from the install script. Package versions are now
+  fully governed by `environment.yml`, improving reproducibility and preventing
+  unintended upgrades after installation.
+
+---
+
 ## [1.0.0] - 2026-03-26 — Initial Public Release
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19245612.svg)](https://doi.org/10.5281/zenodo.19245612)
