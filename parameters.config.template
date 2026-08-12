@@ -73,17 +73,27 @@ params {
     // fastqc parameters
     fastqc {
         threads         = 2
-        memory          = "2G"
+        memory          = 2048  // megabytes, as a plain number - FastQC rejects "2G"
+        // For the standalone FastQC binary (used on the clipped reads in step 2).
         options         = "-t ${params.fastqc.threads} --memory ${params.fastqc.memory}"
+        // For Trim Galore's bundled FastQC engine, which understands only a subset of
+        // FastQC's flags (-t, -o, --nogroup, --quiet, --svg, ...). Anything else warns
+        // and is ignored, so --memory must not be passed here.
+        bundledOptions  = "-t ${params.fastqc.threads}"
     }
     
     // trim_galore parameters
     trim_galore {
         threads         = 4
         quality         = 25
-        adapter1        = 'AATGATACGGCGACCACCGAGATCTACACTCTTTCCCTACACGACGCTCTTCCGATCT'
-        adapter2        = 'GATCGGAAGAGCACACGTCTGAACTCCAGTCACATCACGATCTCGTATGCCGTCTTCTGCTTG'
-        options         = "--cores ${params.trim_galore.threads} --fastqc --fastqc_args \"${params.fastqc.options}\" --paired --retain_unpaired -q ${params.trim_galore.quality} -a ${params.trim_galore.adapter1} -a2 ${params.trim_galore.adapter2}"
+        // true  -> no adapter is passed; Trim Galore auto-detects it (Illumina/Nextera/smallRNA)
+        //          and adapter1/adapter2 below are ignored.
+        // false -> BOTH adapter1 and adapter2 must be set to your provider's sequences.
+        autodetect      = true
+        adapter1        = ''
+        adapter2        = ''
+        adapterOptions  = params.trim_galore.autodetect ? '' : "-a ${params.trim_galore.adapter1} -a2 ${params.trim_galore.adapter2}"
+        options         = "--cores ${params.trim_galore.threads} --fastqc --fastqc_args \"${params.fastqc.bundledOptions}\" --paired --retain_unpaired -q ${params.trim_galore.quality} ${params.trim_galore.adapterOptions}"
     }
     
     cutadapt {

@@ -71,7 +71,8 @@ process TrimReads {
 
         echo "TRIMMING READS ${pair_id}: Moving trim reports to ${target_folder_report_trim}"
         mkdir -p ${target_folder_report_trim}
-        mv *_trimming_report.txt ${target_folder_report_trim}
+        # Trim Galore 2.x writes both .txt and .json reports; keep whichever are present.
+        mv *_trimming_report.* ${target_folder_report_trim}
 
         echo "TRIMMING READS ${pair_id}: Moving trimmed reads to ${target_folder_trimmed}"
         mkdir -p ${target_folder_trimmed}
