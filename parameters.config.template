@@ -153,5 +153,6 @@ params {
         bcftools        = 'bcftools'
         vcftools        = 'vcftools'
         snpEff          = 'snpEff'
+        unzip           = 'unzip'
     }   
 }

@@ -108,6 +108,7 @@ dependencies:
   - tk=8.6.13=noxft_h366c992_103
   - trim-galore=0.6.11=hdfd78af_0
   - tzdata=2025c=hc9c84f9_1
+  - unzip=6.0
   - vcftools=0.1.17=pl5321h077b44d_0
   - wheel=0.46.3=pyhd8ed1ab_0
   - xopen=2.0.2=pyh707e725_2

@@ -6,12 +6,12 @@ process TrimReads {
     file verify
 
     output:
-    tuple val(pair_id), 
-        path("*_R1_val_1.fq.gz"), 
-        path("*_R2_val_2.fq.gz"), emit: trimmed_fastqs
     tuple val(pair_id),
-        path("*_R1_*.zip"),
-        path("*_R2_*.zip"), emit: fastqc_files
+        path("*_val_1.fq.gz"),
+        path("*_val_2.fq.gz"), emit: trimmed_fastqs
+    tuple val(pair_id),
+        path("*_val_1_fastqc.zip"),
+        path("*_val_2_fastqc.zip"), emit: fastqc_files
 
     script:
     target_folder_trimmed = "${params.dir.output.trimmed}/${pair_id}"
@@ -24,13 +24,13 @@ process TrimReads {
     target_file_clipped1 = "${target_folder_trimmed}/${clipped1}"
     target_file_clipped2 = "${target_folder_trimmed}/${clipped2}"
 
-    val1 = "${pair_id}_R1_val_1.fq.gz"
-    val2 = "${pair_id}_R2_val_2.fq.gz"
+    val1 = "${pair_id}_val_1.fq.gz"
+    val2 = "${pair_id}_val_2.fq.gz"
     target_file_val1 = "${target_folder_trimmed}/${val1}"
     target_file_val2 = "${target_folder_trimmed}/${val2}"
 
-    fastqc1 = "${pair_id}_R1_val_1_fastqc.zip"
-    fastqc2 = "${pair_id}_R2_val_2_fastqc.zip"
+    fastqc1 = "${pair_id}_val_1_fastqc.zip"
+    fastqc2 = "${pair_id}_val_2_fastqc.zip"
     target_file_fastqc1 = "${target_folder_fastqc}/${fastqc1}"
     target_file_fastqc2 = "${target_folder_fastqc}/${fastqc2}"
 
@@ -62,7 +62,7 @@ process TrimReads {
         echo "TRIMMING READS ${pair_id}: COMPLETED"
     else
         echo "TRIMMING READS ${pair_id}: Trimming paired reads..."
-        ${params.software.trim_galore} ${params.trim_galore.options} ${read1} ${read2}
+        ${params.software.trim_galore} ${params.trim_galore.options} --basename ${pair_id} ${read1} ${read2}
 
         echo "TRIMMING READS ${pair_id}: Moving FASTQC reports and zips to ${target_folder_fastqc}"
         mkdir -p ${target_folder_fastqc}
@@ -138,8 +138,8 @@ process ClipReads {
         echo "CLIPPING READS ${pair_id}: COMPLETED"
     else
         echo "CLIPPING READS ${pair_id}: Extracting FastQC data" 
-        unzip -o ${zip1}
-        unzip -o ${zip2}
+        ${params.software.unzip} -o ${zip1}
+        ${params.software.unzip} -o ${zip2}
 
         fqcDir1=\$(echo ${zip1} | sed 's/.zip//')
         fqcDir2=\$(echo ${zip2} | sed 's/.zip//')
