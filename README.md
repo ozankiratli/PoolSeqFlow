@@ -89,15 +89,13 @@ chmod +x PoolSeqFlow
 
 ### 2. Configure the pipeline
 
-`parameters.config` holds your own paths and settings, so it is **not tracked in git** — a
-fresh clone ships `parameters.config.template` instead. Create your copy first:
+`parameters.config` holds your own paths and settings, so it is **not tracked in git** — a fresh clone ships `parameters.config.template` instead. Create your copy first:
 
 ```bash
 cp parameters.config.template parameters.config
 ```
 
-This is deliberately not done for you: the pipeline will not start without the file, so the
-settings get read rather than inherited. Now edit `parameters.config` to point to your data:
+This is deliberately not done for you: the pipeline will not start without the file, so the settings get read rather than inherited. Now edit `parameters.config` to point to your data:
 
 ```groovy
 params {
@@ -117,16 +115,9 @@ params {
 }
 ```
 
-> **Configure through `parameters.config` only.** PoolSeqFlow does not accept command-line
-> parameter overrides, and `./PoolSeqFlow` deliberately rejects any argument beyond a single
-> subcommand. Keeping every setting in the file means a run is fully described by something
-> you can version, diff, and share — and it matches the direction Nextflow is taking on
-> configuration handling.
+> **Configure through `parameters.config` only.** PoolSeqFlow does not accept command-line parameter overrides, and `./PoolSeqFlow` deliberately rejects any argument beyond a single subcommand. Keeping every setting in the file means a run is fully described by something you can version, diff, and share — and it matches the direction Nextflow is taking on configuration handling.
 >
-> It also avoids a silent failure mode. Nextflow delivers `--param` values as **strings**, so
-> `--annotate false` sets `annotate` to the string `"false"` — which Groovy evaluates as
-> *true*, leaving annotation switched on with no warning. Written in `parameters.config`,
-> `annotate = false` is a real boolean and behaves as expected.
+> It also avoids a silent failure mode. Nextflow delivers `--param` values as **strings**, so `--annotate false` sets `annotate` to the string `"false"` — which Groovy evaluates as *true*, leaving annotation switched on with no warning. Written in `parameters.config`, `annotate = false` is a real boolean and behaves as expected.
 
 `mainDir` and `projectDir` can be the same path if you have a single storage location. They are separated to support environments where compute nodes and permanent storage are on different filesystems — a common constraint in HPC setups.
 
@@ -144,10 +135,7 @@ Edit `RGTags.csv` to add read group metadata for each sample (see [RG Tag Config
 ./PoolSeqFlow run
 ```
 
-Run this again at any point to resume. Every step checks whether its outputs already
-exist in `projectDir` and skips itself if they do, so an interrupted run picks up where
-it left off without any extra flag. To force a full re-run, use `./PoolSeqFlow reset`
-first (see [Resume Logic](#resume-logic)).
+Run this again at any point to resume. Every step checks whether its outputs already exist in `projectDir` and skips itself if they do, so an interrupted run picks up where it left off without any extra flag. To force a full re-run, use `./PoolSeqFlow reset` first (see [Resume Logic](#resume-logic)).
 
 ### 5. Additional commands
 
@@ -156,6 +144,30 @@ first (see [Resume Logic](#resume-logic)).
 | `./PoolSeqFlow clean` | Clean Nextflow work directories |
 | `./PoolSeqFlow reset` | Remove all progress and start fresh |
 | `./PoolSeqFlow uninstall` | Remove the conda environment |
+
+---
+
+## Upgrading from an earlier release
+
+`parameters.config` belongs to you and is never touched by an update, so after pulling a new version it can be missing parameters the newer code expects. **Nothing detects this.** Step 0 verifies successfully, and a later step then fails with a bare:
+
+```
+.command.sh: line 17: null: command not found
+```
+
+An absent parameter interpolates as the literal string `null`, which is why the error names no parameter and points at a generated script.
+
+So whenever you update the pipeline, rebuild your configuration from the template rather than keeping the old file:
+
+```bash
+cp parameters.config parameters.config.bak        # keep your settings
+cp parameters.config.template parameters.config   # start from the current schema
+diff parameters.config.bak parameters.config      # see what changed, then re-apply yours
+```
+
+Back the file up *before* pulling, too — it is no longer tracked in git, so an update that removes it upstream can take your copy with it.
+
+The Nextflow 26 / Trim Galore 2.x release is the one to watch for: it adds `params.software.unzip`, `params.trim_galore.autodetect` and the whole `params.cores` block, none of which exist in an older file. It also renames trimmed-read outputs and derives the SnpEff database name from the GFF filename, so previously completed trimming and annotation steps are redone on the first run after upgrading.
 
 ---
 
@@ -177,8 +189,7 @@ Rather than relying solely on Nextflow's built-in caching — which stores copie
 
 ### No `-resume` flag
 
-This strategy **replaces** Nextflow's `-resume` rather than supplementing it, so the
-wrapper never passes that flag:
+This strategy **replaces** Nextflow's `-resume` rather than supplementing it, so the wrapper never passes that flag:
 
 - `cleanup = true` in `nextflow.config` deletes the task working directories under
   `work/` once a run completes — only empty hash-prefix folders are left behind. Since
@@ -187,15 +198,9 @@ wrapper never passes that flag:
   example, the trimmed reads are removed after clipping). That leaves the upstream
   task's recorded outputs dangling, which invalidates Nextflow's cache entry anyway.
 
-`./PoolSeqFlow run` is therefore both "start" and "resume". `./PoolSeqFlow resume` still
-works as a deprecated alias and prints a notice. To start genuinely from scratch, run
-`./PoolSeqFlow reset` first — that clears `work/`, the Nextflow metadata, and the
-`Output/`, `Logs/`, `Reports/` and `Reference/` folders in `projectDir`.
+`./PoolSeqFlow run` is therefore both "start" and "resume". `./PoolSeqFlow resume` still works as a deprecated alias and prints a notice. To start genuinely from scratch, run `./PoolSeqFlow reset` first — that clears `work/`, the Nextflow metadata, and the `Output/`, `Logs/`, `Reports/` and `Reference/` folders in `projectDir`.
 
-One consequence worth knowing on HPC: because step-skipping happens *inside* each task
-rather than before it, a re-run still submits every process to the scheduler. Those jobs
-exit almost immediately (they test for a file, create a symlink, and copy two log files),
-but they are real submissions — expect roughly one short job per process per sample.
+One consequence worth knowing on HPC: because step-skipping happens *inside* each task rather than before it, a re-run still submits every process to the scheduler. Those jobs exit almost immediately (they test for a file, create a symlink, and copy two log files), but they are real submissions — expect roughly one short job per process per sample.
 
 `mainDir` and `projectDir` can point to the same path if you have a single unified storage location — the separation is there to gracefully handle the storage constraints common in HPC environments, not to impose them.
 
@@ -398,6 +403,7 @@ Annotates the variant VCF with **SnpEff** using the reference GFF. Enable with `
 | Environment creation fails | `conda update -n base conda`, then retry `./PoolSeqFlow install` |
 | Missing dependencies after install | `conda activate PoolSeqFlow` before running |
 | Pipeline errors | Check `.nextflow.log` for the failing process |
+| `null: command not found`, or a parameter appearing as `null` | Your `parameters.config` predates the installed version — rebuild it from `parameters.config.template` (see [Upgrading](#upgrading-from-an-earlier-release)) |
 | A re-run skips too many steps | Steps skip themselves when their outputs exist in `projectDir`. Delete the stale outputs, or use `./PoolSeqFlow reset` to start over |
 | `-resume` appears to do nothing | Correct — PoolSeqFlow does not use Nextflow's `-resume`. `./PoolSeqFlow run` already resumes (see [Resume Logic](#resume-logic)) |
 | Symbolic link errors | Confirm you are on Linux or macOS, not Windows |
