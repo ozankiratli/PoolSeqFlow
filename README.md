@@ -2,7 +2,7 @@
 
 **A Nextflow pipeline for allele frequency analysis from pooled Illumina sequencing data**
 
-[![Nextflow](https://img.shields.io/badge/nextflow-%E2%89%A523.05.0-brightgreen.svg)](https://www.nextflow.io/)
+[![Nextflow](https://img.shields.io/badge/nextflow-%E2%89%A526.04.0-brightgreen.svg)](https://www.nextflow.io/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19245612.svg)](https://doi.org/10.5281/zenodo.19245612)
 
