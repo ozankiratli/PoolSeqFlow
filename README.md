@@ -89,7 +89,15 @@ chmod +x PoolSeqFlow
 
 ### 2. Configure the pipeline
 
-Edit `parameters.config` to point to your data:
+`parameters.config` holds your own paths and settings, so it is **not tracked in git** — a
+fresh clone ships `parameters.config.template` instead. Create your copy first:
+
+```bash
+cp parameters.config.template parameters.config
+```
+
+This is deliberately not done for you: the pipeline will not start without the file, so the
+settings get read rather than inherited. Now edit `parameters.config` to point to your data:
 
 ```groovy
 params {
