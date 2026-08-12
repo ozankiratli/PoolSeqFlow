@@ -135,7 +135,8 @@ params {
 
     // SNPEff parameters
     snpEff {
-        db              = 'dmel-all-r6.61'  // Drosophila melanogaster database
+        // Derived from the GFF file name ([reference].gff.gz -> [reference].gff).
+        db              = "${params.gffFile.replace('.gz', '')}"
         config          = "snpEff.config"
         buildOptions    = "-gff3 -noCheckCds -noCheckProtein -v"
         options         = "-v -stats ${params.dir.reports}/snpeff_summary.html"

@@ -126,6 +126,7 @@ process BuildSnpEffDb {
 
     script:
     gff = params.gffPath
+    ref = params.referencePath
     build_verify_path = "${params.dir.snpEff}/.build_complete"
     dir_log = "${params.dir.logs}/1_build_dictionaries/s2_3_BuildSnpEffDb"
 
@@ -142,6 +143,13 @@ process BuildSnpEffDb {
             cp ${gff} data/${params.snpEff.db}/genes.gff.gz
         else
             cp ${gff} data/${params.snpEff.db}/genes.gff
+        fi
+
+        echo "SNPEFF DB BUILD:    Copying the reference file..."
+        if [[ ${ref} == *.gz ]]; then
+            cp ${ref} data/${params.snpEff.db}/sequences.fa.gz
+        else
+            cp ${ref} data/${params.snpEff.db}/sequences.fa
         fi
 
         echo "SNPEFF DB BUILD:    Creating snpEff config file..."
