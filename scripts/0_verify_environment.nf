@@ -298,6 +298,59 @@ process CheckInstalledSoftware {
     """
 }
 
+process CheckTrimParameters {
+    output:
+    path 'verify_environment_stage6.txt', emit: report
+
+    script:
+    autodetect = params.trim_galore.autodetect
+    adapter1   = params.trim_galore.adapter1
+    adapter2   = params.trim_galore.adapter2
+    dir_log = "${params.dir.logs}/0_verify_environment/s6_CheckTrimParameters"
+    """
+    REPORTFILE="verify_environment.txt"
+
+    # Function to write to both file and console
+    log_message() {
+        echo "\$1" >> \$REPORTFILE
+        echo "\$1"
+    }
+
+    AUTODETECT="${autodetect}"
+    ADAPTER1="${adapter1}"
+    ADAPTER2="${adapter2}"
+    STATUS="PASS"
+
+    if [ "\$AUTODETECT" = "true" ]; then
+        log_message "TRIM PARAMETERS:       Adapter auto-detection is ENABLED"
+        log_message "TRIM PARAMETERS:       Trim Galore will select the adapter; adapter1/adapter2 are ignored"
+    else
+        log_message "TRIM PARAMETERS:       Adapter auto-detection is DISABLED"
+        log_message "TRIM PARAMETERS:       Both adapter1 and adapter2 must be set in parameters.config"
+
+        for N in 1 2; do
+            eval "SEQ=\\\$ADAPTER\$N"
+            if [ -z "\$SEQ" ]; then
+                log_message "TRIM PARAMETERS:       adapter\$N is empty - set it, or set autodetect = true"
+                STATUS="FAIL"
+            elif ! echo "\$SEQ" | grep -qiE '^[ACGTN]+\$'; then
+                log_message "TRIM PARAMETERS:       adapter\$N is not a DNA sequence: \$SEQ"
+                STATUS="FAIL"
+            else
+                log_message "TRIM PARAMETERS:       adapter\$N OK (\${#SEQ} bp): \$SEQ"
+            fi
+        done
+    fi
+
+    log_message "TRIM PARAMETER CHECK:  STATUS=\$STATUS"
+
+    mv \$REPORTFILE verify_environment_stage6.txt
+    mkdir -p ${dir_log}
+    cp .command.log ${dir_log}/0_VerifyEnvironment_s6_CheckTrimParameters.log
+    cp .command.err ${dir_log}/0_VerifyEnvironment_s6_CheckTrimParameters.err
+    """
+}
+
 process VerifyAll {
     errorStrategy 'finish'
 
@@ -307,6 +360,7 @@ process VerifyAll {
     val dataSource_log
     val rgtags_log
     val software_log
+    val trim_log
 
     output:
     path '0_verify_environment.txt'
@@ -328,7 +382,7 @@ process VerifyAll {
     log_message "========================================================================="
     log_message ""
 
-    cat ${reference_log} ${gffFile_log} ${dataSource_log} ${rgtags_log} ${software_log} | tee -a \$REPORTFILE
+    cat ${reference_log} ${gffFile_log} ${dataSource_log} ${rgtags_log} ${software_log} ${trim_log} | tee -a \$REPORTFILE
     log_message ""
     log_message "========================================================================="
 
@@ -369,7 +423,8 @@ workflow VerifyEnvironment {
     CheckData()
     CheckRGTagsFile(CheckData.out.report)
     CheckInstalledSoftware()
-    VerifyAll(CheckReference.out.report, gff_report, CheckData.out.report, CheckRGTagsFile.out.report, CheckInstalledSoftware.out.report)
+    CheckTrimParameters()
+    VerifyAll(CheckReference.out.report, gff_report, CheckData.out.report, CheckRGTagsFile.out.report, CheckInstalledSoftware.out.report, CheckTrimParameters.out.report)
 
     emit:
     report = VerifyAll.out

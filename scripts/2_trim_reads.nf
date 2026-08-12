@@ -37,7 +37,7 @@ process TrimReads {
     dir_log = "${params.dir.logs}/2_trim_reads/s1_TrimReads/${pair_id}"
 
     """
-    set -e
+    set -eo pipefail
 
     export _JAVA_OPTIONS="${params.java.options}"
 
@@ -124,7 +124,7 @@ process ClipReads {
     dir_log = "${params.dir.logs}/2_trim_reads/${pair_id}"
 
     """
-    set -e
+    set -eo pipefail
 
     # Set Java options
     export _JAVA_OPTIONS="${params.java.options}"
@@ -149,15 +149,81 @@ process ClipReads {
         Data2=\$fqcDir2/fastqc_data.txt
 
         echo "CLIPPING READS ${pair_id}: Calculating clipping parameters..."
-        Max1=\$(sed -n '/>>Per base sequence content/,/>>END_MODULE/p' \$Data1 | head -n -1 | tail -n +2 | awk -v upper=${at_gc_upper_limit} -v lower=${at_gc_lower_limit} 'NR==1 {for (i=1; i<=NF; i++) {if (\$i == "A") a_col=i; if (\$i == "T") t_col=i; if (\$i == "G") g_col=i; if (\$i == "C") c_col=i}} NR>1 {at_ratio=\$(a_col)/\$(t_col); gc_ratio=\$(g_col)/\$(c_col); print \$1, at_ratio, gc_ratio}' | awk -v upper=${at_gc_upper_limit} -v lower=${at_gc_lower_limit} '\$2 >= lower && \$2 <= upper && \$3 >= lower && \$3 <= upper {print \$1}' | sed 's/-/ /g' | tr '\n' ' ' | awk '{print \$NF}')
-        Min1=\$(sed -n '/>>Per base sequence content/,/>>END_MODULE/p' \$Data1 | head -n -1 | tail -n +2 | awk -v upper=${at_gc_upper_limit} -v lower=${at_gc_lower_limit} 'NR==1 {for (i=1; i<=NF; i++) {if (\$i == "A") a_col=i; if (\$i == "T") t_col=i; if (\$i == "G") g_col=i; if (\$i == "C") c_col=i}} NR>1 {at_ratio=\$(a_col)/\$(t_col); gc_ratio=\$(g_col)/\$(c_col); print \$1, at_ratio, gc_ratio}' | awk -v upper=${at_gc_upper_limit} -v lower=${at_gc_lower_limit} '\$2 >= lower && \$2 <= upper && \$3 >= lower && \$3 <= upper {print \$1}' | sed 's/-/ /g' | tr '\n' ' ' | awk '{print \$1}')
-        Max2=\$(sed -n '/>>Per base sequence content/,/>>END_MODULE/p' \$Data2 | head -n -1 | tail -n +2 | awk -v upper=${at_gc_upper_limit} -v lower=${at_gc_lower_limit} 'NR==1 {for (i=1; i<=NF; i++) {if (\$i == "A") a_col=i; if (\$i == "T") t_col=i; if (\$i == "G") g_col=i; if (\$i == "C") c_col=i}} NR>1 {at_ratio=\$(a_col)/\$(t_col); gc_ratio=\$(g_col)/\$(c_col); print \$1, at_ratio, gc_ratio}' | awk -v upper=${at_gc_upper_limit} -v lower=${at_gc_lower_limit} '\$2 >= lower && \$2 <= upper && \$3 >= lower && \$3 <= upper {print \$1}' | sed 's/-/ /g' | tr '\n' ' ' | awk '{print \$NF}')
-        Min2=\$(sed -n '/>>Per base sequence content/,/>>END_MODULE/p' \$Data2 | head -n -1 | tail -n +2 | awk -v upper=${at_gc_upper_limit} -v lower=${at_gc_lower_limit} 'NR==1 {for (i=1; i<=NF; i++) {if (\$i == "A") a_col=i; if (\$i == "T") t_col=i; if (\$i == "G") g_col=i; if (\$i == "C") c_col=i}} NR>1 {at_ratio=\$(a_col)/\$(t_col); gc_ratio=\$(g_col)/\$(c_col); print \$1, at_ratio, gc_ratio}' | awk -v upper=${at_gc_upper_limit} -v lower=${at_gc_lower_limit} '\$2 >= lower && \$2 <= upper && \$3 >= lower && \$3 <= upper {print \$1}' | sed 's/-/ /g' | tr '\n' ' ' | awk '{print \$1}')
 
-        Clip5=\$(echo \$Min1 \$Min2 | tr ' ' '\n' | sort -n | tail -1)
-        rL1=\$(( \$Max1 - \$Clip5 ))
-        rL2=\$(( \$Max2 - \$Clip5 ))
-        readLengthLimit=\$(echo \$rL1 \$rL2 | tr ' ' '\n' | sort -n | tail -1)
+        # Print the first and last cycle whose A/T and G/C ratios are both within
+        # tolerance. Cycles where T or C is zero are skipped: dividing by them aborts
+        # awk mid-pipeline, which plain `set -e` does not catch, leaving the bounds
+        # silently derived from a truncated table.
+        clip_range() {
+            sed -n '/>>Per base sequence content/,/>>END_MODULE/p' "\$1" |
+            head -n -1 | tail -n +2 |
+            awk -v upper=${at_gc_upper_limit} -v lower=${at_gc_lower_limit} '
+                NR == 1 {
+                    for (i = 1; i <= NF; i++) {
+                        if (\$i == "A") a = i
+                        if (\$i == "T") t = i
+                        if (\$i == "G") g = i
+                        if (\$i == "C") c = i
+                    }
+                    if (!a || !t || !g || !c) { bad_header = 1; exit 3 }
+                    next
+                }
+                {
+                    if (\$(t) + 0 == 0 || \$(c) + 0 == 0) next
+                    at = \$(a) / \$(t)
+                    gc = \$(g) / \$(c)
+                    if (at >= lower && at <= upper && gc >= lower && gc <= upper) {
+                        n = split(\$1, part, "-")
+                        if (first == "") first = part[1]
+                        last = (n > 1) ? part[2] : part[1]
+                    }
+                }
+                END {
+                    # `exit 3` above still runs END, so re-assert it here or the
+                    # status below would overwrite the header diagnostic.
+                    if (bad_header) exit 3
+                    if (first == "") exit 4
+                    print first, last
+                }
+            '
+        }
+
+        clip_range_failed() {
+            echo "CLIPPING READS ${pair_id}: ERROR: no usable clip range in \$1" >&2
+            echo "CLIPPING READS ${pair_id}: exit 3 = unexpected FastQC header; 4 = no cycle within at_gc_error (${params.cutadapt.at_gc_error})" >&2
+            exit 1
+        }
+
+        range1=\$(clip_range "\$Data1") || clip_range_failed "\$Data1"
+        range2=\$(clip_range "\$Data2") || clip_range_failed "\$Data2"
+
+        Min1=\${range1%% *}; Max1=\${range1##* }
+        Min2=\${range2%% *}; Max2=\${range2##* }
+
+        for bound in "\$Min1" "\$Max1" "\$Min2" "\$Max2"; do
+            case "\$bound" in
+                ''|*[!0-9]*)
+                    echo "CLIPPING READS ${pair_id}: ERROR: non-numeric clip bound '\$bound'" >&2
+                    exit 1 ;;
+            esac
+        done
+
+        # Clip the 5' end by the larger of the two lower bounds, then truncate to the
+        # larger of the two usable spans. Unchanged from the original calculation.
+        Clip5=\$Min1
+        if [ "\$Min2" -gt "\$Clip5" ]; then Clip5=\$Min2; fi
+        rL1=\$(( Max1 - Clip5 ))
+        rL2=\$(( Max2 - Clip5 ))
+        readLengthLimit=\$rL1
+        if [ "\$rL2" -gt "\$readLengthLimit" ]; then readLengthLimit=\$rL2; fi
+
+        if [ "\$readLengthLimit" -le 0 ]; then
+            echo "CLIPPING READS ${pair_id}: ERROR: read length limit \$readLengthLimit is not positive (Clip5=\$Clip5 Max1=\$Max1 Max2=\$Max2)" >&2
+            exit 1
+        fi
+
+        echo "CLIPPING READS ${pair_id}: usable cycles R1 \$Min1-\$Max1, R2 \$Min2-\$Max2"
+        echo "CLIPPING READS ${pair_id}: 5' clip=\$Clip5, read length limit=\$readLengthLimit"
 
         echo "CLIPPING READS ${pair_id}: Clipping reads..." 
         ${params.software.cutadapt} ${params.cutadapt.options} -u \$Clip5 -U \$Clip5 -l \$readLengthLimit \
