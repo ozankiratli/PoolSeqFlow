@@ -5,11 +5,7 @@
 *.gff*
 Project/
 Data/
-
-# Each user's own run configuration. parameters.config.template is shipped instead
-# and is copied to parameters.config by `./PoolSeqFlow install`.
 parameters.config
-
 .idea/**
 .gradle
 .*.log*
