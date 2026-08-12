@@ -71,7 +71,6 @@ process SkipGFFCheck {
 
     script:
     dir_log = "${params.dir.logs}/0_verify_environment/s2_CheckGFF"
-    script:
     """
     REPORTFILE="verify_environment.txt"
     log_message() {

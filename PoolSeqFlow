@@ -44,8 +44,8 @@ case $COMMAND in
     run|resume)
         # PoolSeqFlow resumes through its own filesystem checks: every step looks for
         # its outputs in projectDir and skips itself if they are already there. Nextflow's
-        # -resume is not used - it depends on the work/ cache, which `cleanup = true`
-        # removes on completion. Use `reset` to force a full re-run.
+        # -resume is not used - it depends on the work/ task directories, which
+        # `cleanup = true` deletes on completion. Use `reset` to force a full re-run.
         if [ "$COMMAND" = "resume" ]; then
             echo "Note: 'resume' is deprecated - 'run' already resumes automatically."
         fi

@@ -2,8 +2,7 @@ process AlignmentReport {
     tag { pair_id }
 
     input:
-    tuple val(pair_id), path(ready_bam)
-    tuple val(pair_id), path(ready_bai)
+    tuple val(pair_id), path(ready_bam), path(ready_bai)
 
     script:
     report_file = "${pair_id}_alignment_report.txt"
@@ -47,8 +46,7 @@ process CoverageReport {
     tag { pair_id }
 
     input:
-    tuple val(pair_id), path(ready_bam)
-    tuple val(pair_id), path(ready_bai)
+    tuple val(pair_id), path(ready_bam), path(ready_bai)
 
     script:
     report_file = "${pair_id}_coverage_report.txt"
@@ -94,6 +92,9 @@ workflow GenerateReports {
     ready_bais
 
     main:
-    AlignmentReport(ready_bams, ready_bais)
-    CoverageReport(ready_bams, ready_bais)
+    // Join on pair_id so each BAM is matched with its own index. Passing the two
+    // channels separately would pair them by emission order, not by sample.
+    ready_data = ready_bams.join(ready_bais)
+    AlignmentReport(ready_data)
+    CoverageReport(ready_data)
 }
