@@ -93,19 +93,32 @@ Edit `parameters.config` to point to your data:
 
 ```groovy
 params {
-    mainDir    = "/path/to/working/directory"  // where the pipeline runs (e.g. compute node scratch)
-    projectDir = "/path/to/permanent/storage"  // where outputs are permanently stored (can be a different filesystem)
-    dataSource = "Data"              // subdirectory of mainDir containing FASTQs
-    refGenome  = "Ref.fa.gz"        // reference genome (gzipped FASTA)
-    refGFF     = "Ref.gff.gz"       // annotation (gzipped GFF)
-    poolSize   = 50                  // number of individuals in pool
-    ploidy     = 2                   // ploidy of your organism
+    mainDir       = "/path/to/working/directory"  // where the pipeline runs (e.g. compute node scratch)
+    projectDir    = "/path/to/permanent/storage"  // where outputs are permanently stored (can be a different filesystem)
+    dataSource    = 'Data'                 // subdirectory of projectDir containing the FASTQs
+    readPattern   = "*_R{1,2}.fq.gz"       // glob matching your paired FASTQ files
+    referenceFile = 'reference.fasta.gz'   // reference genome (gzipped FASTA)
+    gffFile       = 'reference.gff.gz'     // annotation (gzipped GFF)
+    poolSize      = 50                     // number of individuals in pool
+    diploidy      = 2                      // ploidy of your organism
+    annotate      = true                   // run SnpEff annotation (Step 8)
 
     // Adapter sequences
     trim_galore.adapter1 = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"
     trim_galore.adapter2 = "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT"
 }
 ```
+
+> **Configure through `parameters.config` only.** PoolSeqFlow does not accept command-line
+> parameter overrides, and `./PoolSeqFlow` deliberately rejects any argument beyond a single
+> subcommand. Keeping every setting in the file means a run is fully described by something
+> you can version, diff, and share — and it matches the direction Nextflow is taking on
+> configuration handling.
+>
+> It also avoids a silent failure mode. Nextflow delivers `--param` values as **strings**, so
+> `--annotate false` sets `annotate` to the string `"false"` — which Groovy evaluates as
+> *true*, leaving annotation switched on with no warning. Written in `parameters.config`,
+> `annotate = false` is a real boolean and behaves as expected.
 
 `mainDir` and `projectDir` can be the same path if you have a single storage location. They are separated to support environments where compute nodes and permanent storage are on different filesystems — a common constraint in HPC setups.
 

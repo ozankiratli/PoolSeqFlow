@@ -1,3 +1,11 @@
+// PoolSeqFlow parameters.
+//
+// This file is the only supported way to configure a run. Do not override parameters on
+// the command line (`nextflow run ... --poolSize 50`): Nextflow passes CLI parameters as
+// strings, so `--annotate false` sets the string "false", which evaluates as true and
+// silently leaves annotation enabled. Values set here keep their real types.
+// The ./PoolSeqFlow wrapper takes a single subcommand and rejects extra arguments.
+
 params {
     //main parameters
     mainDir         = 'Project'
@@ -9,18 +17,18 @@ params {
     poolSize        = 100
     threads         = 4
 
-    referencePath   = "${mainDir}/${params.referenceFile}"
-    gffPath         = "${mainDir}/${params.gffFile}"
+    referencePath   = "${params.mainDir}/${params.referenceFile}"
+    gffPath         = "${params.mainDir}/${params.gffFile}"
 
     // directories
     dir {
-        data            = "${mainDir}/${params.dataSource}"
-        outputs         = "${mainDir}/Output"
-        references      = "${mainDir}/Reference"
-        scripts         = "${mainDir}/scripts"
-        reports         = "${mainDir}/Reports"
-        bin             = "${mainDir}/bin"
-        logs            = "${mainDir}/Logs"
+        data            = "${params.mainDir}/${params.dataSource}"
+        outputs         = "${params.mainDir}/Output"
+        references      = "${params.mainDir}/Reference"
+        scripts         = "${params.mainDir}/scripts"
+        reports         = "${params.mainDir}/Reports"
+        bin             = "${params.mainDir}/bin"
+        logs            = "${params.mainDir}/Logs"
         snpEff          = "${params.dir.references}/snpEff"
 
         output {
