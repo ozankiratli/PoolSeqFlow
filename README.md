@@ -60,7 +60,7 @@ Raw FASTQ reads
 - **Pool-seq-aware frequency calling**: Allele frequency tables are produced with pool-size- and ploidy-aware minimum frequency filtering (see [Step 7](#step-7-vcf--allele-frequency-tables)).
 - **Major-allele normalisation**: VCF files are re-encoded so the major allele is always the reference, enabling consistent downstream comparisons.
 - **Multiallelic site support**: The pipeline is designed to handle multiallelic sites throughout the variant calling and frequency conversion steps, preserving complex variation that would be lost under biallelic-only assumptions.
-- **Smart resume with permanent storage**: The pipeline uses symbolic links into a permanent output directory so large intermediate files are never duplicated and completed steps are automatically skipped on re-runs — without relying solely on Nextflow's built-in caching (see [Resume Logic](#resume-logic)).
+- **Smart resume with permanent storage**: The pipeline uses symbolic links into a permanent output directory so large intermediate files are never duplicated and completed steps are automatically skipped on re-runs — replacing Nextflow's built-in caching entirely, so there is no `-resume` flag to remember (see [Resume Logic](#resume-logic)).
 - **Modular design**: Each step is an independent Nextflow DSL2 module — easy to modify, extend, or rerun in isolation.
 - **Reproducible environments**: All dependencies are managed via a single conda environment.
 - **Optional annotation**: Variant annotation via SnpEff can be toggled on/off.
@@ -123,13 +123,18 @@ Edit `RGTags.csv` to add read group metadata for each sample (see [RG Tag Config
 ./PoolSeqFlow run
 ```
 
+Run this again at any point to resume. Every step checks whether its outputs already
+exist in `projectDir` and skips itself if they do, so an interrupted run picks up where
+it left off without any extra flag. To force a full re-run, use `./PoolSeqFlow reset`
+first (see [Resume Logic](#resume-logic)).
+
 ### 5. Additional commands
 
 | Command | Description |
 |---|---|
-| `./PoolSeqFlow resume` | Resume a previous run, skipping completed steps |
 | `./PoolSeqFlow clean` | Clean Nextflow work directories |
 | `./PoolSeqFlow reset` | Remove all progress and start fresh |
+| `./PoolSeqFlow uninstall` | Remove the conda environment |
 
 ---
 
@@ -146,8 +151,30 @@ Rather than relying solely on Nextflow's built-in caching — which stores copie
 
 - **No file duplication**: large BAM and VCF files exist in exactly one place on disk, in `projectDir`.
 - **No data movement**: you can run the pipeline on any node that can reach your permanent storage via a symlink, without copying files between filesystems.
-- **Automatic step-skipping**: when `./PoolSeqFlow resume` is invoked, the pipeline checks for the existence of permanent output files in `projectDir`. Any step whose outputs are already present is skipped entirely, regardless of whether the Nextflow `work/` cache is still intact.
+- **Automatic step-skipping**: on *every* `./PoolSeqFlow run`, the pipeline checks for the existence of permanent output files in `projectDir`. Any step whose outputs are already present is skipped entirely, regardless of whether the Nextflow `work/` cache is still intact.
 - **Resilience across sessions**: the resume logic is filesystem-based, so it survives cluster job timeouts, system reboots, and `work/` directory cleanups that would otherwise invalidate Nextflow's native cache.
+
+### No `-resume` flag
+
+This strategy **replaces** Nextflow's `-resume` rather than supplementing it, so the
+wrapper never passes that flag:
+
+- `cleanup = true` in `nextflow.config` removes the `work/` directory once a run
+  completes, and `-resume` replays task outputs *from* `work/` — so there would be
+  nothing left for it to reuse.
+- Several steps delete their own inputs once the next stage has consumed them (for
+  example, the trimmed reads are removed after clipping). That leaves the upstream
+  task's recorded outputs dangling, which invalidates Nextflow's cache entry anyway.
+
+`./PoolSeqFlow run` is therefore both "start" and "resume". `./PoolSeqFlow resume` still
+works as a deprecated alias and prints a notice. To start genuinely from scratch, run
+`./PoolSeqFlow reset` first — that clears `work/`, the Nextflow metadata, and the
+`Output/`, `Logs/`, `Reports/` and `Reference/` folders in `projectDir`.
+
+One consequence worth knowing on HPC: because step-skipping happens *inside* each task
+rather than before it, a re-run still submits every process to the scheduler. Those jobs
+exit almost immediately (they test for a file, create a symlink, and copy two log files),
+but they are real submissions — expect roughly one short job per process per sample.
 
 `mainDir` and `projectDir` can point to the same path if you have a single unified storage location — the separation is there to gracefully handle the storage constraints common in HPC environments, not to impose them.
 
@@ -350,7 +377,8 @@ Annotates the variant VCF with **SnpEff** using the reference GFF. Enable with `
 | Environment creation fails | `conda update -n base conda`, then retry `./PoolSeqFlow install` |
 | Missing dependencies after install | `conda activate PoolSeqFlow` before running |
 | Pipeline errors | Check `.nextflow.log` for the failing process |
-| Resume skips too many steps | Check that permanent output files in `Output/` are intact |
+| A re-run skips too many steps | Steps skip themselves when their outputs exist in `projectDir`. Delete the stale outputs, or use `./PoolSeqFlow reset` to start over |
+| `-resume` appears to do nothing | Correct — PoolSeqFlow does not use Nextflow's `-resume`. `./PoolSeqFlow run` already resumes (see [Resume Logic](#resume-logic)) |
 | Symbolic link errors | Confirm you are on Linux or macOS, not Windows |
 
 ---

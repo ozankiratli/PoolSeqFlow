@@ -5,10 +5,10 @@
 # email  : ozankiratli@protonmail.com
 #
 # Wrapper script for PoolSeqFlow
-# Usage: ./PoolSeqFlow {install|run|resume|clean}
+# Usage: ./PoolSeqFlow {install|run|clean|reset|version|uninstall}
 #  install      - creates the conda environment using environment.yml
-#  run          - runs the pipeline from scratch
-#  resume       - resumes a previous pipeline run
+#  run          - runs the pipeline; completed steps are detected and skipped
+#                 automatically, so this both starts and resumes a run
 #  clean        - cleans the Nextflow work directory
 #  reset        - cleans the Nextflow work directory and deletes all output files. (Use with caution!)
 #  uninstall    - removes the conda environment
@@ -19,7 +19,7 @@ eval "$(conda shell.bash hook)"
 VERSION="1.0.1"
 
 usage() {
-    echo "Usage: $0 {install|run|resume|clean|reset|version}"
+    echo "Usage: $0 {install|run|clean|reset|version|uninstall}"
     exit 1
 }
 
@@ -41,17 +41,17 @@ case $COMMAND in
         fi
         echo "Installation complete."
         ;;
-    run)
+    run|resume)
+        # PoolSeqFlow resumes through its own filesystem checks: every step looks for
+        # its outputs in projectDir and skips itself if they are already there. Nextflow's
+        # -resume is not used - it depends on the work/ cache, which `cleanup = true`
+        # removes on completion. Use `reset` to force a full re-run.
+        if [ "$COMMAND" = "resume" ]; then
+            echo "Note: 'resume' is deprecated - 'run' already resumes automatically."
+        fi
         echo "Running pipeline..."
         conda activate "$ENV_NAME"
-        nextflow run poolseqflow.nf 
-        wait
-        conda deactivate
-        ;;
-    resume)
-        echo "Resuming pipeline..."
-        conda activate "$ENV_NAME"
-        nextflow run poolseqflow.nf -resume
+        nextflow run poolseqflow.nf
         wait
         conda deactivate
         ;;
