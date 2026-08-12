@@ -406,7 +406,7 @@ process CalculateFrequencies {
         echo "CALCULATE FREQUENCIES ${vcf}: Found existing frequency file."
         echo "CALCULATE FREQUENCIES ${vcf}: Found: ${target_freq_file}"
         echo "CALCULATE FREQUENCIES ${vcf}: Creating symbolic link..."
-        ln -s ${freq_file} .
+        ln -s ${target_freq_file} .
         echo "CALCULATE FREQUENCIES ${vcf}: COMPLETED"
     else
         echo "CALCULATE FREQUENCIES ${vcf}: Calculating frequencies for ${freq_file}..."
