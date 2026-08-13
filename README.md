@@ -108,7 +108,6 @@ params {
     poolSize      = 50                     // number of individuals in pool
     diploidy      = 2                      // ploidy of your organism
     annotate      = true                   // run SnpEff annotation (Step 8)
-
 }
 ```
 
@@ -188,12 +187,8 @@ Rather than relying solely on Nextflow's built-in caching — which stores copie
 
 This strategy **replaces** Nextflow's `-resume` rather than supplementing it, so the wrapper never passes that flag:
 
-- `cleanup = true` in `nextflow.config` deletes the task working directories under
-  `work/` once a run completes — only empty hash-prefix folders are left behind. Since
-  `-resume` replays task outputs *from* those directories, there is nothing to reuse.
-- Several steps delete their own inputs once the next stage has consumed them (for
-  example, the trimmed reads are removed after clipping). That leaves the upstream
-  task's recorded outputs dangling, which invalidates Nextflow's cache entry anyway.
+- `cleanup = true` in `nextflow.config` deletes the task working directories under `work/` once a run completes — only empty hash-prefix folders are left behind. Since `-resume` replays task outputs *from* those directories, there is nothing to reuse.
+- Several steps delete their own inputs once the next stage has consumed them (for example, the trimmed reads are removed after clipping). That leaves the upstream task's recorded outputs dangling, which invalidates Nextflow's cache entry anyway.
 
 `./PoolSeqFlow run` is therefore both "start" and "resume". `./PoolSeqFlow resume` still works as a deprecated alias and prints a notice. To start genuinely from scratch, run `./PoolSeqFlow reset` first — that clears `work/`, the Nextflow metadata, and the `Output/`, `Logs/`, `Reports/` and `Reference/` folders in `projectDir`.
 
@@ -411,7 +406,7 @@ Annotates the variant VCF with **SnpEff** using the reference GFF. Enable with `
 
 If you use PoolSeqFlow in your research, please cite:
 
-> Kiratli, O. L. Z. (2026). *PoolSeqFlow: A Nextflow pipeline for allele frequency analysis from pooled Illumina sequencing data*. GitHub. https://github.com/ozankiratli/PoolSeqFlow. DOI: [10.5281/zenodo.19245612](https://doi.org/10.5281/zenodo.19245612)
+> Kiratli, O. L. Z. (2026). *PoolSeqFlow: A Nextflow pipeline for allele frequency analysis from pooled Illumina sequencing data*. \(Version v2.0.1\) \[Computer Software\] GitHub: https://github.com/ozankiratli/PoolSeqFlow. DOI: [10.5281/zenodo.21910670](https://doi.org/10.5281/zenodo.21910670)
 
 ---
 

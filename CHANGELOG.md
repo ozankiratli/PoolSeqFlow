@@ -10,10 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ### Fixed
 
-- `parameters.config.template` was missing the `params.cores` block introduced in 2.0.0,
-  so a configuration created from the template kept the old hardcoded per-tool thread
-  counts instead of deriving them from `params.threads`. Existing runs were unaffected —
-  the template now resolves identically to a 2.0.0 configuration at every `threads` value.
+- `parameters.config.template` was missing the `params.cores` block introduced in 2.0.0, so a configuration created from the template kept the old hardcoded per-tool thread counts instead of deriving them from `params.threads`. Existing runs were unaffected; the template now resolves identically to a 2.0.0 configuration at every `threads` value.
 
 ---
 
