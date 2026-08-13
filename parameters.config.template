@@ -20,6 +20,34 @@ params {
     referencePath   = "${params.mainDir}/${params.referenceFile}"
     gffPath         = "${params.mainDir}/${params.gffFile}"
 
+    // Core allocation - all derived from `threads` above. Do not set the per-tool
+    // thread counts by hand; change `threads` and everything follows.
+    //
+    // Each tool is quantised to the largest power of two at or below `threads`, capped
+    // at 8, which is where the published scaling for these tools flattens out. Setting
+    // threads = 1 forces every tool to a single core.
+    cores {
+        ladder      = params.threads >= 8 ? 8 : (params.threads >= 4 ? 4 : (params.threads >= 2 ? 2 : 1))
+
+        // Trim Galore is costed on its full footprint, not its worker count: --cores N
+        // runs N+4 threads (N workers + 2 decompressors + 1 batcher + 1 writer) for any
+        // N >= 2, while --cores 1 bypasses the pool and is genuinely single-threaded.
+        // So pick the largest N whose N+4 still fits in `threads`:
+        //   12+ cores -> 8    8+ -> 4    6+ -> 2    otherwise -> 1
+        trim        = params.threads >= 12 ? 8 : (params.threads >= 8 ? 4 : (params.threads >= 6 ? 2 : 1))
+        trimTotal   = params.cores.trim > 1 ? params.cores.trim + 4 : 1   // threads actually spawned
+
+        bwa         = params.cores.ladder   // bwa mem -t N
+        cutadapt    = params.cores.ladder   // cutadapt --cores N
+        fastqc      = params.threads >= 2 ? 2 : 1   // one thread per file; step 2 only ever hands it a pair
+
+        // samtools -@ counts ADDITIONAL threads, so 0 means one core and 1 means two.
+        samtools    = params.threads >= 2 ? 1 : 0
+        // Same core count as samtools, kept as its own value so it can be tuned
+        // independently. -XX:ParallelGCThreads is a total, not an increment.
+        javaGc      = params.cores.samtools + 1
+    }
+
     // directories
     dir {
         data            = "${params.mainDir}/${params.dataSource}"
@@ -66,13 +94,13 @@ params {
     // java parameters
     java {
         heapSize        = '-Xmx8g'
-        garbageCollect  = '-XX:ParallelGCThreads=4'
+        garbageCollect  = "-XX:ParallelGCThreads=${params.cores.javaGc}"
         options         = "${params.java.heapSize} ${params.java.garbageCollect}"
     }
 
     // fastqc parameters
     fastqc {
-        threads         = 2
+        threads         = params.cores.fastqc
         memory          = 2048  // megabytes, as a plain number - FastQC rejects "2G"
         // For the standalone FastQC binary (used on the clipped reads in step 2).
         options         = "-t ${params.fastqc.threads} --memory ${params.fastqc.memory}"
@@ -84,7 +112,7 @@ params {
     
     // trim_galore parameters
     trim_galore {
-        threads         = 4
+        threads         = params.cores.trim
         quality         = 25
         // true  -> no adapter is passed; Trim Galore auto-detects it (Illumina/Nextera/smallRNA)
         //          and adapter1/adapter2 below are ignored.
@@ -97,7 +125,7 @@ params {
     }
     
     cutadapt {
-        threads        = 2   // 0 means autodetect
+        threads        = params.cores.cutadapt
         at_gc_error    = 0.025 
         min_length     = 50
         options        = "--cores ${params.cutadapt.threads}" 
@@ -106,7 +134,7 @@ params {
 
     // BWA parameters
     bwa {
-        threads         = 8
+        threads         = params.cores.bwa
         minScoreOutput  = 30
         batchSize       = 10000000
         options         = "-t ${params.bwa.threads} -K ${params.bwa.batchSize} -T ${params.bwa.minScoreOutput}"
@@ -114,7 +142,7 @@ params {
     
     // Samtools parameters
     samtools {
-        threads         =  "${params.threads - 1}"
+        threads         = params.cores.samtools
         filter          = "0xF0C"       // See `man samtools-flags` for more information
         required        = "0x2"         // See `man samtools-flags` for more information
         mapq            = 30
