@@ -109,9 +109,6 @@ params {
     diploidy      = 2                      // ploidy of your organism
     annotate      = true                   // run SnpEff annotation (Step 8)
 
-    // Adapter sequences
-    trim_galore.adapter1 = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"
-    trim_galore.adapter2 = "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT"
 }
 ```
 
