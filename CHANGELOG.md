@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
+## [2.0.1] - 2026-08-12
+
+### Fixed
+
+- `parameters.config.template` was missing the `params.cores` block introduced in 2.0.0,
+  so a configuration created from the template kept the old hardcoded per-tool thread
+  counts instead of deriving them from `params.threads`. Existing runs were unaffected —
+  the template now resolves identically to a 2.0.0 configuration at every `threads` value.
+
+---
+
 ## [2.0.0] - 2026-08-12
 
 Major upgrade to **Nextflow 26** and **Trim Galore 2.x**. This release is not backwards compatible: an existing `parameters.config` will fail mid-run, and completed trimming and annotation outputs are regenerated on first use.
@@ -115,6 +126,7 @@ Major upgrade to **Nextflow 26** and **Trim Galore 2.x**. This release is not ba
 
 ---
 
+[2.0.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.0.1
 [2.0.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.0.0
 [1.0.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v1.0.1
 [1.0.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v1.0.0
