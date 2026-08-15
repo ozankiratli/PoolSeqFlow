@@ -14,7 +14,7 @@ usage() {
   echo "  -t <threshold>      Proportion of the samples to possess the rare allele (required)"
   echo "  -s <sensitivity>    The sensitivity level of the poolseq analysis."
   echo "                      Sensitivity can be calculated with the following formula."
-  echo "                      s = 1 / ([DIPLOIDY] / [POOLSIZE per SAMPLE])"
+  echo "                      s = 1 / 2 * ([DIPLOIDY] / [POOLSIZE per SAMPLE])"
   echo "  -b <bcftools-path>  The path for bcftools. Default: 'bcftools'"
   exit 1
 }
