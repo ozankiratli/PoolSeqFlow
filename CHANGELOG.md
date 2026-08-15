@@ -6,6 +6,44 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
+## [2.1.1] - 2026-08-15
+
+A stability release. Nothing new to configure and no change to how a run is invoked — this closes the gaps where a result could be quietly wrong or quietly irreproducible. An existing `parameters.config` needs no changes.
+
+### Added
+
+- **Step 0 refuses to run when the analysis parameters changed** since the existing outputs were produced. Completed steps are skipped by looking for output files, not by checking what produced them, so a changed `poolSize` or filter threshold would otherwise leave one output folder holding results from two different settings. The values behind a set of outputs are recorded in `.poolseqflow_params` and mirrored to a read-only `Output/run_parameters.txt`. Path, resource and software parameters are excluded; anything added in a later release counts as analysis-affecting until decided otherwise.
+- **Step 0 refuses to run when `RGTags.csv` changed** after the file was consumed. The tags are written into the BAMs at step 4 and the row order is fixed into the VCF at step 6, and neither is re-derived once its output exists. The report separates a changed tag value (invalidates `Ready/`, `VCF/`, `Frequencies/`) from a reordering (invalidates `VCF/`, `Frequencies/` only) and names the folders to delete; deleting them is what clears the check. Projects whose outputs predate this release adopt their current file as the baseline, with a note to confirm it against the BAM headers.
+- **Sample columns follow `RGTags.csv` row order**, so results come out arranged the way the samples were laid out rather than however they sort as strings. Where several rows share an `SM`, the merged column takes the position of the first of them.
+- **Duplicate `ID` detection.** A row is looked up by `ID` and only the first match is read, so a repeated `ID` silently discarded the later rows and gave that sample the wrong tags — producing a perfectly valid BAM that nothing downstream could flag.
+- **CRLF repair for `RGTags.csv`.** A file saved from Excel on Windows carries a stray carriage return into the last tag of every row; it previously failed with `Invalid tag 'PU'`, which names nothing useful. Step 0 now rewrites the file with Unix line endings, preserving permissions and ownership, and reports `RGTAGS LINE ENDING CHECK: FIXED`.
+- **`bin/atomic_mv.sh`** — moves that cross a filesystem boundary now stage through a `.part` file and rename into place.
+
+### Changed
+
+- **`workDir` is now under `mainDir`.** It was a relative path, so the scratch/permanent split the pipeline documents was not actually in effect — work directories landed wherever the pipeline was launched from.
+- **Variant calling receives its BAMs in a defined order.** `collect()` emitted them in task-completion order, so the sample column order of the VCF varied between runs on identical input; three consecutive runs gave three different orders. The sort keys on the sample id, because the file paths begin with Nextflow's work-directory hash and sorting those is no better than chance.
+- **All 22 cross-filesystem moves are atomic.** A plain `mv` across filesystems is a copy followed by an unlink, so a job killed mid-move left a truncated file under its final name — which the existence-based skip logic then accepted as a completed step.
+- **`reset` is behind a typed `DELETE_MY_ANALYSIS` confirmation** and also clears `.poolseqflow_params` and `.poolseqflow_rgtags`, which would otherwise fail the next run's checks against outputs that no longer exist.
+- **`clean` and `reset` resolve paths through `nextflow config`** rather than parsing `parameters.config` as text. Values are interpolated, so text matching returned the wrong path.
+- `RGTags.csv.template` now shows the replicate and `SM`-merge pattern, with `DS` carrying a per-replicate descriptor instead of repeating the sample name.
+
+### Fixed
+
+- The sensitivity formula in `bin/filterFalsePositives.sh -h` was missing a factor of two. It read `s = 1 / ([DIPLOIDY] / [POOLSIZE per SAMPLE])` and should read `s = 1 / 2 * ([DIPLOIDY] / [POOLSIZE per SAMPLE])`. Help text only — anyone who ran the script by hand and followed it would have passed the wrong `-s`.
+
+### Commits
+
+- Minor fix in help for manual use (6e18762)
+- Parameter change detection added. (715f822)
+- workDir and reset fixes (f73b33d)
+- Output parameters to a file (0f5666f)
+- File move process improved (408efb4)
+- Sample ordering in vcf fixed. NF orders samples first come first serve (dc2ea72)
+- Sample ordering in vcf fixed. RGTags guardrails added. (4a9f89d)
+
+---
+
 ## [2.1.0] - 2026-08-15
 
 Resource allocation is now declared to Nextflow rather than only passed to the tools, and there is a helper for carrying an older configuration forward.
