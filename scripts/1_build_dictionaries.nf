@@ -118,6 +118,7 @@ process CreateSamtoolsFaiIndex {
 }
 
 process BuildSnpEffDb {
+    cpus { params.cores.javaGc }
     input:
     path verify
 
@@ -174,7 +175,7 @@ process BuildSnpEffDb {
         fi
     }
 
-    export _JAVA_OPTIONS="${params.java.options}"
+    export _JAVA_OPTIONS="${params.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
 
     # First check existing database
     BUILD_COMPLETE=".build_complete"

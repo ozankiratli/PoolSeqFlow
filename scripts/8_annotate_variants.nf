@@ -1,5 +1,6 @@
 process AnnotateVariants {
     tag { vcf.baseName }
+    cpus { params.cores.javaGc }
 
     input:
     path vcf
@@ -22,7 +23,7 @@ process AnnotateVariants {
     """
     set -e
 
-    export _JAVA_OPTIONS="${params.java.options}"
+    export _JAVA_OPTIONS="${params.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
 
     echo "ANNOTATING VCF ${vcf}: Annotating VCF file..."
     if [ -f ${target_annotated_vcf} ]; then

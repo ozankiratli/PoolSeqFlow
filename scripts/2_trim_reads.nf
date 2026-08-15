@@ -1,5 +1,6 @@
 process TrimReads {
     tag { pair_id }
+    cpus { params.cores.trimTotal }
 
     input:
     tuple val(pair_id), path(read1), path(read2)
@@ -36,10 +37,14 @@ process TrimReads {
 
     dir_log = "${params.dir.logs}/2_trim_reads/s1_TrimReads/${pair_id}"
 
+    // `cpus` reserves Trim Galore's full footprint, because --cores N actually runs N+4
+    // threads (N workers + 2 decompressors + 1 batcher + 1 writer). Map back to the
+    // worker count here. --cores 1 is the exception: it bypasses the pool entirely and
+    // is genuinely single-threaded, so a 1-core reservation stays 1 worker.
+    trim_cores = task.cpus > 4 ? task.cpus - 4 : 1
+
     """
     set -eo pipefail
-
-    export _JAVA_OPTIONS="${params.java.options}"
 
     echo "TRIMMING READS ${pair_id}: Trimming the reads..."
     if [ -f ${target_file_clipped1} ] && [ -f ${target_file_clipped2} ]; then
@@ -62,7 +67,9 @@ process TrimReads {
         echo "TRIMMING READS ${pair_id}: COMPLETED"
     else
         echo "TRIMMING READS ${pair_id}: Trimming paired reads..."
-        ${params.software.trim_galore} ${params.trim_galore.options} --basename ${pair_id} ${read1} ${read2}
+        ${params.software.trim_galore} ${params.trim_galore.options} \\
+            --cores ${trim_cores} --fastqc_args "-t ${task.cpus}" \\
+            --basename ${pair_id} ${read1} ${read2}
 
         echo "TRIMMING READS ${pair_id}: Moving FASTQC reports and zips to ${target_folder_fastqc}"
         mkdir -p ${target_folder_fastqc}
@@ -98,6 +105,7 @@ process TrimReads {
 
 process ClipReads {
     tag { pair_id }
+    cpus { params.cores.cutadapt }
     errorStrategy 'retry'
     maxRetries 3
 
@@ -126,8 +134,8 @@ process ClipReads {
     """
     set -eo pipefail
 
-    # Set Java options
-    export _JAVA_OPTIONS="${params.java.options}"
+    # FastQC is a JVM program; give it the cores this task reserved.
+    export _JAVA_OPTIONS="${params.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
 
     echo "CLIPPING READS ${pair_id}: Clipping the reads..."
     if [ -f ${target_file_clipped1} ] && [ -f ${target_file_clipped2} ]; then
@@ -226,11 +234,11 @@ process ClipReads {
         echo "CLIPPING READS ${pair_id}: 5' clip=\$Clip5, read length limit=\$readLengthLimit"
 
         echo "CLIPPING READS ${pair_id}: Clipping reads..." 
-        ${params.software.cutadapt} ${params.cutadapt.options} -u \$Clip5 -U \$Clip5 -l \$readLengthLimit \
+        ${params.software.cutadapt} ${params.cutadapt.options} --cores ${task.cpus} -u \$Clip5 -U \$Clip5 -l \$readLengthLimit \
             -o ${pair_id}_R1_clipped.fq.gz -p ${pair_id}_R2_clipped.fq.gz ${trimmed_read1} ${trimmed_read2}
 
         echo "CLIPPING READS ${pair_id}: QC on clipped reads..." 
-        ${params.software.fastqc} ${params.fastqc.options} ${pair_id}_R1_clipped.fq.gz ${pair_id}_R2_clipped.fq.gz
+        ${params.software.fastqc} ${params.fastqc.options} -t ${task.cpus} ${pair_id}_R1_clipped.fq.gz ${pair_id}_R2_clipped.fq.gz
 
         echo "CLIPPING READS ${pair_id}: Cleaning up..." 
         rm -r \$fqcDir1 \$fqcDir2

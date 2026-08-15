@@ -1,5 +1,6 @@
 process SortCleanBam {
     tag { pair_id }
+    cpus { params.cores.samtools + 1 }
 
     input:
     tuple val(pair_id), path(input_bam)
@@ -62,7 +63,7 @@ process SortCleanBam {
         echo "SORT AND CLEAN BAM ${pair_id}: Sorting and cleaning ${input_bam} with samtools"
         ${params.software.samtools} sort \
             -n \
-            -@ ${params.samtools.threads} \
+            -@ ${task.cpus - 1} \
             ${input_bam} | \
         ${params.software.samtools} fixmate \
             -@ \$(( ${params.threads} - 1 )) \
@@ -70,21 +71,21 @@ process SortCleanBam {
             - \
             - | \
         ${params.software.samtools} sort \
-            -@ ${params.samtools.threads} \
+            -@ ${task.cpus - 1} \
             - | \
         ${params.software.samtools} markdup \
-            -@ ${params.samtools.threads} \
+            -@ ${task.cpus - 1} \
             -r \
             -s \
             - \
             - | \
         ${params.software.samtools} addreplacerg \
-            -@ ${params.samtools.threads} \
+            -@ ${task.cpus - 1} \
             -r "\$rg_string" \
             - \
             - | \
         ${params.software.samtools} view \
-            -@ ${params.samtools.threads} \
+            -@ ${task.cpus - 1} \
             -F ${params.samtools.filter} \
             -f ${params.samtools.required} \
             -q ${params.samtools.mapq} \

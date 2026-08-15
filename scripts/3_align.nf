@@ -1,5 +1,6 @@
 process Align {
     tag { pair_id }
+    cpus { params.cores.bwa }
 
     input:
     tuple val(pair_id), path(read1), path(read2)
@@ -29,8 +30,8 @@ process Align {
         echo "ALIGNING ${pair_id}: COMPLETED"
     else
         echo "ALIGNING ${pair_id}: Aligning reads and converting to BAM..."
-        ${params.software.bwa} mem ${params.bwa.options} ${reference} ${read1} ${read2} | \
-        ${params.software.samtools} view -b -@ ${params.samtools.threads} -o ${aligned_bam_file}
+        ${params.software.bwa} mem ${params.bwa.options} -t ${task.cpus} ${reference} ${read1} ${read2} | \
+        ${params.software.samtools} view -b -@ ${params.cores.samtools} -o ${aligned_bam_file}
         echo "ALIGNING ${pair_id}: Moving ${aligned_bam_file} to ${target_folder}"
         mkdir -p ${target_folder}
         mv ${aligned_bam_file} ${target_folder}
