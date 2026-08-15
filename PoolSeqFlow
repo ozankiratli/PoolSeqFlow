@@ -5,13 +5,14 @@
 # email  : ozankiratli@protonmail.com
 #
 # Wrapper script for PoolSeqFlow
-# Usage: ./PoolSeqFlow {install|run|clean|reset|version|uninstall}
-#  install      - creates the conda environment using environment.yml
-#  run          - runs the pipeline; completed steps are detected and skipped
-#                 automatically, so this both starts and resumes a run
-#  clean        - cleans the Nextflow work directory
-#  reset        - cleans the Nextflow work directory and deletes all output files. (Use with caution!)
-#  uninstall    - removes the conda environment
+# Usage: ./PoolSeqFlow {install|run|migrate_config|clean|reset|version|uninstall}
+#  install        - creates the conda environment using environment.yml
+#  run            - runs the pipeline; completed steps are detected and skipped
+#                   automatically, so this both starts and resumes a run
+#  migrate_config - carries an older parameters.config onto the current template
+#  clean          - cleans the Nextflow work directory
+#  reset          - cleans the Nextflow work directory and deletes all output files. (Use with caution!)
+#  uninstall      - removes the conda environment
 
 set -e
 eval "$(conda shell.bash hook)"
@@ -19,7 +20,7 @@ eval "$(conda shell.bash hook)"
 VERSION="2.0.1"
 
 usage() {
-    echo "Usage: $0 {install|run|clean|reset|version|uninstall}"
+    echo "Usage: $0 {install|run|migrate_config|clean|reset|version|uninstall}"
     exit 1
 }
 
@@ -54,6 +55,30 @@ case $COMMAND in
         nextflow run poolseqflow.nf
         wait
         conda deactivate
+        ;;
+    migrate_config)
+        MIGRATE="bin/config_migrate.sh"
+        [ -f "$MIGRATE" ] || { echo "ERROR: $MIGRATE not found." >&2; exit 1; }
+        echo "-------------------------------------------------------------------------"
+        echo " WARNING: this rewrites parameters.config."
+        echo ""
+        echo " Migration is a convenience, not a guarantee. It carries across settings"
+        echo " whose parameter still exists and has the same meaning. It cannot know"
+        echo " about a parameter whose behaviour changed in a way that still looks"
+        echo " like a plain value, so a migrated file can be silently wrong."
+        echo ""
+        echo " Read the report below, then diff your file against the template:"
+        echo "     diff parameters.config parameters.config.template"
+        echo ""
+        echo " Every release adds parameters, so starting from the template and"
+        echo " re-entering your settings by hand is often the safer choice:"
+        echo "     cp parameters.config.template parameters.config"
+        echo "-------------------------------------------------------------------------"
+        echo ""
+        bash "$MIGRATE"
+        echo ""
+        echo "Now compare the result against the template before running:"
+        echo "    diff parameters.config parameters.config.template"
         ;;
     clean)
         echo "Cleaning Nextflow work directory..."

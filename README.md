@@ -138,6 +138,7 @@ Run this again at any point to resume. Every step checks whether its outputs alr
 
 | Command | Description |
 |---|---|
+| `./PoolSeqFlow migrate_config` | Carry an older `parameters.config` onto the current template (see [Upgrading](#upgrading-from-an-earlier-release)) |
 | `./PoolSeqFlow clean` | Clean Nextflow work directories |
 | `./PoolSeqFlow reset` | Remove all progress and start fresh |
 | `./PoolSeqFlow uninstall` | Remove the conda environment |
@@ -154,7 +155,27 @@ Run this again at any point to resume. Every step checks whether its outputs alr
 
 An absent parameter interpolates as the literal string `null`, which is why the error names no parameter and points at a generated script.
 
-So whenever you update the pipeline, rebuild your configuration from the template rather than keeping the old file:
+There is a helper for this:
+
+```bash
+./PoolSeqFlow migrate_config
+```
+
+It backs your file up, rebuilds it from the current template, carries across every setting
+whose parameter still exists, and reports what it kept, what is new, what this release now
+computes for itself, and what it dropped.
+
+**Treat the result as a starting point, not an answer.** Migration can only recognise a
+parameter that still exists *and still means the same thing*. A parameter whose behaviour
+changed while its value still looks like an ordinary number or string will be carried
+across and be silently wrong. Always compare afterwards:
+
+```bash
+diff parameters.config parameters.config.template
+```
+
+Every release adds parameters, so rebuilding by hand is often the safer choice — and it is
+the only way to be certain you have actually looked at the new ones:
 
 ```bash
 cp parameters.config parameters.config.bak        # keep your settings
