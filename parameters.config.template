@@ -8,17 +8,22 @@
 
 params {
     //main parameters
-    mainDir         = 'Project'
+    threads         = 4
+    mainDir         = "/path/to/working/directory"   // where the pipeline runs (e.g. node scratch)
+    projectDir      = "/path/to/permanent/storage"   // where outputs are kept (may be another filesystem)
     dataSource      = 'Data'
     readPattern     = "*_R{1,2}.fq.gz"
-    referenceFile   = 'dmel-all-chromosome-r6.61.fasta.gz'
-    gffFile         = 'dmel-all-r6.61.gff.gz'
-    rgTagsFile      = 'RGTags.csv'
+    referenceFile   = 'reference.fasta.gz'
     poolSize        = 100
-    threads         = 4
+    diploidy        = 2
+    rgTagsFile      = 'RGTags.csv'
+    annotate        = true
+    gffFile         = 'reference.gff.gz'
 
-    referencePath   = "${params.mainDir}/${params.referenceFile}"
-    gffPath         = "${params.mainDir}/${params.gffFile}"
+    referenceFa     = "${params.referenceFile.replace('.gz', '')}"
+    referencePath   = "${params.projectDir}/${params.referenceFile}"
+    gffPath         = "${params.projectDir}/${params.gffFile}"
+    rgTagsPath      = "${params.projectDir}/${params.rgTagsFile}"
 
     // Core allocation - all derived from `threads` above. Do not set the per-tool
     // thread counts by hand; change `threads` and everything follows.
@@ -47,49 +52,6 @@ params {
         // independently. -XX:ParallelGCThreads is a total, not an increment.
         javaGc      = params.cores.samtools + 1
     }
-
-    // directories
-    dir {
-        data            = "${params.mainDir}/${params.dataSource}"
-        outputs         = "${params.mainDir}/Output"
-        references      = "${params.mainDir}/Reference"
-        scripts         = "${params.mainDir}/scripts"
-        reports         = "${params.mainDir}/Reports"
-        bin             = "${params.mainDir}/bin"
-        logs            = "${params.mainDir}/Logs"
-        snpEff          = "${params.dir.references}/snpEff"
-
-        output {
-            aligned         = "${params.dir.outputs}/Aligned"
-            ready           = "${params.dir.outputs}/Ready"
-            trimmed         = "${params.dir.outputs}/Trimmed"
-            unpaired        = "${params.dir.outputs}/Unpaired"
-            vcf             = "${params.dir.outputs}/VCF"
-            freq            = "${params.dir.outputs}/Frequencies"
-            reports         = "${params.dir.outputs}/Reports"
-            temp            = "${params.dir.outputs}/Temp"
-
-            report {
-                align           = "${params.dir.output.reports}/Align"
-                coverage        = "${params.dir.output.reports}/Coverage"
-                fastqc          = "${params.dir.output.reports}/Fastqc"
-                trim            = "${params.dir.output.reports}/Trim"
-            }
-        }
-
-        report {
-            align           = "${params.dir.reports}/Align"
-            coverage        = "${params.dir.reports}/Coverage"
-            fastqc          = "${params.dir.reports}/Fastqc"
-            trim            = "${params.dir.reports}/Trim"
-            clean           = "${params.dir.reports}/Clean"
-        }
-    }
-
-    // setting reference and data full paths
-    reference       = "${params.dir.references}/${params.referenceFile.replace('.gz', '')}"
-    gff             = "${params.dir.references}/${params.gffFile.replace('.gz', '')}" 
-    reads           = "${params.dir.data}/${params.readPattern}"
 
     // java parameters
     java {
@@ -129,7 +91,6 @@ params {
         at_gc_error    = 0.025 
         min_length     = 50
         options        = "--cores ${params.cutadapt.threads}" 
-        //options        = "--cores ${params.cutadapt.threads} -q ${params.trim_galore.quality} --minimum-length ${params.cutadapt.min_length}" 
     }
 
     // BWA parameters
@@ -146,7 +107,6 @@ params {
         filter          = "0xF0C"       // See `man samtools-flags` for more information
         required        = "0x2"         // See `man samtools-flags` for more information
         mapq            = 30
-        rgTagsFile      = "${params.mainDir}/${params.rgTagsFile}"
     }
 
 
@@ -168,14 +128,13 @@ params {
 
     // vcf Filtering parameters
     vcftools {
-        minDP           = 100
+        minDP           = 20
         minQUAL         = 30
-        maxMissing      = 1.0
     }
     
     // Filter False Positives parameters
     filterFalsePositives {
-        sensitivity     = 1.0 / (2 * params.poolSize)
+        sensitivity     = 1.0 / (2 * params.diploidy * params.poolSize)
         sampleThreshold = 0.2
     }   
 
@@ -185,10 +144,49 @@ params {
         db              = "${params.gffFile.replace('.gz', '')}"
         config          = "snpEff.config"
         buildOptions    = "-gff3 -noCheckCds -noCheckProtein -v"
-        options         = "-v -stats ${params.dir.reports}/snpeff_summary.html"
+        runOptions      = "-v"
     }
     
-    // Add software commands
+    // directories
+    dir {
+        data            = "${params.projectDir}/${params.dataSource}"
+        outputs         = "${params.projectDir}/Output"
+        references      = "${params.projectDir}/Reference"
+        scripts         = "${params.mainDir}/scripts"
+        bin             = "${params.mainDir}/bin"
+        logs            = "${params.projectDir}/Logs"
+        snpEff          = "${params.dir.references}/snpEff"
+
+        output {
+            aligned         = "${params.dir.outputs}/Aligned"
+            ready           = "${params.dir.outputs}/Ready"
+            trimmed         = "${params.dir.outputs}/Trimmed"
+            unpaired        = "${params.dir.outputs}/Unpaired"
+            vcf             = "${params.dir.outputs}/VCF"
+            freq            = "${params.dir.outputs}/Frequencies"
+            reports         = "${params.dir.outputs}/Reports"
+            temp            = "${params.dir.outputs}/Temp"
+
+            report {
+                align           = "${params.dir.output.reports}/Alignment"
+                coverage        = "${params.dir.output.reports}/Coverage"
+                fastqc          = "${params.dir.output.reports}/Fastqc"
+                trim            = "${params.dir.output.reports}/Trimming"
+            }
+        }
+    }
+
+    // setting reference and data full paths
+    reference       = "${params.dir.references}/${params.referenceFile.replace('.gz', '')}"
+    gff             = "${params.dir.references}/${params.gffFile.replace('.gz', '')}" 
+    reads           = "${params.dir.data}/${params.readPattern}"
+
+
+    // Add software commands. 
+    // WARNING: It is possible to use the software installed on the system instead of conda environment.
+    //          Replace the command with the full path of the software. 
+    //          Due to version conflicts the pipeline might misbehave. 
+    //          Use with caution!
     software {
         java            = 'java'
         cutadapt        = 'cutadapt'
