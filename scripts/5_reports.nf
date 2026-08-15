@@ -30,7 +30,7 @@ process AlignmentReport {
 
         echo "ALIGNMENT REPORT ${ready_bam}: Moving ${report_file} to ${target_folder}..."
         mkdir -p ${target_folder}
-        mv ${report_file} ${target_folder}/
+        atomic_mv.sh ${report_file} ${target_report}
         echo "ALIGNMENT REPORT ${ready_bam}: Creating symbolic link..."
         ln -s ${target_report} .
         echo "ALIGNMENT REPORT ${ready_bam}: COMPLETED"
@@ -74,7 +74,7 @@ process CoverageReport {
 
         echo "COVERAGE REPORT ${ready_bam}: Moving ${report_file} to ${target_folder}..."
         mkdir -p ${target_folder}
-        mv ${report_file} ${target_folder}/
+        atomic_mv.sh ${report_file} ${target_report}
         echo "COVERAGE REPORT ${ready_bam}: Creating symbolic link..."
         ln -s ${target_report} .
         echo "COVERAGE REPORT ${ready_bam}: COMPLETED"

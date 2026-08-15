@@ -34,7 +34,7 @@ process Align {
         ${params.software.samtools} view -b -@ ${params.cores.samtools} -o ${aligned_bam_file}
         echo "ALIGNING ${pair_id}: Moving ${aligned_bam_file} to ${target_folder}"
         mkdir -p ${target_folder}
-        mv ${aligned_bam_file} ${target_folder}
+        atomic_mv.sh ${aligned_bam_file} ${target_file}
         echo "ALIGNING ${pair_id}: Creating symbolic link..."
         ln -s ${target_file} .
         echo "ALIGNING ${pair_id}: COMPLETED"

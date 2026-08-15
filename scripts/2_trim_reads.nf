@@ -73,21 +73,20 @@ process TrimReads {
 
         echo "TRIMMING READS ${pair_id}: Moving FASTQC reports and zips to ${target_folder_fastqc}"
         mkdir -p ${target_folder_fastqc}
-        mv *.zip ${target_folder_fastqc}
-        mv *.html ${target_folder_fastqc}
+        for f in *.zip *.html; do atomic_mv.sh "\$f" ${target_folder_fastqc}; done
 
         echo "TRIMMING READS ${pair_id}: Moving trim reports to ${target_folder_report_trim}"
         mkdir -p ${target_folder_report_trim}
         # Trim Galore 2.x writes both .txt and .json reports; keep whichever are present.
-        mv *_trimming_report.* ${target_folder_report_trim}
+        for f in *_trimming_report.*; do atomic_mv.sh "\$f" ${target_folder_report_trim}; done
 
         echo "TRIMMING READS ${pair_id}: Moving trimmed reads to ${target_folder_trimmed}"
         mkdir -p ${target_folder_trimmed}
-        mv *_val_* ${target_folder_trimmed}
+        for f in *_val_*; do atomic_mv.sh "\$f" ${target_folder_trimmed}; done
 
         echo "TRIMMING READS ${pair_id}: Moving unpaired reads to ${target_folder_unpaired}"
         mkdir -p ${target_folder_unpaired}
-        mv *_unpaired_* ${target_folder_unpaired}
+        for f in *_unpaired_*; do atomic_mv.sh "\$f" ${target_folder_unpaired}; done
 
         echo "TRIMMING READS ${pair_id}: Creating symbolic links..."
         ln -s ${target_file_val1} .
@@ -245,12 +244,11 @@ process ClipReads {
 
         echo "CLIPPING READS ${pair_id}: Moving clipped reads to ${target_folder_trimmed}" 
         mkdir -p ${target_folder_trimmed}
-        mv *_clipped.fq.gz ${target_folder_trimmed}
+        for f in *_clipped.fq.gz; do atomic_mv.sh "\$f" ${target_folder_trimmed}; done
 
         echo "CLIPPING READS ${pair_id}: Moving FASTQC reports and zip files to ${target_folder_fastqc}" 
         mkdir -p ${target_folder_fastqc}
-        mv *_clipped_fastqc.zip ${target_folder_fastqc}
-        mv *_clipped_fastqc.html ${target_folder_fastqc}
+        for f in *_clipped_fastqc.zip *_clipped_fastqc.html; do atomic_mv.sh "\$f" ${target_folder_fastqc}; done
 
         echo "CLIPPING READS ${pair_id}: Creating symbolic links..."
         ln -s ${target_file_clipped1} .

@@ -37,7 +37,7 @@ process VariantCall {
 
         echo "VARIANT CALL ${vcf_file}: Moving ${vcf_file} to ${target_vcf_folder}..."
         mkdir -p ${params.dir.output.vcf}
-        mv ${vcf_file} ${target_vcf_file}
+        atomic_mv.sh ${vcf_file} ${target_vcf_file}
         echo "VARIANT CALL ${vcf_file}: Creating symbolic link..."
         ln -s ${target_vcf_file} .
         echo "VARIANT CALL ${vcf_file}: COMPLETED"

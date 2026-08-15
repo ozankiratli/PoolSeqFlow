@@ -51,7 +51,7 @@ process AnnotateVariants {
 
         echo "ANNOTATING VCF ${vcf}: Moving ${annotated_vcf_file} to ${target_folder}"
         mkdir -p ${target_folder}
-        mv ${annotated_vcf_file} ${target_folder}/
+        atomic_mv.sh ${annotated_vcf_file} ${target_annotated_vcf}
         echo "ANNOTATING VCF ${vcf}: Creating symbolic link..."
         ln -s ${target_annotated_vcf} .
         echo "ANNOTATING VCF ${vcf}: COMPLETED"

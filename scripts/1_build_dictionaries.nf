@@ -67,7 +67,7 @@ process CreateBwaIndex {
         ${params.software.bwa} index -a bwtsw ${reference}
         for ext in bwt ann amb pac sa; do
             echo "BWA INDEX ${params.referenceFile}:          Moving ${params.referenceFile}.\$ext to ${referenceDir}"
-            mv ${params.referenceFa}.\$ext ${referenceDir}/
+            atomic_mv.sh ${params.referenceFa}.\$ext ${referenceDir}/
             echo "BWA INDEX ${params.referenceFile}:          Creating symbolic link for ${params.referenceFile}.\$ext"
             ln -s ${params.reference}.\$ext .
         done
@@ -105,7 +105,7 @@ process CreateSamtoolsFaiIndex {
         ${params.software.samtools} faidx ${reference}
 
         echo "SAMTOOLS INDEX ${params.referenceFile}:     Moving ${params.referenceFa}.fai to ${referenceDir}"
-        mv ${params.referenceFa}.fai ${referenceDir}/
+        atomic_mv.sh ${params.referenceFa}.fai ${referenceDir}/
         echo "SAMTOOLS INDEX ${params.referenceFile}:     Creating symbolic link..."
         ln -s ${params.reference}.fai .
         echo "SAMTOOLS INDEX ${params.referenceFile}:     COMPLETED"
@@ -184,7 +184,7 @@ process BuildSnpEffDb {
         ln -s ${build_verify_path} .
     else
         ( buildSnpEffDb && touch "\$BUILD_COMPLETE" ) || exit 1
-        mv \$BUILD_COMPLETE ${build_verify_path}
+        atomic_mv.sh \$BUILD_COMPLETE ${build_verify_path}
         ln -s ${build_verify_path} .
     fi
     

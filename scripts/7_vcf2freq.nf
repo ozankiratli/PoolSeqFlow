@@ -80,7 +80,7 @@ process SortRefAltByFrequency {
         MajorAlleleToRef.py ${vcf} ${sorted_vcf}
         echo "SORT ALLELES BY FREQ ${vcf}: Moving ${sorted_vcf} to ${target_folder_vcf}..."
         mkdir -p ${target_folder_vcf}
-        mv ${sorted_vcf} ${target_sorted_vcf}
+        atomic_mv.sh ${sorted_vcf} ${target_sorted_vcf}
         echo "SORT ALLELES BY FREQ ${vcf}: Creating symbolic link..."
         ln -s ${target_sorted_vcf} .
         echo "SORT ALLELES BY FREQ ${vcf}: COMPLETED"
@@ -183,7 +183,7 @@ process FilterPotentialFalsePositives {
         rm "\$TMP_FILE"
 
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Moving ${filterfp_vcf} to ${target_folder_vcf}..."
-        mv ${filterfp_vcf} ${target_filterfp_vcf}
+        atomic_mv.sh ${filterfp_vcf} ${target_filterfp_vcf}
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Creating symbolic link..."
         ln -s ${target_filterfp_vcf} .
 
@@ -267,7 +267,7 @@ process DepthAndQualityFilter {
             --out ${filterdq_base}
 
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Renaming ${filterdq_recode_vcf} as ${filterdq_vcf} and moving to ${target_folder_vcf}"
-        mv ${filterdq_recode_vcf} ${target_filterdq_vcf}
+        atomic_mv.sh ${filterdq_recode_vcf} ${target_filterdq_vcf}
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Creating symbolic link..."
         ln -s ${target_filterdq_vcf} .
 
@@ -350,7 +350,7 @@ process SplitSNPsAndINDELs {
             --out ${snp_base}
 
             echo "SPLIT SNPS AND INDELS ${vcf}: Renaming ${snp_recode_vcf} as ${snp_vcf} and moving to ${target_folder_vcf}"
-            mv ${snp_recode_vcf} ${target_snp_vcf}
+            atomic_mv.sh ${snp_recode_vcf} ${target_snp_vcf}
             echo "SPLIT SNPS AND INDELS ${vcf}: Creating symbolic link for SNP..."
             ln -s ${target_snp_vcf} .
         fi 
@@ -369,7 +369,7 @@ process SplitSNPsAndINDELs {
             --out ${indel_base}
 
             echo "SPLIT SNPS AND INDELS ${vcf}: Renaming ${snp_recode_vcf} as ${snp_vcf} and moving to ${target_folder_vcf}"
-            mv ${indel_recode_vcf} ${target_indel_vcf}
+            atomic_mv.sh ${indel_recode_vcf} ${target_indel_vcf}
             echo "SPLIT SNPS AND INDELS ${vcf}: Creating symbolic link..."
             ln -s ${target_indel_vcf} .
             echo "SPLIT SNPS AND INDELS ${vcf}: COMPLETED"
@@ -414,7 +414,7 @@ process CalculateFrequencies {
         
         echo "CALCULATE FREQUENCIES ${vcf}: Moving ${freq_file} to ${target_folder_freq}..."
         mkdir -p ${target_folder_freq}
-        mv ${freq_file} ${target_freq_file}
+        atomic_mv.sh ${freq_file} ${target_freq_file}
         echo "CALCULATE FREQUENCIES ${vcf}: Creating symbolic link..."
         ln -s ${target_freq_file} .
         

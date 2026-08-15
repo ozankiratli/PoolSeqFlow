@@ -98,8 +98,8 @@ process SortCleanBam {
 
         echo "SORT AND CLEAN BAM ${pair_id}: Moving ${target_bam} and ${target_bai} to ${target_folder_ready}..."
         mkdir -p ${target_folder_ready}
-        mv ${target_bam} ${target_bam_ready}
-        mv ${target_bai} ${target_bai_ready}
+        atomic_mv.sh ${target_bam} ${target_bam_ready}
+        atomic_mv.sh ${target_bai} ${target_bai_ready}
         echo "SORT AND CLEAN BAM ${pair_id}: Creating symbolic links..."
         ln -s ${target_bam_ready} .
         ln -s ${target_bai_ready} .
