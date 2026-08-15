@@ -389,6 +389,7 @@ process CheckRunParameters {
     script:
     manifest    = analysisParams()
     stored      = "${params.projectDir}/.poolseqflow_params"
+    readable    = "${params.dir.outputs}/run_parameters.txt"
     dir_log     = "${params.dir.logs}/0_verify_environment/s7_CheckRunParameters"
     """
     REPORTFILE="verify_environment.txt"
@@ -429,6 +430,23 @@ CURRENT_PARAMS
         log_message "RUN PARAMETERS:        Either restore the previous values, or start a fresh run:"
         log_message "RUN PARAMETERS:            ./PoolSeqFlow reset"
         STATUS="FAIL"
+    fi
+
+    # Publish a readable copy next to the results. ${stored} stays the file the check
+    # compares against; this one exists so the settings behind a set of outputs can be
+    # read without picking through parameters.config. Read-only, because editing it
+    # changes nothing - the pipeline reads ${stored}.
+    if [ "\$STATUS" = "PASS" ]; then
+        mkdir -p "\$(dirname "${readable}")"
+        rm -f "${readable}"
+        {
+            echo "# PoolSeqFlow analysis parameters for the outputs in ${params.dir.outputs}"
+            echo "# Generated \$(date -u '+%Y-%m-%d %H:%M:%S UTC') - read-only; edit parameters.config instead."
+            echo "#"
+            cat current_params.txt
+        } > "${readable}"
+        chmod 444 "${readable}"
+        log_message "RUN PARAMETERS:        Written to ${readable}"
     fi
 
     log_message "RUN PARAMETER CHECK:   STATUS=\$STATUS"
