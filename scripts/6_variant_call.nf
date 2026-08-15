@@ -55,9 +55,16 @@ workflow VariantCalling {
     fai_index
 
     main:
+    // Order the BAMs by sample id before handing them to bcftools. collect() alone emits
+    // in task-completion order, so whichever sample finishes first lands first on the
+    // command line and bcftools orders the VCF sample columns to match - two runs on the
+    // same input would give frequency tables with differently ordered columns.
+    //
+    // Sorting has to key on the sample id, not the file path: the paths begin with
+    // Nextflow's random work-directory hash, so sorting those is no better than chance.
     ready_bams = out_ready_bams
-            .map { id, bam -> return bam }
-            .collect()
+            .toSortedList { a, b -> a[0] <=> b[0] }
+            .map { rows -> rows.collect { row -> row[1] } }
 
     VariantCall(ready_bams,fai_index)
 
