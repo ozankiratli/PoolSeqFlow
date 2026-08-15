@@ -61,6 +61,7 @@ Raw FASTQ reads
 - **Major-allele normalisation**: VCF files are re-encoded so the major allele is always the reference, enabling consistent downstream comparisons.
 - **Multiallelic site support**: The pipeline is designed to handle multiallelic sites throughout the variant calling and frequency conversion steps, preserving complex variation that would be lost under biallelic-only assumptions.
 - **Smart resume with permanent storage**: The pipeline uses symbolic links into a permanent output directory so large intermediate files are never duplicated and completed steps are automatically skipped on re-runs — replacing Nextflow's built-in caching entirely, so there is no `-resume` flag to remember (see [Resume Logic](#resume-logic)).
+- **Benchmark-driven core allocation**: Every tool's thread count is derived from a single `threads` setting rather than dividing cores evenly. Each tool is quantised to the point where its published scaling flattens out, and Trim Galore is costed on its real footprint — `--cores N` runs N+4 threads — so a task never quietly asks for more than the budget you gave it (see [Resource configuration](#resource-configuration)).
 - **Modular design**: Each step is an independent Nextflow DSL2 module — easy to modify, extend, or rerun in isolation.
 - **Reproducible environments**: All dependencies are managed via a single conda environment.
 - **Optional annotation**: Variant annotation via SnpEff can be toggled on/off.
@@ -270,14 +271,80 @@ PoolSeqFlow/
 
 ### Resource configuration
 
-Adjust CPU and memory in `nextflow.config`:
+Two values in `parameters.config` size an entire run:
+
+```groovy
+threads = 8          // cores a single task may use
+memory  = '24 GB'    // memory ceiling for a single task
+```
+
+Every tool's thread count is derived from `threads` — do not set the per-tool counts by
+hand:
+
+| `threads` | Trim Galore `--cores` | actual threads | BWA `-t` | cutadapt | FastQC `-t` | SAMtools `-@` | Java GC |
+|---|---|---|---|---|---|---|---|
+| 1 | 1 | 1 | 1 | 1 | 1 | 0 | 1 |
+| 4 | 1 | 1 | 4 | 4 | 2 | 1 | 2 |
+| 8 | 4 | 8 | 8 | 8 | 2 | 1 | 2 |
+| 12+ | 8 | 12 | 8 | 8 | 2 | 1 | 2 |
+
+Two details explain the shape of that table. Trim Galore's `--cores N` actually runs **N+4** threads (N workers, 2 decompressors, a batcher and a writer), so the ladder picks the largest N whose full footprint still fits — which is why 4 cores yields `--cores 1` rather than `--cores 4`. And SAMtools' `-@` counts *additional* threads, so `0` means one core and `1` means two.
+
+#### How the numbers reach the tools
+
+Each process declares what it needs with the `cpus` directive and passes that same number to its tool as `task.cpus`, so there is exactly one value per task and nothing can drift:
+
+```groovy
+process Align {
+    cpus { params.cores.bwa }
+    script:
+    """
+    bwa mem -t ${task.cpus} ...
+    """
+}
+```
+
+| Process | reserves | at `threads = 8` |
+|---|---|---|
+| `TrimReads` | `params.cores.trimTotal` | 8 |
+| `ClipReads` | `params.cores.cutadapt` | 8 |
+| `Align` | `params.cores.bwa` | 8 |
+| `SortCleanBam` | `params.cores.samtools + 1` | 2 |
+| `BuildSnpEffDb`, `AnnotateVariants` | `params.cores.javaGc` | 2 |
+| every other step | *(single-threaded)* | 1 |
+
+This matters for more than bookkeeping: **Nextflow decides how many tasks to run at once by comparing `cpus` against the resources available**, so an under-declared task leads to oversubscription. Overriding `cpus` in a profile automatically changes what the tool is told, because both come from `task.cpus`.
+
+`TrimReads` is the one place the number is not passed through unchanged. Its reservation is Trim Galore's *footprint*, since `--cores N` really runs N+4 threads, so the script maps back to the worker count:
+
+```groovy
+cpus { params.cores.trimTotal }              // 8 at threads = 8
+trim_cores = task.cpus > 4 ? task.cpus - 4 : 1   // -> --cores 4
+```
+
+Reserving the worker count instead would understate the task by four threads. The guard covers `--cores 1`, which bypasses the worker pool and is genuinely single-threaded.
+
+#### `threads` must fit the machine
+
+Because tasks now reserve what they really use, a request larger than the available cores fails immediately rather than quietly oversubscribing:
+
+```
+Process requirement exceeds available CPUs -- req: 12; avail: 8
+```
+
+Set `threads` to the cores you actually have — on HPC, the size of one node. Note the consequence on a small machine: at `threads = 8`, a single `TrimReads` task reserves all eight, so samples are trimmed one at a time instead of three at once. That is slower in wall-clock than the old behaviour, which ran three concurrently at 12 threads each on 8 cores; it is also the only version that respects the machine.
+
+#### `resourceLimits` is a ceiling, not an allocation
+
+`nextflow.config` caps requests using the same two parameters:
 
 ```groovy
 process {
-    cpus   = 8
-    memory = '16 GB'
+    resourceLimits = [ memory: params.memory, cpus: params.threads ]
 }
 ```
+
+If a task requests more than this, Nextflow reduces the request before submitting it — which prevents a job that no node can satisfy from queueing forever. It does **not** reserve anything and does **not** limit concurrency on its own; that is what `cpus` does. Set `threads` and `memory` to match the node you are running on.
 
 ### SAMtools filter flags
 
@@ -322,6 +389,24 @@ Sample2,Population1,Lib2,Pop1_Rep2,FASTQ,ILLUMINA,Unit1
 | `PU` | No | Platform unit |
 | `CN` | No | Sequencing centre |
 | `DT` | No | Run date (ISO8601, e.g., `2024-03-07`) |
+
+### `SM` decides what counts as a sample
+
+`ID` identifies each FASTQ pair, but **`SM` determines the samples in your variant calls.** BCFtools names VCF columns after `SM`, and any read groups sharing a value are pooled into a single column. The example above does exactly this: `Sample1` and `Sample2` both carry `SM=Population1`, so their reads are combined.
+
+| `SM` values in RGTags.csv | Resulting VCF columns |
+|---|---|
+| `Sample1`, `Sample2`, `Sample3` | `Sample1`  `Sample2`  `Sample3` |
+| `Population1`, `Population1`, `Sample3` | `Population1`  `Sample3` |
+
+**Give every pool its own `SM`** when you want them analysed separately. This is what most runs want, and it is the safe default.
+
+**Share an `SM` deliberately** when several FASTQ pairs are really the same biological pool:
+
+- **One pool sequenced more than once** — split across lanes or runs to reach the depth Pool-seq needs. Each run arrives as its own FASTQ pair, but they describe one set of individuals, and the allele frequencies are only correct once the reads are combined.
+- **Technical replicates** of the same library that you want treated as one observation rather than compared with each other.
+
+Because merging happens at variant calling, it changes the numbers: read depths add together and each frequency is computed across the pooled reads. Leaving one pool split across two `SM` values instead gives you two under-powered estimates of the same thing — which is easy to do by accident, since the FASTQ files look like two ordinary samples.
 
 ---
 
