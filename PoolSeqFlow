@@ -24,6 +24,13 @@ usage() {
     exit 1
 }
 
+# Resolve a setting through Nextflow rather than parsing parameters.config by hand -
+# values are interpolated (workDir is built from mainDir), so text matching gets them
+# wrong. Requires the conda environment to be active.
+nf_config_value() {
+    nextflow config -flat 2>/dev/null | sed -n "s|^$1 = ||p" | head -1 | tr -d "'\""
+}
+
 if [ "$#" -ne 1 ]; then
     usage
 fi
@@ -82,20 +89,60 @@ case $COMMAND in
         ;;
     clean)
         echo "Cleaning Nextflow work directory..."
-        conda activate "$ENV_NAME"  
+        conda activate "$ENV_NAME"
+        WORKDIR=$(nf_config_value workDir)
         nextflow clean -f || true
         wait
-        conda deactivate 
+        conda deactivate
         wait
-        echo "Removing directories and log files"
-        rm -rf work .nextflow*
+        if [ -n "$WORKDIR" ]; then
+            echo "Removing $WORKDIR and log files"
+            rm -rf "$WORKDIR"
+        else
+            echo "WARNING: could not resolve workDir; leaving it in place." >&2
+        fi
+        rm -rf .nextflow*
         echo "Cleaned."
         ;;
-    reset) 
+    reset)
+        conda activate "$ENV_NAME"
+        WORKDIR=$(nf_config_value workDir)
+        STORAGE=$(nf_config_value params.projectDir)
+        DATADIR=$(nf_config_value params.dir.data)
+        conda deactivate
+        if [ -z "$STORAGE" ]; then
+            echo "ERROR: could not resolve params.projectDir - is parameters.config present?" >&2
+            exit 1
+        fi
+        echo ""
+        echo "This permanently deletes:"
+        echo "    $STORAGE/Output      - every result produced so far"
+        echo "    $STORAGE/Reports"
+        echo "    $STORAGE/Logs"
+        echo "    $STORAGE/Reference   - indices and the SnpEff database"
+        echo "    $STORAGE/.poolseqflow_params"
+        [ -n "$WORKDIR" ] && echo "    $WORKDIR"
+        echo ""
+        echo "Your raw sequencing data in $DATADIR is not touched."
+        echo ""
+        printf 'Type DELETE_MY_ANALYSIS to confirm: '
+        if ! read -r CONFIRM; then
+            echo ""
+            echo "Aborted - no confirmation received. Nothing was deleted."
+            exit 1
+        fi
+        if [ "$CONFIRM" != "DELETE_MY_ANALYSIS" ]; then
+            echo "Aborted - nothing was deleted."
+            exit 1
+        fi
         echo "Resetting pipeline..."
-        rm -rf work .nextflow*
-        projectDir=$(grep -m 1 projectDir parameters.config | cut -d '=' -f 2 | sed 's/"//g;s|/| |g' | awk '{print $NF}')
-        rm -rf $projectDir/Reports $projectDir/Logs $projectDir/Output $projectDir/Reference $projectDir/PoolSeqFlow_* 
+        rm -rf .nextflow*
+        if [ -n "$WORKDIR" ]; then rm -rf "$WORKDIR"; fi
+        rm -rf "$STORAGE"/Reports "$STORAGE"/Logs "$STORAGE"/Output \
+               "$STORAGE"/Reference "$STORAGE"/PoolSeqFlow_*
+        # This records the parameters behind outputs that no longer exist; leaving it
+        # would make the next run fail its parameter check for no reason.
+        rm -f "$STORAGE"/.poolseqflow_params
         echo "Reset complete."
         ;;
     version)
