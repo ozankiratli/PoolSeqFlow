@@ -8,7 +8,8 @@
 
 params {
     //main parameters
-    threads         = 4
+    threads         =  8                 // cores per task
+    memory          = '24 GB'            // memory ceiling per task
     mainDir         = "/path/to/working/directory"   // where the pipeline runs (e.g. node scratch)
     projectDir      = "/path/to/permanent/storage"   // where outputs are kept (may be another filesystem)
     dataSource      = 'Data'
@@ -54,27 +55,22 @@ params {
     }
 
     // java parameters
+    // Only the heap size lives here. -XX:ParallelGCThreads is set per process from
+    // task.cpus, so the JVM always gets the cores that task actually reserved.
     java {
         heapSize        = '-Xmx8g'
-        garbageCollect  = "-XX:ParallelGCThreads=${params.cores.javaGc}"
-        options         = "${params.java.heapSize} ${params.java.garbageCollect}"
     }
 
     // fastqc parameters
     fastqc {
-        threads         = params.cores.fastqc
         memory          = 2048  // megabytes, as a plain number - FastQC rejects "2G"
         // For the standalone FastQC binary (used on the clipped reads in step 2).
-        options         = "-t ${params.fastqc.threads} --memory ${params.fastqc.memory}"
-        // For Trim Galore's bundled FastQC engine, which understands only a subset of
-        // FastQC's flags (-t, -o, --nogroup, --quiet, --svg, ...). Anything else warns
-        // and is ignored, so --memory must not be passed here.
-        bundledOptions  = "-t ${params.fastqc.threads}"
+        // -t is supplied by each process from task.cpus
+        options         = "--memory ${params.fastqc.memory}"
     }
     
     // trim_galore parameters
     trim_galore {
-        threads         = params.cores.trim
         quality         = 25
         // true  -> no adapter is passed; Trim Galore auto-detects it (Illumina/Nextera/smallRNA)
         //          and adapter1/adapter2 below are ignored.
@@ -83,27 +79,27 @@ params {
         adapter1        = ''
         adapter2        = ''
         adapterOptions  = params.trim_galore.autodetect ? '' : "-a ${params.trim_galore.adapter1} -a2 ${params.trim_galore.adapter2}"
-        options         = "--cores ${params.trim_galore.threads} --fastqc --fastqc_args \"${params.fastqc.bundledOptions}\" --paired --retain_unpaired -q ${params.trim_galore.quality} ${params.trim_galore.adapterOptions}"
+        // --cores and --fastqc_args are supplied by TrimReads from task.cpus
+        options         = "--fastqc --paired --retain_unpaired -q ${params.trim_galore.quality} ${params.trim_galore.adapterOptions}"
     }
     
     cutadapt {
-        threads        = params.cores.cutadapt
         at_gc_error    = 0.025 
         min_length     = 50
-        options        = "--cores ${params.cutadapt.threads}" 
+        // --cores is supplied by ClipReads from task.cpus
+        options        = ""
     }
 
     // BWA parameters
     bwa {
-        threads         = params.cores.bwa
         minScoreOutput  = 30
         batchSize       = 10000000
-        options         = "-t ${params.bwa.threads} -K ${params.bwa.batchSize} -T ${params.bwa.minScoreOutput}"
+        // -t is supplied by Align from task.cpus
+        options         = "-K ${params.bwa.batchSize} -T ${params.bwa.minScoreOutput}"
     }
     
     // Samtools parameters
     samtools {
-        threads         = params.cores.samtools
         filter          = "0xF0C"       // See `man samtools-flags` for more information
         required        = "0x2"         // See `man samtools-flags` for more information
         mapq            = 30
