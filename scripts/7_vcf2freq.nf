@@ -79,7 +79,7 @@ process SortRefAltByFrequency {
         echo "SORT ALLELES BY FREQ ${vcf}: Sorting alleles by frequency..."
         MajorAlleleToRef.py ${vcf} ${sorted_vcf}
         echo "SORT ALLELES BY FREQ ${vcf}: Moving ${sorted_vcf} to ${target_folder_vcf}..."
-        mkdir -p ${target_folder_freq}
+        mkdir -p ${target_folder_vcf}
         mv ${sorted_vcf} ${target_sorted_vcf}
         echo "SORT ALLELES BY FREQ ${vcf}: Creating symbolic link..."
         ln -s ${target_sorted_vcf} .
