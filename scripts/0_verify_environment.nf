@@ -1,3 +1,34 @@
+// Flatten the nested params map into dotted keys (dir.output.report.align and so on).
+def flattenParams(Map m, String prefix, Map out) {
+    m.each { k, v ->
+        String key = prefix ? "${prefix}.${k}" : "${k}"
+        if (v instanceof Map) flattenParams(v, key, out)
+        else out[key] = v
+    }
+    return out
+}
+
+// The parameters that decide what the numbers are. Everything else - where files live,
+// how many cores to use, where a tool is installed - can change freely between runs
+// without invalidating an existing result.
+//
+// This is an exclusion list on purpose: a parameter added in a later release is treated
+// as analysis-affecting until someone decides otherwise, which fails safe. Add new path
+// or resource parameters here.
+def analysisParams() {
+    def skipKey = [
+        'mainDir', 'projectDir', 'dataSource',
+        'referencePath', 'gffPath', 'rgTagsPath', 'referenceFa', 'reference', 'gff', 'reads',
+        'threads', 'memory'
+    ] as Set
+    def skipPrefix = ['dir.', 'cores.', 'java.', 'software.']
+    return flattenParams(params, '', [:])
+        .findAll { k, v -> !skipKey.contains(k) && !skipPrefix.any { p -> k.startsWith(p) } }
+        .collect { k, v -> "${k}=${v}" }
+        .sort()
+        .join('\n')
+}
+
 process CheckReference {
     output:
     path 'verify_environment_stage1.txt', emit: report
@@ -351,6 +382,64 @@ process CheckTrimParameters {
     """
 }
 
+process CheckRunParameters {
+    output:
+    path 'verify_environment_stage7.txt', emit: report
+
+    script:
+    manifest    = analysisParams()
+    stored      = "${params.projectDir}/.poolseqflow_params"
+    dir_log     = "${params.dir.logs}/0_verify_environment/s7_CheckRunParameters"
+    """
+    REPORTFILE="verify_environment.txt"
+
+    log_message() {
+        echo "\$1" >> \$REPORTFILE
+        echo "\$1"
+    }
+
+    cat <<'CURRENT_PARAMS' > current_params.txt
+${manifest}
+CURRENT_PARAMS
+
+    STATUS="PASS"
+    if [ ! -f "${stored}" ]; then
+        log_message "RUN PARAMETERS:        No previous run recorded - this is a fresh project"
+        log_message "RUN PARAMETERS:        Recording \$(wc -l < current_params.txt) analysis parameters"
+        mkdir -p "\$(dirname "${stored}")"
+        cp current_params.txt "${stored}"
+    elif diff -q "${stored}" current_params.txt > /dev/null 2>&1; then
+        log_message "RUN PARAMETERS:        Unchanged since the outputs in ${params.dir.outputs} were produced"
+    else
+        log_message "RUN PARAMETERS:        CHANGED since the existing outputs were produced:"
+        log_message ""
+        # report each parameter that differs, old -> new
+        while IFS= read -r line; do
+            case "\$line" in
+                '<'*) printf '  was  %s\\n' "\${line#< }" | tee -a \$REPORTFILE ;;
+                '>'*) printf '  now  %s\\n' "\${line#> }" | tee -a \$REPORTFILE ;;
+            esac
+        done < <(diff "${stored}" current_params.txt | grep -E '^[<>]')
+        log_message ""
+        log_message "RUN PARAMETERS:        Existing outputs were produced with different settings."
+        log_message "RUN PARAMETERS:        The pipeline skips completed steps by checking for output"
+        log_message "RUN PARAMETERS:        files, not by checking which parameters produced them, so"
+        log_message "RUN PARAMETERS:        continuing would mix old and new results."
+        log_message "RUN PARAMETERS:"
+        log_message "RUN PARAMETERS:        Either restore the previous values, or start a fresh run:"
+        log_message "RUN PARAMETERS:            ./PoolSeqFlow reset"
+        STATUS="FAIL"
+    fi
+
+    log_message "RUN PARAMETER CHECK:   STATUS=\$STATUS"
+
+    mv \$REPORTFILE verify_environment_stage7.txt
+    mkdir -p ${dir_log}
+    cp .command.log ${dir_log}/0_VerifyEnvironment_s7_CheckRunParameters.log
+    cp .command.err ${dir_log}/0_VerifyEnvironment_s7_CheckRunParameters.err
+    """
+}
+
 process VerifyAll {
     errorStrategy 'finish'
 
@@ -361,6 +450,7 @@ process VerifyAll {
     val rgtags_log
     val software_log
     val trim_log
+    val runparam_log
 
     output:
     path '0_verify_environment.txt'
@@ -382,7 +472,7 @@ process VerifyAll {
     log_message "========================================================================="
     log_message ""
 
-    cat ${reference_log} ${gffFile_log} ${dataSource_log} ${rgtags_log} ${software_log} ${trim_log} | tee -a \$REPORTFILE
+    cat ${reference_log} ${gffFile_log} ${dataSource_log} ${rgtags_log} ${software_log} ${trim_log} ${runparam_log} | tee -a \$REPORTFILE
     log_message ""
     log_message "========================================================================="
 
@@ -424,7 +514,8 @@ workflow VerifyEnvironment {
     CheckRGTagsFile(CheckData.out.report)
     CheckInstalledSoftware()
     CheckTrimParameters()
-    VerifyAll(CheckReference.out.report, gff_report, CheckData.out.report, CheckRGTagsFile.out.report, CheckInstalledSoftware.out.report, CheckTrimParameters.out.report)
+    CheckRunParameters()
+    VerifyAll(CheckReference.out.report, gff_report, CheckData.out.report, CheckRGTagsFile.out.report, CheckInstalledSoftware.out.report, CheckTrimParameters.out.report, CheckRunParameters.out.report)
 
     emit:
     report = VerifyAll.out
