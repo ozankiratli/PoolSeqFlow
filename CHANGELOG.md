@@ -6,6 +6,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
+## [2.1.0] - 2026-08-15
+
+Resource allocation is now declared to Nextflow rather than only passed to the tools, and there is a helper for carrying an older configuration forward.
+
+### Added
+
+- **`./PoolSeqFlow migrate_config`** — rebuilds `parameters.config` from the current template, backs the original up, carries across every setting whose parameter still exists, and reports what it kept, what is new, what the pipeline now computes for itself, and what it dropped. It refuses to carry a value the template derives, so it cannot reintroduce a stale `snpEff.db` or a hand-set thread count. The report is a starting point: a parameter whose behaviour changed while its value still looks ordinary will be carried across, so compare against the template afterwards.
+- **Every process declares `cpus`**, so Nextflow schedules against real requirements instead of assuming one core per task. Previously three `Align` tasks each using ~2.2 cores ran concurrently on an 8-core machine with `cpus=1` recorded for each.
+- `params.memory`, feeding `resourceLimits` alongside `params.threads`, so one place sizes a run.
+
+### Changed
+
+- **Tools now read `task.cpus`** rather than thread counts baked into option strings, so the number Nextflow reserves and the number the tool receives cannot diverge. Overriding `cpus` in a profile now changes the tool's behaviour too.
+- **`TrimReads` reserves Trim Galore's full footprint.** `--cores N` runs N+4 threads (measured: `--cores 8` peaks at 12 OS threads), so the process reserves `cores.trimTotal` and maps back to the worker count. A request larger than the machine now fails with `Process requirement exceeds available CPUs` instead of silently oversubscribing.
+- **JVM garbage-collection threads come from `task.cpus`.** `-XX:ParallelGCThreads` was read from a config string, so `cpus` had no effect on SnpEff or FastQC.
+- `resourceLimits` moved to `params.threads` / `params.memory`; it was hardcoded and would not follow a change to `threads`.
+- Eight parameters removed after the rework left them unreferenced: the five per-tool `threads` values, `fastqc.bundledOptions`, `java.garbageCollect` and `java.options`. Each looked like a knob that did nothing.
+- `TrimReads` no longer exports `_JAVA_OPTIONS`; Trim Galore 2.x is a native binary with a bundled FastQC and never starts a JVM.
+
+### Fixed
+
+- **`parameters.config.template` was missing parameters the pipeline requires** — `annotate`, `snpEff.runOptions`, `rgTagsPath`, `diploidy` — and carried a different `vcftools.minDP` and different report directory names. A configuration built from it failed step 0 with `RGTAGS VERIFICATION: STATUS=FAIL`. The template is now generated from the reference configuration and resolves identically to it.
+- **Step 7 created the wrong output directory.** `SortRefAltByFrequency` ran `mkdir -p` on the frequencies folder and then moved into the VCF folder, which only worked because step 6 had created it first.
+- `parameters.config` contained the `dir { }` block and the reference path assignments twice, byte-identical.
+
+---
+
 ## [2.0.1] - 2026-08-12
 
 ### Fixed
@@ -123,6 +150,7 @@ Major upgrade to **Nextflow 26** and **Trim Galore 2.x**. This release is not ba
 
 ---
 
+[2.1.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.1.0
 [2.0.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.0.1
 [2.0.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.0.0
 [1.0.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v1.0.1
