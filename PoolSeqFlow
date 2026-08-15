@@ -121,6 +121,7 @@ case $COMMAND in
         echo "    $STORAGE/Logs"
         echo "    $STORAGE/Reference   - indices and the SnpEff database"
         echo "    $STORAGE/.poolseqflow_params"
+        echo "    $STORAGE/.poolseqflow_rgtags"
         [ -n "$WORKDIR" ] && echo "    $WORKDIR"
         echo ""
         echo "Your raw sequencing data in $DATADIR is not touched."
@@ -140,9 +141,9 @@ case $COMMAND in
         if [ -n "$WORKDIR" ]; then rm -rf "$WORKDIR"; fi
         rm -rf "$STORAGE"/Reports "$STORAGE"/Logs "$STORAGE"/Output \
                "$STORAGE"/Reference "$STORAGE"/PoolSeqFlow_*
-        # This records the parameters behind outputs that no longer exist; leaving it
-        # would make the next run fail its parameter check for no reason.
-        rm -f "$STORAGE"/.poolseqflow_params
+        # These record the parameters and RG tags behind outputs that no longer exist;
+        # leaving them would make the next run fail its checks for no reason.
+        rm -f "$STORAGE"/.poolseqflow_params "$STORAGE"/.poolseqflow_rgtags
         echo "Reset complete."
         ;;
     version)

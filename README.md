@@ -395,9 +395,17 @@ Create `RGTags.csv` in your project directory. The `ID` field must match the sam
 
 ```csv
 ID,SM,LB,DS,FO,PL,PU
-Sample1,Population1,Lib1,Pop1_Rep1,FASTQ,ILLUMINA,Unit1
-Sample2,Population1,Lib2,Pop1_Rep2,FASTQ,ILLUMINA,Unit1
+Sample1T1Rep1,Sample1T1,Lib1,Pop1_T1_Rep1,FASTQ,ILLUMINA,Unit1
+Sample1T1Rep2,Sample1T1,Lib1,Pop1_T1_Rep2,FASTQ,ILLUMINA,Unit1
+Sample1T2Rep1,Sample1T2,Lib1,Pop1_T2_Rep1,FASTQ,ILLUMINA,Unit1
+Sample1T2Rep2,Sample1T2,Lib1,Pop1_T2_Rep2,FASTQ,ILLUMINA,Unit1
+Sample2T1Rep1,Sample2T1,Lib1,Pop2_T1_Rep1,FASTQ,ILLUMINA,Unit1
+Sample2T1Rep2,Sample2T1,Lib1,Pop2_T1_Rep2,FASTQ,ILLUMINA,Unit1
+Sample2T2Rep1,Sample2T2,Lib1,Pop2_T2_Rep1,FASTQ,ILLUMINA,Unit1
+Sample2T2Rep2,Sample2T2,Lib1,Pop2_T2_Rep2,FASTQ,ILLUMINA,Unit1
 ```
+
+*This csv will create a vcf file with 4 samples, Sample1T1, Sample1T2, Sample2T1, Sample2T2. (See Below)*
 
 | Tag | Required | Description |
 |---|---|---|
@@ -411,9 +419,13 @@ Sample2,Population1,Lib2,Pop1_Rep2,FASTQ,ILLUMINA,Unit1
 | `CN` | No | Sequencing centre |
 | `DT` | No | Run date (ISO8601, e.g., `2024-03-07`) |
 
+**Every `ID` must appear exactly once.** A row is looked up by `ID` and only the first match is read, so a repeated `ID` would silently discard the later rows and give that sample the wrong tags. Step 0 refuses to run and lists the offending values.
+
+Editing this file in Excel on Windows saves it with CRLF line endings, which would otherwise put a stray carriage return in the last tag of every row. Step 0 detects that, rewrites the file with Unix line endings, and reports `RGTAGS LINE ENDING CHECK: FIXED`. File permissions and ownership are preserved; if the file cannot be rewritten, the run stops and tells you the command to run.
+
 ### `SM` decides what counts as a sample
 
-`ID` identifies each FASTQ pair, but **`SM` determines the samples in your variant calls.** BCFtools names VCF columns after `SM`, and any read groups sharing a value are pooled into a single column. The example above does exactly this: `Sample1` and `Sample2` both carry `SM=Population1`, so their reads are combined.
+`ID` identifies each FASTQ pair, but **`SM` determines the samples in your variant calls.** BCFtools names VCF columns after `SM`, and any read groups sharing a value are pooled into a single column. The example above does exactly this: eight FASTQ pairs carry four distinct `SM` values, so each pair of replicates is combined and the VCF has four columns.
 
 | `SM` values in RGTags.csv | Resulting VCF columns |
 |---|---|
@@ -429,6 +441,36 @@ Sample2,Population1,Lib2,Pop1_Rep2,FASTQ,ILLUMINA,Unit1
 
 Because merging happens at variant calling, it changes the numbers: read depths add together and each frequency is computed across the pooled reads. Leaving one pool split across two `SM` values instead gives you two under-powered estimates of the same thing — which is easy to do by accident, since the FASTQ files look like two ordinary samples.
 
+### Row order decides column order
+
+**The order of the rows in `RGTags.csv` is the order of the sample columns** in the VCF and in the frequency tables. Put the rows in whatever order you want to read your results in — treatment before control, or by time point — and the output follows.
+
+```csv
+ID,SM,DS,FO,PL,PU
+Sample3,Sample3,Sample3,FASTQ,ILLUMINA,Unit1     # -> first column
+Sample1,Sample1,Sample1,FASTQ,ILLUMINA,Unit1     # -> second column
+Sample2,Sample2,Sample2,FASTQ,ILLUMINA,Unit1     # -> third column
+```
+
+When several rows share an `SM`, the merged column appears where the **first** of those rows sits.
+
+Reordering rows only moves columns; it never changes a value. Nothing else about the file is positional.
+
+### Editing `RGTags.csv` after a run
+
+Completed steps are skipped by looking for their output files, not by checking what produced them. So once this file has been consumed, editing it does **not** update anything that already exists — the tags are inside the BAMs, and the column order is inside the VCF.
+
+Step 0 therefore records the file the first time it is used and compares against that record on every later run. **If it has changed, the run stops before any work happens** and the report tells you which outputs are now stale:
+
+| What you changed | What it invalidates | Delete and rerun |
+|---|---|---|
+| A tag value (`SM`, `DS`, …) | The BAMs, and everything called from them | `Output/Ready/`, `Output/VCF/`, `Output/Frequencies/` |
+| Row order only | The VCF sample column order | `Output/VCF/`, `Output/Frequencies/` |
+
+Deleting the affected outputs is what clears the check — the edit becomes the new baseline on the next run. Or discard everything and start over with `./PoolSeqFlow reset`.
+
+The record lives in `.poolseqflow_rgtags` in your project directory. Line endings and trailing whitespace are ignored when comparing; row order is not.
+
 ---
 
 ## Step-by-step Description
@@ -436,6 +478,8 @@ Because merging happens at variant calling, it changes the numbers: read depths 
 ### Step 0: Verify Environment
 
 Checks that all required files and software dependencies are present before the run begins. Produces `Reports/0_verify_environment.txt`.
+
+It also refuses to continue when something an existing result was built from has since changed — the analysis parameters in `parameters.config`, or `RGTags.csv` (see [Editing `RGTags.csv` after a run](#editing-rgtagscsv-after-a-run)). Because completed steps are skipped by looking for output files, continuing would otherwise mix old and new results in one output folder.
 
 ### Step 1: Build Reference Dictionaries
 

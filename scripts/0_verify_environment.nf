@@ -187,6 +187,10 @@ process CheckRGTagsFile {
     rgTagsFile = params.rgTagsPath
     dataDir = params.dir.data
     readPattern = params.readPattern.replace('{','[').replace('}',']')
+    storedRg = "${params.projectDir}/.poolseqflow_rgtags"
+    readyDir = "${params.dir.output.ready}"
+    vcfDir = "${params.dir.output.vcf}"
+    freqDir = "${params.dir.output.freq}"
     dir_log = "${params.dir.logs}/0_verify_environment/s4_CheckRGTagsFile"
 
     """
@@ -216,6 +220,35 @@ process CheckRGTagsFile {
     else
         log_message "RGTags file exists: ${rgTagsFile}"
         log_message "RGTAGS FILE CHECK:     PASS"
+
+        # Repair Windows line endings in place. A file saved from Excel on Windows ends
+        # every line with CR, which rides along into the last field of each row: the
+        # header check below rejects 'PU\\r' as an invalid tag, and were it to get past
+        # that, the CR would end up inside the RG tag written into the BAM. Neither
+        # failure names the real cause, so fix it here and say so.
+        #
+        # Detection and repair use the same expression, so a file that is reported as
+        # fixed really is fixed - a mismatch between the two would report it every run.
+        if ! sed 's/\\r\$//' ${rgTagsFile} | cmp -s - ${rgTagsFile}; then
+            # Rewrite the file's contents rather than replacing the file. 'sed -i' swaps
+            # in a new inode and does not carry the mode across - it turned a 444 file
+            # into a 644 one in testing, quietly making a deliberately read-only RGTags
+            # file writable. Redirecting into the existing path keeps mode and ownership,
+            # and fails honestly when the file really is not writable.
+            if sed 's/\\r\$//' ${rgTagsFile} > rgtags_norm.tmp && [ -s rgtags_norm.tmp ] &&
+               cat rgtags_norm.tmp > ${rgTagsFile} 2>/dev/null; then
+                log_message "RGTags file had Windows (CRLF) line endings - repaired in place"
+                log_message "RGTAGS LINE ENDING CHECK: FIXED"
+            else
+                log_message "RGTags file has Windows (CRLF) line endings and could not be rewritten"
+                log_message "Convert it yourself with:"
+                log_message "    sed -i 's/\\\\r\$//' ${rgTagsFile}"
+                log_message "RGTAGS LINE ENDING CHECK: FAIL"
+                STATUS="FAIL"
+            fi
+        else
+            log_message "RGTAGS LINE ENDING CHECK: PASS"
+        fi
 
         # Get header and validate format
         header=\$(head -n 1 ${rgTagsFile})
@@ -247,6 +280,25 @@ process CheckRGTagsFile {
             log_message "ID column found at position \$id_col"
             log_message "RGTAGS ID COLUMN CHECK: PASS"
 
+            # Every ID must be unique. Step 4 looks its row up by ID and reads only the
+            # first line of the result, so a repeated ID means the later rows are dropped
+            # without a word and the sample silently takes the first row's tags. Nothing
+            # downstream can detect that, because the resulting BAM is perfectly valid.
+            dup_ids=\$(awk -F',' -v col=\$id_col '
+                NR > 1 && \$col != "" { seen[\$col]++ }
+                END { for (id in seen) if (seen[id] > 1) printf "  %s (%d rows)\\n", id, seen[id] }
+            ' ${rgTagsFile} | sort)
+            if [ -n "\$dup_ids" ]; then
+                log_message "Duplicate ID values in ${rgTagsFile}:"
+                echo "\$dup_ids" | tee -a \$REPORTFILE
+                log_message "Each ID must appear once. Only the first row of a repeated ID is"
+                log_message "used, so the rest would be discarded without any error."
+                log_message "RGTAGS UNIQUE ID CHECK: FAIL"
+                STATUS="FAIL"
+            else
+                log_message "RGTAGS UNIQUE ID CHECK: PASS"
+            fi
+
             # Get sample IDs from data directory
             sample_ids=\$(find ${dataDir} -name "${readPattern}" | sed -E 's/.*\\/(.+)_R[12].*/\\1/' | sort -u)
 
@@ -274,6 +326,102 @@ process CheckRGTagsFile {
                     STATUS="FAIL"
                 fi
             done
+        fi
+
+        # Detect edits made after the file was already consumed. Step 4 bakes the tags
+        # into each BAM with 'samtools addreplacerg', and the row order sets the sample
+        # column order of the VCF in step 6. Neither is re-derived once its output
+        # exists, so an edit after that point leaves the results describing a version of
+        # this file that is no longer on disk - silently, because completed steps are
+        # skipped by looking for output files rather than by checking what produced them.
+        #
+        # Normalise line endings and trailing blanks before comparing, but never the row
+        # order: that is significant now, and sorting it away would hide a real change.
+        sed -e 's/\\r\$//' -e 's/[[:space:]]*\$//' -e '/^\$/d' ${rgTagsFile} > current_rgtags.csv
+
+        # The two things that consume this file have different lifetimes, so ask about
+        # each separately. The tag values live in the cleaned BAMs; the row order lives in
+        # the VCF and nowhere else. A change only matters while the thing that absorbed it
+        # is still on disk - which is what makes the recovery below terminate: delete that
+        # output and the same edit stops being a change and becomes the new baseline.
+        # Test each candidate separately: 'ls a b' reports failure when either operand is
+        # missing, so a single ls over two globs would call an existing VCF absent.
+        any_exists() {
+            for f in "\$@"; do
+                [ -e "\$f" ] && return 0
+            done
+            return 1
+        }
+        HAVE_BAMS=0; any_exists ${readyDir}/*_ready.bam && HAVE_BAMS=1
+        HAVE_VCF=0;  any_exists ${vcfDir}/*.vcf ${vcfDir}/*.vcf.gz && HAVE_VCF=1
+
+        record_baseline() {
+            mkdir -p "\$(dirname "${storedRg}")"
+            cp current_rgtags.csv "${storedRg}"
+        }
+
+        if [ "\$HAVE_BAMS" -eq 0 ] && [ "\$HAVE_VCF" -eq 0 ]; then
+            # Nothing has consumed the file yet, so an edit costs nothing. Record it.
+            record_baseline
+            log_message "RGTags baseline recorded - nothing has consumed the file yet"
+            log_message "RGTAGS CHANGE CHECK:   PASS"
+        elif [ ! -f "${storedRg}" ]; then
+            # Outputs from before this check existed. There is no baseline to compare
+            # against and no way to reconstruct one, so adopt the current file and say so.
+            cp current_rgtags.csv "${storedRg}"
+            log_message "Cleaned BAMs exist but predate this check - no baseline to compare"
+            log_message "Adopting the current RGTags file as the baseline"
+            log_message "Verify it still matches what is in the BAMs:"
+            log_message "    ${params.software.samtools} view -H ${readyDir}/<sample>_ready.bam | grep '^@RG'"
+            log_message "RGTAGS CHANGE CHECK:   PASS"
+        elif diff -q "${storedRg}" current_rgtags.csv > /dev/null 2>&1; then
+            log_message "RGTags file unchanged since the existing outputs were produced"
+            log_message "RGTAGS CHANGE CHECK:   PASS"
+        elif [ "\$(sort "${storedRg}")" = "\$(sort current_rgtags.csv)" ]; then
+            # Same rows, different order. The tags in the BAMs are matched by ID rather
+            # than by position, so they are untouched; only the VCF column order is wrong.
+            if [ "\$HAVE_VCF" -eq 0 ]; then
+                record_baseline
+                log_message "RGTags row order changed, but no VCF exists to have used it"
+                log_message "RGTAGS CHANGE CHECK:   PASS"
+            else
+                # Report this as two orderings - a line diff of a permutation shows the
+                # same text as both removed and added, which reads as nonsense.
+                id_list() { awk -F',' -v c="\$id_col" 'NR>1 { printf "%s%s", sep, \$c; sep=", " }' "\$1"; }
+                log_message "RGTags row order has CHANGED since the existing outputs were produced:"
+                log_message ""
+                log_message "  was  \$(id_list "${storedRg}")"
+                log_message "  now  \$(id_list current_rgtags.csv)"
+                log_message ""
+                log_message "The tags in the BAMs are matched by ID and are still correct, but"
+                log_message "the VCF sample column order is not."
+                log_message "Delete these and run again to apply it:"
+                log_message "    ${vcfDir}"
+                log_message "    ${freqDir}"
+                log_message "Or discard the whole analysis and start over:  ./PoolSeqFlow reset"
+                log_message "RGTAGS CHANGE CHECK:   FAIL"
+                STATUS="FAIL"
+            fi
+        else
+            log_message "RGTags file has CHANGED since the existing outputs were produced:"
+            log_message ""
+            while IFS= read -r line; do
+                case "\$line" in
+                    '<'*) printf '  was  %s\\n' "\${line#< }" | tee -a \$REPORTFILE ;;
+                    '>'*) printf '  now  %s\\n' "\${line#> }" | tee -a \$REPORTFILE ;;
+                esac
+            done < <(diff "${storedRg}" current_rgtags.csv | grep -E '^[<>]')
+            log_message ""
+            log_message "Tag values changed. Every BAM in"
+            log_message "    ${readyDir}"
+            log_message "carries the old tags, and everything called from them carries them too."
+            log_message "Delete these and run again to apply it:"
+            log_message "    ${readyDir}"
+            log_message "    ${vcfDir}"
+            log_message "    ${freqDir}"
+            log_message "Or discard the whole analysis and start over:  ./PoolSeqFlow reset"
+            log_message "RGTAGS CHANGE CHECK:   FAIL"
+            STATUS="FAIL"
         fi
     fi
 
