@@ -88,6 +88,7 @@ params {
         min_length     = 50
         // --cores is supplied by ClipReads from task.cpus
         options        = ""
+        // options     = "-m ${params.cutadapt.min_length}"   // discard reads shorter than min_length after clipping
     }
 
     // BWA parameters
@@ -112,7 +113,7 @@ params {
         baseQualMin     = 30
         varQualMin      = 30
         maxDepth        = 2000
-        mpileupOptions  = "-B -C ${params.bcftools.scaleMapQ} -q ${params.bcftools.baseQualMin} -Q ${params.bcftools.varQualMin} -d ${params.bcftools.maxDepth} -a AD,DP,SP,INFO/AD -Ou"
+        mpileupOptions  = "-B -C ${params.bcftools.scaleMapQ} -q ${params.bcftools.varQualMin} -Q ${params.bcftools.baseQualMin} -d ${params.bcftools.maxDepth} -a AD,DP,SP,INFO/AD -Ou"
 
         callOptions         = "-m -A -v -Ov"  
     }
@@ -123,7 +124,7 @@ params {
     }
 
     // vcf Filtering parameters
-    vcftools {
+    vcffilter {
         minDP           = 20
         minQUAL         = 30
     }

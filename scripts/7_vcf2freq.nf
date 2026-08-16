@@ -214,6 +214,11 @@ process DepthAndQualityFilter {
     target_folder_vcf = "${params.dir.output.vcf}"
     target_folder_freq = "${params.dir.output.freq}"
 
+    // Depth-filtered intermediate. Stays in the task directory and is never moved to
+    // permanent storage - only the quality-filtered result is kept. Named _dp so it
+    // cannot be picked up by the process's own "*_dq.vcf" output glob.
+    filterdp_vcf = "${vcf.baseName}_dp.vcf"
+
     filterdq_base = "${vcf.baseName}_dq"
     filterdq_vcf = "${filterdq_base}.vcf"
     filterdq_recode_vcf = "${filterdq_base}.recode.vcf"
@@ -259,10 +264,11 @@ process DepthAndQualityFilter {
         ln -s ${target_filterdq_vcf} .
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: COMPLETED"
     else
-        echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Processing SNPs..."
-        ${params.software.vcftools} --vcf ${vcf} \
-            --minDP ${params.vcftools.minDP} \
-            --minQ ${params.vcftools.minQUAL} \
+        echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Depth Filtering VCF..."
+        ${params.software.bcftools} view -e "FMT/DP<${params.vcffilter.minDP}" -Ov -o ${filterdp_vcf} ${vcf}
+        echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Quality Filtering VCF..."
+        ${params.software.vcftools} --vcf ${filterdp_vcf} \
+            --minQ ${params.vcffilter.minQUAL} \
             --recode --recode-INFO-all \
             --out ${filterdq_base}
 
