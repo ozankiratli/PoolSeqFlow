@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+     viewBox="0 0 64 64" width="64" height="64">
+  <title>PoolSeqFlow</title>
+  <desc>Pooled DNA in a vessel, one strand rising from it.</desc>
+
+  <!-- Cleaned from tripod-new.svg. Same design, same proportions; what changed:
+         - the two nested matrix() transforms are resolved into the path data, so
+           a node sits where Inkscape shows it and stroke widths are literal
+         - the neck is aligned: both vessel curves and the helix now start at
+           x=32 (they were at 31.891, 32.337 and 31.950)
+         - the three pools are centred on 32 as well, evenly spaced +/-13.555
+         - two empty leftover groups removed, stale comments rewritten
+       Nothing was redrawn - every curve keeps its original control offsets.
+
+       GEOMETRY
+         Helix half-period = one cubic, start and end on the centre line, both
+         controls pushed the same side. Control offset = amplitude x 4/3.
+           top helix:  centre x=32, half-period 12.77, control dx 7.59
+           pool helix: half-period 6.93, control dx 3.98
+         Rungs sit at each half-period midpoint, spaced by the amplitude.
+
+       NOTE the vessel's lowest stroke edge lands at y=63.8 against a 64 canvas,
+       leaving 0.2 of margin. Fine as a standalone mark; if it ever sits on a
+       filled favicon tile, lift the whole group ~2 units first. -->
+
+  <g inkscape:groupmode="layer" inkscape:label="PoolSeqFlow mark"
+     fill="none" stroke="#3cb371" stroke-linecap="round">
+
+    <!-- THE POOL: vessel holding the samples -->
+    <g id="vessel">
+      <path id="vessel-right" stroke-width="3.66"
+            d="m32 30.83c4.659 7.346 4.736 7.377 14.933 10.228 20.420 5.708 20.026 13.929 0 20.894"/>
+      <path id="vessel-left" stroke-width="3.66"
+            d="m32 30.83c-4.659 7.346-4.736 7.377-14.933 10.228-20.420 5.708-20.026 13.929 0 20.894"/>
+      <path id="vessel-base" stroke-width="3.06" opacity="0.75"
+            d="M18.15 61.95H45.85"/>
+    </g>
+
+    <!-- ONE STRAND: the pooled result, rising from the neck -->
+    <g id="single-helix">
+      <path id="single-strand-front" stroke-width="4.46"
+            d="M32 5.39c7.587 3.647 7.587 9.119 0 12.766c-7.587 3.647-7.587 9.119 0 12.766"/>
+      <path id="single-strand-back" stroke-width="4.46" opacity="0.55"
+            d="M32 5.39c-7.587 3.647-7.587 9.119 0 12.766c7.587 3.647 7.587 9.119 0 12.766"/>
+      <g id="single-rungs" stroke-width="3.60" opacity="0.85">
+        <path d="M26.51 11.77H37.49"/>
+        <path d="M26.51 24.53H37.49"/>
+      </g>
+    </g>
+
+    <!-- THREE POOLS: the samples going in. Each group carries only a
+         translate(), so it can be dragged in Inkscape without distortion. -->
+    <g id="pooled-helices" stroke-width="2.38">
+      <g id="pool-left" transform="translate(18.445,44.255)">
+        <path d="m0 0c3.982 1.980 3.982 4.949 0 6.929c-3.982 1.980-3.982 4.949 0 6.929"/>
+        <path opacity="0.55"
+              d="m0 0c-3.982 1.980-3.982 4.949 0 6.929c3.982 1.980 3.982 4.949 0 6.929"/>
+        <path stroke-width="1.92" opacity="0.85" d="M-2.88 3.46H2.88"/>
+        <path stroke-width="1.92" opacity="0.85" d="M-2.88 10.39H2.88"/>
+      </g>
+      <g id="pool-centre" transform="translate(32,44.255)">
+        <path d="m0 0c3.982 1.980 3.982 4.949 0 6.929c-3.982 1.980-3.982 4.949 0 6.929"/>
+        <path opacity="0.55"
+              d="m0 0c-3.982 1.980-3.982 4.949 0 6.929c3.982 1.980 3.982 4.949 0 6.929"/>
+        <path stroke-width="1.92" opacity="0.85" d="M-2.88 3.46H2.88"/>
+        <path stroke-width="1.92" opacity="0.85" d="M-2.88 10.39H2.88"/>
+      </g>
+      <g id="pool-right" transform="translate(45.555,44.255)">
+        <path d="m0 0c3.982 1.980 3.982 4.949 0 6.929c-3.982 1.980-3.982 4.949 0 6.929"/>
+        <path opacity="0.55"
+              d="m0 0c-3.982 1.980-3.982 4.949 0 6.929c3.982 1.980 3.982 4.949 0 6.929"/>
+        <path stroke-width="1.92" opacity="0.85" d="M-2.88 3.46H2.88"/>
+        <path stroke-width="1.92" opacity="0.85" d="M-2.88 10.39H2.88"/>
+      </g>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,6 @@
+# Build dependencies for the documentation site only.
+# The pipeline itself needs none of these - see install/environment.yml.
+#
+#   pip install -r docs/requirements.txt
+#   mkdocs serve
+mkdocs-material==9.7.7

@@ -1,0 +1,509 @@
+/* PoolSeqFlow documentation theme
+   ---------------------------------------------------------------------------
+   Palette is carried over from ozankiratli.github.io (_sass/_theme.scss) so the
+   docs read as part of the same body of work:
+
+     ground      #252a34   darkblue
+     text        #eaeaea   lesswhite      muted  #aeaeae   lesserwhite
+     primary     #3cb371   leaf green
+     accent      #4fe0b7   greenblue
+     link        #60c0ff   main blue      (dodger blue #1e90ff on light)
+     rule        #485266   grayblue
+     highlight   #ffd166   star yellow
+
+   Headings use Montserrat, as they do on the personal site. It is not one of
+   the two fonts Material loads from `theme.font`, so it is imported here. */
+
+@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&display=swap");
+
+/* ---------------------------------------------------------------- dark ---- */
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 220;
+
+  --md-default-bg-color: #252a34;
+  --md-default-bg-color--light: rgba(37, 42, 52, 0.7);
+  --md-default-bg-color--lighter: rgba(37, 42, 52, 0.45);
+  --md-default-bg-color--lightest: rgba(37, 42, 52, 0.12);
+
+  --md-default-fg-color: #eaeaea;
+  --md-default-fg-color--light: #aeaeae;
+  --md-default-fg-color--lighter: rgba(108, 123, 153, 1);
+  --md-default-fg-color--lightest: rgba(72, 82, 102, 0.4);
+
+  /* The header deliberately matches the page rather than sitting on a slab of
+     colour; separation comes from a hairline rule further down. */
+  --md-primary-fg-color: #252a34;
+  --md-primary-fg-color--light: #2f3542;
+  --md-primary-fg-color--dark: #1b1e26;
+  --md-primary-bg-color: #eaeaea;
+  --md-primary-bg-color--light: #aeaeae;
+
+  --md-accent-fg-color: #4fe0b7;
+  --md-accent-fg-color--transparent: rgba(79, 224, 183, 0.1);
+  --md-accent-bg-color: #252a34;
+  --md-accent-bg-color--light: #2f3542;
+
+  --md-typeset-color: #eaeaea;
+  --md-typeset-a-color: #60c0ff;
+  --md-typeset-mark-color: rgba(60, 179, 113, 0.28);
+  --md-typeset-del-color: rgba(255, 110, 110, 0.15);
+  --md-typeset-ins-color: rgba(60, 179, 113, 0.15);
+  --md-typeset-table-color: rgba(72, 82, 102, 0.7);
+
+  --md-typeset-kbd-color: #2f3542;
+  --md-typeset-kbd-accent-color: #485266;
+  --md-typeset-kbd-border-color: #1b1e26;
+
+  --md-code-bg-color: #1b1e26;
+  --md-code-fg-color: #eaeaea;
+  --md-code-hl-color: rgba(255, 209, 102, 0.18);
+  --md-code-hl-comment-color: rgba(108, 123, 153, 1);
+  --md-code-hl-keyword-color: #3cb371;
+  --md-code-hl-string-color: #60c0ff;
+  --md-code-hl-number-color: #ffd166;
+  --md-code-hl-function-color: #4fe0b7;
+  --md-code-hl-constant-color: #ffd166;
+  --md-code-hl-special-color: #ffd166;
+  --md-code-hl-variable-color: #eaeaea;
+  --md-code-hl-name-color: #eaeaea;
+  --md-code-hl-operator-color: #aeaeae;
+  --md-code-hl-punctuation-color: #aeaeae;
+
+  --md-footer-bg-color: #1b1e26;
+  --md-footer-bg-color--dark: #16181f;
+  --md-footer-fg-color: #eaeaea;
+  --md-footer-fg-color--light: #aeaeae;
+  --md-footer-fg-color--lighter: rgba(108, 123, 153, 1);
+
+  --md-admonition-bg-color: rgba(72, 82, 102, 0.14);
+
+  --psf-rule: rgba(72, 82, 102, 0.55);
+  --psf-rule-strong: rgba(72, 82, 102, 0.9);
+  --psf-surface: #1f232c;
+  --psf-cta: #3cb371;
+}
+
+/* --------------------------------------------------------------- light ---- */
+
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #ffffff;
+  --md-default-fg-color: #252a34;
+  --md-default-fg-color--light: #5b6478;
+  --md-default-fg-color--lighter: #8b93a5;
+  --md-default-fg-color--lightest: rgba(72, 82, 102, 0.12);
+
+  --md-primary-fg-color: #ffffff;
+  --md-primary-fg-color--light: #f3f5f8;
+  --md-primary-fg-color--dark: #eaedf2;
+  --md-primary-bg-color: #252a34;
+  --md-primary-bg-color--light: #5b6478;
+
+  /* Leaf green and main blue are both too light to carry text on white, so the
+     light scheme uses darkened counterparts rather than the literal values. */
+  --md-accent-fg-color: #217a4e;
+  --md-accent-fg-color--transparent: rgba(33, 122, 78, 0.1);
+
+  --md-typeset-color: #252a34;
+  --md-typeset-a-color: #1668b3;
+  --md-typeset-mark-color: rgba(60, 179, 113, 0.22);
+  --md-typeset-table-color: rgba(72, 82, 102, 0.35);
+
+  --md-code-bg-color: #f4f6f9;
+  --md-code-fg-color: #252a34;
+
+  --md-footer-bg-color: #252a34;
+  --md-footer-bg-color--dark: #1b1e26;
+
+  --psf-rule: rgba(72, 82, 102, 0.2);
+  --psf-rule-strong: rgba(72, 82, 102, 0.4);
+  --psf-surface: #f7f9fb;
+  --psf-cta: #217a4e;
+}
+
+/* ---------------------------------------------------------- typography ---- */
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4,
+.md-typeset h5,
+.md-typeset h6,
+.md-header__topic:first-child,
+.md-nav__title {
+  font-family: "Montserrat", var(--md-text-font-family), sans-serif;
+}
+
+.md-typeset h1 {
+  color: var(--md-default-fg-color);
+  font-size: 1.85rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin-bottom: 1.2rem;
+}
+
+.md-typeset h2 {
+  font-size: 1.3rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-top: 2.2em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--psf-rule);
+}
+
+.md-typeset h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-top: 1.8em;
+}
+
+.md-typeset h4 {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+/* Wider than Material's default 61rem. The reference tables here carry four or
+   five columns of parameter names, and at the stock width they squeeze code
+   spans until they wrap mid-token. */
+.md-grid {
+  max-width: 72rem;
+}
+
+.md-typeset {
+  font-size: 0.775rem;
+  line-height: 1.7;
+}
+
+/* ---------------------------------------------------------- chrome ------- */
+
+/* Flat header on a hairline, in place of Material's drop shadow. */
+.md-header {
+  box-shadow: none;
+  border-bottom: 1px solid var(--psf-rule);
+}
+
+.md-header--shadow {
+  box-shadow: none;
+  border-bottom: 1px solid var(--psf-rule-strong);
+  transition: border-color 0.25s;
+}
+
+.md-header__title {
+  font-weight: 600;
+}
+
+/* The site title is wrapped in a link by javascripts/header-link.js. It should
+   look exactly as it did - the affordance is the cursor, not a colour change. */
+.md-header__topic .md-header__topic-link {
+  color: inherit;
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+
+.md-header__topic .md-header__topic-link:hover,
+.md-header__topic .md-header__topic-link:focus {
+  color: inherit;
+  opacity: 0.75;
+}
+
+.md-tabs {
+  border-bottom: 1px solid var(--psf-rule);
+}
+
+/* Search field reads as an inset field rather than a floating pill. */
+.md-search__form {
+  background-color: var(--psf-surface);
+  border: 1px solid var(--psf-rule);
+  border-radius: 0.25rem;
+  box-shadow: none;
+}
+
+.md-search__form:hover {
+  background-color: var(--psf-surface);
+  border-color: var(--psf-rule-strong);
+}
+
+[data-md-toggle="search"]:checked ~ .md-header .md-search__form {
+  border-color: var(--md-accent-fg-color);
+}
+
+/* ------------------------------------------------------------ sidebar ---- */
+
+.md-nav {
+  font-size: 0.7rem;
+}
+
+.md-nav__title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--md-default-fg-color--light);
+}
+
+/* Section labels in the left sidebar: small, spaced, quiet. */
+.md-nav--primary .md-nav__item--section > .md-nav__link {
+  font-family: "Montserrat", var(--md-text-font-family), sans-serif;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--md-default-fg-color--light);
+  margin-top: 1.1em;
+}
+
+/* Active page: leaf green, marked with a rule rather than a fill. */
+.md-nav__link--active,
+.md-nav__link--active code {
+  color: #3cb371;
+  font-weight: 600;
+}
+
+[data-md-color-scheme="default"] .md-nav__link--active,
+[data-md-color-scheme="default"] .md-nav__link--active code {
+  color: var(--md-accent-fg-color);
+}
+
+.md-sidebar--primary .md-nav__list .md-nav__list .md-nav__item {
+  border-left: 1px solid var(--psf-rule);
+}
+
+.md-sidebar--primary .md-nav__list .md-nav__list .md-nav__item:has(> .md-nav__link--active) {
+  border-left-color: #3cb371;
+}
+
+.md-nav__link:focus,
+.md-nav__link:hover {
+  color: var(--md-accent-fg-color);
+}
+
+/* Right-hand table of contents. */
+.md-nav--secondary .md-nav__title {
+  box-shadow: none;
+  border-bottom: 1px solid var(--psf-rule);
+}
+
+/* --------------------------------------------------------------- code ---- */
+
+.md-typeset code {
+  border-radius: 0.15rem;
+  padding: 0.08em 0.32em;
+  font-size: 0.84em;
+}
+
+.md-typeset pre > code {
+  border: 1px solid var(--psf-rule);
+  border-radius: 0.25rem;
+  padding: 0.75em 1em;
+}
+
+.md-typeset .highlight .filename {
+  border-bottom: 1px solid var(--psf-rule);
+  background-color: var(--psf-surface);
+}
+
+/* Pipeline diagrams are drawn with box characters and must not wrap. */
+.md-typeset pre {
+  line-height: 1.5;
+}
+
+/* -------------------------------------------------------------- tables ---- */
+
+/* Rules only, no fills — the tables here are dense reference material and read
+   better without a striped background competing with the code spans inside. */
+.md-typeset table:not([class]) {
+  border: none;
+  border-top: 1px solid var(--psf-rule-strong);
+  border-bottom: 1px solid var(--psf-rule-strong);
+  border-radius: 0;
+  box-shadow: none;
+  font-size: 0.72rem;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: transparent;
+  border-bottom: 1px solid var(--psf-rule-strong);
+  color: var(--md-default-fg-color);
+  font-family: "Montserrat", var(--md-text-font-family), sans-serif;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.md-typeset table:not([class]) td {
+  border-top: 1px solid var(--psf-rule);
+  vertical-align: top;
+}
+
+/* A parameter name broken across two lines reads as two names. Keep code spans
+   whole and let Material's wrapper scroll the table instead. */
+.md-typeset table:not([class]) code {
+  white-space: nowrap;
+}
+
+.md-typeset table:not([class]) tr:first-child td {
+  border-top: none;
+}
+
+.md-typeset table:not([class]) tr:hover {
+  background-color: var(--md-default-fg-color--lightest);
+}
+
+/* --------------------------------------------------- blockquotes / admo ---- */
+
+.md-typeset blockquote {
+  border-left: 2px solid #3cb371;
+  color: var(--md-default-fg-color--light);
+}
+
+.md-typeset .admonition,
+.md-typeset details {
+  border-width: 1px;
+  border-left-width: 2px;
+  border-radius: 0.25rem;
+  box-shadow: none;
+  font-size: 0.74rem;
+}
+
+/* Material ships its own hue per admonition type, none of which are in this
+   palette. Remap the five types used in these docs. */
+:root {
+  --psf-note: #60c0ff;
+  --psf-info: #4fe0b7;
+  --psf-tip: #3cb371;
+  --psf-warning: #ffd166;
+  --psf-danger: #ff6b6b;
+}
+
+.md-typeset .admonition.note,
+.md-typeset details.note { border-color: var(--psf-note); }
+.md-typeset .note > .admonition-title,
+.md-typeset .note > summary { background-color: rgba(96, 192, 255, 0.1); }
+.md-typeset .note > .admonition-title::before,
+.md-typeset .note > summary::before { background-color: var(--psf-note); }
+
+.md-typeset .admonition.info,
+.md-typeset details.info { border-color: var(--psf-info); }
+.md-typeset .info > .admonition-title,
+.md-typeset .info > summary { background-color: rgba(79, 224, 183, 0.1); }
+.md-typeset .info > .admonition-title::before,
+.md-typeset .info > summary::before { background-color: var(--psf-info); }
+
+.md-typeset .admonition.tip,
+.md-typeset details.tip { border-color: var(--psf-tip); }
+.md-typeset .tip > .admonition-title,
+.md-typeset .tip > summary { background-color: rgba(60, 179, 113, 0.1); }
+.md-typeset .tip > .admonition-title::before,
+.md-typeset .tip > summary::before { background-color: var(--psf-tip); }
+
+.md-typeset .admonition.warning,
+.md-typeset details.warning { border-color: var(--psf-warning); }
+.md-typeset .warning > .admonition-title,
+.md-typeset .warning > summary { background-color: rgba(255, 209, 102, 0.1); }
+.md-typeset .warning > .admonition-title::before,
+.md-typeset .warning > summary::before { background-color: var(--psf-warning); }
+
+.md-typeset .admonition.danger,
+.md-typeset details.danger { border-color: var(--psf-danger); }
+.md-typeset .danger > .admonition-title,
+.md-typeset .danger > summary { background-color: rgba(255, 107, 107, 0.1); }
+.md-typeset .danger > .admonition-title::before,
+.md-typeset .danger > summary::before { background-color: var(--psf-danger); }
+
+/* ------------------------------------------------------------ buttons ---- */
+
+/* Material's .md-button draws itself in --md-primary-fg-color, which in this
+   theme is the page background so the header can sit flush. That makes the
+   button invisible, so it needs its own colour. */
+.md-typeset .md-button {
+  color: var(--md-typeset-a-color);
+  border-color: var(--md-typeset-a-color);
+  font-weight: 600;
+}
+
+.md-typeset .md-button:focus,
+.md-typeset .md-button:hover {
+  background-color: var(--md-accent-fg-color);
+  border-color: var(--md-accent-fg-color);
+  color: var(--md-default-bg-color);
+}
+
+/* The primary variant fills with --md-primary-fg-color, which is also the page
+   background here, so untouched it is indistinguishable from the outlined one.
+   Give it the leaf green - it is the one action a first-time visitor wants, and
+   green separates it from the blue used for ordinary links. */
+.md-typeset .md-button--primary {
+  background-color: var(--psf-cta);
+  border-color: var(--psf-cta);
+  color: var(--md-default-bg-color);
+}
+
+.md-typeset .md-button--primary:focus,
+.md-typeset .md-button--primary:hover {
+  background-color: var(--md-accent-fg-color);
+  border-color: var(--md-accent-fg-color);
+  color: var(--md-default-bg-color);
+}
+
+/* ---------------------------------------------------------- home page ---- */
+
+/* Card grid used on the landing page (`<div class="grid cards" markdown>`). */
+.md-typeset .grid.cards > ul > li {
+  border: 1px solid var(--psf-rule);
+  border-radius: 0.25rem;
+  box-shadow: none;
+  padding: 1em 1.1em;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: #3cb371;
+  transform: none;
+  box-shadow: none;
+}
+
+.md-typeset .grid.cards > ul > li > hr {
+  margin: 0.6em 0;
+  border-color: var(--psf-rule);
+}
+
+/* Lead paragraph on the landing page. */
+.md-typeset .psf-lead {
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--md-default-fg-color--light);
+  margin-bottom: 1.4em;
+}
+
+/* Badge row — keeps the shields on one line with no bullet artefacts. */
+.md-typeset .psf-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+  margin-bottom: 1.6em;
+}
+
+.md-typeset .psf-badges img {
+  height: 20px;
+}
+
+/* --------------------------------------------------------------- misc ---- */
+
+.md-footer-meta {
+  border-top: 1px solid rgba(72, 82, 102, 0.5);
+}
+
+.md-typeset hr {
+  border-bottom: 1px solid var(--psf-rule);
+}
+
+/* Keep the "Edit this page" pencil quiet until hovered. */
+.md-content__button {
+  color: var(--md-default-fg-color--lighter);
+}
+
+.md-content__button:hover {
+  color: var(--md-accent-fg-color);
+}

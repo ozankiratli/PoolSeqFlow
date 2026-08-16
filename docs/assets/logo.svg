@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+     viewBox="0 0 64 64" width="64" height="64">
+  <title>PoolSeqFlow</title>
+  <desc>Pooled DNA in a vessel, one strand rising from it. Small-size variant.</desc>
+
+  <!-- Reduced variant of logo-full.svg, for 16-32px: favicon, header icon.
+       IDENTICAL silhouette and identical coordinates - the vessel and the
+       single helix are copied verbatim, so the two files read as one mark.
+
+       Two changes, both forced by pixel budget at 24px (scale 0.375):
+         1. The three pool helices become plain strokes. Each was 13.9 units
+            tall with a 3.98 amplitude - about 5.2px tall and 1.5px wide once
+            scaled, so the rungs merged into a solid band rather than reading as
+            helices. The strokes keep their exact x positions (18.445, 32,
+            45.555) and vertical extent, so the silhouette is unchanged.
+         2. Strokes are heavier throughout: at 0.375 scale a 2.38 stroke renders
+            at 0.9px and greys out against the background.
+       The single helix also drops to two rungs from the full file's two - it
+       already had the minimum that reads.
+
+       If logo-full.svg changes, regenerate this from it rather than editing the
+       two independently. -->
+
+  <g inkscape:groupmode="layer" inkscape:label="PoolSeqFlow mark (small)"
+     fill="none" stroke="#3cb371" stroke-linecap="round">
+
+    <!-- Vessel: identical geometry to logo-full.svg, heavier stroke -->
+    <g id="vessel" stroke-width="4.6">
+      <path id="vessel-right"
+            d="m32 30.83c4.659 7.346 4.736 7.377 14.933 10.228 20.420 5.708 20.026 13.929 0 20.894"/>
+      <path id="vessel-left"
+            d="m32 30.83c-4.659 7.346-4.736 7.377-14.933 10.228-20.420 5.708-20.026 13.929 0 20.894"/>
+      <path id="vessel-base" opacity="0.75" d="M18.15 61.95H45.85"/>
+    </g>
+
+    <!-- Single helix: identical geometry to logo-full.svg, heavier stroke -->
+    <g id="single-helix" stroke-width="4.6">
+      <path id="single-strand-front"
+            d="M32 5.39c7.587 3.647 7.587 9.119 0 12.766c-7.587 3.647-7.587 9.119 0 12.766"/>
+      <path id="single-strand-back" opacity="0.5"
+            d="M32 5.39c-7.587 3.647-7.587 9.119 0 12.766c7.587 3.647 7.587 9.119 0 12.766"/>
+      <g id="single-rungs" stroke-width="3.8" opacity="0.85">
+        <path d="M26.51 11.77H37.49"/>
+        <path d="M26.51 24.53H37.49"/>
+      </g>
+    </g>
+
+    <!-- Three pools, reduced to strokes. Same x positions and vertical span as
+         the helices they stand in for (44.255 to 58.113), inset slightly on the
+         outer two so the round caps clear the vessel wall. -->
+    <g id="pooled-strokes" stroke-width="4.2" opacity="0.9">
+      <path id="pool-left"   d="M18.445 46.5V56.2"/>
+      <path id="pool-centre" d="M32 44.8V57.6"/>
+      <path id="pool-right"  d="M45.555 46.5V56.2"/>
+    </g>
+  </g>
+</svg>
