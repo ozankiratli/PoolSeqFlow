@@ -12,8 +12,9 @@
 #
 # The original is copied to parameters.config.bak before anything is written.
 #
-# Reports three things:
+# Reports:
 #   CARRIED   your value was kept
+#   RENAMED   the parameter was renamed this release; your value followed it
 #   NEW       the template has a parameter your config did not - review the default
 #   DROPPED   your config had a parameter this release no longer uses
 
@@ -70,6 +71,20 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
     # win even though both sides look like plain literals.
     function reformatted(k) { return (k == "fastqc.memory") }
 
+    # Parameters renamed in this release, keyed by their CURRENT name and returning the
+    # name they had before. Without this a rename is two unrelated events - one DROPPED
+    # and one NEW - and the user silently gets the template default back.
+    #
+    # Add a line whenever a parameter is renamed. If a rename also changed what the
+    # parameter means, add the new name to reformatted() as well: that check runs first,
+    # so the template value wins and the rename is reported without carrying a value
+    # that no longer means the same thing.
+    function renamed(k) {
+        if (k == "vcffilter.minDP")   return "vcftools.minDP"
+        if (k == "vcffilter.minQUAL") return "vcftools.minQUAL"
+        return ""
+    }
+
     BEGIN { depth = 0; pass = 1 }
 
     FILENAME == OLDF && FNR == 1 { pass = 1 }
@@ -99,21 +114,36 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
 
             if (pass == 1) { oldval[full] = val; seen[full] = 1; next }
 
-            if (full in oldval) {
-                used[full] = 1
+            # Which key in the old config supplies this template key. Normally the same
+            # name; for a renamed parameter, the name it used to have.
+            src = full
+            was_renamed = 0
+            if (!(full in oldval)) {
+                prev = renamed(full)
+                if (prev != "" && (prev in oldval)) { src = prev; was_renamed = 1 }
+            }
+
+            if (src in oldval) {
+                used[src] = 1
                 if (!literal(val)) {
                     # this release computes it - the template wins
-                    if (literal(oldval[full]) && oldval[full] != val)
-                        printf "COMPUTED\t%s\t%s\t%s\n", full, val, oldval[full] >> REPORT
+                    if (literal(oldval[src]) && oldval[src] != val)
+                        printf "COMPUTED\t%s\t%s\t%s\n", full, val, oldval[src] >> REPORT
                 } else if (reformatted(full)) {
-                    if (oldval[full] != val)
-                        printf "REFORMAT\t%s\t%s\t%s\n", full, val, oldval[full] >> REPORT
-                } else if (literal(oldval[full]) && oldval[full] != val) {
-                    printf "CARRIED\t%s\t%s\t%s\n", full, val, oldval[full] >> REPORT
+                    if (oldval[src] != val)
+                        printf "REFORMAT\t%s\t%s\t%s\n", full, val, oldval[src] >> REPORT
+                } else if (literal(oldval[src])) {
+                    if (was_renamed)
+                        printf "RENAMED\t%s\t%s\t%s\n", full, oldval[src], src >> REPORT
+                    else if (oldval[src] != val)
+                        printf "CARRIED\t%s\t%s\t%s\n", full, val, oldval[src] >> REPORT
+
                     # replace only the value, keeping the template comment and layout
-                    head = $0; sub(/=[ \t]*.*$/, "= ", head)
-                    tail = substr(raw, length(val) + 1)
-                    $0 = head oldval[full] tail
+                    if (was_renamed || oldval[src] != val) {
+                        head = $0; sub(/=[ \t]*.*$/, "= ", head)
+                        tail = substr(raw, length(val) + 1)
+                        $0 = head oldval[src] tail
+                    }
                 }
             } else {
                 printf "NEW\t%s\t%s\t\n", full, val >> REPORT
@@ -146,6 +176,7 @@ show() {
 }
 
 show CARRIED  "Kept your value"                              "  %-30s %s -> %s\n"
+show RENAMED  "Renamed this release - your value followed"   "  %-30s %s (was %s)\n"
 show COMPUTED "Now computed by the pipeline - your value ignored" "  %-30s now %s (was %s)\n"
 show REFORMAT "Format changed this release - template value used"  "  %-30s now %s (was %s)\n"
 show NEW      "New in this release - review these defaults"   "  %-30s %s%s\n"
