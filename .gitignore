@@ -56,3 +56,5 @@ plugins-prod
 .tmp/
 dev/
 *.bak
+# MkDocs build output
+site/
