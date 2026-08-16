@@ -4,7 +4,7 @@
 
 [![Nextflow](https://img.shields.io/badge/nextflow-%E2%89%A526.04.0-brightgreen.svg)](https://www.nextflow.io/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19245612.svg)](https://doi.org/10.5281/zenodo.19245612)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19245611.svg)](https://doi.org/10.5281/zenodo.19245611)
 
 
 
@@ -234,7 +234,6 @@ PoolSeqFlow/
 │   └── MajorAlleleToRef.py       # Re-encode VCF with major allele as REF
 ├── install/
 │   ├── environment.yml           # Conda environment specification
-│   ├── install.sh                # Environment setup script
 │   └── check_install.sh          # Dependency verification (./PoolSeqFlow check)
 ├── scripts/
 │   ├── 0_verify_environment.nf
@@ -554,9 +553,18 @@ Annotates the variant VCF with **SnpEff** using the reference GFF. Enable with `
 
 ## Citation
 
-If you use PoolSeqFlow in your research, please cite:
+Your installed copy prints its own citation, with the version filled in:
 
-> Kiratli, O. L. Z. (2026). *PoolSeqFlow: A Nextflow pipeline for allele frequency analysis from pooled Illumina sequencing data*. \(Version v2.0.1\) \[Computer Software\] GitHub: https://github.com/ozankiratli/PoolSeqFlow. DOI: [10.5281/zenodo.21910670](https://doi.org/10.5281/zenodo.21910670)
+```bash
+./PoolSeqFlow cite
+```
+
+**Cite the version you actually ran, not the newest one.** Zenodo issues a separate DOI for every release, and results depend on which release produced them — filters, defaults and parameter names have all changed between versions. A paper citing the current release for numbers produced by an older one is describing a method it did not use.
+
+- [10.5281/zenodo.19245611](https://doi.org/10.5281/zenodo.19245611) is the **all-versions** DOI. It always resolves to the newest release — use it to refer to the software in general.
+- For results, open that record, pick your version from the **Versions** list, and use its DOI.
+
+> Kiratli, O. L. Z. (2026). *PoolSeqFlow: A Nextflow pipeline for allele frequency analysis from pooled Illumina sequencing data* \(Version *x.y.z*\) \[Computer Software\]. https://doi.org/10.5281/zenodo.19245611
 
 ---
 

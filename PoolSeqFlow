@@ -5,7 +5,7 @@
 # email  : ozankiratli@protonmail.com
 #
 # Wrapper script for PoolSeqFlow
-# Usage: ./PoolSeqFlow {install|check|run|migrate_config|clean|reset|version|uninstall}
+# Usage: ./PoolSeqFlow {install|check|run|migrate_config|clean|reset|version|cite|uninstall}
 #  install        - creates the conda environment using environment.yml, then verifies it
 #  check          - verifies the installation: every tool resolves, helpers are
 #                   executable, and parameters.config parses
@@ -14,6 +14,7 @@
 #  migrate_config - carries an older parameters.config onto the current template
 #  clean          - cleans the Nextflow work directory
 #  reset          - cleans the Nextflow work directory and deletes all output files. (Use with caution!)
+#  cite           - prints how to cite this copy, and which DOI to use
 #  uninstall      - removes the conda environment
 
 set -e
@@ -21,8 +22,14 @@ eval "$(conda shell.bash hook)"
 
 VERSION="2.1.1"
 
+# Zenodo concept DOI - the software as a whole. It always resolves to the newest
+# release and never changes, which is why it is the one on the badge and in the
+# docs. Every release ALSO gets its own version DOI, and that is the one a paper
+# should carry, because results depend on the version. `cite` says so.
+CONCEPT_DOI="10.5281/zenodo.19245611"
+
 usage() {
-    echo "Usage: $0 {install|check|run|migrate_config|clean|reset|version|uninstall}"
+    echo "Usage: $0 {install|check|run|migrate_config|clean|reset|version|cite|uninstall}"
     exit 1
 }
 
@@ -167,6 +174,50 @@ case $COMMAND in
     version)
         echo "PoolSeqFlow"
         echo "v$VERSION"
+        ;;
+
+    cite)
+        cat <<EOF
+PoolSeqFlow v$VERSION
+Ozan L. Z. Kiratli
+
+Cite the version you actually ran, not the newest one.
+--------------------------------------------------------------------
+Zenodo mints a separate DOI for every release, and results depend on
+which release produced them - filters, defaults and parameter names
+have all changed between versions. A paper that cites the current
+release for numbers produced by an older one is describing a method
+it did not use.
+
+This copy is v$VERSION. To get its DOI, open the all-versions record
+below and pick v$VERSION from the "Versions" list:
+
+    https://doi.org/$CONCEPT_DOI
+
+Then replace the DOI in the entries below with that one.
+
+Reference
+--------------------------------------------------------------------
+Kiratli, O. L. Z. (2026). PoolSeqFlow: A Nextflow pipeline for allele
+frequency analysis from pooled Illumina sequencing data (Version
+v$VERSION) [Computer software]. https://doi.org/$CONCEPT_DOI
+
+BibTeX
+--------------------------------------------------------------------
+@software{kiratli_poolseqflow,
+  author  = {Kiratli, Ozan L. Z.},
+  title   = {PoolSeqFlow: A Nextflow pipeline for allele frequency
+             analysis from pooled Illumina sequencing data},
+  version = {v$VERSION},
+  year    = {2026},
+  doi     = {$CONCEPT_DOI},
+  url     = {https://github.com/ozankiratli/PoolSeqFlow}
+}
+
+$CONCEPT_DOI is the all-versions DOI: it always resolves to the
+newest release. Use it when referring to the software in general, and
+a version DOI when reporting results.
+EOF
         ;;
     uninstall)
         echo "Uninstalling conda environment..."
