@@ -5,8 +5,10 @@
 # email  : ozankiratli@protonmail.com
 #
 # Wrapper script for PoolSeqFlow
-# Usage: ./PoolSeqFlow {install|run|migrate_config|clean|reset|version|uninstall}
-#  install        - creates the conda environment using environment.yml
+# Usage: ./PoolSeqFlow {install|check|run|migrate_config|clean|reset|version|uninstall}
+#  install        - creates the conda environment using environment.yml, then verifies it
+#  check          - verifies the installation: every tool resolves, helpers are
+#                   executable, and parameters.config parses
 #  run            - runs the pipeline; completed steps are detected and skipped
 #                   automatically, so this both starts and resumes a run
 #  migrate_config - carries an older parameters.config onto the current template
@@ -20,7 +22,7 @@ eval "$(conda shell.bash hook)"
 VERSION="2.1.1"
 
 usage() {
-    echo "Usage: $0 {install|run|migrate_config|clean|reset|version|uninstall}"
+    echo "Usage: $0 {install|check|run|migrate_config|clean|reset|version|uninstall}"
     exit 1
 }
 
@@ -48,6 +50,22 @@ case $COMMAND in
             conda env create -f "$ENV_FILE"
         fi
         echo "Installation complete."
+        echo
+        # An environment that was created but is missing a tool is not an install.
+        # Verify before reporting success: a tool that is absent here would
+        # otherwise surface partway through a run, hours in. `set -e` means a
+        # failed check fails the install.
+        conda activate "$ENV_NAME"
+        bash install/check_install.sh
+        ;;
+
+    check)
+        if ! conda env list | grep -q "$ENV_NAME"; then
+            echo "Environment '$ENV_NAME' does not exist. Run './$(basename "$0") install' first." >&2
+            exit 1
+        fi
+        conda activate "$ENV_NAME"
+        bash install/check_install.sh
         ;;
     run|resume)
         # PoolSeqFlow resumes through its own filesystem checks: every step looks for

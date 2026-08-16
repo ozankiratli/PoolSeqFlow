@@ -235,7 +235,7 @@ PoolSeqFlow/
 ├── install/
 │   ├── environment.yml           # Conda environment specification
 │   ├── install.sh                # Environment setup script
-│   └── test-install.sh           # Dependency verification
+│   └── check_install.sh          # Dependency verification (./PoolSeqFlow check)
 ├── scripts/
 │   ├── 0_verify_environment.nf
 │   ├── 1_build_dictionaries.nf
