@@ -54,7 +54,7 @@ plugins-prod
 /results
 /x/*
 .tmp/
-dev/
 *.bak
+*.bak.*
 # MkDocs build output
 site/
