@@ -112,7 +112,7 @@ jobs:
           # Everything a run needs.
           for f in PoolSeqFlow poolseqflow.nf nextflow.config \
                    parameters.config.template RGTags.csv.template \
-                   install/environment.yml install/install.sh install/check_install.sh \
+                   install/environment.yml install/check_install.sh \
                    LICENSE README.md CHANGELOG.md; do
             [ -f "$root/$f" ] || fail "missing from archive: $f"
           done
