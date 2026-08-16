@@ -70,10 +70,20 @@ awk -v entry="$ENTRY" '
 
 sed -i -E "s|^# Version: .*|# Version: $NEW|; s|^VERSION=\".*\"|VERSION=\"$NEW\"|" "$MAIN"
 
+# The version also lives in nextflow.config's manifest, which is what Nextflow reports and
+# what step 0 records alongside a project's outputs. release.yml refuses to publish if it
+# disagrees with $MAIN, so it has to move at the same time.
+NFCONFIG="nextflow.config"
+[ -f "$NFCONFIG" ] || { echo "ERROR: $NFCONFIG not found" >&2; exit 1; }
+sed -i -E "s|^(\s*version\s*=\s*)'.*'|\1'$NEW'|" "$NFCONFIG"
+grep -q "version *= *'$NEW'" "$NFCONFIG" || {
+    echo "ERROR: could not update the manifest version in $NFCONFIG" >&2; exit 1; }
+
 echo "$CURRENT -> $NEW"
 echo "  $MAIN  : $(grep -c "$NEW" "$MAIN") references updated"
+echo "  $NFCONFIG : manifest version updated"
 echo "  $LOG   : $(printf '%s\n' "$COMMITS" | wc -l) commits since ${LAST_TAG:-start}"
 echo
 echo "Review, then:"
-echo "  git add $MAIN $LOG && git commit -m 'Version bump $NEW'"
+echo "  git add $MAIN $NFCONFIG $LOG && git commit -m 'Version bump $NEW'"
 echo "  git tag v$NEW"

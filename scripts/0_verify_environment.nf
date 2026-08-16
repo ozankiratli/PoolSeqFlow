@@ -538,6 +538,8 @@ process CheckRunParameters {
     manifest    = analysisParams()
     stored      = "${params.projectDir}/.poolseqflow_params"
     readable    = "${params.dir.outputs}/run_parameters.txt"
+    versions    = "${params.projectDir}/.poolseqflow_versions"
+    release     = workflow.manifest.version ?: 'unknown'
     dir_log     = "${params.dir.logs}/0_verify_environment/s7_CheckRunParameters"
     """
     REPORTFILE="verify_environment.txt"
@@ -580,6 +582,27 @@ CURRENT_PARAMS
         STATUS="FAIL"
     fi
 
+    # Which release produced these outputs. Recorded, never enforced: most releases do
+    # not change results, so a version change must not invalidate outputs the way a
+    # parameter change does. But "cite the version you ran" is unanswerable if nothing
+    # writes it down, and a project that several versions have touched is worth knowing
+    # about - the file is append-only for exactly that reason.
+    if [ ! -f "${versions}" ]; then
+        mkdir -p "\$(dirname "${versions}")"
+        printf '%s\\t%s\\n' "${release}" "\$(date -u '+%Y-%m-%d')" > "${versions}"
+        log_message "PIPELINE VERSION:      ${release} - first run in this project"
+    elif [ "\$(tail -n 1 "${versions}" | cut -f1)" = "${release}" ]; then
+        log_message "PIPELINE VERSION:      ${release}"
+    else
+        PREVIOUS=\$(tail -n 1 "${versions}" | cut -f1)
+        printf '%s\\t%s\\n' "${release}" "\$(date -u '+%Y-%m-%d')" >> "${versions}"
+        log_message "PIPELINE VERSION:      ${release} - earlier runs here used \$PREVIOUS"
+        log_message "PIPELINE VERSION:      Outputs already present were produced by the earlier"
+        log_message "PIPELINE VERSION:      release, and completed steps are not redone. Cite the"
+        log_message "PIPELINE VERSION:      version that produced the results you report."
+        log_message "PIPELINE VERSION:      Full history: ${versions}"
+    fi
+
     # Publish a readable copy next to the results. ${stored} stays the file the check
     # compares against; this one exists so the settings behind a set of outputs can be
     # read without picking through parameters.config. Read-only, because editing it
@@ -590,6 +613,10 @@ CURRENT_PARAMS
         {
             echo "# PoolSeqFlow analysis parameters for the outputs in ${params.dir.outputs}"
             echo "# Generated \$(date -u '+%Y-%m-%d %H:%M:%S UTC') - read-only; edit parameters.config instead."
+            echo "#"
+            echo "# Pipeline version(s) that have run in this project, oldest first."
+            echo "# More than one means these outputs were not all produced by the same release."
+            sed 's/^/#   /' "${versions}"
             echo "#"
             cat current_params.txt
         } > "${readable}"

@@ -39,6 +39,7 @@ The gate for everything else. It runs sixteen checks and writes `Output/Reports/
 |---|---|
 | `.poolseqflow_params` | Analysis-affecting parameters, mirrored read-only to `Output/run_parameters.txt` |
 | `.poolseqflow_rgtags` | The `RGTags.csv` as consumed; line endings and trailing whitespace ignored |
+| `.poolseqflow_versions` | Every pipeline version that has run in this project, with the date. **Recorded, never enforced** |
 
 Path, resource and software parameters are excluded — they change where and how fast work happens, not what the answer is.
 
