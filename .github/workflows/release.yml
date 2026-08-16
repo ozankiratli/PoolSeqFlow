@@ -1,0 +1,190 @@
+name: Publish a release
+
+# Tag a release to publish it: bump VERSION in ./PoolSeqFlow, write the CHANGELOG
+# entry, commit, then `git tag v2.1.2 && git push --tags`.
+#
+# What this builds is deliberately not GitHub's "Source code" archive. It is a
+# curated tarball - the pipeline only, without docs/, .github/ or the mkdocs
+# config - wrapped in a PoolSeqFlow-<version>/ directory so extracting it does
+# not scatter files across someone's current directory. What goes in is decided
+# by `export-ignore` in .gitattributes, in one place, next to the files.
+#
+# It is built with `git archive` rather than `tar` so the executable bit on
+# ./PoolSeqFlow and bin/* comes straight from the git index instead of depending
+# on the runner's umask. A downloaded wrapper that will not run is the worst
+# possible first contact with the tool.
+#
+# tar.gz only, no zip. The pipeline is Linux and macOS only, and zip does not
+# carry the executable bit reliably across the tools people extract it with. An
+# archive format someone has to look up is a smaller problem than a broken
+# permission they will not think to check.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Work out the version and check everything agrees on it
+        id: version
+        run: |
+          set -euo pipefail
+
+          # The wrapper is the authority: it is what `./PoolSeqFlow version`
+          # prints, so it is what a user will quote in a bug report.
+          declared=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' PoolSeqFlow)
+          if [ -z "$declared" ]; then
+            echo "could not find VERSION=\"...\" in ./PoolSeqFlow" >&2
+            exit 1
+          fi
+
+          # The header comment carries the version too and nothing keeps the two
+          # in step. A bump that misses one leaves the file people read first
+          # disagreeing with the command they run.
+          header=$(sed -n 's/^# Version: \(.*\)$/\1/p' PoolSeqFlow)
+          if [ "$header" != "$declared" ]; then
+            echo "./PoolSeqFlow disagrees with itself:" >&2
+            echo "  VERSION=\"$declared\" but the header comment says \"$header\"" >&2
+            exit 1
+          fi
+
+          # On a tag, the tag has to match. On workflow_dispatch there is no tag,
+          # and the run builds and verifies the archive without publishing.
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            tagged="${GITHUB_REF_NAME#v}"
+            if [ "$tagged" != "$declared" ]; then
+              echo "tag $GITHUB_REF_NAME expects VERSION=\"$tagged\" in ./PoolSeqFlow," >&2
+              echo "but it says \"$declared\"" >&2
+              exit 1
+            fi
+          fi
+
+          # Refuse to publish a version the changelog does not describe. The
+          # changelog is how anyone decides whether an upgrade will change their
+          # results, which for this pipeline is not a formality.
+          if ! grep -q "^## \[$declared\]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no '## [$declared]' section" >&2
+            exit 1
+          fi
+
+          echo "version=$declared" >> "$GITHUB_OUTPUT"
+          echo "name=PoolSeqFlow-$declared" >> "$GITHUB_OUTPUT"
+          echo "Building PoolSeqFlow-$declared"
+
+      - name: Build the archive
+        env:
+          NAME: ${{ steps.version.outputs.name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          git archive --format=tar.gz --prefix="${NAME}/" -o "dist/${NAME}.tar.gz" HEAD
+
+          # The same archive under a stable name. GitHub's
+          # /releases/latest/download/<asset> only resolves a filename it can
+          # predict, so a versioned name alone would mean editing the website on
+          # every release. The directory inside is still versioned, so an
+          # extracted copy is never ambiguous about what it is.
+          cp "dist/${NAME}.tar.gz" dist/PoolSeqFlow.tar.gz
+
+          ( cd dist && sha256sum ./*.tar.gz > SHA256SUMS )
+          ls -lh dist/
+
+      - name: Verify the archive is a working copy of the pipeline
+        env:
+          NAME: ${{ steps.version.outputs.name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          tar -xzf "dist/${NAME}.tar.gz" -C "$tmp"
+          root="$tmp/${NAME}"
+
+          fail() { echo "ARCHIVE CHECK FAILED: $*" >&2; exit 1; }
+
+          # Everything a run needs.
+          for f in PoolSeqFlow poolseqflow.nf nextflow.config \
+                   parameters.config.template RGTags.csv.template \
+                   install/environment.yml install/install.sh install/check_install.sh \
+                   LICENSE README.md CHANGELOG.md; do
+            [ -f "$root/$f" ] || fail "missing from archive: $f"
+          done
+
+          # All nine step modules, not however many happened to be committed.
+          steps_found=$(find "$root/scripts" -name '*.nf' | wc -l)
+          [ "$steps_found" -eq 9 ] || fail "expected 9 scripts/*.nf, found $steps_found"
+
+          # The helpers the process scripts call by bare name via nextflow.config's PATH.
+          for f in atomic_mv.sh config_migrate.sh createDepthFile.sh \
+                   depth2freq.awk filterFalsePositives.sh MajorAlleleToRef.py; do
+            [ -f "$root/bin/$f" ] || fail "missing from archive: bin/$f"
+          done
+
+          # Repository furniture must NOT ship. This is the other half of
+          # .gitattributes: if an export-ignore is dropped, this catches it.
+          for f in docs .github mkdocs.yml .gitignore .gitattributes dev Project; do
+            [ ! -e "$root/$f" ] || fail "should have been export-ignored: $f"
+          done
+
+          # The executable bit is the whole reason for git archive over tar.
+          [ -x "$root/PoolSeqFlow" ] || fail "./PoolSeqFlow is not executable"
+          for s in "$root"/bin/*; do
+            [ -x "$s" ] || fail "$(basename "$s") is not executable"
+          done
+
+          # Syntax-check every shell script that ships.
+          bash -n "$root/PoolSeqFlow" || fail "./PoolSeqFlow has a syntax error"
+          for s in "$root"/bin/*.sh "$root"/install/*.sh; do
+            bash -n "$s" || fail "$(basename "$s") has a syntax error"
+          done
+
+          # The wrapper cannot simply be run here: it calls `conda shell.bash hook`
+          # at the top under `set -e`, and the runner has no conda. Check the
+          # version it would report instead.
+          grep -q "^VERSION=\"${VERSION}\"$" "$root/PoolSeqFlow" \
+            || fail "extracted wrapper does not report ${VERSION}"
+
+          echo "Archive verified: $(du -h "dist/${NAME}.tar.gz" | cut -f1)"
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          body: |
+            ## Download and install
+
+            ```bash
+            curl -LO https://github.com/ozankiratli/PoolSeqFlow/releases/download/${{ github.ref_name }}/${{ steps.version.outputs.name }}.tar.gz
+            tar -xzf ${{ steps.version.outputs.name }}.tar.gz
+            cd ${{ steps.version.outputs.name }}
+
+            cp parameters.config.template parameters.config
+            ./PoolSeqFlow install
+            ```
+
+            Then edit `parameters.config` and `RGTags.csv` for your data and run
+            `./PoolSeqFlow run`.
+
+            Verify the download with `sha256sum -c SHA256SUMS`.
+
+            `PoolSeqFlow.tar.gz` is the same archive under a stable name, for
+            scripted installs:
+            `https://github.com/ozankiratli/PoolSeqFlow/releases/latest/download/PoolSeqFlow.tar.gz`
+
+            **Upgrading an existing project?** Your `parameters.config` is not
+            touched by a new version and can be missing parameters this release
+            expects. Run `./PoolSeqFlow migrate_config` and read what it reports —
+            see [Upgrading](https://ozankiratli.github.io/PoolSeqFlow/getting-started/upgrading/).
+
+            Full documentation: <https://ozankiratli.github.io/PoolSeqFlow/>
+            Changes in this release: see `CHANGELOG.md`.

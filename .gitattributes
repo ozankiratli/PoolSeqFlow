@@ -1,0 +1,20 @@
+# Files that belong to the repository but not to a release download.
+#
+# `export-ignore` removes them from `git archive`, which is what release.yml
+# builds the distributable tarball with - and also what GitHub's own
+# "Source code" links produce, so the two stay consistent.
+#
+# Anything a run needs must NOT be listed here. release.yml asserts both
+# directions: required files present, these absent.
+
+docs/               export-ignore
+.github/            export-ignore
+mkdocs.yml          export-ignore
+.gitignore          export-ignore
+.gitattributes      export-ignore
+
+# Development scratch. Listed ahead of being tracked: once these are in git they
+# are kept out of every release download automatically, so tracking them costs a
+# user nothing.
+dev/                export-ignore
+Project/            export-ignore
