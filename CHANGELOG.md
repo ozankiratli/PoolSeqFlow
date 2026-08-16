@@ -6,6 +6,48 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
+## [2.2.0] - 2026-08-16
+
+**This release changes results.** `vcffilter.minDP` previously had no effect on the output at all; it now removes sites. Read the first entry under Changed before upgrading a project that has outputs you intend to keep — and expect step 0 to stop your next run, because the analysis parameters have changed. That is the guardrail working; the report names the folders to delete.
+
+Alongside that: a documentation site, an installation check that fails an install rather than letting a half-built environment through, and a release process that publishes a verified download so nobody has to clone the repository to use the pipeline.
+
+### Changed
+
+- **`vcffilter.minDP` now filters, where before it did nothing.** The depth filter was `vcftools --minDP`, which expresses a failed genotype-level test by rewriting `FORMAT/GT` and nothing else — it never touches `AD` or `DP`, and it never removes a site. Because step 7's major-allele normalisation sets every `GT` to `./.` before that filter runs, and because frequency conversion reads `AD` rather than `GT`, the setting had no path to the output: running the old command with `--minDP 20` and with `--minDP 50` produced byte-identical frequency tables. It is now `bcftools view -e "FMT/DP<N"`, applied before the quality filter. **The test is per site, not per sample: a site is removed if *any* sample falls below the depth**, so the weakest library sets the threshold for the whole cohort. Check `Output/Reports/Coverage/` for your least-covered sample before trusting the default of `20` — on a run with one thin library it can remove most of the call set.
+- **`params.vcftools` is now `params.vcffilter`.** The block never mapped to one tool and now genuinely does not: depth filtering is bcftools, quality filtering is vcftools. `./PoolSeqFlow migrate_config` carries your values across to the new names and reports them as `Renamed this release`.
+- **Two bcftools parameters were the wrong way round.** `baseQualMin` supplied `mpileup -q`, which is the *mapping* quality minimum, and `varQualMin` supplied `-Q`, the *base* quality minimum. Both default to `30`, so no run changes behaviour — but anyone who tuned one was tuning the other.
+- **Citations point at the Zenodo concept DOI** ([10.5281/zenodo.19245611](https://doi.org/10.5281/zenodo.19245611)) rather than a version DOI. The badge previously pointed at the v1.0.0 record, which is frozen and therefore permanently flagged "a newer version is available". The concept DOI always resolves to the newest release. Papers should still cite the *version* DOI of the release they ran — `./PoolSeqFlow cite` explains which and why.
+- **`install/install.sh` removed.** The wrapper's `install` subcommand creates the environment itself and never called it; the script also used a relative path to `environment.yml` and a `conda activate` with no shell hook, so running it directly would not have worked either.
+- `cutadapt.min_length` is still not applied, and the template now carries a commented-out `options` line to switch it on deliberately rather than leaving the parameter looking active.
+
+### Added
+
+- **A documentation site** at <https://ozankiratli.github.io/PoolSeqFlow/>, built with MkDocs Material and published from `main` by GitHub Actions. It goes well beyond the README: when Pool-seq fits and when it does not, why the pipeline replaces Nextflow's `-resume` and what that costs, the full filter chain from alignment flags to frequency conversion with what each stage removes, and how to read the frequency tables. Broken internal links fail the build.
+- **`./PoolSeqFlow check`** — verifies an installation and reports what it finds. Every command the pipeline invokes, with the version each reports; every helper in `bin/`, present *and* executable, since they are called by bare name off `nextflow.config`'s `PATH` and a lost executable bit fails mid-run; and that `parameters.config` parses. With a config present the tool list is read from `params.software` through `nextflow config`, so a command repointed at a system binary is checked as configured rather than as shipped. It also runs at the end of `install` and **fails the install** if anything is missing — an environment that was created but is short a tool would otherwise surface partway through step 4, hours in.
+- **`./PoolSeqFlow cite`** — prints the citation for the copy you have, with its version filled in, and explains which DOI to use.
+- **A release workflow.** Tagging `v*` publishes a curated tarball: the pipeline only, in a versioned directory, built with `git archive` so the executable bit on `./PoolSeqFlow` and `bin/*` comes from the git index rather than the runner's umask. What ships is decided by `export-ignore` in `.gitattributes`, and the workflow asserts both directions — required files present, repository furniture absent — along with the executable bits, shell syntax and the version the extracted wrapper reports. It refuses to publish unless the tag, both version strings in `./PoolSeqFlow` and a changelog section all agree. `SHA256SUMS` is attached, and `PoolSeqFlow.tar.gz` carries a stable name for scripted installs.
+- **`config_migrate.sh` handles renamed parameters.** A rename was previously two unrelated events — one `DROPPED`, one `NEW` — and your tuned value silently reverted to the template default. Renames now carry the value across and report it as `Renamed this release`. If a rename also changes what the parameter *means*, adding it to `reformatted()` makes the template value win while still surfacing the change.
+
+### Fixed
+
+- The sensitivity formula in `bin/filterFalsePositives.sh -h` now reads `s = 1 / (2 * [DIPLOIDY] * [POOLSIZE per SAMPLE])`, matching what `parameters.config` computes. The correction in 2.1.1 was itself wrong. Help text only; the value the pipeline passes was never affected.
+
+### Commits
+
+- Depth filtering fix, and minor config corrections. (2c29d35)
+- Typo fix, not a functional problem (78ac157)
+- site is added to gitignore (b087cd5)
+- Renaming check is added to the migration script (8595513)
+- dev files added (0e63c74)
+- Check install status added (9687114)
+- Release workflow added (6b5a549)
+- check install added to workflow (7aae36e)
+- Citation fixes (aaec06c)
+- Website is finished (d423c8e)
+
+---
+
 ## [2.1.1] - 2026-08-15
 
 A stability release. Nothing new to configure and no change to how a run is invoked — this closes the gaps where a result could be quietly wrong or quietly irreproducible. An existing `parameters.config` needs no changes.

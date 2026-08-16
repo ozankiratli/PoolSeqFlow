@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Version: 2.1.1
+# Version: 2.2.0
 # Author : Ozan L. Z. Kiratli
 # email  : ozankiratli@protonmail.com
 #
@@ -20,7 +20,7 @@
 set -e
 eval "$(conda shell.bash hook)"
 
-VERSION="2.1.1"
+VERSION="2.2.0"
 
 # Zenodo concept DOI - the software as a whole. It always resolves to the newest
 # release and never changes, which is why it is the one on the badge and in the
