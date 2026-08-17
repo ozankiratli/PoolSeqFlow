@@ -41,8 +41,11 @@ process Align {
     fi
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/3_AlignReads_Align_${pair_id}.log
-    cp .command.err ${dir_log}/3_AlignReads_Align_${pair_id}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/3_AlignReads_Align_${pair_id}_nextflow.log
     """
 }
 

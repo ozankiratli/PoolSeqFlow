@@ -87,8 +87,11 @@ process SortRefAltByFrequency {
     fi
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/7_s1_SortRefAltByFrequency_${vcf.baseName}.log
-    cp .command.err ${dir_log}/7_s1_SortRefAltByFrequency_${vcf.baseName}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/7_s1_SortRefAltByFrequency_${vcf.baseName}_nextflow.log
     """
 }
 
@@ -196,8 +199,11 @@ process FilterPotentialFalsePositives {
     fi
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/7_s2_FilterFalsePositives_${vcf.baseName}.log
-    cp .command.err ${dir_log}/7_s2_FilterFalsePositives_${vcf.baseName}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/7_s2_FilterFalsePositives_${vcf.baseName}_nextflow.log
     """
 }
 
@@ -286,8 +292,11 @@ process DepthAndQualityFilter {
     fi
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/7_s3_DepthAndQualityFilter_${vcf.baseName}.log
-    cp .command.err ${dir_log}/7_s3_DepthAndQualityFilter_${vcf.baseName}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/7_s3_DepthAndQualityFilter_${vcf.baseName}_nextflow.log
     """
 }
 
@@ -383,8 +392,11 @@ process SplitSNPsAndINDELs {
     fi
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/7_s4_SplitSNPsAndINDELs_${vcf.baseName}.log
-    cp .command.err ${dir_log}/7_s4_SplitSNPsAndINDELs_${vcf.baseName}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/7_s4_SplitSNPsAndINDELs_${vcf.baseName}_nextflow.log
     """
 }
 
@@ -432,8 +444,11 @@ process CalculateFrequencies {
     fi
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/7_s5_CalculateFrequencies_${vcf.baseName}.log
-    cp .command.err ${dir_log}/7_s5_CalculateFrequencies_${vcf.baseName}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/7_s5_CalculateFrequencies_${vcf.baseName}_nextflow.log
     """
 }
 

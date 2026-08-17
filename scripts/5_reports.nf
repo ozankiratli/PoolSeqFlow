@@ -37,8 +37,11 @@ process AlignmentReport {
     fi
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/5_GenerateReports_s1_AlignmentReport_${pair_id}.log
-    cp .command.err ${dir_log}/5_GenerateReports_s1_AlignmentReport_${pair_id}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/5_GenerateReports_s1_AlignmentReport_${pair_id}_nextflow.log
     """
 }
 
@@ -81,8 +84,11 @@ process CoverageReport {
     fi
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/5_GenerateReports_s2_CoverageReport_${pair_id}.log
-    cp .command.err ${dir_log}/5_GenerateReports_s2_CoverageReport_${pair_id}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/5_GenerateReports_s2_CoverageReport_${pair_id}_nextflow.log
     """
 }
 

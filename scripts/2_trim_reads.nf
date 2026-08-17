@@ -97,8 +97,11 @@ process TrimReads {
     fi
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/2_TrimQcClip_s1_TrimReads_${pair_id}.log
-    cp .command.err ${dir_log}/2_TrimQcClip_s1_TrimReads_${pair_id}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/2_TrimQcClip_s1_TrimReads_${pair_id}_nextflow.log
     """
 }
 
@@ -262,8 +265,11 @@ process ClipReads {
     echo "Clipping completed for ${pair_id}!"
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/2_TrimQcClip_s2_ClipReads_${pair_id}.log
-    cp .command.err ${dir_log}/2_TrimQcClip_s2_ClipReads_${pair_id}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/2_TrimQcClip_s2_ClipReads_${pair_id}_nextflow.log
     """
 }
 

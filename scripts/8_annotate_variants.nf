@@ -58,8 +58,11 @@ process AnnotateVariants {
     fi
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/8_AnnotateVariants_${vcf.baseName}.log
-    cp .command.err ${dir_log}/8_AnnotateVariants_${vcf.baseName}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/8_AnnotateVariants_${vcf.baseName}_nextflow.log
     """
 }
 

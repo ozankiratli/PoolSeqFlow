@@ -44,8 +44,11 @@ process VariantCall {
     fi
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/6_VariantCall_${params.vcf.fileName}.log
-    cp .command.err ${dir_log}/6_VariantCall_${params.vcf.fileName}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/6_VariantCall_${params.vcf.fileName}_nextflow.log
     """
 }
 

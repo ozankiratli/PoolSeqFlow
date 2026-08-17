@@ -57,8 +57,11 @@ process CheckReference {
 
     mv \$REPORTFILE verify_environment_stage1.txt
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/0_VerifyEnvironment_s1_CheckReference.log
-    cp .command.err ${dir_log}/0_VerifyEnvironment_s1_CheckReference.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/0_VerifyEnvironment_s1_CheckReference_nextflow.log
     """
 }
 
@@ -91,8 +94,11 @@ process CheckGFF {
 
     mv \$REPORTFILE verify_environment_stage2.txt
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/0_VerifyEnvironment_s2_CheckGFF.log
-    cp .command.err ${dir_log}/0_VerifyEnvironment_s2_CheckGFF.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/0_VerifyEnvironment_s2_CheckGFF_nextflow.log
     """
 }
 
@@ -112,8 +118,11 @@ process SkipGFFCheck {
     log_message "GFF FILE CHECK:        STATUS=SKIPPED"
     mv \$REPORTFILE verify_environment_stage2.txt
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/0_VerifyEnvironment_s2_SkipGFFCheck.log
-    cp .command.err ${dir_log}/0_VerifyEnvironment_s2_SkipGFFCheck.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/0_VerifyEnvironment_s2_SkipGFFCheck_nextflow.log
     """
 }
 
@@ -171,8 +180,11 @@ process CheckData {
     log_message "DATA SOURCE CHECK:     STATUS=\$STATUS"
     mv \$REPORTFILE verify_environment_stage3.txt
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/0_VerifyEnvironment_s3_CheckData.log
-    cp .command.err ${dir_log}/0_VerifyEnvironment_s3_CheckData.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/0_VerifyEnvironment_s3_CheckData_nextflow.log
     """
 }
 
@@ -489,8 +501,11 @@ process CheckRGTagsFile {
     mv \$REPORTFILE verify_environment_stage4.txt
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/0_VerifyEnvironment_s4_CheckRGTags.log
-    cp .command.err ${dir_log}/0_VerifyEnvironment_s4_CheckRGTags.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/0_VerifyEnvironment_s4_CheckRGTags_nextflow.log
     """
 }
 
@@ -532,8 +547,11 @@ process CheckInstalledSoftware {
     log_message "SOFTWARE CHECK:        STATUS=\$STATUS"
     mv \$REPORTFILE verify_environment_stage5.txt
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/0_VerifyEnvironment_s5_CheckInstalledSoftware.log
-    cp .command.err ${dir_log}/0_VerifyEnvironment_s5_CheckInstalledSoftware.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/0_VerifyEnvironment_s5_CheckInstalledSoftware_nextflow.log
     """
 }
 
@@ -585,8 +603,11 @@ process CheckTrimParameters {
 
     mv \$REPORTFILE verify_environment_stage6.txt
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/0_VerifyEnvironment_s6_CheckTrimParameters.log
-    cp .command.err ${dir_log}/0_VerifyEnvironment_s6_CheckTrimParameters.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/0_VerifyEnvironment_s6_CheckTrimParameters_nextflow.log
     """
 }
 
@@ -688,8 +709,11 @@ CURRENT_PARAMS
 
     mv \$REPORTFILE verify_environment_stage7.txt
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/0_VerifyEnvironment_s7_CheckRunParameters.log
-    cp .command.err ${dir_log}/0_VerifyEnvironment_s7_CheckRunParameters.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/0_VerifyEnvironment_s7_CheckRunParameters_nextflow.log
     """
 }
 
@@ -724,10 +748,18 @@ process VerifyAll {
     # task directory: `cleanup = true` empties that on success, which means the report
     # currently survives only when the run fails. Publishing it also makes the path
     # docs/pipeline/steps.md and directories.md already advertise real.
-    publish_report() {
+    # The log mirror belongs here too. It used to sit below the `exit 1`, so a failed
+    # verification - the one case where the log is actually wanted - never reached it.
+    archive_logs() {
         mkdir -p ${output_folder}
         atomic_mv.sh \$REPORTFILE ${output_folder}/\$REPORTFILE
         ln -s ${output_folder}/\$REPORTFILE .
+        mkdir -p ${dir_log}
+        {
+            echo ""
+            echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+            cat .command.log
+        } >> ${dir_log}/0_VerifyEnvironment_VerifyAll_nextflow.log
     }
 
     log_message "==================== ENVIRONMENT VERIFICATION REPORT ===================="
@@ -747,7 +779,7 @@ process VerifyAll {
         log_message ""
         log_message "ENVIRONMENT VERIFICATION: FAILED"
 
-        publish_report
+        archive_logs
         exit 1
     else
         log_message "All verification checks passed successfully."
@@ -756,11 +788,7 @@ process VerifyAll {
 
     fi
 
-    publish_report
-
-    mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/0_VerifyEnvironment_VerifyAll.log
-    cp .command.err ${dir_log}/0_VerifyEnvironment_VerifyAll.err
+    archive_logs
     """
 }
 

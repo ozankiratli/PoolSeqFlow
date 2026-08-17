@@ -38,8 +38,11 @@ process UngzipReference {
     fi
     
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/1_BuildDictionary_s1_UngzipReference.log
-    cp .command.err ${dir_log}/1_BuildDictionary_s1_UngzipReference.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/1_BuildDictionary_s1_UngzipReference_nextflow.log
     """
 }
 
@@ -79,8 +82,11 @@ process CreateBwaIndex {
     fi
     
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/1_BuildDictionary_s2_1_CreateBwaIndex.log
-    cp .command.err ${dir_log}/1_BuildDictionary_s2_1_CreateBwaIndex.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/1_BuildDictionary_s2_1_CreateBwaIndex_nextflow.log
     """
 }
 
@@ -116,8 +122,11 @@ process CreateSamtoolsFaiIndex {
     fi
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/1_BuildDictionary_s2_2_CreateSamtoolsFaiIndex.log
-    cp .command.err ${dir_log}/1_BuildDictionary_s2_2_CreateSamtoolsFaiIndex.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/1_BuildDictionary_s2_2_CreateSamtoolsFaiIndex_nextflow.log
     """
 }
 
@@ -193,8 +202,11 @@ process BuildSnpEffDb {
     fi
     
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/1_BuildDictionary_s2_3_BuildSnpEffDb.log
-    cp .command.err ${dir_log}/1_BuildDictionary_s2_3_BuildSnpEffDb.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/1_BuildDictionary_s2_3_BuildSnpEffDb_nextflow.log
     """
 }
 
