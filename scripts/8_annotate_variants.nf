@@ -35,7 +35,13 @@ process AnnotateVariants {
     else
         echo "ANNOTATING VCF ${vcf}: Creating symbolic links for snpEff database"
         ln -s ${params.dir.snpEff}/* .
-        TMPFILE=\$(mktemp --suffix=.vcf)
+        # Keep the temp in the task directory rather than system /tmp: it is the same
+        # order of magnitude as the call set, so it belongs on the filesystem sized for
+        # the run, and `cleanup = true` reaps it. The trap removes it however the task
+        # ends - the plain rm below it only ran when everything succeeded, so a bcftools
+        # or snpEff failure orphaned a whole-genome VCF, once per retry.
+        TMPFILE=\$(mktemp -p . --suffix=.vcf)
+        trap 'rm -f "\$TMPFILE"' EXIT
         
         echo "ANNOTATING VCF ${vcf}: Converting multiallelic sites into separate lines..."
         ${params.software.bcftools} norm -m - ${vcf} > \${TMPFILE}
@@ -46,8 +52,6 @@ process AnnotateVariants {
             ${params.snpEff.db} \
             \${TMPFILE} \
             > ${annotated_vcf_file}
-
-        rm \${TMPFILE}
 
         echo "ANNOTATING VCF ${vcf}: Moving ${annotated_vcf_file} to ${target_folder}"
         mkdir -p ${target_folder}

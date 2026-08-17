@@ -166,7 +166,10 @@ process FilterPotentialFalsePositives {
         ln -s ${target_filterfp_vcf} .
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: COMPLETED"
     else
-        TMP_FILE=\$(mktemp --suffix=.vcf)
+        # In the task directory, not system /tmp, and removed by the trap however the
+        # task ends. The plain rm further down only ran on the success path.
+        TMP_FILE=\$(mktemp -p . --suffix=.vcf)
+        trap 'rm -f "\$TMP_FILE"' EXIT
         
         # Following code does the following:
         # 1. Converts multiallelic sites into biallelic sites.
@@ -182,8 +185,6 @@ process FilterPotentialFalsePositives {
 
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Order might change after filtering, reordering alleles again..."
         MajorAlleleToRef.py "\$TMP_FILE" "${filterfp_vcf}"
-
-        rm "\$TMP_FILE"
 
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Moving ${filterfp_vcf} to ${target_folder_vcf}..."
         atomic_mv.sh ${filterfp_vcf} ${target_filterfp_vcf}
