@@ -343,17 +343,36 @@ process CheckRGTagsFile {
                 done | sort -u)
             fi
 
+            # Every row must carry as many columns as the header. The empty-value loop
+            # below bounds on NF, which is the row's own field count, so a short row
+            # passes it and then loses that tag silently in step 4. A missing middle
+            # column is worse: every later value shifts one tag left, so the wrong tags
+            # are written rather than merely absent ones.
+            column_report=\$(awk -F',' '
+            NR == 1 { ncol = NF; next }
+            NF == 0 { next }
+            NF != ncol {
+                printf "Row %d has %d column(s), the header has %d\\n", NR, NF, ncol
+                exit 1
+            }' ${rgTagsFile}) || {
+                log_message "\$column_report"
+                log_message "Every row needs one value per header column, in the same order."
+                log_message "RGTAGS COLUMN COUNT CHECK: FAIL"
+                STATUS="FAIL"
+            }
+
             # Check all rows for empty values
-            awk -F',' '
-            NR > 1 {
+            empty_report=\$(awk -F',' '
+            NR == 1 { for (i=1; i<=NF; i++) header[i] = \$i; next }
+            {
                 for (i=1; i<=NF; i++) {
                     if (length(\$i) == 0 || \$i ~ /^[[:space:]]*\$/) {
                         printf "Empty value found in row %d, column %d (%s)\\n", NR, i, header[i]
                         exit 1
                     }
                 }
-            }' ${rgTagsFile} || {
-                log_message "Empty values found in RGTags file"
+            }' ${rgTagsFile}) || {
+                log_message "\$empty_report"
                 log_message "RGTAGS EMPTY VALUES CHECK: FAIL"
                 STATUS="FAIL"
             }
