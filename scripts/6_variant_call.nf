@@ -16,7 +16,7 @@ process VariantCall {
     dir_log = "${params.dir.logs}/6_variant_call"
 
     """
-    set -e
+    set -eo pipefail
     echo "VARIANT CALL ${vcf_file}: Variant calling started..."
     if [ -f ${target_vcf_file} ]; then
         echo "VARIANT CALL ${vcf_file}: Found existing VCF file" 

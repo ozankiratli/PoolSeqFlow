@@ -42,7 +42,7 @@ process SortRefAltByFrequency {
     dir_log = "${params.dir.logs}/7_vcf2freq/s1_SortRefAltByFrequency"
 
     """
-    set -e
+    set -eo pipefail
 
     echo "SORT ALLELES BY FREQ ${vcf}: Sorting alleles by frequency..."
     if [ -f ${target_snp_freq_tsv} ] || [ -f ${target_indel_freq_tsv} ]; then
@@ -136,7 +136,7 @@ process FilterPotentialFalsePositives {
     dir_log = "${params.dir.logs}/7_vcf2freq/s2_FilterPotentialFalsePositives"
 
     """
-    set -e
+    set -eo pipefail
     echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Filtering possible false positives..."
     if [ -f ${target_snp_freq_tsv} ] || [ -f ${target_indel_freq_tsv} ]; then
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Found at least one of the existing freq files"
@@ -243,7 +243,7 @@ process DepthAndQualityFilter {
     dir_log = "${params.dir.logs}/7_vcf2freq/s3_DepthAndQualityFilter"
 
     """
-    set -e
+    set -eo pipefail
     echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Filtering VCF for depth and quality ${vcf.baseName}..."
     if [ -f ${target_snp_freq_tsv} ] || [ -f ${target_indel_freq_tsv} ]; then
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Found at least one of the existing freq files"
@@ -326,7 +326,7 @@ process SplitSNPsAndINDELs {
     dir_log = "${params.dir.logs}/7_vcf2freq/s4_SplitSNPsAndINDELs"
 
     """
-    set -e
+    set -eo pipefail
     echo "SPLIT SNPS AND INDELS ${vcf}: Splitting ${vcf.baseName} to SNP and INDEL VCFs..."
     if [ -f ${target_snp_freq_tsv} ] || [ -f ${target_indel_freq_tsv} ]; then
         echo "SPLIT SNPS AND INDELS ${vcf}: Found both of the freq files"
@@ -405,7 +405,7 @@ process CalculateFrequencies {
     dir_log = "${params.dir.logs}/7_vcf2freq/s5_CalculateFrequencies"
 
     """
-    set -e
+    set -eo pipefail
 
     echo "CALCULATE FREQUENCIES ${vcf}: Calculating Frequencies"
     if [ -f ${target_freq_file} ]; then

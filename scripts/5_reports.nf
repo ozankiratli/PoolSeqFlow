@@ -11,7 +11,7 @@ process AlignmentReport {
     dir_log = "${params.dir.logs}/5_reports/s1_AlignmentReport/${pair_id}"
 
     """
-    set -e
+    set -eo pipefail
     if [ -f ${target_report} ]; then
         echo "ALIGNMENT REPORT ${ready_bam}: Found existing alignment report file"
         echo "ALIGNMENT REPORT ${ready_bam}: Found: ${target_report}"
@@ -55,7 +55,7 @@ process CoverageReport {
     dir_log = "${params.dir.logs}/5_reports/s2_CoverageReport/${pair_id}"
 
     """
-    set -e
+    set -eo pipefail
     if [ -f ${target_report} ]; then
         echo "COVERAGE REPORT ${ready_bam}: Found existing coverage report file"
         echo "COVERAGE REPORT ${ready_bam}: Found: ${target_report}"

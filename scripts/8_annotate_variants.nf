@@ -21,7 +21,7 @@ process AnnotateVariants {
     dir_log = "${params.dir.logs}/8_annotate_variants"
 
     """
-    set -e
+    set -eo pipefail
 
     export _JAVA_OPTIONS="${params.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
 

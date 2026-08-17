@@ -20,7 +20,7 @@ process SortCleanBam {
     dir_log = "${params.dir.logs}/4_clean/${pair_id}"
 
     """
-    set -e
+    set -eo pipefail
 
     echo "SORT AND CLEAN BAM ${pair_id}: Sorting and Cleaning BAM file..."
     if [ -f ${target_bam_ready} ]; then

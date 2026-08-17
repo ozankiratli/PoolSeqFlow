@@ -17,7 +17,7 @@ process Align {
     dir_log = "${params.dir.logs}/3_align/${pair_id}"
 
     """
-    set -e
+    set -eo pipefail
 
     echo "ALIGNING ${pair_id}: Aligning the reads to the reference..."
     
