@@ -1,0 +1,96 @@
+name: Checks
+
+# The gate on merging into main, and an early warning on dev.
+#
+# Everything here is static: nothing runs the pipeline or needs sequencing data.
+# It catches the class of breakage that would otherwise only surface at tag time
+# (release.yml) or on someone else's machine - a syntax error in a helper, a
+# version that drifted between the three places it lives, a template that no
+# longer parses, an archive missing a file a run needs.
+#
+# It deliberately does NOT run on push to main: by then it is too late to gate
+# anything, and main is only written by merges that already passed here.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Pinned to the version install/environment.yml ships, so CI checks the same
+  # Nextflow a user will actually run.
+  NXF_VER: 26.04.6
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # verify-archive.sh builds from a git ref, so it needs real history.
+          fetch-depth: 0
+
+      - name: The version agrees with itself
+        run: |
+          set -euo pipefail
+          declared=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' PoolSeqFlow)
+          header=$(sed -n 's/^# Version: \(.*\)$/\1/p' PoolSeqFlow)
+          manifest=$(sed -n "s/^[[:space:]]*version[[:space:]]*=[[:space:]]*'\(.*\)'.*/\1/p" nextflow.config)
+          echo "  ./PoolSeqFlow VERSION= : $declared"
+          echo "  ./PoolSeqFlow header   : $header"
+          echo "  nextflow.config        : $manifest"
+          [ -n "$declared" ] || { echo "no VERSION= in ./PoolSeqFlow" >&2; exit 1; }
+          [ "$header" = "$declared" ] && [ "$manifest" = "$declared" ] || {
+            echo "the three version strings disagree" >&2; exit 1; }
+
+      - name: Shell scripts parse
+        run: |
+          set -euo pipefail
+          for s in PoolSeqFlow bin/*.sh install/*.sh dev/scripts/*.sh; do
+            bash -n "$s" && echo "  ok  $s"
+          done
+
+      - name: Python and awk helpers parse
+        run: |
+          set -euo pipefail
+          python3 -m py_compile bin/MajorAlleleToRef.py && echo "  ok  bin/MajorAlleleToRef.py"
+          # Running it on empty input executes BEGIN and nothing else, which is
+          # enough to reject a syntax error without needing a VCF.
+          awk -f bin/depth2freq.awk /dev/null && echo "  ok  bin/depth2freq.awk"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Nextflow
+        run: |
+          curl -s https://get.nextflow.io | bash
+          sudo mv nextflow /usr/local/bin/
+          nextflow -version
+
+      - name: Pipeline lints without errors
+        run: nextflow lint poolseqflow.nf scripts/*.nf
+
+      # The failure this catches is the one users hit as `null: command not
+      # found` partway through a run - a parameter the template no longer
+      # resolves. Cheap to check, invisible otherwise until it bites.
+      - name: The config template parses
+        run: |
+          set -euo pipefail
+          cp parameters.config.template parameters.config
+          nextflow config -flat > /dev/null
+          echo "  ok  parameters.config.template resolves"
+          rm -f parameters.config
+
+      - name: The release archive is a working copy
+        run: dev/scripts/verify-archive.sh
