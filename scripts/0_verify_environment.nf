@@ -720,6 +720,16 @@ process VerifyAll {
         echo "\$1"
     }
 
+    # The report is the durable record of what step 0 checked, so it has to leave the
+    # task directory: `cleanup = true` empties that on success, which means the report
+    # currently survives only when the run fails. Publishing it also makes the path
+    # docs/pipeline/steps.md and directories.md already advertise real.
+    publish_report() {
+        mkdir -p ${output_folder}
+        atomic_mv.sh \$REPORTFILE ${output_folder}/\$REPORTFILE
+        ln -s ${output_folder}/\$REPORTFILE .
+    }
+
     log_message "==================== ENVIRONMENT VERIFICATION REPORT ===================="
     log_message "Date: \$(date)"
     log_message "========================================================================="
@@ -737,13 +747,16 @@ process VerifyAll {
         log_message ""
         log_message "ENVIRONMENT VERIFICATION: FAILED"
 
+        publish_report
         exit 1
     else
         log_message "All verification checks passed successfully."
         log_message ""
         log_message "ENVIRONMENT VERIFICATION: SUCCESS"
-        
+
     fi
+
+    publish_report
 
     mkdir -p ${dir_log}
     cp .command.log ${dir_log}/0_VerifyEnvironment_VerifyAll.log
