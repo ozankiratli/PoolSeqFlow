@@ -97,6 +97,7 @@ Two records are kept in the project directory:
 | Record | Covers | Written by |
 |---|---|---|
 | `.poolseqflow_params` | Analysis-affecting parameters, mirrored to a read-only `Output/run_parameters.txt` | Step 0 |
+| `.poolseqflow_versions` | Every pipeline version that has run here. Recorded only — a version change never stops a run | Step 0 |
 | `.poolseqflow_rgtags` | The consumed `RGTags.csv`, ignoring line endings and trailing whitespace | Step 0 |
 
 Path, resource and software parameters are excluded — they change where and how fast the work happens, not what the answer is. Anything added in a later release counts as analysis-affecting until decided otherwise, which is the conservative direction to err in.

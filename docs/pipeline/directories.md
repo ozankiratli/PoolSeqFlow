@@ -57,6 +57,7 @@ Both reference files must be gzipped. The pipeline decompresses them into `Refer
 /path/to/project/
 ├── .poolseqflow_params           # Analysis parameters behind these outputs
 ├── .poolseqflow_rgtags           # RGTags.csv as consumed
+├── .poolseqflow_versions         # Pipeline versions that have run here, oldest first
 ├── Logs/                         # Per-step .log and .err, mirrored from every task
 ├── Reference/
 │   ├── reference.fasta

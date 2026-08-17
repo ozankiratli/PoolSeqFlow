@@ -23,7 +23,9 @@ Zenodo issues **two kinds of DOI**, and the difference matters.
 
     Results depend on which release produced them. Filters, defaults and parameter names have all changed between versions — `vcffilter.minDP` went from having no effect to removing whole sites, and sample column ordering changed in 2.1.1. A paper citing the current release for numbers produced by an older one is describing a method it did not use.
 
-    Find your version with `./PoolSeqFlow version`, then open the [all-versions record](https://doi.org/10.5281/zenodo.19245611) and pick that version from the **Versions** list to get its DOI.
+    Find the version that produced a given set of results in that project's `Output/run_parameters.txt`, which lists every release that has run there — `./PoolSeqFlow version` tells you only what is installed now, which is not the same thing once you have upgraded. Then open the [all-versions record](https://doi.org/10.5281/zenodo.19245611) and pick that version from the **Versions** list to get its DOI.
+
+    If more than one version is listed, the outputs were not all produced by the same release: completed steps are not redone on upgrade. Say so in your methods, or `./PoolSeqFlow reset` and re-run under one version.
 
 ## Reference
 

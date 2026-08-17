@@ -56,6 +56,16 @@ jobs:
             exit 1
           fi
 
+          # The version lives in nextflow.config's manifest too - that is what Nextflow
+          # reports and what step 0 records alongside a project's outputs, so a stale
+          # value there would misattribute results to the wrong release.
+          nfversion=$(sed -n "s/^[[:space:]]*version[[:space:]]*=[[:space:]]*'\(.*\)'.*/\1/p" nextflow.config)
+          if [ "$nfversion" != "$declared" ]; then
+            echo "./PoolSeqFlow says VERSION=\"$declared\" but nextflow.config's" >&2
+            echo "  manifest says version = '$nfversion'" >&2
+            exit 1
+          fi
+
           # On a tag, the tag has to match. On workflow_dispatch there is no tag,
           # and the run builds and verifies the archive without publishing.
           if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
@@ -79,13 +89,14 @@ jobs:
           echo "name=PoolSeqFlow-$declared" >> "$GITHUB_OUTPUT"
           echo "Building PoolSeqFlow-$declared"
 
-      - name: Build the archive
+      # Same script ci.yml runs on every pull request, so what is published here
+      # has already been checked in review rather than only at tag time.
+      - name: Build and verify the archive
         env:
           NAME: ${{ steps.version.outputs.name }}
         run: |
           set -euo pipefail
-          mkdir -p dist
-          git archive --format=tar.gz --prefix="${NAME}/" -o "dist/${NAME}.tar.gz" HEAD
+          dev/scripts/verify-archive.sh HEAD dist
 
           # The same archive under a stable name. GitHub's
           # /releases/latest/download/<asset> only resolves a filename it can
@@ -96,62 +107,6 @@ jobs:
 
           ( cd dist && sha256sum ./*.tar.gz > SHA256SUMS )
           ls -lh dist/
-
-      - name: Verify the archive is a working copy of the pipeline
-        env:
-          NAME: ${{ steps.version.outputs.name }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          tmp=$(mktemp -d)
-          tar -xzf "dist/${NAME}.tar.gz" -C "$tmp"
-          root="$tmp/${NAME}"
-
-          fail() { echo "ARCHIVE CHECK FAILED: $*" >&2; exit 1; }
-
-          # Everything a run needs.
-          for f in PoolSeqFlow poolseqflow.nf nextflow.config \
-                   parameters.config.template RGTags.csv.template \
-                   install/environment.yml install/check_install.sh \
-                   LICENSE README.md CHANGELOG.md; do
-            [ -f "$root/$f" ] || fail "missing from archive: $f"
-          done
-
-          # All nine step modules, not however many happened to be committed.
-          steps_found=$(find "$root/scripts" -name '*.nf' | wc -l)
-          [ "$steps_found" -eq 9 ] || fail "expected 9 scripts/*.nf, found $steps_found"
-
-          # The helpers the process scripts call by bare name via nextflow.config's PATH.
-          for f in atomic_mv.sh config_migrate.sh createDepthFile.sh \
-                   depth2freq.awk filterFalsePositives.sh MajorAlleleToRef.py; do
-            [ -f "$root/bin/$f" ] || fail "missing from archive: bin/$f"
-          done
-
-          # Repository furniture must NOT ship. This is the other half of
-          # .gitattributes: if an export-ignore is dropped, this catches it.
-          for f in docs .github mkdocs.yml .gitignore .gitattributes dev Project; do
-            [ ! -e "$root/$f" ] || fail "should have been export-ignored: $f"
-          done
-
-          # The executable bit is the whole reason for git archive over tar.
-          [ -x "$root/PoolSeqFlow" ] || fail "./PoolSeqFlow is not executable"
-          for s in "$root"/bin/*; do
-            [ -x "$s" ] || fail "$(basename "$s") is not executable"
-          done
-
-          # Syntax-check every shell script that ships.
-          bash -n "$root/PoolSeqFlow" || fail "./PoolSeqFlow has a syntax error"
-          for s in "$root"/bin/*.sh "$root"/install/*.sh; do
-            bash -n "$s" || fail "$(basename "$s") has a syntax error"
-          done
-
-          # The wrapper cannot simply be run here: it calls `conda shell.bash hook`
-          # at the top under `set -e`, and the runner has no conda. Check the
-          # version it would report instead.
-          grep -q "^VERSION=\"${VERSION}\"$" "$root/PoolSeqFlow" \
-            || fail "extracted wrapper does not report ${VERSION}"
-
-          echo "Archive verified: $(du -h "dist/${NAME}.tar.gz" | cut -f1)"
 
       - name: Publish the release
         if: github.ref_type == 'tag'
