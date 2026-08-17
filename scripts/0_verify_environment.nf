@@ -187,6 +187,27 @@ process CheckRGTagsFile {
     rgTagsFile = params.rgTagsPath
     dataDir = params.dir.data
     readPattern = params.readPattern.replace('{','[').replace('}',']')
+    // A sample ID is the part of a FASTQ name that precedes the mate token. Take that
+    // token from readPattern rather than assuming _R1/_R2: step 2 keys every sample off
+    // Channel.fromFilePairs, which derives the prefix from the glob and accepts any
+    // {1,2} scheme, so this check has to agree with it or it rejects valid layouts.
+    mateBrace = params.readPattern.indexOf('{')
+    mateClose = params.readPattern.indexOf('}')
+    hasMateGroup = mateBrace >= 0 && mateClose > mateBrace
+    matePrefix = hasMateGroup ? params.readPattern.substring(0, mateBrace).replaceAll(/^.*\*/, '') : ''
+    mateTail = hasMateGroup ? params.readPattern.substring(mateClose + 1) : ''
+    mateAlts = hasMateGroup ? params.readPattern.substring(mateBrace + 1, mateClose).split(',').collect { alt -> alt.trim() } : []
+
+    // The mate token must be separated from the sample name. Without a separator the
+    // split is guesswork: Sample11/Sample12 are equally readable as one sample's two
+    // mates or as two different samples, so refuse rather than pick one.
+    mateSeparated = hasMateGroup && mateAlts.every { alt ->
+        (matePrefix + alt).startsWith('_') || (matePrefix + alt).startsWith('.')
+    }
+
+    // Strip the exact text the pattern says follows the sample name, one alternative at
+    // a time. Literal, so it holds for non-numeric mates (_F/_R) too.
+    stripMate = mateAlts.collect { alt -> 'base="${base%' + matePrefix + alt + mateTail + '}"' }.join('; ')
     storedRg = "${params.projectDir}/.poolseqflow_rgtags"
     readyDir = "${params.dir.output.ready}"
     vcfDir = "${params.dir.output.vcf}"
@@ -300,7 +321,27 @@ process CheckRGTagsFile {
             fi
 
             # Get sample IDs from data directory
-            sample_ids=\$(find ${dataDir} -name "${readPattern}" | sed -E 's/.*\\/(.+)_R[12].*/\\1/' | sort -u)
+            if [ "${hasMateGroup}" != "true" ]; then
+                sample_ids=""
+                log_message "readPattern '${params.readPattern}' has no {1,2} mate group, so sample IDs cannot be derived"
+                log_message "Give both mates in one pattern, e.g. '*_R{1,2}.fq.gz'"
+                log_message "RGTAGS SAMPLE MATCH CHECK: FAIL"
+                STATUS="FAIL"
+            elif [ "${mateSeparated}" != "true" ]; then
+                sample_ids=""
+                log_message "readPattern '${params.readPattern}' runs the mate token straight onto the sample name"
+                log_message "Sample IDs would be ambiguous: 'Sample11' and 'Sample12' read equally well as"
+                log_message "one sample's two mates or as two separate samples."
+                log_message "Separate the mate token with '_' or '.', e.g. '*_R{1,2}.fq.gz' or '*_{1,2}.fq.gz'"
+                log_message "RGTAGS SAMPLE MATCH CHECK: FAIL"
+                STATUS="FAIL"
+            else
+                sample_ids=\$(find ${dataDir} -name "${readPattern}" | while read -r fq; do
+                    base=\$(basename "\$fq")
+                    ${stripMate}
+                    echo "\$base"
+                done | sort -u)
+            fi
 
             # Check all rows for empty values
             awk -F',' '
