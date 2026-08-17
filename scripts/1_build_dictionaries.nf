@@ -11,6 +11,8 @@ process UngzipReference {
     dir_log = "${params.dir.logs}/1_build_dictionaries/s1_UngzipReference"
 
     """
+    set -eo pipefail
+
     #if [ ! -f ${verify} ]; then
     #    echo "UNGZIP:             Verify file not found: ${verify}"
     #    exit 1
@@ -27,7 +29,9 @@ process UngzipReference {
         echo "UNGZIP ${params.referenceFile}:             COMPLETED"
     else
         echo "UNGZIP ${params.referenceFile}:             Unzipping reference file..."
-        gunzip -c ${refIn} > ${refOut}
+        gunzip -c ${refIn} > ${params.referenceFa}
+        echo "UNGZIP ${params.referenceFile}:             Moving ${params.referenceFa} to ${params.dir.references}"
+        atomic_mv.sh ${params.referenceFa} ${refOut}
         echo "UNGZIP ${params.referenceFile}:             Creating symbolic link..."
         ln -s ${refOut} .
         echo "UNGZIP ${params.referenceFile}:             COMPLETED"
