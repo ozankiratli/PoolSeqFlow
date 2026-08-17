@@ -213,8 +213,9 @@ process CheckRGTagsFile {
     // The mate token must be separated from the sample name. Without a separator the
     // split is guesswork: Sample11/Sample12 are equally readable as one sample's two
     // mates or as two different samples, so refuse rather than pick one.
+    mateSeparators = ['_', '.', '-']
     mateSeparated = hasMateGroup && mateAlts.every { alt ->
-        (matePrefix + alt).startsWith('_') || (matePrefix + alt).startsWith('.')
+        mateSeparators.any { sep -> (matePrefix + alt).startsWith(sep) }
     }
 
     // Strip the exact text the pattern says follows the sample name, one alternative at
@@ -344,7 +345,7 @@ process CheckRGTagsFile {
                 log_message "readPattern '${params.readPattern}' runs the mate token straight onto the sample name"
                 log_message "Sample IDs would be ambiguous: 'Sample11' and 'Sample12' read equally well as"
                 log_message "one sample's two mates or as two separate samples."
-                log_message "Separate the mate token with '_' or '.', e.g. '*_R{1,2}.fq.gz' or '*_{1,2}.fq.gz'"
+                log_message "Separate the mate token with '_', '.' or '-', e.g. '*_R{1,2}.fq.gz' or '*_{1,2}.fq.gz'"
                 log_message "RGTAGS SAMPLE MATCH CHECK: FAIL"
                 STATUS="FAIL"
             else
