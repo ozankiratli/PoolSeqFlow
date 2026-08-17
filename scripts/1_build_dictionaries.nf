@@ -172,9 +172,9 @@ process BuildSnpEffDb {
             echo "SNPEFF DB BUILD:    Found \$BIN_COUNT .bin files."
             echo "SNPEFF DB BUILD:    Database creation successful!"
             echo "SNPEFF DB BUILD:    Copying database to ${params.dir.snpEff}"
-            mkdir -p ${params.dir.snpEff}
-            cp -r data ${params.dir.snpEff}/
-            cp snpEff.config ${params.dir.snpEff}/
+            mkdir -p ${params.dir.snpEff} || return 1
+            cp -r data ${params.dir.snpEff}/ || return 1
+            cp snpEff.config ${params.dir.snpEff}/ || return 1
             return 0
         fi
     }
