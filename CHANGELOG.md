@@ -35,16 +35,16 @@ Alongside that: a documentation site, an installation check that fails an instal
 
 ### Commits
 
-- Depth filtering fix, and minor config corrections. (2c29d35)
-- Typo fix, not a functional problem (78ac157)
-- site is added to gitignore (b087cd5)
-- Renaming check is added to the migration script (8595513)
-- dev files added (0e63c74)
-- Check install status added (9687114)
-- Release workflow added (6b5a549)
-- check install added to workflow (7aae36e)
-- Citation fixes (aaec06c)
-- Website is finished (d423c8e)
+- (2c29d35) Depth filtering fix, and minor config corrections.
+- (78ac157) Typo fix, not a functional problem
+- (b087cd5) site is added to gitignore
+- (8595513) Renaming check is added to the migration script
+- (0e63c74) dev files added
+- (9687114) Check install status added
+- (6b5a549) Release workflow added
+- (7aae36e) check install added to workflow
+- (aaec06c) Citation fixes
+- (d423c8e) Website is finished
 
 ---
 
@@ -76,13 +76,13 @@ A stability release. Nothing new to configure and no change to how a run is invo
 
 ### Commits
 
-- Minor fix in help for manual use (6e18762)
-- Parameter change detection added. (715f822)
-- workDir and reset fixes (f73b33d)
-- Output parameters to a file (0f5666f)
-- File move process improved (408efb4)
-- Sample ordering in vcf fixed. NF orders samples first come first serve (dc2ea72)
-- Sample ordering in vcf fixed. RGTags guardrails added. (4a9f89d)
+- (6e18762) Minor fix in help for manual use
+- (715f822) Parameter change detection added.
+- (f73b33d) workDir and reset fixes
+- (0f5666f) Output parameters to a file
+- (408efb4) File move process improved
+- (dc2ea72) Sample ordering in vcf fixed. NF orders samples first come first serve
+- (4a9f89d) Sample ordering in vcf fixed. RGTags guardrails added.
 
 ---
 
@@ -230,6 +230,8 @@ Major upgrade to **Nextflow 26** and **Trim Galore 2.x**. This release is not ba
 
 ---
 
+[2.2.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.2.0
+[2.1.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.1.1
 [2.1.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.1.0
 [2.0.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.0.1
 [2.0.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.0.0

@@ -6,8 +6,9 @@
 #
 # Rewrites the version in the PoolSeqFlow wrapper (both the header comment and
 # VERSION=) and prepends a CHANGELOG section listing every commit since the last
-# release tag under a "### Commits" heading. Does not commit, tag, or push - it
-# prints those commands for you.
+# release tag under a "### Commits" heading, along with the matching reference-link
+# definition at the foot of the file. Does not commit, tag, or push - it prints those
+# commands for you.
 #
 # Add release notes above that heading, not over it: the commit list stays in the
 # changelog as the record of what landed.
@@ -43,7 +44,7 @@ else
     RANGE="HEAD"
 fi
 
-COMMITS="$(git log --no-merges --reverse --pretty='- %s (%h)' "$RANGE")"
+COMMITS="$(git log --no-merges --reverse --pretty='- (%h) %s' "$RANGE")"
 if [ -z "$COMMITS" ]; then
     echo "ERROR: no commits since ${LAST_TAG:-the start of history} - nothing to release" >&2
     exit 1
@@ -73,6 +74,27 @@ ENTRY="$ENTRY" awk '
     END { if (!inserted) print ENVIRON["ENTRY"] }
 ' "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
 
+# The matching reference-link definition at the foot of the file. Every `## [x.y.z]`
+# heading is a Markdown reference link, so without one the heading renders as literal
+# brackets and the release is unreachable from the changelog. This used to be a manual
+# step and was missed: 2.1.1 and 2.2.0 both shipped without a definition.
+#
+# The base URL is taken from the newest existing definition rather than hardcoded, so it
+# follows the repository if it ever moves.
+LINKBASE="$(sed -n 's|^\[[0-9][0-9.]*\]: \(https://.*\)/v[0-9][0-9.]*$|\1|p' "$LOG" | head -1)"
+[ -n "$LINKBASE" ] || LINKBASE="https://github.com/ozankiratli/PoolSeqFlow/releases/tag"
+LINK="[$NEW]: $LINKBASE/v$NEW"
+
+if grep -qE '^\[[0-9]+\.[0-9]+\.[0-9]+\]: ' "$LOG"; then
+    # Above the newest existing definition, keeping the list in descending order.
+    LINK="$LINK" awk '
+        !inserted && /^\[[0-9]+\.[0-9]+\.[0-9]+\]: / { print ENVIRON["LINK"]; inserted = 1 }
+        { print }
+    ' "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+else
+    printf '\n%s\n' "$LINK" >> "$LOG"
+fi
+
 sed -i -E "s|^# Version: .*|# Version: $NEW|; s|^VERSION=\".*\"|VERSION=\"$NEW\"|" "$MAIN"
 
 # The version also lives in nextflow.config's manifest, which is what Nextflow reports and
@@ -87,7 +109,7 @@ grep -q "version *= *'$NEW'" "$NFCONFIG" || {
 echo "$CURRENT -> $NEW"
 echo "  $MAIN  : $(grep -cF "$NEW" "$MAIN") references updated"
 echo "  $NFCONFIG : manifest version updated"
-echo "  $LOG   : $(printf '%s\n' "$COMMITS" | wc -l) commits since ${LAST_TAG:-start}"
+echo "  $LOG   : $(printf '%s\n' "$COMMITS" | wc -l) commits since ${LAST_TAG:-start}, link definition added"
 echo
 echo "Review, then:"
 echo "  git add $MAIN $NFCONFIG $LOG && git commit -m 'Version bump $NEW'"
