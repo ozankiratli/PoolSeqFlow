@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# pipefail is what matters here: this script's real work is one long pipeline whose last
+# stage is awk, and awk succeeds on empty input. Without it every bcftools in the chain
+# could fail and the script would still exit 0, emitting an empty VCF that the caller
+# publishes to permanent storage - where the existence-based skip logic then reuses it on
+# every later run, even after the underlying problem is fixed.
+set -euo pipefail
+
 # Initialize variables
 VCF=""
 THRESHOLD=""
@@ -38,6 +45,13 @@ if [ -z "$VCF" ] || [ -z "$THRESHOLD" ] || [ -z "$SENSITIVITY" ]; then
 fi
 
 SAMPLENUMBER=$(${BCFTOOLS} query -l ${VCF} | wc -l)
+# Checked rather than assumed: MINSAMPLES is the right-hand side of the COUNT(...) >= N
+# clause below, so a sample count of zero does not fail - it quietly sets the threshold to
+# zero and disables the cross-sample filter while the rest of the expression still runs.
+if [ "$SAMPLENUMBER" -eq 0 ]; then
+  echo "Error: no samples found in ${VCF}" >&2
+  exit 1
+fi
 MINSAMPLES=$(awk "BEGIN {printf \"%f\", $SAMPLENUMBER * $THRESHOLD}")
 
 ${BCFTOOLS} norm -m - ${VCF} | \
