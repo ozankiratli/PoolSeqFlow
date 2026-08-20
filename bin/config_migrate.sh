@@ -97,8 +97,11 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
         # scope close
         if (line ~ /^\}/) { if (depth > 0) depth--; if (pass == 2) print; next }
 
-        # scope open:  name {
-        if (line ~ /^[A-Za-z_][A-Za-z0-9_]*[ \t]*\{[ \t]*$/) {
+        # scope open:  name {          (a trailing // comment is allowed, as on the close
+        # above - without that, annotating a block header silently drops every value in
+        # it: the line matches neither this rule nor the assignment rule below, so depth
+        # is never incremented and the keys in that block are qualified one level short)
+        if (line ~ /^[A-Za-z_][A-Za-z0-9_]*[ \t]*\{[ \t]*(\/\/.*)?$/) {
             name = line; sub(/[ \t]*\{.*$/, "", name)
             stack[++depth] = name
             if (pass == 2) print
