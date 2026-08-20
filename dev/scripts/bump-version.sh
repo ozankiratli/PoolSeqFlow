@@ -62,10 +62,15 @@ $COMMITS
 "
 
 # Insert above the newest existing section.
-awk -v entry="$ENTRY" '
-    !inserted && /^## \[/ { print entry; inserted = 1 }
+#
+# The entry reaches awk through the environment rather than `-v entry=...`: POSIX requires
+# -v assignments to undergo escape-sequence processing, so a commit subject containing \t
+# or \n would be rewritten on its way in - a literal backslash-t becoming a tab, and a
+# backslash-n injecting a bare line into the commit list. ENVIRON does no such processing.
+ENTRY="$ENTRY" awk '
+    !inserted && /^## \[/ { print ENVIRON["ENTRY"]; inserted = 1 }
     { print }
-    END { if (!inserted) print entry }
+    END { if (!inserted) print ENVIRON["ENTRY"] }
 ' "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
 
 sed -i -E "s|^# Version: .*|# Version: $NEW|; s|^VERSION=\".*\"|VERSION=\"$NEW\"|" "$MAIN"
@@ -80,7 +85,7 @@ grep -q "version *= *'$NEW'" "$NFCONFIG" || {
     echo "ERROR: could not update the manifest version in $NFCONFIG" >&2; exit 1; }
 
 echo "$CURRENT -> $NEW"
-echo "  $MAIN  : $(grep -c "$NEW" "$MAIN") references updated"
+echo "  $MAIN  : $(grep -cF "$NEW" "$MAIN") references updated"
 echo "  $NFCONFIG : manifest version updated"
 echo "  $LOG   : $(printf '%s\n' "$COMMITS" | wc -l) commits since ${LAST_TAG:-start}"
 echo
