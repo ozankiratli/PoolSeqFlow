@@ -33,6 +33,15 @@ usage() {
     exit 1
 }
 
+# `conda env list` prints "<name>  [*]  <path>" per environment, so grepping the whole
+# line for the name also matches any OTHER environment whose path happens to contain it.
+# That is not hypothetical here: the repository directory is itself called PoolSeqFlow,
+# so an environment created underneath it matches. Compare the name column only, and
+# compare it whole (-x) and literally (-F) so a name containing '.' or '+' still works.
+env_exists() {
+    conda env list | awk '{print $1}' | grep -qxF "$ENV_NAME"
+}
+
 # Resolve a setting through Nextflow rather than parsing parameters.config by hand -
 # values are interpolated (workDir is built from mainDir), so text matching gets them
 # wrong. Requires the conda environment to be active.
@@ -51,7 +60,7 @@ ENV_FILE="install/environment.yml"  # Make sure this file exists in the project 
 case $COMMAND in
     install)
         echo "Installing conda environment..."
-        if conda env list | grep -q "$ENV_NAME"; then
+        if env_exists; then
             echo "Environment '$ENV_NAME' already exists."
         else
             conda env create -f "$ENV_FILE"
@@ -67,7 +76,7 @@ case $COMMAND in
         ;;
 
     check)
-        if ! conda env list | grep -q "$ENV_NAME"; then
+        if ! env_exists; then
             echo "Environment '$ENV_NAME' does not exist. Run './$(basename "$0") install' first." >&2
             exit 1
         fi
@@ -142,12 +151,13 @@ case $COMMAND in
         echo ""
         echo "This permanently deletes:"
         echo "    $STORAGE/Output      - every result produced so far"
-        echo "    $STORAGE/Reports"
+        echo "    $STORAGE/Reports     - only if a pre-2.1 version put reports here"
         echo "    $STORAGE/Logs"
         echo "    $STORAGE/Reference   - indices and the SnpEff database"
         echo "    $STORAGE/.poolseqflow_params"
         echo "    $STORAGE/.poolseqflow_rgtags"
         echo "    $STORAGE/.poolseqflow_versions"
+        echo "    $(pwd)/.nextflow*    - Nextflow's own history and cache"
         [ -n "$WORKDIR" ] && echo "    $WORKDIR"
         echo ""
         echo "Your raw sequencing data in $DATADIR is not touched."
@@ -165,8 +175,17 @@ case $COMMAND in
         echo "Resetting pipeline..."
         rm -rf .nextflow*
         if [ -n "$WORKDIR" ]; then rm -rf "$WORKDIR"; fi
+        # `$STORAGE/Reports` only exists for projects created before 2.1.0, when reports
+        # were written outside Output/. Harmless when absent, so it stays.
+        #
+        # `$STORAGE/PoolSeqFlow_*` used to be removed here too. It was dropped: the
+        # PoolSeqFlow_pipeline_{dag,trace,timeline,report} files have gone to
+        # ${params.dir.output.reports} in every release since 1.0.0, never to projectDir
+        # itself, so the glob never matched anything this pipeline created - it could only
+        # ever have deleted a user's own file or directory that happened to start with
+        # "PoolSeqFlow_", undisclosed and with rm -rf.
         rm -rf "$STORAGE"/Reports "$STORAGE"/Logs "$STORAGE"/Output \
-               "$STORAGE"/Reference "$STORAGE"/PoolSeqFlow_*
+               "$STORAGE"/Reference
         # These record the parameters, RG tags and pipeline versions behind outputs that
         # no longer exist; leaving them would make the next run fail its checks for no
         # reason, and would attribute fresh results to an earlier release.
