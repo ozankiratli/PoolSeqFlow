@@ -58,5 +58,5 @@ workflow AlignReads {
     Align(reads, bwa_index)
 
     emit:
-    aligned_bam = Align.out.aligned_bam
+    Align.out.aligned_bam
 }

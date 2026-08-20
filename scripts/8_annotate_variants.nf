@@ -10,8 +10,6 @@ process AnnotateVariants {
     path "*_annotated.vcf", emit: annotated_vcf
 
     script:
-    gff = params.gff
-    reference = params.reference
     annotated_vcf_file = "${vcf.baseName}_annotated.vcf"
     report_folder = "${params.dir.output.reports}"
     report_file = "${report_folder}/snpeff_summary.html"
@@ -80,5 +78,5 @@ workflow AnnotateVCF {
     AnnotateVariants(vcf,snpeff_db_verify)
 
     emit:
-    annotated_vcf = AnnotateVariants.out.annotated_vcf
+    AnnotateVariants.out.annotated_vcf
 }

@@ -123,5 +123,5 @@ workflow VariantCalling {
     VariantCall(ready_bams,fai_index)
 
     emit:
-    vcf = VariantCall.out.vcf_file
+    VariantCall.out.vcf_file
 }

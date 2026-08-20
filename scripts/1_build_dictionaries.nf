@@ -250,6 +250,5 @@ workflow BuildDictionaries {
     reference         = UngzipReference.out.reference
     bwa_index         = CreateBwaIndex.out.bwa_index
     fai_index         = CreateSamtoolsFaiIndex.out.fai_index
-    //snpeff_db_verify  = BuildSnpEffDb.out.snpeff_db_verify
-    snpeff_db_verify  = params.annotate ? BuildSnpEffDb.out.snpeff_db_verify : Channel.empty()
+    snpeff_db_verify  = params.annotate ? BuildSnpEffDb.out.snpeff_db_verify : channel.empty()
 }

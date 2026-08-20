@@ -469,5 +469,5 @@ workflow VCF2Frequencies {
     CalculateFrequencies(all_vcfs)
 
     emit:
-    frequencies = CalculateFrequencies.out.frequencies
+    CalculateFrequencies.out.frequencies
 }

@@ -278,7 +278,7 @@ workflow TrimQcClip{
     verify
 
     main:
-    rawFiles = Channel.fromFilePairs("${params.reads}", checkIfExists: true)
+    rawFiles = channel.fromFilePairs("${params.reads}", checkIfExists: true)
         .map { id, files -> tuple(id, files[0], files[1]) }
 
     TrimReads(rawFiles,verify)
@@ -286,5 +286,5 @@ workflow TrimQcClip{
     ClipReads(trimmed_and_qc)
 
     emit:
-    clipped_fastqs = ClipReads.out.clipped_fastqs
+    ClipReads.out.clipped_fastqs
 }

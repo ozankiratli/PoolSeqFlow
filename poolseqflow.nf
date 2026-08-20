@@ -71,12 +71,12 @@ workflow {
     
     TrimQcClip(VerifyEnvironment.out)
     AlignReads(TrimQcClip.out, BuildDictionaries.out.bwa_index)  
-    SortCleanBams(AlignReads.out.aligned_bam)
+    SortCleanBams(AlignReads.out)
     
     GenerateReports(SortCleanBams.out.ready_bam,SortCleanBams.out.ready_bai)
     VariantCalling(SortCleanBams.out.ready_bam, BuildDictionaries.out.fai_index)
-    VCF2Frequencies(VariantCalling.out.vcf)
+    VCF2Frequencies(VariantCalling.out)
     if (params.annotate) {
-        AnnotateVCF(VariantCalling.out.vcf, BuildDictionaries.out.snpeff_db_verify)
+        AnnotateVCF(VariantCalling.out, BuildDictionaries.out.snpeff_db_verify)
     }
 }

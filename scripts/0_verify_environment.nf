@@ -23,7 +23,7 @@ def analysisParams() {
     ] as Set
     def skipPrefix = ['dir.', 'cores.', 'java.', 'software.']
     return flattenParams(params, '', [:])
-        .findAll { k, v -> !skipKey.contains(k) && !skipPrefix.any { p -> k.startsWith(p) } }
+        .findAll { k, _v -> !skipKey.contains(k) && !skipPrefix.any { p -> k.startsWith(p) } }
         .collect { k, v -> "${k}=${v}" }
         .sort()
         .join('\n')
@@ -832,5 +832,5 @@ workflow VerifyEnvironment {
     VerifyAll(CheckReference.out.report, gff_report, CheckData.out.report, CheckRGTagsFile.out.report, CheckInstalledSoftware.out.report, CheckTrimParameters.out.report, CheckRunParameters.out.report)
 
     emit:
-    report = VerifyAll.out
+    VerifyAll.out
 }
