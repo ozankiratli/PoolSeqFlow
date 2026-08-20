@@ -48,6 +48,7 @@ process AnnotateVariants {
         echo "ANNOTATING VCF ${vcf}: Running snpEff annotation..."
         ${params.software.snpEff} \
             ${params.snpEff.runOptions} \
+            -c ${params.snpEff.config} \
             -stats ${report_file} \
             ${params.snpEff.db} \
             \${TMPFILE} \

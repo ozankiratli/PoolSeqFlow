@@ -187,7 +187,15 @@ process BuildSnpEffDb {
         echo "${params.snpEff.db}.genome : ${params.snpEff.db}" > ${params.snpEff.config}
         
         echo "SNPEFF DB BUILD:    Build database"
-        ${params.software.snpEff} build ${params.snpEff.buildOptions} ${params.snpEff.db}
+        # -c names the config explicitly. Without it snpEff only finds a config in the
+        # working directory when it is called exactly 'snpEff.config', and otherwise
+        # silently falls back to the one bundled with the install - which has no entry
+        # for this genome, so the build dies with "Property: '<db>.genome' not found".
+        # That made params.snpEff.config a parameter that broke the run if it was ever
+        # changed from its default.
+        ${params.software.snpEff} build ${params.snpEff.buildOptions} \
+            -c ${params.snpEff.config} \
+            ${params.snpEff.db}
 
         echo "SNPEFF DB BUILD:    Checking if database was created..."
         BIN_COUNT=\$(find data/${params.snpEff.db} -name "*.bin" | wc -l)
@@ -200,7 +208,7 @@ process BuildSnpEffDb {
             echo "SNPEFF DB BUILD:    Copying database to ${params.dir.snpEff}"
             mkdir -p ${params.dir.snpEff} || return 1
             cp -r data ${params.dir.snpEff}/ || return 1
-            cp snpEff.config ${params.dir.snpEff}/ || return 1
+            cp ${params.snpEff.config} ${params.dir.snpEff}/ || return 1
             return 0
         fi
     }
