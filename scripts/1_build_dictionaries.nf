@@ -58,10 +58,22 @@ process CreateBwaIndex {
     dir_log = "${params.dir.logs}/1_build_dictionaries/s2_1_CreateBwaIndex"
 
     """
+    set -eo pipefail
+
     echo "BWA INDEX ${params.referenceFile}:          Start building BWA index..."
-    CT=\$( ( ls ${referenceDir}/*.bwt 2>/dev/null && ls ${referenceDir}/*.ann 2>/dev/null && ls ${referenceDir}/*.amb 2>/dev/null && ls ${referenceDir}/*.pac 2>/dev/null && ls ${referenceDir}/*.sa 2>/dev/null ) | wc -l)
-    if [ \$CT -eq 5 ]; then
-        echo "BWA INDEX ${params.referenceFile}:          Found \$CT existing index files"
+    # Test the exact five files the symlinks below point at, one test each. The previous
+    # form counted output lines from `ls ${referenceDir}/*.bwt` and friends chained with
+    # &&, which was wrong twice over: an unmatched glob makes ls exit non-zero, so on a
+    # first run the whole substitution fails and takes the task with it once pipefail is
+    # on; and *.bwt matches an index built for a differently named reference, so the
+    # check could pass while the `ln -s` below still had nothing to point at.
+    INDEX_COMPLETE=true
+    for ext in bwt ann amb pac sa; do
+        if [ ! -f "${params.reference}.\$ext" ]; then INDEX_COMPLETE=false; fi
+    done
+
+    if [ "\$INDEX_COMPLETE" = true ]; then
+        echo "BWA INDEX ${params.referenceFile}:          Found a complete existing index"
         echo "BWA INDEX ${params.referenceFile}:          No need to create the index again"
         echo "BWA INDEX ${params.referenceFile}:          Creating symbolic links..."
         for ext in bwt ann amb pac sa; do
@@ -102,9 +114,12 @@ process CreateSamtoolsFaiIndex {
     dir_log = "${params.dir.logs}/1_build_dictionaries/s2_2_CreateSamtoolsFaiIndex"
 
     """
+    set -eo pipefail
+
     echo "SAMTOOLS INDEX ${params.referenceFile}:     Start building samtools fai index..."
-    CT=\$(ls ${referenceDir}/*.fai 2>/dev/null | wc -l)
-    if [ \$CT -eq 1 ]; then
+    # The exact file the symlink below points at, rather than counting any *.fai in the
+    # directory - see the note in CreateBwaIndex for why the ls|wc form had to go.
+    if [ -f "${params.reference}.fai" ]; then
         echo "SAMTOOLS INDEX ${params.referenceFile}:     Found existing fai index file"
         echo "SAMTOOLS INDEX ${params.referenceFile}:     Found: ${params.reference}.fai"
         echo "SAMTOOLS INDEX ${params.referenceFile}:     Creating symbolic link..."
@@ -145,6 +160,8 @@ process BuildSnpEffDb {
     dir_log = "${params.dir.logs}/1_build_dictionaries/s2_3_BuildSnpEffDb"
 
     """
+    set -eo pipefail
+
     buildSnpEffDb() {
         echo "SNPEFF DB BUILD:    Building SnpEff database..."
         echo "SNPEFF DB BUILD:    Creating SNPEff directory structure"
