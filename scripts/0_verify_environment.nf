@@ -29,6 +29,25 @@ def analysisParams() {
         .join('\n')
 }
 
+// Turn a readPattern into a find(1) expression matching both mates.
+//
+// The mate group cannot become a bracket class: `{1,2}` -> `[1,2]` happens to work only
+// because each alternative is one character. `{R1,R2}` -> `[R1,R2]` is a class matching a
+// single character out of R, 1, ',' or 2, so it matches no real FASTQ at all - the check
+// then finds nothing and passes vacuously while the run has no data. Expanding the group
+// into one -name per alternative is exact for any length.
+def findNameExpr(String pattern) {
+    def open  = pattern.indexOf('{')
+    def close = pattern.indexOf('}')
+    if (open < 0 || close < open) {
+        return "-name '${pattern}'"
+    }
+    def head = pattern.substring(0, open)
+    def tail = pattern.substring(close + 1)
+    def alts = pattern.substring(open + 1, close).split(',').collect { alt -> alt.trim() }
+    return '\\( ' + alts.collect { alt -> "-name '${head}${alt}${tail}'" }.join(' -o ') + ' \\)'
+}
+
 process CheckReference {
     output:
     path 'verify_environment_stage1.txt', emit: report
@@ -133,7 +152,7 @@ process CheckData {
     script:
     dataDir = params.dir.data
     dir_log = "${params.dir.logs}/0_verify_environment/s3_CheckData"
-    read_pattern = params.readPattern.replace('{','[').replace('}',']')
+    read_pattern = findNameExpr(params.readPattern)
 
     """
     DATADIR=${dataDir}
@@ -157,10 +176,10 @@ process CheckData {
         log_message "The data source is set to: ${params.dataSource}"
 
         # Check for FASTQ files
-        FASTQ_COUNT=\$(find \$DATADIR -name ${read_pattern} | wc -l)
+        FASTQ_COUNT=\$(find \$DATADIR ${read_pattern} | wc -l)
         if [ \$FASTQ_COUNT -eq 0 ]; then
             log_message "No FASTQ files found in data directory!"
-            log_message "Expected pattern: ${read_pattern}"
+            log_message "Expected pattern: ${params.readPattern}"
             log_message "DATA FILES CHECK:      FAIL"
             STATUS="FAIL"
         else
@@ -198,7 +217,7 @@ process CheckRGTagsFile {
     script:
     rgTagsFile = params.rgTagsPath
     dataDir = params.dir.data
-    readPattern = params.readPattern.replace('{','[').replace('}',']')
+    readPattern = findNameExpr(params.readPattern)
     // A sample ID is the part of a FASTQ name that precedes the mate token. Take that
     // token from readPattern rather than assuming _R1/_R2: step 2 keys every sample off
     // Channel.fromFilePairs, which derives the prefix from the glob and accepts any
@@ -349,7 +368,7 @@ process CheckRGTagsFile {
                 log_message "RGTAGS SAMPLE MATCH CHECK: FAIL"
                 STATUS="FAIL"
             else
-                sample_ids=\$(find ${dataDir} -name "${readPattern}" | while read -r fq; do
+                sample_ids=\$(find ${dataDir} ${readPattern} | while read -r fq; do
                     base=\$(basename "\$fq")
                     ${stripMate}
                     echo "\$base"
