@@ -58,3 +58,9 @@ plugins-prod
 *.bak.*
 # MkDocs build output
 site/
+
+# Compiled Python. Regenerated on first use, and it is one machine's bytecode for one
+# interpreter version - bin/__pycache__ was tracked, and shipped inside the release
+# tarball, until 2.3.0.
+__pycache__/
+*.pyc

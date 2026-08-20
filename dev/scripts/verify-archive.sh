@@ -56,6 +56,14 @@ for f in docs .github mkdocs.yml .gitignore .gitattributes dev Project; do
     [ ! -e "$root/$f" ] || fail "should have been export-ignored: $f"
 done
 
+# Compiled Python must not ship: it is one machine's bytecode for one interpreter
+# version, and it is regenerated on first use anyway. bin/__pycache__ was tracked and
+# did ship until 2.3.0. Note the executable-bit loop below would not catch it - a
+# directory carries the execute bit, so __pycache__ passes that check.
+if find "$root" \( -name '__pycache__' -o -name '*.pyc' \) -print -quit | grep -q .; then
+    fail "compiled Python found in the archive"
+fi
+
 # The executable bit is the whole reason for git archive over tar.
 [ -x "$root/PoolSeqFlow" ] || fail "./PoolSeqFlow is not executable"
 for s in "$root"/bin/*; do
