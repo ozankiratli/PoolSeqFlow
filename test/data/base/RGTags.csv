@@ -1,0 +1,7 @@
+ID,SM,LB,DS,FO,PL,PU
+TestSample1,TestSample1,Lib1,Pop1_T1_Rep1,FASTQ,ILLUMINA,Unit1
+TestSample2,TestSample2,Lib1,Pop1_T2_Rep1,FASTQ,ILLUMINA,Unit1
+TestSample3,TestSample3,Lib1,Pop2_T1_Rep1,FASTQ,ILLUMINA,Unit1
+TestSample4,TestSample4,Lib1,Pop2_T2_Rep1,FASTQ,ILLUMINA,Unit1
+TestSample5,TestSample5,Lib1,Pop3_T1_Rep1,FASTQ,ILLUMINA,Unit1
+TestSample6,TestSample6,Lib1,Pop3_T2_Rep1,FASTQ,ILLUMINA,Unit1

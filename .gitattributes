@@ -18,3 +18,7 @@ mkdocs.yml          export-ignore
 # user nothing.
 dev/                export-ignore
 Project/            export-ignore
+
+# The test suite and its committed fixture data. Kept in the repository so every change can
+# be checked against a known dataset, kept out of releases because a user never runs it.
+test/               export-ignore

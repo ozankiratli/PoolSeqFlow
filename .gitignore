@@ -30,7 +30,6 @@ nextflow.eml
 nextflow.iml
 Vagrantfile
 resources/*
-test/*
 tools/*
 tests_other
 other
@@ -64,3 +63,16 @@ site/
 # tarball, until 2.3.0.
 __pycache__/
 *.pyc
+
+# The test suite is tracked, fixture data included. Everything above stays as it is: the
+# *.fa*/*.fq*/*.gff*/Data/ rules are what stop a real dataset being committed by accident,
+# and they still cover Project/. The fixture is small, synthetic and deliberately checked
+# in, so it is re-included here by explicit path rather than by weakening those rules.
+#
+# Both lines are needed. Git will not descend into a directory an earlier rule excluded, so
+# the directories have to be re-included before their contents can be.
+#
+# The suite is kept out of release downloads by `test/ export-ignore` in .gitattributes,
+# the same arrangement dev/ uses.
+!test/
+!test/**
