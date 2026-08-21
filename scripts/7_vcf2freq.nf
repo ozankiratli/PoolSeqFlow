@@ -31,11 +31,19 @@ process SortRefAltByFrequency {
     indel_vcf = "${indel_base}.vcf"
     target_indel_vcf = "${target_folder_vcf}/${indel_vcf}"
 
-    snp_freq_base = "${vcf.baseName}_snp_freq"
+    // The frequency-table names come from params.vcf.fileName, not from vcf.baseName. Every
+    // other name in this file accumulates suffixes as the VCF moves down the chain
+    // (Test -> _sort -> _fp -> _dq), but CalculateFrequencies strips them all back off before
+    // writing, so the tables are always Test_snp_freq.tsv / Test_indel_freq.tsv. Building
+    // these guards from vcf.baseName gave each process a different, suffixed name that no
+    // step ever writes - so on a rerun of a finished project the guards never matched, the
+    // vcftools passes ran again, and the split VCFs reappeared in Output/VCF after
+    // CalculateFrequencies had already consumed them.
+    snp_freq_base = "${params.vcf.fileName}_snp_freq"
     snp_freq_tsv = "${snp_freq_base}.tsv"
     target_snp_freq_tsv = "${target_folder_freq}/${snp_freq_tsv}"
 
-    indel_freq_base = "${vcf.baseName}_indel_freq"
+    indel_freq_base = "${params.vcf.fileName}_indel_freq"
     indel_freq_tsv = "${indel_freq_base}.tsv"
     target_indel_freq_tsv = "${target_folder_freq}/${indel_freq_tsv}"
 
@@ -124,11 +132,11 @@ process FilterPotentialFalsePositives {
     indel_vcf = "${indel_base}.vcf"
     target_indel_vcf = "${target_folder_vcf}/${indel_vcf}"
 
-    snp_freq_base = "${vcf.baseName}_snp_freq"
+    snp_freq_base = "${params.vcf.fileName}_snp_freq"
     snp_freq_tsv = "${snp_freq_base}.tsv"
     target_snp_freq_tsv = "${target_folder_freq}/${snp_freq_tsv}"
 
-    indel_freq_base = "${vcf.baseName}_indel_freq"
+    indel_freq_base = "${params.vcf.fileName}_indel_freq"
     indel_freq_tsv = "${indel_freq_base}.tsv"
     target_indel_freq_tsv = "${target_folder_freq}/${indel_freq_tsv}"
 
@@ -239,11 +247,11 @@ process DepthAndQualityFilter {
     indel_vcf = "${indel_base}.vcf"
     target_indel_vcf = "${target_folder_vcf}/${indel_vcf}"
 
-    snp_freq_base = "${vcf.baseName}_snp_freq"
+    snp_freq_base = "${params.vcf.fileName}_snp_freq"
     snp_freq_tsv = "${snp_freq_base}.tsv"
     target_snp_freq_tsv = "${target_folder_freq}/${snp_freq_tsv}"
 
-    indel_freq_base = "${vcf.baseName}_indel_freq"
+    indel_freq_base = "${params.vcf.fileName}_indel_freq"
     indel_freq_tsv = "${indel_freq_base}.tsv"
     target_indel_freq_tsv = "${target_folder_freq}/${indel_freq_tsv}"
 
@@ -325,11 +333,11 @@ process SplitSNPsAndINDELs {
     indel_recode_vcf = "${indel_base}.recode.vcf"
     target_indel_vcf = "${target_folder_vcf}/${indel_vcf}"
     
-    snp_freq_base = "${vcf.baseName}_snp_freq"
+    snp_freq_base = "${params.vcf.fileName}_snp_freq"
     snp_freq_tsv = "${snp_freq_base}.tsv"
     target_snp_freq_tsv = "${target_folder_freq}/${snp_freq_tsv}"
 
-    indel_freq_base = "${vcf.baseName}_indel_freq"
+    indel_freq_base = "${params.vcf.fileName}_indel_freq"
     indel_freq_tsv = "${indel_freq_base}.tsv"
     target_indel_freq_tsv = "${target_folder_freq}/${indel_freq_tsv}"
 
@@ -384,7 +392,7 @@ process SplitSNPsAndINDELs {
             --recode --recode-INFO-all \
             --out ${indel_base}
 
-            echo "SPLIT SNPS AND INDELS ${vcf}: Renaming ${snp_recode_vcf} as ${snp_vcf} and moving to ${target_folder_vcf}"
+            echo "SPLIT SNPS AND INDELS ${vcf}: Renaming ${indel_recode_vcf} as ${indel_vcf} and moving to ${target_folder_vcf}"
             atomic_mv.sh ${indel_recode_vcf} ${target_indel_vcf}
             echo "SPLIT SNPS AND INDELS ${vcf}: Creating symbolic link..."
             ln -s ${target_indel_vcf} .
