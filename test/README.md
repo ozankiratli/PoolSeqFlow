@@ -1,0 +1,103 @@
+# PoolSeqFlow test suite
+
+```
+test/run_tests.sh                 everything (about two minutes)
+test/run_tests.sh --fast          skip the suites that run the pipeline (seconds)
+test/run_tests.sh --suite static  run suites whose name contains "static"
+test/run_tests.sh --list          list the suites
+test/run_tests.sh --keep          leave the working directories behind for inspection
+```
+
+Run it after finishing a stage. Exit status is 0 only when every case that ran passed;
+skips do not fail the run, so a machine without the conda environment can still check
+everything that does not need it.
+
+The suite is kept out of release downloads by `test/ export-ignore` in `.gitattributes`,
+the same arrangement `dev/` uses.
+
+## Layout
+
+| Path | What it is |
+|---|---|
+| `run_tests.sh` | Driver: discovers suites, runs their `test_*` functions, reports |
+| `lib/harness.sh` | Assertions and result accounting |
+| `lib/sandbox.sh` | Throwaway project directories, and the stub conda |
+| `tools/make_fixture.py` | Generates the fixture. A development tool — its output is committed |
+| `data/base/` | The committed fixture: 6 samples, 20 kb genome, 3 genes, ~80x |
+| `suites/00_static.sh` | Syntax, release packaging, version consistency. No data needed |
+| `suites/20_launcher.sh` | `./PoolSeqFlow` environment handling, against a stub conda |
+| `suites/30_pipeline.sh` | End-to-end runs against the fixture. The slow one |
+
+## Two rules the suite is built around
+
+**Nothing may touch a real project.** `guard_path` in `lib/sandbox.sh` refuses any path
+that is not inside the suite's own temporary directory, and refuses anything inside the
+repository. The pipeline deletes and overwrites whatever `mainDir`/`projectDir` point at,
+and a real project holds sequencing data that took days to produce.
+
+**Nothing may touch a real conda environment.** Launcher tests run against a fake `conda`
+that answers from a canned environment list and logs what it was asked to do. A test suite
+that could delete an operator's 1 GB install is not worth having.
+
+## Adding a case
+
+Add a `test_*` function to the relevant suite. The name becomes the label with underscores
+turned into spaces, so name it as the claim being made:
+
+```bash
+test_rerunning_a_finished_project_changes_nothing() {
+    needs_run || return
+    assert_eq "$before" "$after" "Output/VCF should be unchanged by a rerun"
+}
+```
+
+Assertions record a failure and let the case continue, so one broken case reports every
+problem it has instead of only the first: `assert_eq`, `assert_contains`,
+`assert_not_contains`, `assert_status`, `assert_file`, `assert_no_file`, `assert_count`,
+plus `fail_case` and `skip_case`.
+
+Cases that need the pipeline start with `needs_run || return`, which skips them when there
+is no conda environment or `--fast` was given.
+
+## The fixture, and what it can and cannot tell you
+
+`data/base/` is committed rather than generated at test time. Generating it per run would
+make the reference outputs depend on the Python version's RNG, so a baseline recorded on
+one machine would not reproduce on another. Regenerate deliberately:
+
+```bash
+python3 test/tools/make_fixture.py test/data/base
+```
+
+`planted.tsv` records **what went in**. It is not an answer key, and asserting output
+values against it directly does not work — trimming, the FastQC-driven clip, the
+proper-pair filter and the caller all sit in between. An earlier version of the fixture
+tried to be exactly predictable by giving every fragment the same length; that left bwa
+with a zero-variance insert size distribution, so every indel-bearing pair was flagged
+improper and discarded, and six planted deletions produced zero indel calls.
+
+What the plant does support is the assertion in
+`test_sites_planted_absent_stay_absent`: an allele planted at 0.0 in a sample has no read
+carrying it, and nothing downstream can invent one. Intermediate frequencies are
+deliberately never asserted against the plant.
+
+Two details worth knowing when writing assertions against the frequency tables:
+
+- `MajorAlleleToRef.py` re-polarises every site to the cohort major allele, so a planted
+  ALT routinely becomes the REF. Match rows on the allele **base**, never on "the row where
+  REF differs from ALLELE".
+- Sites where no sample varies are absent by design — fixed-for-the-same-allele everywhere
+  is dropped by the false-positive filter, and never-varying sites are never called. Both
+  are symmetric and intended; see the fixed-site matrix in the project notes.
+
+## Known gaps
+
+- No unit coverage of the `bin/` helpers in isolation (`atomic_mv.sh`, `config_migrate.sh`,
+  `depth2freq.awk`, `MajorAlleleToRef.py`). They are exercised end to end only.
+- No fault injection: the failure paths hardened during the audit — a mid-pipe tool death,
+  an interrupted decompress, a failed database copy — have no cases.
+- No case for `filterFalsePositives.sh`'s cross-sample threshold. With six samples
+  `MINSAMPLES` is 1.2, so a single qualifying sample is enough and the threshold never
+  binds; exercising it needs a larger fixture.
+- The `-m` parsing in `ClipReads` is only covered end to end. Finer cases would want that
+  logic moved into a `bin/` helper where it can be called directly.

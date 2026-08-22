@@ -76,3 +76,9 @@ __pycache__/
 # the same arrangement dev/ uses.
 !test/
 !test/**
+
+# ...but not compiled Python underneath it. The re-inclusion above is broad enough to
+# override the __pycache__ rule further up, which would put bytecode back under version
+# control - the thing untracking bin/__pycache__ was meant to end.
+test/**/__pycache__/
+test/**/*.pyc
