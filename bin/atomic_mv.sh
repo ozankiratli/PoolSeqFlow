@@ -6,7 +6,7 @@
 # Usage: atomic_mv.sh <source-file> <destination-file>
 #        atomic_mv.sh <source-file> <destination-directory>/     <- note the trailing slash
 #
-# The work directory and projectDir are normally on different filesystems, so `mv` is a
+# The work directory and storageDir are normally on different filesystems, so `mv` is a
 # copy followed by an unlink rather than a rename(). A job killed mid-copy therefore
 # leaves a truncated file at the destination - and the pipeline's skip logic only asks
 # whether the file exists, so the next run treats that fragment as a completed step.

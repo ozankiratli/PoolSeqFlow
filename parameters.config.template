@@ -11,7 +11,10 @@ params {
     threads         =  8                 // cores per task
     memory          = '24 GB'            // memory ceiling per task
     mainDir         = "/path/to/working/directory"   // where the pipeline runs (e.g. node scratch)
-    projectDir      = "/path/to/permanent/storage"   // where outputs are kept (may be another filesystem)
+    // Called storageDir, not projectDir: Nextflow defines `projectDir` itself, as the
+    // directory the pipeline script lives in, and a params entry of that name shadows it.
+    // Renamed from projectDir - `./PoolSeqFlow migrate_config` carries the old value over.
+    storageDir      = "/path/to/permanent/storage"   // where outputs are kept (may be another filesystem)
     dataSource      = 'Data'
     readPattern     = "*_R{1,2}.fq.gz"
     referenceFile   = 'reference.fasta.gz'
@@ -22,9 +25,9 @@ params {
     gffFile         = 'reference.gff.gz'
 
     referenceFa     = "${params.referenceFile.replace('.gz', '')}"
-    referencePath   = "${params.projectDir}/${params.referenceFile}"
-    gffPath         = "${params.projectDir}/${params.gffFile}"
-    rgTagsPath      = "${params.projectDir}/${params.rgTagsFile}"
+    referencePath   = "${params.storageDir}/${params.referenceFile}"
+    gffPath         = "${params.storageDir}/${params.gffFile}"
+    rgTagsPath      = "${params.storageDir}/${params.rgTagsFile}"
 
     // Core allocation - all derived from `threads` above. Do not set the per-tool
     // thread counts by hand; change `threads` and everything follows.
@@ -150,12 +153,12 @@ params {
     
     // directories
     dir {
-        data            = "${params.projectDir}/${params.dataSource}"
-        outputs         = "${params.projectDir}/Output"
-        references      = "${params.projectDir}/Reference"
+        data            = "${params.storageDir}/${params.dataSource}"
+        outputs         = "${params.storageDir}/Output"
+        references      = "${params.storageDir}/Reference"
         scripts         = "${params.mainDir}/scripts"
         bin             = "${params.mainDir}/bin"
-        logs            = "${params.projectDir}/Logs"
+        logs            = "${params.storageDir}/Logs"
         snpEff          = "${params.dir.references}/snpEff"
 
         output {

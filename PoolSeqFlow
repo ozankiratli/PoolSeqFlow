@@ -182,7 +182,7 @@ case $COMMAND in
         ;;
     run|resume)
         # PoolSeqFlow resumes through its own filesystem checks: every step looks for
-        # its outputs in projectDir and skips itself if they are already there. Nextflow's
+        # its outputs in storageDir and skips itself if they are already there. Nextflow's
         # -resume is not used - it depends on the work/ task directories, which
         # `cleanup = true` deletes on completion. Use `reset` to force a full re-run.
         if [ "$COMMAND" = "resume" ]; then
@@ -238,11 +238,11 @@ case $COMMAND in
     reset)
         require_env
         WORKDIR=$(nf_config_value workDir)
-        STORAGE=$(nf_config_value params.projectDir)
+        STORAGE=$(nf_config_value params.storageDir)
         DATADIR=$(nf_config_value params.dir.data)
         conda deactivate
         if [ -z "$STORAGE" ]; then
-            echo "ERROR: could not resolve params.projectDir - is parameters.config present?" >&2
+            echo "ERROR: could not resolve params.storageDir - is parameters.config present?" >&2
             exit 1
         fi
         echo ""
@@ -277,7 +277,7 @@ case $COMMAND in
         #
         # `$STORAGE/PoolSeqFlow_*` used to be removed here too. It was dropped: the
         # PoolSeqFlow_pipeline_{dag,trace,timeline,report} files have gone to
-        # ${params.dir.output.reports} in every release since 1.0.0, never to projectDir
+        # ${params.dir.output.reports} in every release since 1.0.0, never to storageDir
         # itself, so the glob never matched anything this pipeline created - it could only
         # ever have deleted a user's own file or directory that happened to start with
         # "PoolSeqFlow_", undisclosed and with rm -rf.

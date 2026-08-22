@@ -17,7 +17,7 @@ def flattenParams(Map m, String prefix, Map out) {
 // or resource parameters here.
 def analysisParams() {
     def skipKey = [
-        'mainDir', 'projectDir', 'dataSource',
+        'mainDir', 'storageDir', 'dataSource',
         'referencePath', 'gffPath', 'rgTagsPath', 'referenceFa', 'reference', 'gff', 'reads',
         'threads', 'memory'
     ] as Set
@@ -240,7 +240,7 @@ process CheckRGTagsFile {
     // Strip the exact text the pattern says follows the sample name, one alternative at
     // a time. Literal, so it holds for non-numeric mates (_F/_R) too.
     stripMate = mateAlts.collect { alt -> 'base="${base%' + matePrefix + alt + mateTail + '}"' }.join('; ')
-    storedRg = "${params.projectDir}/.poolseqflow_rgtags"
+    storedRg = "${params.storageDir}/.poolseqflow_rgtags"
     readyDir = "${params.dir.output.ready}"
     vcfDir = "${params.dir.output.vcf}"
     freqDir = "${params.dir.output.freq}"
@@ -637,9 +637,9 @@ process CheckRunParameters {
 
     script:
     manifest    = analysisParams()
-    stored      = "${params.projectDir}/.poolseqflow_params"
+    stored      = "${params.storageDir}/.poolseqflow_params"
     readable    = "${params.dir.outputs}/run_parameters.txt"
-    versions    = "${params.projectDir}/.poolseqflow_versions"
+    versions    = "${params.storageDir}/.poolseqflow_versions"
     release     = workflow.manifest.version ?: 'unknown'
     dir_log     = "${params.dir.logs}/0_verify_environment/s7_CheckRunParameters"
     """

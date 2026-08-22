@@ -6,7 +6,7 @@
 # pipeline at a real project directory - guard_path below refuses both.
 
 # Refuse any path that is not inside the suite's own temporary area. The pipeline deletes
-# and overwrites whatever mainDir/projectDir point at, and a real project holds sequencing
+# and overwrites whatever mainDir/storageDir point at, and a real project holds sequencing
 # data that took days to produce, so this is checked rather than assumed.
 guard_path() {
     local path="$1" resolved
@@ -46,7 +46,7 @@ write_sandbox_config() {
     local sb="$1"; shift
     local -a seds=(
         -e "s|^    mainDir .*|    mainDir         = \"$sb\"|"
-        -e "s|^    projectDir .*|    projectDir      = \"$sb/proj\"|"
+        -e "s|^    storageDir .*|    storageDir      = \"$sb/proj\"|"
         -e "s|^    threads .*|    threads         = 4|"
         -e "s|^    memory .*|    memory          = '6 GB'|"
     )
@@ -55,6 +55,25 @@ write_sandbox_config() {
         seds+=(-e "$expr")
     done
     sed "${seds[@]}" "$REPO_ROOT/parameters.config.template" > "$sb/parameters.config"
+
+    # Checked rather than assumed. These substitutions are keyed on parameter names, and a
+    # rename in the template would silently stop them matching - leaving the sandbox config
+    # pointing at the template's own placeholder paths. guard_path cannot catch that,
+    # because the bad path never passes through it.
+    local dir
+    for dir in mainDir storageDir; do
+        grep -q "^    $dir  *= \"$sb" "$sb/parameters.config" || {
+            echo "test harness: $dir was not redirected into the sandbox." >&2
+            echo "  The template parameter has probably been renamed; update" >&2
+            echo "  write_sandbox_config in test/lib/sandbox.sh to match." >&2
+            exit 1
+        }
+    done
+    grep -q '/path/to/' "$sb/parameters.config" && {
+        echo "test harness: a placeholder path survived into $sb/parameters.config" >&2
+        exit 1
+    }
+    return 0
     # The suite runs tools from the conda environment already on PATH rather than letting
     # Nextflow build one per process, which would dominate the runtime.
     echo "conda.enabled = false" >> "$sb/parameters.config"

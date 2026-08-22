@@ -32,7 +32,7 @@ the same arrangement `dev/` uses.
 
 **Nothing may touch a real project.** `guard_path` in `lib/sandbox.sh` refuses any path
 that is not inside the suite's own temporary directory, and refuses anything inside the
-repository. The pipeline deletes and overwrites whatever `mainDir`/`projectDir` point at,
+repository. The pipeline deletes and overwrites whatever `mainDir`/`storageDir` point at,
 and a real project holds sequencing data that took days to produce.
 
 **Nothing may touch a real conda environment.** Launcher tests run against a fake `conda`

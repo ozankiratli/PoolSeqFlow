@@ -82,6 +82,7 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
     function renamed(k) {
         if (k == "vcffilter.minDP")   return "vcftools.minDP"
         if (k == "vcffilter.minQUAL") return "vcftools.minQUAL"
+        if (k == "storageDir")        return "projectDir"
         return ""
     }
 
