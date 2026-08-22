@@ -15,7 +15,10 @@
 #  clean          - cleans the Nextflow work directory
 #  reset          - cleans the Nextflow work directory and deletes all output files. (Use with caution!)
 #  cite           - prints how to cite this copy, and which DOI to use
-#  uninstall      - removes the conda environment
+#  uninstall      - removes this version's conda environment
+#
+# The conda environment is named after the release (PoolSeqFlow-<version>), so each version
+# installs and runs against its own pinned tool set.
 
 set -e
 eval "$(conda shell.bash hook)"
@@ -39,7 +42,65 @@ usage() {
 # so an environment created underneath it matches. Compare the name column only, and
 # compare it whole (-x) and literally (-F) so a name containing '.' or '+' still works.
 env_exists() {
-    conda env list | awk '{print $1}' | grep -qxF "$ENV_NAME"
+    conda env list | awk '{print $1}' | grep -qxF "$1"
+}
+
+# Every PoolSeqFlow environment on this machine: the versioned ones and the single
+# unversioned name older releases used. `|| true` because grep exits 1 when nothing
+# matches, and this script runs under `set -e`.
+poolseqflow_envs() {
+    conda env list | awk '{print $1}' | grep -E '^PoolSeqFlow(-.+)?$' | sort || true
+}
+
+# Every PoolSeqFlow environment except this version's own and the legacy unversioned one.
+other_version_envs() {
+    poolseqflow_envs | grep -vxF "$ENV_NAME" | grep -vxF "$LEGACY_ENV" || true
+}
+
+# Activate this version's environment, or explain what to do about its absence.
+#
+# This deliberately never falls back to another version's environment. The pinned tool
+# versions are part of what produced a result, so running this code against a different
+# release's tools would leave `.poolseqflow_versions` recording a version that did not
+# actually produce the outputs.
+require_env() {
+    if env_exists "$ENV_NAME"; then
+        conda activate "$ENV_NAME"
+        return 0
+    fi
+
+    echo "ERROR: conda environment '$ENV_NAME' not found." >&2
+    echo "" >&2
+    if env_exists "$LEGACY_ENV"; then
+        echo "An environment called '$LEGACY_ENV' does exist. That is an install from a" >&2
+        echo "release that kept every version in one environment. Environments are named" >&2
+        echo "after the version now, so this copy does not use it." >&2
+        echo "" >&2
+    fi
+    OTHERS=$(other_version_envs)
+    if [ -n "$OTHERS" ]; then
+        echo "Environments for other versions are installed:" >&2
+        echo "$OTHERS" | sed 's/^/    /' >&2
+        echo "" >&2
+    fi
+    echo "Install this version's environment with:" >&2
+    echo "    ./$(basename "$0") install" >&2
+    exit 1
+}
+
+# Report the other PoolSeqFlow environments present, if any. Each is roughly 1.1 GB, so an
+# operator who has upgraded a few times should be told rather than discover it from a full
+# disk.
+report_other_envs() {
+    OTHERS=$(poolseqflow_envs | grep -vxF "$ENV_NAME" || true)
+    [ -n "$OTHERS" ] || return 0
+    echo "Other PoolSeqFlow environments on this machine:"
+    echo "$OTHERS" | sed 's/^/    /'
+    echo ""
+    echo "Each belongs to a different version and takes roughly 1.1 GB. They are never"
+    echo "used by this copy. Remove one you no longer need with:"
+    echo "    conda env remove -n <name>"
+    echo ""
 }
 
 # Resolve a setting through Nextflow rather than parsing parameters.config by hand -
@@ -54,19 +115,37 @@ if [ "$#" -ne 1 ]; then
 fi
 
 COMMAND=$1
-ENV_NAME="PoolSeqFlow"   # Change this to match your conda environment name
+
+# The environment is named after the release it belongs to, and the name is derived from
+# VERSION above so a version bump carries it automatically.
+#
+# Earlier releases all shared one environment called "PoolSeqFlow". That made upgrading
+# quietly wrong: `install` found an environment of that name already present, did nothing,
+# and the new release then ran against the previous release's pinned tools while
+# `.poolseqflow_versions` recorded the new one. A versioned name makes the tool set behind
+# a result identifiable, at the cost of about 1.1 GB per version kept installed.
+ENV_NAME="PoolSeqFlow-${VERSION}"
+
+# What an install from before the change above is called. Detected so the error messages
+# can say so; never activated.
+LEGACY_ENV="PoolSeqFlow"
+
 ENV_FILE="install/environment.yml"  # Make sure this file exists in the project root
 
 case $COMMAND in
     install)
-        echo "Installing conda environment..."
-        if env_exists; then
+        echo "Installing conda environment '$ENV_NAME'..."
+        if env_exists "$ENV_NAME"; then
             echo "Environment '$ENV_NAME' already exists."
         else
-            conda env create -f "$ENV_FILE"
+            # -n overrides the `name:` key inside environment.yml. Without it conda takes
+            # the name from that key and every release lands in the same environment again,
+            # which is the behaviour the versioned name exists to end.
+            conda env create -n "$ENV_NAME" -f "$ENV_FILE"
         fi
         echo "Installation complete."
         echo
+        report_other_envs
         # An environment that was created but is missing a tool is not an install.
         # Verify before reporting success: a tool that is absent here would
         # otherwise surface partway through a run, hours in. `set -e` means a
@@ -76,11 +155,7 @@ case $COMMAND in
         ;;
 
     check)
-        if ! env_exists; then
-            echo "Environment '$ENV_NAME' does not exist. Run './$(basename "$0") install' first." >&2
-            exit 1
-        fi
-        conda activate "$ENV_NAME"
+        require_env
         bash install/check_install.sh
         ;;
     run|resume)
@@ -92,7 +167,7 @@ case $COMMAND in
             echo "Note: 'resume' is deprecated - 'run' already resumes automatically."
         fi
         echo "Running pipeline..."
-        conda activate "$ENV_NAME"
+        require_env
         nextflow run poolseqflow.nf
         wait
         conda deactivate
@@ -123,7 +198,7 @@ case $COMMAND in
         ;;
     clean)
         echo "Cleaning Nextflow work directory..."
-        conda activate "$ENV_NAME"
+        require_env
         WORKDIR=$(nf_config_value workDir)
         nextflow clean -f || true
         wait
@@ -139,7 +214,7 @@ case $COMMAND in
         echo "Cleaned."
         ;;
     reset)
-        conda activate "$ENV_NAME"
+        require_env
         WORKDIR=$(nf_config_value workDir)
         STORAGE=$(nf_config_value params.projectDir)
         DATADIR=$(nf_config_value params.dir.data)
@@ -242,7 +317,22 @@ a version DOI when reporting results.
 EOF
         ;;
     uninstall)
-        echo "Uninstalling conda environment..."
+        # Checked rather than attempted: `conda env remove` on an absent environment exits
+        # non-zero, and under `set -e` that surfaced as a raw conda error with no indication
+        # of which environments do exist.
+        if ! env_exists "$ENV_NAME"; then
+            echo "Environment '$ENV_NAME' is not installed." >&2
+            INSTALLED=$(poolseqflow_envs)
+            if [ -n "$INSTALLED" ]; then
+                echo "" >&2
+                echo "PoolSeqFlow environments that are installed:" >&2
+                echo "$INSTALLED" | sed 's/^/    /' >&2
+                echo "" >&2
+                echo "Remove one with: conda env remove -n <name>" >&2
+            fi
+            exit 1
+        fi
+        echo "Uninstalling conda environment '$ENV_NAME'..."
         conda deactivate
         conda env remove -n "$ENV_NAME"
         ;;
