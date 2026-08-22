@@ -5,7 +5,7 @@
 # email  : ozankiratli@protonmail.com
 #
 # Wrapper script for PoolSeqFlow
-# Usage: ./PoolSeqFlow {install|check|run|migrate_config|clean|reset|version|cite|uninstall}
+# Usage: ./PoolSeqFlow {install|check|run|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}
 #  install        - creates the conda environment using environment.yml, then verifies it
 #  check          - verifies the installation: every tool resolves, helpers are
 #                   executable, and parameters.config parses
@@ -14,8 +14,11 @@
 #  migrate_config - carries an older parameters.config onto the current template
 #  clean          - cleans the Nextflow work directory
 #  reset          - cleans the Nextflow work directory and deletes all output files. (Use with caution!)
+#  version        - prints the version of this copy
 #  cite           - prints how to cite this copy, and which DOI to use
+#  list           - lists the PoolSeqFlow conda environments installed on this machine
 #  uninstall      - removes this version's conda environment
+#  uninstall_all  - removes every PoolSeqFlow conda environment, after confirmation
 #
 # The conda environment is named after the release (PoolSeqFlow-<version>), so each version
 # installs and runs against its own pinned tool set.
@@ -32,7 +35,7 @@ VERSION="2.2.0"
 CONCEPT_DOI="10.5281/zenodo.19245611"
 
 usage() {
-    echo "Usage: $0 {install|check|run|migrate_config|clean|reset|version|cite|uninstall}"
+    echo "Usage: $0 {install|check|run|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}"
     exit 1
 }
 
@@ -88,18 +91,26 @@ require_env() {
     exit 1
 }
 
-# Report the other PoolSeqFlow environments present, if any. Each is roughly 1.1 GB, so an
-# operator who has upgraded a few times should be told rather than discover it from a full
-# disk.
+# Report the other PoolSeqFlow environments present, if any. An operator who has upgraded a
+# few times should be told they are accumulating rather than discover it from a full disk.
 report_other_envs() {
     OTHERS=$(poolseqflow_envs | grep -vxF "$ENV_NAME" || true)
     [ -n "$OTHERS" ] || return 0
     echo "Other PoolSeqFlow environments on this machine:"
-    echo "$OTHERS" | sed 's/^/    /'
+    # Annotated the same way `list` does. The legacy name matches poolseqflow_envs too, and
+    # calling it "a different version" would be wrong - it predates versioned names.
+    for env in $OTHERS; do
+        if [ "$env" = "$LEGACY_ENV" ]; then
+            printf '    %-24s unversioned - predates per-version environments\n' "$env"
+        else
+            printf '    %s\n' "$env"
+        fi
+    done
     echo ""
-    echo "Each belongs to a different version and takes roughly 1.1 GB. They are never"
-    echo "used by this copy. Remove one you no longer need with:"
-    echo "    conda env remove -n <name>"
+    echo "None of them is used by this copy. Keep the ones whose results you still need to"
+    echo "reproduce; remove the rest:"
+    printf '    %-32s %s\n' "conda env remove -n <name>" "one environment"
+    printf '    %-32s %s\n' "./$(basename "$0") uninstall_all" "every PoolSeqFlow environment"
     echo ""
 }
 
@@ -123,7 +134,14 @@ COMMAND=$1
 # quietly wrong: `install` found an environment of that name already present, did nothing,
 # and the new release then ran against the previous release's pinned tools while
 # `.poolseqflow_versions` recorded the new one. A versioned name makes the tool set behind
-# a result identifiable, at the cost of about 1.1 GB per version kept installed.
+# a result identifiable.
+#
+# The cost is smaller than `du` suggests but not negligible. Conda hardlinks most package
+# files from its shared cache, so environments overlap on disk. Measured on this
+# environment: 1000 MB total, of which 696 MB (90% of files) is hardlinked and shared, and
+# 304 MB (10% of files) is genuinely per-environment. So a second version costs roughly
+# 300 MB even where the packages match, plus the full size of anything whose version
+# differs. Counting files rather than bytes makes the sharing look better than it is.
 ENV_NAME="PoolSeqFlow-${VERSION}"
 
 # What an install from before the change above is called. Detected so the error messages
@@ -268,6 +286,34 @@ case $COMMAND in
               "$STORAGE"/.poolseqflow_versions
         echo "Reset complete."
         ;;
+    list)
+        INSTALLED=$(poolseqflow_envs)
+        if [ -z "$INSTALLED" ]; then
+            echo "No PoolSeqFlow conda environments are installed."
+            echo "Install this version's with:  ./$(basename "$0") install"
+            exit 0
+        fi
+        echo "PoolSeqFlow conda environments:"
+        for env in $INSTALLED; do
+            if [ "$env" = "$ENV_NAME" ]; then
+                printf '  * %-24s this copy (v%s)\n' "$env" "$VERSION"
+            elif [ "$env" = "$LEGACY_ENV" ]; then
+                printf '    %-24s unversioned - predates per-version environments\n' "$env"
+            else
+                printf '    %s\n' "$env"
+            fi
+        done
+        echo ""
+        if ! env_exists "$ENV_NAME"; then
+            echo "This copy is v$VERSION and runs only against '$ENV_NAME',"
+            echo "which is not installed. Install it with:"
+            echo "    ./$(basename "$0") install"
+            echo ""
+        fi
+        echo "Remove one environment:   conda env remove -n <name>"
+        echo "Remove all of them:       ./$(basename "$0") uninstall_all"
+        ;;
+
     version)
         echo "PoolSeqFlow"
         echo "v$VERSION"
@@ -335,6 +381,51 @@ EOF
         echo "Uninstalling conda environment '$ENV_NAME'..."
         conda deactivate
         conda env remove -n "$ENV_NAME"
+        ;;
+
+    uninstall_all)
+        # A separate subcommand rather than `uninstall all`, so the wrapper keeps taking
+        # exactly one argument - the contract parameters.config.template documents.
+        INSTALLED=$(poolseqflow_envs)
+        if [ -z "$INSTALLED" ]; then
+            echo "No PoolSeqFlow conda environments are installed. Nothing to do."
+            exit 0
+        fi
+        echo ""
+        echo "This removes every PoolSeqFlow conda environment on this machine:"
+        echo "$INSTALLED" | sed 's/^/    /'
+        echo ""
+        echo "Only the environments go. Your project data, outputs, logs and"
+        echo "parameters.config are untouched - none of them live in a conda environment."
+        echo "Reinstall this version afterwards with:"
+        echo "    ./$(basename "$0") install"
+        echo ""
+        echo "Removing an environment means results produced with that version can no"
+        echo "longer be reproduced without reinstalling it."
+        echo ""
+        printf 'Remove them? [y/N]: '
+        if ! read -r CONFIRM; then
+            echo ""
+            echo "Aborted - no confirmation received. Nothing was removed."
+            exit 1
+        fi
+        case "$CONFIRM" in
+            y|Y|yes|YES|Yes) ;;
+            *) echo "Aborted - nothing was removed."; exit 1 ;;
+        esac
+        # Whichever one is active has to be stepped out of before it can be removed. It may
+        # be that none is, so a failure here is not interesting.
+        conda deactivate 2>/dev/null || true
+        # A plain `for` rather than `... | while read`: a piped loop runs in a subshell, so
+        # a failure inside it would not stop the script the way `set -e` should. Environment
+        # names cannot contain whitespace - `conda env list` is column-separated and
+        # poolseqflow_envs takes the first field - so word splitting is safe here.
+        for env in $INSTALLED; do
+            echo "Removing $env..."
+            conda env remove -n "$env" -y
+        done
+        echo ""
+        echo "All PoolSeqFlow environments removed."
         ;;
     *)
         usage
