@@ -64,6 +64,10 @@ site/
 __pycache__/
 *.pyc
 
+# Release-preparation logs from dev/scripts/prep-version.sh. Records of one machine's
+# package solve on one day - useful while preparing a release, not history worth keeping.
+dev/logs/
+
 # The test suite is tracked, fixture data included. Everything above stays as it is: the
 # *.fa*/*.fq*/*.gff*/Data/ rules are what stop a real dataset being committed by accident,
 # and they still cover Project/. The fixture is small, synthetic and deliberately checked

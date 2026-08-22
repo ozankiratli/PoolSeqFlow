@@ -122,6 +122,27 @@ test_check_install_hint_uses_the_versioned_environment() {
         "the how-to-fix epilogue should name this version's environment exactly"
 }
 
+# A malformed version has to be refused before anything is cloned, updated or exported.
+# This runs no conda commands - the check is ahead of them.
+test_prep_version_rejects_a_malformed_version() {
+    local out status
+    for bad in "" "2.3" "v2.3.0" "2.3.0-rc1"; do
+        out=$(cd "$REPO_ROOT" && bash dev/scripts/prep-version.sh "$bad" 2>&1)
+        status=$?
+        assert_status 1 "$status" "'$bad' should be refused"
+        assert_contains "$out" "Usage:" "'$bad' should print usage"
+    done
+}
+
+# Release-prep logs are one machine's package solve on one day. They must not become
+# history, and the broad `!test/**` style re-inclusions elsewhere make that worth asserting.
+test_release_prep_logs_are_not_tracked() {
+    local ignored
+    ignored=$(cd "$REPO_ROOT" && git check-ignore dev/logs/example/summary.txt 2>/dev/null)
+    assert_contains "$ignored" "dev/logs" "dev/logs/ should be gitignored"
+    assert_eq "" "$(cd "$REPO_ROOT" && git ls-files dev/logs)" "no prep log should be tracked"
+}
+
 # The committed fixture must be reproducible from the generator, or the reference outputs
 # cannot be regenerated after a change to it.
 test_fixture_generator_is_deterministic() {
