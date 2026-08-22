@@ -89,6 +89,39 @@ test_changelog_sections_all_have_link_definitions() {
     done < <(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' "$REPO_ROOT/CHANGELOG.md")
 }
 
+# environment.yml shipped `prefix: /home/<maintainer>/...` inside the release tarball for
+# several versions. Nothing should carry an absolute home path into a user's download.
+test_environment_yml_carries_no_absolute_home_path() {
+    local hits
+    hits=$(grep -n "/home/\|/Users/" "$REPO_ROOT/install/environment.yml" || true)
+    assert_eq "" "$hits" "environment.yml should not contain an absolute home path"
+}
+
+# Without a name: key, `conda env create -f` refuses unless given -n. That is deliberate:
+# environments are named after the release, and a fixed name in the file is an invitation
+# to build an unversioned one that the launcher then declines to use.
+test_environment_yml_has_no_name_or_prefix_key() {
+    assert_eq "" "$(grep -c '^name:' "$REPO_ROOT/install/environment.yml" | grep -v '^0$')" \
+        "environment.yml should have no name: key"
+    assert_eq "" "$(grep -c '^prefix:' "$REPO_ROOT/install/environment.yml" | grep -v '^0$')" \
+        "environment.yml should have no prefix: key"
+}
+
+# The tool list a user is told to expect and the one that is pinned have to agree, and the
+# epilogue that tells them how to fix a broken install has to name the right environment.
+test_check_install_hint_uses_the_versioned_environment() {
+    local out version
+    version=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/PoolSeqFlow" | head -1)
+    # Run standalone, with no ENV_NAME exported, which is the case the fallback exists for.
+    out=$(cd "$REPO_ROOT" && env -u ENV_NAME bash install/check_install.sh 2>&1)
+    # Compared as a whole line. A substring check for "conda activate PoolSeqFlow" matches
+    # the versioned name too, so it can neither confirm nor deny anything useful here.
+    local activate_line
+    activate_line=$(printf '%s\n' "$out" | sed -n 's/^ *\(conda activate .*\)$/\1/p' | head -1)
+    assert_eq "conda activate PoolSeqFlow-$version" "$activate_line" \
+        "the how-to-fix epilogue should name this version's environment exactly"
+}
+
 # The committed fixture must be reproducible from the generator, or the reference outputs
 # cannot be regenerated after a change to it.
 test_fixture_generator_is_deterministic() {

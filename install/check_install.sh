@@ -24,6 +24,16 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
 
+# Which environment this copy expects. ./PoolSeqFlow exports it; derived from the same
+# source here so the epilogue still names the right one when this script is run directly,
+# and so the name can never be stale relative to the launcher. Under `set -u` an unset
+# variable would abort the run outright, which is the other reason this is not left to the
+# caller.
+if [ -z "${ENV_NAME:-}" ]; then
+    _version=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' PoolSeqFlow 2>/dev/null | head -1)
+    ENV_NAME="PoolSeqFlow${_version:+-$_version}"
+fi
+
 RED=''; GREEN=''; YELLOW=''; DIM=''; RESET=''
 if [ -t 1 ]; then
     RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'
@@ -181,5 +191,5 @@ echo "${RED}$missing of $checked checks failed.${RESET}"
 echo
 echo "If tools are missing, the environment is either not active or not built:"
 echo "  ./PoolSeqFlow install"
-echo "  conda activate PoolSeqFlow"
+echo "  conda activate $ENV_NAME"
 exit 1

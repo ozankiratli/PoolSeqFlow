@@ -148,6 +148,10 @@ ENV_NAME="PoolSeqFlow-${VERSION}"
 # can say so; never activated.
 LEGACY_ENV="PoolSeqFlow"
 
+# check_install.sh names the environment in its "how to fix this" epilogue. Exported rather
+# than hardcoded there, so the two can never disagree about which one this copy uses.
+export ENV_NAME
+
 ENV_FILE="install/environment.yml"  # Make sure this file exists in the project root
 
 case $COMMAND in
