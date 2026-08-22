@@ -235,7 +235,60 @@ process ClipReads {
         echo "CLIPPING READS ${pair_id}: usable cycles R1 \$Min1-\$Max1, R2 \$Min2-\$Max2"
         echo "CLIPPING READS ${pair_id}: 5' clip=\$Clip5, read length limit=\$readLengthLimit"
 
-        echo "CLIPPING READS ${pair_id}: Clipping reads..." 
+        # cutadapt applies -m (minimum length) AFTER -l (truncate to length), so a minimum
+        # above the read length limit computed just above discards every pair - and cutadapt
+        # still exits 0. That leaves empty clipped FASTQs which the existence-based skip
+        # checks would then treat as a finished step for good.
+        #
+        # The value is read out of cutadapt.options rather than taken from
+        # params.cutadapt.min_length, because that options line is user-edited and may carry
+        # a literal instead. No -m at all - the default - means nothing to check.
+        clip_min_length() {
+            set -- ${params.cutadapt.options}
+            while [ \$# -gt 0 ]; do
+                case "\$1" in
+                    -m|--minimum-length) printf '%s' "\${2-}"; return 0 ;;
+                    --minimum-length=*)  printf '%s' "\${1#--minimum-length=}"; return 0 ;;
+                    -m?*)                printf '%s' "\${1#-m}"; return 0 ;;
+                esac
+                shift
+            done
+        }
+
+        minLength=\$(clip_min_length)
+        if [ -n "\$minLength" ]; then
+            # The paired form is "R1:R2". cutadapt's default --pair-filter=any drops the
+            # pair when either mate is too short, so the larger of the two is what binds.
+            minR1=\${minLength%%:*}
+            minR2=\${minLength#*:}
+            if [ "\$minR2" = "\$minLength" ]; then minR2=\$minR1; fi
+
+            minValid=yes
+            for bound in "\$minR1" "\$minR2"; do
+                case "\$bound" in
+                    ''|*[!0-9]*) minValid=no ;;
+                esac
+            done
+
+            if [ "\$minValid" = no ]; then
+                # Deliberately a warning, not an error: this check exists to catch one
+                # specific trap, not to validate cutadapt's option grammar. An option string
+                # it cannot parse must not be able to block an otherwise valid run.
+                echo "CLIPPING READS ${pair_id}: WARNING: could not read a numeric minimum length from cutadapt.options; skipping the read length limit check" >&2
+            else
+                minBinding=\$minR1
+                if [ "\$minR2" -gt "\$minBinding" ]; then minBinding=\$minR2; fi
+                if [ "\$minBinding" -gt "\$readLengthLimit" ]; then
+                    echo "CLIPPING READS ${pair_id}: ERROR: these settings would discard every read." >&2
+                    echo "CLIPPING READS ${pair_id}: cutadapt.options sets a minimum length of \$minBinding, but the read length limit computed from this sample's FastQC report is \$readLengthLimit." >&2
+                    echo "CLIPPING READS ${pair_id}: cutadapt truncates to \$readLengthLimit first and only then drops reads shorter than \$minBinding, so nothing would survive." >&2
+                    echo "CLIPPING READS ${pair_id}: lower cutadapt.min_length to \$readLengthLimit or less, or comment the -m line in cutadapt.options back out." >&2
+                    exit 1
+                fi
+            fi
+        fi
+
+        echo "CLIPPING READS ${pair_id}: Clipping reads..."
         ${params.software.cutadapt} ${params.cutadapt.options} --cores ${task.cpus} -u \$Clip5 -U \$Clip5 -l \$readLengthLimit \
             -o ${pair_id}_R1_clipped.fq.gz -p ${pair_id}_R2_clipped.fq.gz ${trimmed_read1} ${trimmed_read2}
 

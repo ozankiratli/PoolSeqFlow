@@ -84,10 +84,14 @@ params {
     }
     
     cutadapt {
-        at_gc_error    = 0.025 
-        min_length     = 50
+        at_gc_error    = 0.025
+        min_length     = 50      // inert on its own - see the options lines below
         // --cores is supplied by ClipReads from task.cpus
         options        = ""
+        // To apply min_length, comment out the line above and uncomment the one below.
+        // ClipReads also passes -l, a read length limit it computes from the FastQC report,
+        // and cutadapt applies -m after -l - so a min_length above that computed limit
+        // discards every read and the step succeeds with empty output.
         // options     = "-m ${params.cutadapt.min_length}"   // discard reads shorter than min_length after clipping
     }
 
