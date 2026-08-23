@@ -156,7 +156,16 @@ process BuildSnpEffDb {
     script:
     gff = params.gffPath
     ref = params.referencePath
-    build_verify_path = "${params.dir.snpEff}/.build_complete"
+    // The marker lives inside the genome's own database directory, not at the top of the
+    // snpEff folder. One snpEff folder serves every reference a project has built, so a
+    // single top-level marker answered "has any database been built here?" when the
+    // question is "has THIS genome's database been built?". Building against a second
+    // reference found the marker, skipped the build, and inherited the first genome's
+    // database - and the failure did not surface until step 8, after alignment and
+    // calling, as "Genome download failed!" (snpEff falls through to -download when the
+    // config names a database it cannot find). Every index file in this step was already
+    // keyed by reference name; this was the one artifact that was not.
+    build_verify_path = "${params.dir.snpEff}/data/${params.snpEff.db}/.build_complete"
     dir_log = "${params.dir.logs}/1_build_dictionaries/s2_3_BuildSnpEffDb"
 
     """
@@ -184,8 +193,9 @@ process BuildSnpEffDb {
         fi
 
         echo "SNPEFF DB BUILD:    Creating snpEff config file..."
-        echo "${params.snpEff.db}.genome : ${params.snpEff.db}" > ${params.snpEff.config}
-        
+        GENOME_LINE="${params.snpEff.db}.genome : ${params.snpEff.db}"
+        printf '%s\\n' "\$GENOME_LINE" > ${params.snpEff.config}
+
         echo "SNPEFF DB BUILD:    Build database"
         # -c names the config explicitly. Without it snpEff only finds a config in the
         # working directory when it is called exactly 'snpEff.config', and otherwise
@@ -207,8 +217,21 @@ process BuildSnpEffDb {
             echo "SNPEFF DB BUILD:    Database creation successful!"
             echo "SNPEFF DB BUILD:    Copying database to ${params.dir.snpEff}"
             mkdir -p ${params.dir.snpEff} || return 1
+            # cp -r merges rather than nests when the destination already has a data/
+            # directory, so a second genome lands alongside the first instead of at
+            # data/data/ (verified).
             cp -r data ${params.dir.snpEff}/ || return 1
-            cp ${params.snpEff.config} ${params.dir.snpEff}/ || return 1
+            # Merge this genome's line into the shared config instead of replacing the
+            # file. The config sits next to the shared data/ directory and snpEff reads
+            # every entry in it, so it has to name every genome built here - a plain cp
+            # left it holding only the most recently built one, which made every earlier
+            # genome unannotatable even though its database was still on disk.
+            DEST_CONFIG="${params.dir.snpEff}/${params.snpEff.config}"
+            if [ ! -f "\$DEST_CONFIG" ]; then
+                cp ${params.snpEff.config} "\$DEST_CONFIG" || return 1
+            elif ! grep -qxF "\$GENOME_LINE" "\$DEST_CONFIG"; then
+                printf '%s\\n' "\$GENOME_LINE" >> "\$DEST_CONFIG" || return 1
+            fi
             return 0
         fi
     }
@@ -218,9 +241,20 @@ process BuildSnpEffDb {
     # First check existing database
     BUILD_COMPLETE=".build_complete"
     if [ -f ${build_verify_path} ]; then
-        echo "SNPEFF DB BUILD: Existing database found, skipping..."
+        echo "SNPEFF DB BUILD: Existing database found for ${params.snpEff.db}, skipping..."
         ln -s ${build_verify_path} .
     else
+        # A project built by an earlier release has its marker at the top of the snpEff
+        # folder rather than inside the genome's database directory, so the first run
+        # after upgrading rebuilds once. Deliberate: the old marker records that *a*
+        # database was built, not which genome it was for, so it cannot be adopted
+        # without guessing. The rebuild lands in the same place and merges its config
+        # line, and every run after it skips normally.
+        if [ -f "${params.dir.snpEff}/.build_complete" ]; then
+            echo "SNPEFF DB BUILD: Found a marker from a release that kept one marker for"
+            echo "SNPEFF DB BUILD: the whole snpEff folder. It does not say which genome it"
+            echo "SNPEFF DB BUILD: was built for, so ${params.snpEff.db} is being rebuilt once."
+        fi
         ( buildSnpEffDb && touch "\$BUILD_COMPLETE" ) || exit 1
         atomic_mv.sh \$BUILD_COMPLETE ${build_verify_path}
         ln -s ${build_verify_path} .

@@ -148,6 +148,87 @@ test_rerunning_a_finished_project_changes_nothing() {
     assert_count 1 "$reruns" "SplitSNPsAndINDELs should do its work once, not again on the rerun"
 }
 
+# Per-sample steps must run once per sample, and cohort steps exactly once.
+#
+# A status check cannot see this. Every singleton artifact here - the verify token, the
+# reference, both indexes, the snpEff marker - rides a value channel, which is what lets one
+# index broadcast against N samples. An operator inserted into such a path turns it into a
+# queue channel, and the run then still reports SUCCESS while aligning one sample instead of
+# six. The counts come from the Nextflow trace, so this holds for any rewiring.
+test_each_step_runs_once_per_sample() {
+    needs_run || return
+    local samples
+    samples=$(find "$PIPELINE_SB/proj/Data" -name '*_R1.fq.gz' | wc -l)
+    [ "$samples" -gt 1 ] || { skip_case "fixture has $samples samples; nothing to fan out"; return; }
+
+    local p
+    for p in TrimQcClip:TrimReads TrimQcClip:ClipReads AlignReads:Align \
+             SortCleanBams:SortCleanBam GenerateReports:AlignmentReport \
+             GenerateReports:CoverageReport; do
+        assert_count "$samples" "$(task_count "$PIPELINE_SB" "$p")" "$p should run once per sample"
+    done
+
+    # The cohort side of the boundary. VariantCall gathers every BAM through toSortedList,
+    # so more than one task here would mean samples were called separately.
+    for p in BuildDictionaries:UngzipReference BuildDictionaries:CreateBwaIndex \
+             BuildDictionaries:CreateSamtoolsFaiIndex VariantCalling:VariantCall \
+             VCF2Frequencies:SplitSNPsAndINDELs; do
+        assert_count 1 "$(task_count "$PIPELINE_SB" "$p")" "$p should run exactly once"
+    done
+
+    # SNPs and INDELs, from one .mix().
+    assert_count 2 "$(task_count "$PIPELINE_SB" VCF2Frequencies:CalculateFrequencies)" \
+        "CalculateFrequencies should run twice"
+}
+
+# One snpEff folder serves every reference a project has built, so the build marker has to
+# name the genome it belongs to. It used to be a single .build_complete at the top of that
+# folder, which answered "has anything been built here?" - so a second reference found it,
+# skipped its own build, and inherited the first genome's database. That did not surface
+# until step 8, as snpEff falling through to -download and dying with "Genome download
+# failed!" after alignment and calling had already run.
+#
+# Uses the step-1-only entry script: this is entirely a reference-handling question, and a
+# full run per genome would cost a minute each for nothing.
+test_a_second_reference_builds_its_own_snpeff_database() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status db
+    sb=$(make_pipeline_sandbox "twogenome")
+    # Same sequence and annotation under a second name - what differs is the database name
+    # snpEff derives from gffFile, which is exactly what the marker has to distinguish.
+    cp "$sb/proj/reference.fasta.gz" "$sb/proj/genomeB.fasta.gz"
+    cp "$sb/proj/reference.gff.gz"   "$sb/proj/genomeB.gff.gz"
+    : > "$sb/proj/.step0_token"
+    write_sandbox_config "$sb"
+
+    status=$(run_dictionaries_only "$sb")
+    assert_status 0 "$status" "the first genome's dictionaries should build"
+
+    write_sandbox_config "$sb" \
+        "s|^    referenceFile .*|    referenceFile   = 'genomeB.fasta.gz'|" \
+        "s|^    gffFile .*|    gffFile         = 'genomeB.gff.gz'|"
+    status=$(run_dictionaries_only "$sb")
+    assert_status 0 "$status" "the second genome's dictionaries should build"
+
+    db="$sb/proj/Reference/snpEff/data"
+    assert_file "$db/reference.gff/.build_complete"  "the first genome should keep its marker"
+    assert_file "$db/genomeB.gff/.build_complete"    "the second genome should get its own marker"
+    assert_file "$db/genomeB.gff/snpEffectPredictor.bin" \
+        "the second genome should have a real database, not the first genome's"
+
+    # snpEff reads every entry in the config, so it has to name both genomes. A plain
+    # overwrite left only the most recent one, which made the earlier genome unannotatable
+    # while its database sat on disk intact.
+    local cfg; cfg=$(cat "$sb/proj/Reference/snpEff/snpEff.config")
+    assert_contains "$cfg" "reference.gff.genome" "the config should still name the first genome"
+    assert_contains "$cfg" "genomeB.gff.genome"   "the config should also name the second genome"
+
+    # Both references' indexes coexist too - already true, and worth holding to.
+    assert_file "$sb/proj/Reference/reference.fasta.fai" "the first genome's fai should survive"
+    assert_file "$sb/proj/Reference/genomeB.fasta.fai"   "the second genome should get its own fai"
+}
+
 # cutadapt applies -m after -l, so a minimum length above the computed read length limit
 # discards every pair while still exiting 0. Without the guard that leaves empty clipped
 # FASTQs which the existence checks would treat as a finished step for good.

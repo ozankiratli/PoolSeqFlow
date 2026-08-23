@@ -83,14 +83,82 @@ write_sandbox_config() {
 # exit status. Any extra arguments are passed through to `nextflow run`.
 run_pipeline() {
     local sb="$1"; shift
+    _run_entry "$sb" poolseqflow.nf "$@"
+}
+
+# Run step 1 on its own, for tests about reference handling that would otherwise pay for a
+# full end-to-end run. Output and status behave as run_pipeline's do.
+#
+# `-entry` is unsupported under the strict parser, so running one workflow alone needs a
+# small include file. It is generated here rather than committed: the include path has to be
+# './scripts/...' to resolve where it runs, and a committed copy under test/lib/ carrying
+# that path cannot resolve from its own location, so `nextflow lint .` fails on it.
+#
+# BuildDictionaries' `verify` input is a pure ordering barrier - UngzipReference stages it
+# and never reads it (its only references are commented out), and BuildSnpEffDb never names
+# it in its script body at all - so a placeholder file stands in for step 0.
+run_dictionaries_only() {
+    local sb="$1"
+    cat > "$sb/dictionaries_only.nf" <<'ENTRY'
+nextflow.enable.dsl=2
+
+include { BuildDictionaries } from './scripts/1_build_dictionaries.nf'
+
+workflow {
+    BuildDictionaries(channel.value(file("${params.storageDir}/.step0_token")))
+}
+ENTRY
+    _run_entry "$sb" dictionaries_only.nf
+}
+
+# Run step 0 by itself, for tests about the environment and parameter guards. Same
+# generate-rather-than-commit reasoning as run_dictionaries_only.
+run_verify_only() {
+    local sb="$1"
+    cat > "$sb/verify_only.nf" <<'ENTRY'
+nextflow.enable.dsl=2
+
+include { VerifyEnvironment } from './scripts/0_verify_environment.nf'
+
+workflow {
+    VerifyEnvironment()
+}
+ENTRY
+    _run_entry "$sb" verify_only.nf
+}
+
+# Shared runner for the generated entry scripts above and for run_pipeline.
+_run_entry() {
+    local sb="$1" entry="$2"; shift 2
     (
         cd "$sb" || exit 1
         export JAVA_HOME="$TEST_CONDA_ENV" JAVA_CMD="$TEST_CONDA_ENV/bin/java"
         export PATH="$TEST_CONDA_ENV/bin:$PATH"
         export NXF_HOME="$sb/nxfhome" NXF_VER="${TEST_NXF_VER:-26.04.6}"
-        nextflow -q run poolseqflow.nf "$@" > run.out 2>&1
+        nextflow -q run "$entry" "$@" > run.out 2>&1
     )
     printf '%s' "$?"
+}
+
+# How many tasks a process ran, from the Nextflow trace. Takes the fully qualified name as
+# the trace records it (`AlignReads:Align`), because the short name is ambiguous.
+#
+# This is the guard against a whole class of refactoring bug that a status check cannot see.
+# Every singleton artifact in this pipeline rides a value channel, which is what lets one
+# reference index broadcast against N samples; inserting an operator into such a path can
+# turn it into a queue channel, at which point the run still succeeds but does the work
+# once instead of N times.
+task_count() {
+    local sb="$1" process="$2" trace
+    trace="$sb/proj/Output/Reports/PoolSeqFlow_pipeline_trace.txt"
+    [ -f "$trace" ] || { printf 'no-trace'; return; }
+    awk -F'\t' -v want="$process" '
+        NR > 1 {
+            split($4, a, " ")        # strip the "(tag)" suffix Nextflow appends
+            if (a[1] == want) n++
+        }
+        END { print n + 0 }
+    ' "$trace"
 }
 
 # A fake `conda` that answers from a canned environment list and records what it was asked

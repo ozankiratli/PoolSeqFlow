@@ -27,6 +27,7 @@ the same arrangement `dev/` uses.
 | `suites/00_static.sh` | Syntax, release packaging, version consistency. No data needed |
 | `suites/20_launcher.sh` | `./PoolSeqFlow` environment handling, against a stub conda |
 | `suites/30_pipeline.sh` | End-to-end runs against the fixture. The slow one |
+| `suites/40_guards.sh` | The step 0 change guards, via step-0-only runs |
 
 ## Two rules the suite is built around
 
@@ -58,6 +59,22 @@ plus `fail_case` and `skip_case`.
 
 Cases that need the pipeline start with `needs_run || return`, which skips them when there
 is no conda environment or `--fast` was given.
+
+Two helpers in `lib/sandbox.sh` are worth knowing about before writing a new case:
+
+`task_count <sandbox> <Workflow:Process>` reads the Nextflow trace and returns how many
+tasks that process ran. Use it whenever a change touches channel wiring. Every singleton
+artifact here — the verify token, the reference, both indexes, the snpEff marker — rides a
+value channel, which is what lets one index broadcast against N samples. An operator
+inserted into such a path turns it into a queue channel, and the run then still reports
+SUCCESS while doing the work once instead of N times. `test_each_step_runs_once_per_sample`
+is the standing guard; extend it rather than trusting an exit status.
+
+`run_dictionaries_only <sandbox>` and `run_verify_only <sandbox>` run step 1 and step 0 by
+themselves, for questions that would otherwise cost a full end-to-end run. `-entry` does not
+work under the strict parser, so each generates a small include file into the sandbox —
+generated rather than committed, because the include path has to be `./scripts/…` to resolve
+where it runs, and a committed copy carrying that path fails `nextflow lint .`.
 
 ## The fixture, and what it can and cannot tell you
 

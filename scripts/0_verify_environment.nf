@@ -16,8 +16,13 @@ def flattenParams(Map m, String prefix, Map out) {
 // as analysis-affecting until someone decides otherwise, which fails safe. Add new path
 // or resource parameters here.
 def analysisParams() {
+    // dataSource is deliberately NOT excluded. It names the subdirectory the reads are read
+    // from, so two different datasets under one storageDir are two different analyses - and
+    // while it was excluded, both passed this check and the second run reused the first
+    // dataset's trimmed reads, because step 2 keys its skip test on the sample id alone.
+    // Nothing recorded which data produced a set of outputs.
     def skipKey = [
-        'mainDir', 'storageDir', 'dataSource',
+        'mainDir', 'storageDir',
         'referencePath', 'gffPath', 'rgTagsPath', 'referenceFa', 'reference', 'gff', 'reads',
         'threads', 'memory'
     ] as Set
@@ -655,6 +660,7 @@ ${manifest}
 CURRENT_PARAMS
 
     STATUS="PASS"
+    ADOPTED=0
     if [ ! -f "${stored}" ]; then
         log_message "RUN PARAMETERS:        No previous run recorded - this is a fresh project"
         log_message "RUN PARAMETERS:        Recording \$(wc -l < current_params.txt) analysis parameters"
@@ -663,24 +669,126 @@ CURRENT_PARAMS
     elif diff -q "${stored}" current_params.txt > /dev/null 2>&1; then
         log_message "RUN PARAMETERS:        Unchanged since the outputs in ${params.dir.outputs} were produced"
     else
-        log_message "RUN PARAMETERS:        CHANGED since the existing outputs were produced:"
-        log_message ""
-        # report each parameter that differs, old -> new
-        while IFS= read -r line; do
-            case "\$line" in
-                '<'*) printf '  was  %s\\n' "\${line#< }" | tee -a \$REPORTFILE ;;
-                '>'*) printf '  now  %s\\n' "\${line#> }" | tee -a \$REPORTFILE ;;
-            esac
-        done < <(diff "${stored}" current_params.txt | grep -E '^[<>]')
-        log_message ""
-        log_message "RUN PARAMETERS:        Existing outputs were produced with different settings."
-        log_message "RUN PARAMETERS:        The pipeline skips completed steps by checking for output"
-        log_message "RUN PARAMETERS:        files, not by checking which parameters produced them, so"
-        log_message "RUN PARAMETERS:        continuing would mix old and new results."
-        log_message "RUN PARAMETERS:"
-        log_message "RUN PARAMETERS:        Either restore the previous values, or start a fresh run:"
-        log_message "RUN PARAMETERS:            ./PoolSeqFlow reset"
-        STATUS="FAIL"
+        # Three things can happen to a manifest and they do not mean the same thing:
+        #
+        #   CHANGED           a parameter that existed before now holds a different value.
+        #                     The user changed a setting, and continuing would mix results.
+        #   ADDED / REMOVED   the set of parameters itself differs. That is what a release
+        #                     does when it introduces or retires one - the outputs on disk
+        #                     were produced before the parameter existed, so there is no
+        #                     earlier value for it to conflict with.
+        #
+        # A plain `diff` cannot tell these apart, so every release that added a parameter
+        # failed every existing project and told it to run `reset` - which deletes the
+        # results. Whether an add or remove is a release event or the user editing their own
+        # config is settled by ${versions}: it records every release that has run here, and
+        # this block runs before the version line below is appended, so its last entry is
+        # still the release that produced the outputs on disk.
+        classify_manifest() {
+            awk '
+                FNR == NR {
+                    eq = index(\$0, "=")
+                    if (eq > 0) {
+                        k = substr(\$0, 1, eq - 1)
+                        old[k] = substr(\$0, eq + 1)
+                        order[++n] = k
+                    }
+                    next
+                }
+                {
+                    eq = index(\$0, "=")
+                    if (eq == 0) next
+                    k = substr(\$0, 1, eq - 1)
+                    v = substr(\$0, eq + 1)
+                    seen[k] = 1
+                    if (!(k in old))      { printf "ADDED\\t%s\\t\\t%s\\n", k, v; a++ }
+                    else if (old[k] != v) { printf "CHANGED\\t%s\\t%s\\t%s\\n", k, old[k], v; c++ }
+                }
+                END {
+                    for (i = 1; i <= n; i++)
+                        if (!(order[i] in seen)) {
+                            printf "REMOVED\\t%s\\t%s\\t\\n", order[i], old[order[i]]
+                            r++
+                        }
+                    printf "COUNTS\\t%d\\t%d\\t%d\\n", a + 0, c + 0, r + 0
+                }
+            ' "\$1" "\$2"
+        }
+
+        # Emitted once and read several times, so the classification cannot disagree with
+        # itself between the counts and the listings.
+        classify_manifest "${stored}" current_params.txt > param_diff.txt
+
+        N_ADDED=\$(awk -F'\\t' '\$1 == "COUNTS" { print \$2 }' param_diff.txt)
+        N_CHANGED=\$(awk -F'\\t' '\$1 == "COUNTS" { print \$3 }' param_diff.txt)
+        N_REMOVED=\$(awk -F'\\t' '\$1 == "COUNTS" { print \$4 }' param_diff.txt)
+
+        PREVIOUS_RELEASE=""
+        if [ -f "${versions}" ]; then
+            PREVIOUS_RELEASE=\$(tail -n 1 "${versions}" | cut -f1)
+        fi
+
+        list_set_changes() {
+            while IFS=\$'\\t' read -r kind key was now; do
+                case "\$kind" in
+                    ADDED)   printf '  added    %s = %s\\n' "\$key" "\$now" | tee -a \$REPORTFILE ;;
+                    REMOVED) printf '  removed  %s (was %s)\\n' "\$key" "\$was" | tee -a \$REPORTFILE ;;
+                esac
+            done < param_diff.txt
+        }
+
+        if [ "\${N_CHANGED:-0}" -gt 0 ]; then
+            log_message "RUN PARAMETERS:        CHANGED since the existing outputs were produced:"
+            log_message ""
+            while IFS=\$'\\t' read -r kind key was now; do
+                [ "\$kind" = "CHANGED" ] || continue
+                printf '  %s\\n      was  %s\\n      now  %s\\n' "\$key" "\$was" "\$now" | tee -a \$REPORTFILE
+            done < param_diff.txt
+            log_message ""
+            log_message "RUN PARAMETERS:        The pipeline skips completed steps by checking for output"
+            log_message "RUN PARAMETERS:        files, not by checking which parameters produced them, so"
+            log_message "RUN PARAMETERS:        continuing would mix old and new results."
+            log_message "RUN PARAMETERS:"
+            log_message "RUN PARAMETERS:        Either restore the previous values, or start a fresh run:"
+            log_message "RUN PARAMETERS:            ./PoolSeqFlow reset"
+            STATUS="FAIL"
+        fi
+
+        if [ "\${N_ADDED:-0}" -gt 0 ] || [ "\${N_REMOVED:-0}" -gt 0 ]; then
+            log_message ""
+            if [ -n "\$PREVIOUS_RELEASE" ] && [ "\$PREVIOUS_RELEASE" != "${release}" ]; then
+                log_message "RUN PARAMETERS:        The set of parameters changed between \$PREVIOUS_RELEASE,"
+                log_message "RUN PARAMETERS:        which produced the outputs here, and ${release}:"
+                log_message ""
+                list_set_changes
+                log_message ""
+                log_message "RUN PARAMETERS:        Recorded rather than treated as a change: a parameter that did"
+                log_message "RUN PARAMETERS:        not exist cannot have produced the outputs already on disk. This"
+                log_message "RUN PARAMETERS:        is the reasoning the pipeline version check below already uses."
+                log_message "RUN PARAMETERS:        Read the new values before relying on results that span two"
+                log_message "RUN PARAMETERS:        releases; they are listed in ${readable}."
+                ADOPTED=1
+            else
+                log_message "RUN PARAMETERS:        Parameters were added to or removed from parameters.config"
+                log_message "RUN PARAMETERS:        without a release change:"
+                log_message ""
+                list_set_changes
+                log_message ""
+                log_message "RUN PARAMETERS:        ${release} has run in this project before, so this is an edit to"
+                log_message "RUN PARAMETERS:        your own config rather than something a release introduced, and"
+                log_message "RUN PARAMETERS:        what it does to the existing outputs cannot be known. Restore"
+                log_message "RUN PARAMETERS:        the file, or start a fresh run:"
+                log_message "RUN PARAMETERS:            ./PoolSeqFlow reset"
+                STATUS="FAIL"
+            fi
+        fi
+
+        # Adopted only when nothing conflicted, so the notice appears on the upgrade run and
+        # not on every run after it. A failed check leaves ${stored} untouched, which is what
+        # keeps the failure reproducible instead of self-clearing.
+        if [ "\$STATUS" = "PASS" ] && [ "\$ADOPTED" = "1" ]; then
+            cp current_params.txt "${stored}"
+        fi
     fi
 
     # Which release produced these outputs. Recorded, never enforced: most releases do
