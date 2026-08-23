@@ -24,8 +24,14 @@ guards_ready() {
     return 0
 }
 
+# The published report, found via the config the case actually wrote rather than a fixed
+# path. Cases that repoint storageDir move the report with it, and reading the old location
+# would quietly return the previous run's report - which looks like a passing assertion.
 guard_report() {
-    cat "$GUARD_SB/proj/Output/Reports/0_verify_environment.txt" 2>/dev/null
+    local store
+    store=$(sed -n 's|^    storageDir *= *"\(.*\)"|\1|p' "$GUARD_SB/parameters.config" | head -1)
+    [ -n "$store" ] || { echo "test harness: could not read storageDir from the sandbox config" >&2; return 1; }
+    cat "$store/Output/Reports/0_verify_environment.txt" 2>/dev/null
 }
 
 # Rewrite the recorded release so the next run looks like an upgrade. The parameter check
@@ -114,6 +120,50 @@ test_the_release_notice_appears_once_but_a_failure_does_not_clear_itself() {
     assert_status 1 "$status" "the changed value should fail"
     status=$(run_verify_only "$GUARD_SB")
     assert_status 1 "$status" "and should still fail on the next run, not clear itself"
+}
+
+# mainDir and storageDir are two storage tiers. Outputs are written to the first and
+# promoted to the second as the steps that consume them finish, which cannot mean anything
+# if both name one directory.
+test_equal_main_and_storage_directories_fail() {
+    guards_ready || return
+    write_sandbox_config "$GUARD_SB" "s|^    storageDir .*|    storageDir      = \"$GUARD_SB\"|"
+    local status report
+    status=$(run_verify_only "$GUARD_SB")
+    report=$(guard_report)
+    assert_status 1 "$status" "one directory for both tiers should fail"
+    assert_contains "$report" "are the same directory" "should say what is wrong"
+    assert_contains "$report" "DIRECTORY CHECK:       STATUS=FAIL" "the stage should record a failure"
+}
+
+# The same directory has many spellings. A string comparison passes on every one of them,
+# which is why the check resolves both paths first.
+test_the_same_directory_spelled_differently_is_still_caught() {
+    guards_ready || return
+    local status
+    # '..' back out of the child directory lands on mainDir again.
+    write_sandbox_config "$GUARD_SB" "s|^    storageDir .*|    storageDir      = \"$GUARD_SB/proj/..\"|"
+    status=$(run_verify_only "$GUARD_SB")
+    assert_status 1 "$status" "a '..' spelling of mainDir should be caught"
+    assert_contains "$(guard_report)" "are the same directory" "should resolve before comparing"
+
+    # And through a symlink, where the two strings have nothing in common at all.
+    ln -sfn "$GUARD_SB" "$GUARD_SB/proj/tierlink"
+    write_sandbox_config "$GUARD_SB" "s|^    storageDir .*|    storageDir      = \"$GUARD_SB/proj/tierlink\"|"
+    status=$(run_verify_only "$GUARD_SB")
+    assert_status 1 "$status" "a symlink to mainDir should be caught"
+    assert_contains "$(guard_report)" "are the same directory" "should follow the symlink"
+    rm -f "$GUARD_SB/proj/tierlink"
+}
+
+# Two genuinely different directories are the normal case and must not be flagged - the
+# fixture nests storageDir inside mainDir, which is fine: containment is not the problem,
+# identity is.
+test_distinct_directories_pass_even_when_nested() {
+    guards_ready || return
+    local report; report=$(guard_report)
+    assert_contains "$report" "The two storage tiers are distinct" "nesting should not be flagged"
+    assert_contains "$report" "DIRECTORY CHECK:       STATUS=PASS" "the stage should pass"
 }
 
 # dataSource names the subdirectory the reads come from, so two datasets under one

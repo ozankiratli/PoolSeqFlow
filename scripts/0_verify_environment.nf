@@ -636,6 +636,69 @@ process CheckTrimParameters {
     """
 }
 
+// mainDir and storageDir are two tiers, not two names for one place: outputs are written to
+// the working volume and promoted to permanent storage once whatever consumes them has
+// succeeded. Pointing both at the same directory makes every promotion a no-op that moves a
+// file onto itself, and makes `clean` and `reset` - which treat the two roots differently -
+// impossible to reason about.
+//
+// Compared as RESOLVED paths. A string comparison passes happily on `/data/x` versus
+// `/data/x/`, versus `/data/y/../x`, versus a symlink to the same directory, and each of
+// those is the same directory with a different spelling.
+//
+// Containment is deliberately NOT rejected here. One root inside the other is harmless in
+// itself - the managed subdirectories still do not collide - and the check that actually
+// matters is that no two computed directories in the `dir` block resolve to the same path.
+// That belongs where the block is built, not here.
+process CheckDirectories {
+    output:
+    path 'verify_environment_stage8.txt', emit: report
+
+    script:
+    dir_log = "${params.dir.logs}/0_verify_environment/s8_CheckDirectories"
+    """
+    REPORTFILE="verify_environment.txt"
+
+    log_message() {
+        echo "\$1" >> \$REPORTFILE
+        echo "\$1"
+    }
+
+    STATUS="PASS"
+
+    # -m resolves symlinks, '..' and trailing slashes without requiring the directory to
+    # exist yet; mainDir need not be there before the first run creates work/ under it.
+    MAIN=\$(realpath -m "${params.mainDir}")
+    STORE=\$(realpath -m "${params.storageDir}")
+
+    log_message "DIRECTORY CHECK:       mainDir    \$MAIN"
+    log_message "DIRECTORY CHECK:       storageDir \$STORE"
+
+    if [ "\$MAIN" = "\$STORE" ]; then
+        log_message "DIRECTORY CHECK:       mainDir and storageDir are the same directory."
+        log_message "DIRECTORY CHECK:       They are two storage tiers: mainDir is the fast volume the"
+        log_message "DIRECTORY CHECK:       pipeline works on and keeps Data/ and Reference/ in, and"
+        log_message "DIRECTORY CHECK:       storageDir is where finished results are kept. Outputs move"
+        log_message "DIRECTORY CHECK:       from the first to the second as each step that needs them"
+        log_message "DIRECTORY CHECK:       completes, which cannot mean anything if they are one place."
+        log_message "DIRECTORY CHECK:       Set them to two different directories in parameters.config."
+        STATUS="FAIL"
+    else
+        log_message "DIRECTORY CHECK:       The two storage tiers are distinct"
+    fi
+
+    log_message "DIRECTORY CHECK:       STATUS=\$STATUS"
+
+    mv \$REPORTFILE verify_environment_stage8.txt
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/0_VerifyEnvironment_s8_CheckDirectories_nextflow.log
+    """
+}
+
 process CheckRunParameters {
     output:
     path 'verify_environment_stage7.txt', emit: report
@@ -856,6 +919,7 @@ process VerifyAll {
     val software_log
     val trim_log
     val runparam_log
+    val directory_log
 
     output:
     path '0_verify_environment.txt'
@@ -895,7 +959,7 @@ process VerifyAll {
     log_message "========================================================================="
     log_message ""
 
-    cat ${reference_log} ${gffFile_log} ${dataSource_log} ${rgtags_log} ${software_log} ${trim_log} ${runparam_log} | tee -a \$REPORTFILE
+    cat ${reference_log} ${gffFile_log} ${dataSource_log} ${rgtags_log} ${software_log} ${trim_log} ${runparam_log} ${directory_log} | tee -a \$REPORTFILE
     log_message ""
     log_message "========================================================================="
 
@@ -937,7 +1001,8 @@ workflow VerifyEnvironment {
     CheckInstalledSoftware()
     CheckTrimParameters()
     CheckRunParameters()
-    VerifyAll(CheckReference.out.report, gff_report, CheckData.out.report, CheckRGTagsFile.out.report, CheckInstalledSoftware.out.report, CheckTrimParameters.out.report, CheckRunParameters.out.report)
+    CheckDirectories()
+    VerifyAll(CheckReference.out.report, gff_report, CheckData.out.report, CheckRGTagsFile.out.report, CheckInstalledSoftware.out.report, CheckTrimParameters.out.report, CheckRunParameters.out.report, CheckDirectories.out.report)
 
     emit:
     VerifyAll.out
