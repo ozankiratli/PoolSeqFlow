@@ -97,14 +97,20 @@ run_pipeline() {
 # BuildDictionaries' `verify` input is a pure ordering barrier - UngzipReference stages it
 # and never reads it (its only references are commented out), and BuildSnpEffDb never names
 # it in its script body at all - so a placeholder file stands in for step 0.
+#
+# Every entry script must call resolveParameters() first, exactly as poolseqflow.nf does.
+# Without it the computed parameters are simply absent, and the first process to read one
+# dies on a null - which looks like a bug in that process rather than a missing setup call.
 run_dictionaries_only() {
     local sb="$1"
     cat > "$sb/dictionaries_only.nf" <<'ENTRY'
 nextflow.enable.dsl=2
 
+include { resolveParameters } from './scripts/resolve_parameters.nf'
 include { BuildDictionaries } from './scripts/1_build_dictionaries.nf'
 
 workflow {
+    resolveParameters()
     BuildDictionaries(channel.value(file("${params.storageDir}/.step0_token")))
 }
 ENTRY
@@ -118,9 +124,11 @@ run_verify_only() {
     cat > "$sb/verify_only.nf" <<'ENTRY'
 nextflow.enable.dsl=2
 
+include { resolveParameters } from './scripts/resolve_parameters.nf'
 include { VerifyEnvironment } from './scripts/0_verify_environment.nf'
 
 workflow {
+    resolveParameters()
     VerifyEnvironment()
 }
 ENTRY

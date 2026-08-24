@@ -29,32 +29,35 @@ params {
     gffPath         = "${params.storageDir}/${params.gffFile}"
     rgTagsPath      = "${params.storageDir}/${params.rgTagsFile}"
 
-    // Core allocation - all derived from `threads` above. Do not set the per-tool
-    // thread counts by hand; change `threads` and everything follows.
+    // Core allocation. Every value below is computed from `threads` above, in
+    // scripts/resolve_parameters.nf, and is left commented out here so that changing
+    // `threads` moves all of them together.
     //
-    // Each tool is quantised to the largest power of two at or below `threads`, capped
-    // at 8, which is where the published scaling for these tools flattens out. Setting
-    // threads = 1 forces every tool to a single core.
+    // Uncomment any single one to pin it. A value you set is used exactly as written and
+    // also feeds the ones computed from it - pinning `samtools` moves `javaGc` with it.
+    //
+    // Each tool is quantised to the largest power of two at or below `threads`, capped at
+    // 8, which is where the published scaling for these tools flattens out. threads = 1
+    // forces every tool to a single core.
     cores {
-        ladder      = params.threads >= 8 ? 8 : (params.threads >= 4 ? 4 : (params.threads >= 2 ? 2 : 1))
-
-        // Trim Galore is costed on its full footprint, not its worker count: --cores N
-        // runs N+4 threads (N workers + 2 decompressors + 1 batcher + 1 writer) for any
-        // N >= 2, while --cores 1 bypasses the pool and is genuinely single-threaded.
-        // So pick the largest N whose N+4 still fits in `threads`:
+        // ladder    = largest power of two <= threads, capped at 8
+        //
+        // Trim Galore is costed on its full footprint, not its worker count: --cores N runs
+        // N+4 threads (N workers + 2 decompressors + 1 batcher + 1 writer) for any N >= 2,
+        // while --cores 1 bypasses the pool and is genuinely single-threaded. So `trim` is
+        // the largest N whose N+4 still fits in `threads`:
         //   12+ cores -> 8    8+ -> 4    6+ -> 2    otherwise -> 1
-        trim        = params.threads >= 12 ? 8 : (params.threads >= 8 ? 4 : (params.threads >= 6 ? 2 : 1))
-        trimTotal   = params.cores.trim > 1 ? params.cores.trim + 4 : 1   // threads actually spawned
-
-        bwa         = params.cores.ladder   // bwa mem -t N
-        cutadapt    = params.cores.ladder   // cutadapt --cores N
-        fastqc      = params.threads >= 2 ? 2 : 1   // one thread per file; step 2 only ever hands it a pair
-
+        // trim      = as above
+        // trimTotal = trim > 1 ? trim + 4 : 1        threads actually spawned
+        // bwa       = ladder                         bwa mem -t N
+        // cutadapt  = ladder                         cutadapt --cores N
+        // fastqc    = threads >= 2 ? 2 : 1           one thread per file; step 2 only ever hands it a pair
+        //
         // samtools -@ counts ADDITIONAL threads, so 0 means one core and 1 means two.
-        samtools    = params.threads >= 2 ? 1 : 0
-        // Same core count as samtools, kept as its own value so it can be tuned
-        // independently. -XX:ParallelGCThreads is a total, not an increment.
-        javaGc      = params.cores.samtools + 1
+        // samtools  = threads >= 2 ? 1 : 0
+        // Same count as samtools, separate so it can be tuned on its own.
+        // -XX:ParallelGCThreads is a total, not an increment.
+        // javaGc    = samtools + 1
     }
 
     // java parameters
@@ -68,10 +71,11 @@ params {
     fastqc {
         memory          = 2048  // megabytes, as a plain number - FastQC rejects "2G"
         // For the standalone FastQC binary (used on the clipped reads in step 2).
-        // -t is supplied by each process from task.cpus
-        options         = "--memory ${params.fastqc.memory}"
+        // -t is supplied by each process from task.cpus. Uncomment to take full control;
+        // `memory` above is then unused.
+        // options      = "--memory ${params.fastqc.memory}"
     }
-    
+
     // trim_galore parameters
     trim_galore {
         quality         = 25
@@ -81,9 +85,11 @@ params {
         autodetect      = true
         adapter1        = ''
         adapter2        = ''
-        adapterOptions  = params.trim_galore.autodetect ? '' : "-a ${params.trim_galore.adapter1} -a2 ${params.trim_galore.adapter2}"
-        // --cores and --fastqc_args are supplied by TrimReads from task.cpus
-        options         = "--fastqc --paired --retain_unpaired -q ${params.trim_galore.quality} ${params.trim_galore.adapterOptions}"
+        // Both are built from the values above. Uncomment either to take full control of it;
+        // what it was built from is then unused. --cores and --fastqc_args are supplied by
+        // TrimReads from task.cpus.
+        // adapterOptions = autodetect ? '' : "-a ${params.trim_galore.adapter1} -a2 ${params.trim_galore.adapter2}"
+        // options        = "--fastqc --paired --retain_unpaired -q ${params.trim_galore.quality} ${params.trim_galore.adapterOptions}"
     }
     
     cutadapt {
@@ -102,8 +108,9 @@ params {
     bwa {
         minScoreOutput  = 30
         batchSize       = 10000000
-        // -t is supplied by Align from task.cpus
-        options         = "-K ${params.bwa.batchSize} -T ${params.bwa.minScoreOutput}"
+        // Built from the two values above. -t is supplied by Align from task.cpus.
+        // Uncomment to take full control; the two values above are then unused.
+        // options      = "-K ${params.bwa.batchSize} -T ${params.bwa.minScoreOutput}"
     }
     
     // Samtools parameters
@@ -120,9 +127,12 @@ params {
         baseQualMin     = 30
         varQualMin      = 30
         maxDepth        = 2000
-        mpileupOptions  = "-B -C ${params.bcftools.scaleMapQ} -q ${params.bcftools.varQualMin} -Q ${params.bcftools.baseQualMin} -d ${params.bcftools.maxDepth} -a AD,DP,SP,INFO/AD -Ou"
+        // Built from the four values above. -q is mapping quality and -Q is base quality;
+        // they are not interchangeable. Uncomment to take full control; the four values
+        // above are then unused, including maxDepth.
+        // mpileupOptions = "-B -C ${params.bcftools.scaleMapQ} -q ${params.bcftools.varQualMin} -Q ${params.bcftools.baseQualMin} -d ${params.bcftools.maxDepth} -a AD,DP,SP,INFO/AD -Ou"
 
-        callOptions         = "-m -A -v -Ov"  
+        callOptions         = "-m -A -v -Ov"
     }
 
     // VCF parameters

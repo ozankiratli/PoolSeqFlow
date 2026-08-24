@@ -2,6 +2,7 @@
 
 nextflow.enable.dsl=2
 
+include { resolveParameters }   from './scripts/resolve_parameters.nf'
 include { VerifyEnvironment }   from './scripts/0_verify_environment.nf'
 include { BuildDictionaries }   from './scripts/1_build_dictionaries.nf'
 include { TrimQcClip }          from './scripts/2_trim_reads.nf'
@@ -65,6 +66,10 @@ def assembleCombinedLog() {
 
 workflow {
     workflow.onComplete { assembleCombinedLog() }
+
+    // First, before any process script is evaluated and before the change-guard manifest is
+    // built: it fills in every parameter that is computed from another one.
+    resolveParameters()
 
     VerifyEnvironment()
     BuildDictionaries(VerifyEnvironment.out)

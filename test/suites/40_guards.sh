@@ -145,6 +145,51 @@ test_the_release_notice_appears_once_but_a_failure_does_not_clear_itself() {
     assert_status 1 "$status" "and should still fail on the next run, not clear itself"
 }
 
+# Computed parameters are a convenience, not a policy: a value written in parameters.config
+# is used exactly as written, and it also feeds whatever is computed from it. Pinning
+# cores.samtools must therefore move cores.javaGc with it, or pinning one thing would
+# silently strand the things below it.
+#
+# Checked through the trace's cpus column, because the cores scope is excluded from the
+# change-guard manifest and so cannot be read out of run_parameters.txt. BuildSnpEffDb
+# declares `cpus { params.cores.javaGc }`, which makes the resolved value observable.
+test_a_pinned_core_count_cascades_into_the_values_computed_from_it() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status cpus
+    sb=$(make_pipeline_sandbox "pinned-cores")
+    : > "$sb/proj/.step0_token"
+    # threads is 4 in the sandbox, so samtools would compute to 1 and javaGc to 2. The pin
+    # is deliberately small: process.resourceLimits caps cpus at `threads`, so a javaGc above
+    # 4 would be clamped on the way to the trace and the test would measure the ceiling
+    # rather than the resolution.
+    write_sandbox_config "$sb" 's|^    cores {|    cores {\n        samtools = 2|'
+    status=$(run_dictionaries_only "$sb")
+    assert_status 0 "$status" "the dictionaries should build; see $sb/run.out"
+    cpus=$(awk -F'\t' 'NR > 1 { split($4, a, " "); if (a[1] == "BuildDictionaries:BuildSnpEffDb") print $10 }' \
+           "$sb/proj/Output/Reports/PoolSeqFlow_pipeline_trace.txt" 2>/dev/null)
+    assert_eq "3" "$cpus" "javaGc should be the pinned samtools + 1, not the computed 1 + 1"
+}
+
+# An option string written out in parameters.config is passed through untouched. This is the
+# half of the arrangement that matters most: the values above it exist to build a sensible
+# default, not to constrain what can be run.
+test_a_pinned_option_string_is_used_verbatim() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status params
+    sb=$(make_pipeline_sandbox "pinned-options")
+    write_sandbox_config "$sb" \
+        's|^        maxDepth        = 2000|        maxDepth        = 2000\n        mpileupOptions = "PINNED -d 99"|'
+    status=$(run_verify_only "$sb")
+    assert_status 0 "$status" "a fresh project should verify; see $sb/run.out"
+    params=$(cat "$sb/proj/Output/run_parameters.txt" 2>/dev/null)
+    assert_contains "$params" "bcftools.mpileupOptions=PINNED -d 99" \
+        "the written option string should reach the run untouched"
+    assert_not_contains "$params" "-a AD,DP,SP,INFO/AD" \
+        "the composed default should not have been used"
+}
+
 # mainDir and storageDir are two storage tiers. Outputs are written to the first and
 # promoted to the second as the steps that consume them finish, which cannot mean anything
 # if both name one directory.
