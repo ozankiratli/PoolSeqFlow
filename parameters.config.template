@@ -10,11 +10,22 @@ params {
     //main parameters
     threads         =  8                 // cores per task
     memory          = '24 GB'            // memory ceiling per task
-    mainDir         = "/path/to/working/directory"   // where the pipeline runs (e.g. node scratch)
+    // This project's own directory, and the one you launch the run from - this file is read
+    // from wherever you are when you start it. Put it on the faster volume; on a cluster,
+    // the node's own disk rather than the shared archive.
+    //
+    // It is NOT where PoolSeqFlow is installed, and it may not be: one installation serves
+    // any number of projects, each with its own mainDir, and step 0 refuses a run where the
+    // two are the same directory. A mainDir underneath the installation is allowed but
+    // warned about - nothing collides, but the two have very different lifetimes.
+    mainDir         = "/path/to/project/directory"
+    // Where finished results are kept. May be a slower archive volume on another
+    // filesystem, and must not be the same directory as mainDir.
+    //
     // Called storageDir, not projectDir: Nextflow defines `projectDir` itself, as the
     // directory the pipeline script lives in, and a params entry of that name shadows it.
     // Renamed from projectDir - `./PoolSeqFlow migrate_config` carries the old value over.
-    storageDir      = "/path/to/permanent/storage"   // where outputs are kept (may be another filesystem)
+    storageDir      = "/path/to/permanent/storage"
     dataSource      = 'Data'
     readPattern     = "*_R{1,2}.fq.gz"
     referenceFile   = 'reference.fasta.gz'
@@ -166,8 +177,23 @@ params {
         data            = "${params.storageDir}/${params.dataSource}"
         outputs         = "${params.storageDir}/Output"
         references      = "${params.storageDir}/Reference"
-        scripts         = "${params.mainDir}/scripts"
-        bin             = "${params.mainDir}/bin"
+        // The installed pipeline's own directories, which are not under either of your two
+        // storage roots: one installation serves any number of projects.
+        //
+        // `projectDir` here is Nextflow's own variable - the directory the pipeline script
+        // lives in - not a parameter of ours. It became usable only when our storage root
+        // was renamed from projectDir to storageDir, because a params entry of that name
+        // shadows it.
+        //
+        // These read "${params.mainDir}/..." until 3.0, which was wrong from the first
+        // working version onward: nothing has ever been installed under a project's working
+        // directory, so `bin` named a path that did not exist in any release. It stayed
+        // invisible because Nextflow puts the pipeline's own bin/ on each task's PATH by
+        // itself, so every helper resolved through that instead. The hazard was that
+        // env.PATH below PREPENDS this path: a mainDir that happened to contain a bin/
+        // directory would have shadowed the conda environment's tools for every task.
+        scripts         = "${projectDir}/scripts"
+        bin             = "${projectDir}/bin"
         logs            = "${params.storageDir}/Logs"
         snpEff          = "${params.dir.references}/snpEff"
 

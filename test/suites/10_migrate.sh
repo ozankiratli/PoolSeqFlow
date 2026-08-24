@@ -77,3 +77,30 @@ test_a_commented_block_opening_still_migrates() {
     assert_eq "77" "$(migrated_value minDP)" \
         "a value inside a block whose opening brace carries a comment should survive"
 }
+
+# The cases above use the script's defaults, which resolve all three files in the current
+# directory. That is no longer how the wrapper calls it: the template ships with the
+# installation while the config belongs to the project, so ./PoolSeqFlow migrate_config now
+# passes the template by absolute path. The backup must still land beside the user's config
+# rather than next to the template.
+test_the_template_may_live_outside_the_project() {
+    local sb out status value
+    sb=$(guard_path "$TEST_TMPDIR/migrate-split")
+    rm -rf "$sb"
+    mkdir -p "$sb/install/bin" "$sb/project"
+    cp "$REPO_ROOT/bin/config_migrate.sh" "$sb/install/bin/"
+    cp "$REPO_ROOT/parameters.config.template" "$sb/install/"
+    sed -e 's|^    storageDir .*|    projectDir      = "/data/my_experiment"|' \
+        "$REPO_ROOT/parameters.config.template" > "$sb/project/parameters.config"
+
+    out=$(cd "$sb/project" && bash "$sb/install/bin/config_migrate.sh" \
+              parameters.config "$sb/install/parameters.config.template" parameters.config 2>&1)
+    status=$?
+    assert_status 0 "$status" "migration should succeed with the template in another directory"
+
+    value=$(sed -n 's|^ *storageDir *= *||p' "$sb/project/parameters.config" \
+            | head -1 | tr -d "\"'" | sed 's/ *\/\/.*//')
+    assert_eq "/data/my_experiment" "$value" "the value should still carry across the rename"
+    assert_contains "$out" "storageDir" "the report should still name the parameter"
+    assert_file "$sb/project/parameters.config.bak" "the backup belongs beside the user's config"
+}

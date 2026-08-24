@@ -636,20 +636,32 @@ process CheckTrimParameters {
     """
 }
 
+// A run stands in four directories, and confusing any two of them is the failure this
+// catches. The installation holds the code; the project directory is where you launched and
+// where parameters.config was read from; mainDir is the fast working volume; storageDir is
+// permanent storage.
+//
 // mainDir and storageDir are two tiers, not two names for one place: outputs are written to
 // the working volume and promoted to permanent storage once whatever consumes them has
 // succeeded. Pointing both at the same directory makes every promotion a no-op that moves a
 // file onto itself, and makes `clean` and `reset` - which treat the two roots differently -
 // impossible to reason about.
 //
+// Neither storage root may BE the installation. The installation is a tool: one copy serves
+// any number of projects, it is replaced wholesale on upgrade, and from 3.0 it may be
+// read-only and shared. A project working directory kept inside it would be destroyed by an
+// upgrade and would make two projects impossible; permanent storage kept inside it would
+// take the results and their provenance with it.
+//
 // Compared as RESOLVED paths. A string comparison passes happily on `/data/x` versus
 // `/data/x/`, versus `/data/y/../x`, versus a symlink to the same directory, and each of
 // those is the same directory with a different spelling.
 //
-// Containment is deliberately NOT rejected here. One root inside the other is harmless in
-// itself - the managed subdirectories still do not collide - and the check that actually
-// matters is that no two computed directories in the `dir` block resolve to the same path.
-// That belongs where the block is built, not here.
+// Containment is warned about, not rejected. One root inside another is harmless in itself -
+// the managed subdirectories still do not collide - but the lifetimes differ sharply enough
+// that it is worth saying out loud. The check that actually matters for collisions is that
+// no two computed directories in the `dir` block resolve alike, and that belongs where the
+// block is built, not here.
 process CheckDirectories {
     output:
     path 'verify_environment_stage8.txt', emit: report
@@ -670,9 +682,13 @@ process CheckDirectories {
     # exist yet; mainDir need not be there before the first run creates work/ under it.
     MAIN=\$(realpath -m "${params.mainDir}")
     STORE=\$(realpath -m "${params.storageDir}")
+    INSTALL=\$(realpath -m "${workflow.projectDir}")
+    LAUNCH=\$(realpath -m "${workflow.launchDir}")
 
-    log_message "DIRECTORY CHECK:       mainDir    \$MAIN"
-    log_message "DIRECTORY CHECK:       storageDir \$STORE"
+    log_message "DIRECTORY CHECK:       installation \$INSTALL"
+    log_message "DIRECTORY CHECK:       project      \$LAUNCH"
+    log_message "DIRECTORY CHECK:       mainDir      \$MAIN"
+    log_message "DIRECTORY CHECK:       storageDir   \$STORE"
 
     if [ "\$MAIN" = "\$STORE" ]; then
         log_message "DIRECTORY CHECK:       mainDir and storageDir are the same directory."
@@ -685,6 +701,53 @@ process CheckDirectories {
         STATUS="FAIL"
     else
         log_message "DIRECTORY CHECK:       The two storage tiers are distinct"
+    fi
+
+    if [ "\$MAIN" = "\$INSTALL" ]; then
+        log_message "DIRECTORY CHECK:       mainDir is the PoolSeqFlow installation itself."
+        log_message "DIRECTORY CHECK:       The installation is a tool, not a workspace: one copy serves"
+        log_message "DIRECTORY CHECK:       any number of projects, it is replaced wholesale on upgrade,"
+        log_message "DIRECTORY CHECK:       and it may be read-only or shared between users. A project"
+        log_message "DIRECTORY CHECK:       kept inside it does not survive an upgrade, and a second"
+        log_message "DIRECTORY CHECK:       project has nowhere to go."
+        log_message "DIRECTORY CHECK:       Make a directory for this project, put parameters.config in"
+        log_message "DIRECTORY CHECK:       it, point mainDir at it, and run from there."
+        STATUS="FAIL"
+    fi
+
+    if [ "\$STORE" = "\$INSTALL" ]; then
+        log_message "DIRECTORY CHECK:       storageDir is the PoolSeqFlow installation itself."
+        log_message "DIRECTORY CHECK:       storageDir is permanent storage - it holds the results and the"
+        log_message "DIRECTORY CHECK:       record of what produced them. The installation is neither"
+        log_message "DIRECTORY CHECK:       permanent nor yours alone: it is replaced wholesale on upgrade"
+        log_message "DIRECTORY CHECK:       and may be read-only or shared. Results kept inside it are"
+        log_message "DIRECTORY CHECK:       destroyed by the next upgrade, which is the one loss this"
+        log_message "DIRECTORY CHECK:       pipeline can least afford."
+        log_message "DIRECTORY CHECK:       Point storageDir at a volume that outlives the installation."
+        STATUS="FAIL"
+    fi
+
+    # Containment. Harmless mechanically - nothing collides - but the lifetimes differ, so
+    # it is said out loud rather than discovered during an upgrade or a reset.
+    case "\$MAIN/" in
+        "\$INSTALL"/*)
+            log_message "DIRECTORY CHECK:       WARNING: mainDir is inside the installation. Allowed, but"
+            log_message "DIRECTORY CHECK:       an upgrade replaces the installation and this project with it."
+            ;;
+    esac
+    case "\$STORE/" in
+        "\$INSTALL"/*)
+            log_message "DIRECTORY CHECK:       WARNING: storageDir is inside the installation. Allowed, but"
+            log_message "DIRECTORY CHECK:       an upgrade replaces the installation and these results with it."
+            ;;
+    esac
+
+    # parameters.config is read from the directory the run was launched in. When that is not
+    # mainDir the run still works, but the project's settings and the project's working files
+    # are in two different places, which is worth knowing before wondering where a file went.
+    if [ "\$MAIN" != "\$LAUNCH" ]; then
+        log_message "DIRECTORY CHECK:       NOTE: the run was launched in \$LAUNCH, which is not mainDir."
+        log_message "DIRECTORY CHECK:       parameters.config was read from there; the work happens in mainDir."
     fi
 
     log_message "DIRECTORY CHECK:       STATUS=\$STATUS"

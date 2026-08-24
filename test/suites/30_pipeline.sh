@@ -40,7 +40,7 @@ test_full_run_completes() {
 
 test_every_step_produces_its_outputs() {
     needs_run || return
-    local o="$PIPELINE_SB/proj/Output"
+    local o="$PIPELINE_SB/store/Output"
     assert_file "$o/Reports/0_verify_environment.txt" "step 0 should publish its report"
     assert_file "$o/VCF/Test.vcf"                     "step 6 should produce the raw VCF"
     assert_file "$o/Frequencies/Test_snp_freq.tsv"    "step 7 should produce the SNP table"
@@ -55,8 +55,8 @@ test_every_step_produces_its_outputs() {
 test_frequency_table_columns_follow_the_rgtags_order() {
     needs_run || return
     local header expected
-    header=$(head -1 "$PIPELINE_SB/proj/Output/Frequencies/Test_snp_freq.tsv" | cut -f6-)
-    expected=$(tail -n +2 "$PIPELINE_SB/proj/RGTags.csv" | cut -d, -f1 | tr '\n' '\t' | sed 's/\t$//')
+    header=$(head -1 "$PIPELINE_SB/store/Output/Frequencies/Test_snp_freq.tsv" | cut -f6-)
+    expected=$(tail -n +2 "$PIPELINE_SB/store/RGTags.csv" | cut -d, -f1 | tr '\n' '\t' | sed 's/\t$//')
     assert_eq "$expected" "$header" "sample columns should match RGTags row order"
 }
 
@@ -66,7 +66,7 @@ test_all_frequencies_are_proportions() {
     needs_run || return
     local bad
     bad=$(awk -F'\t' 'NR>1 { for (i=5;i<=NF;i++) if ($i+0 < 0 || $i+0 > 1) c++ } END { print c+0 }' \
-          "$PIPELINE_SB/proj/Output/Frequencies/Test_snp_freq.tsv")
+          "$PIPELINE_SB/store/Output/Frequencies/Test_snp_freq.tsv")
     assert_count 0 "$bad" "frequencies outside [0,1]"
 }
 
@@ -76,7 +76,7 @@ test_all_frequencies_are_proportions() {
 test_indels_survive_to_the_frequency_table() {
     needs_run || return
     local rows
-    rows=$(( $(wc -l < "$PIPELINE_SB/proj/Output/Frequencies/Test_indel_freq.tsv") - 1 ))
+    rows=$(( $(wc -l < "$PIPELINE_SB/store/Output/Frequencies/Test_indel_freq.tsv") - 1 ))
     [ "$rows" -gt 0 ] || fail_case "the INDEL frequency table is empty; planted indels are being lost"
 }
 
@@ -116,7 +116,7 @@ test_sites_planted_absent_stay_absent() {
             }
         }
         END { printf "CHECKED %d\n", checked + 0 }
-    ' "$PIPELINE_SB/proj/planted.tsv" "$PIPELINE_SB/proj/Output/Frequencies/Test_snp_freq.tsv")
+    ' "$PIPELINE_SB/store/planted.tsv" "$PIPELINE_SB/store/Output/Frequencies/Test_snp_freq.tsv")
 
     checked=$(printf '%s' "$report" | sed -n 's/^CHECKED //p')
     bad=$(printf '%s' "$report" | grep -c "planted 0.0 but reported")
@@ -132,17 +132,17 @@ test_sites_planted_absent_stay_absent() {
 test_rerunning_a_finished_project_changes_nothing() {
     needs_run || return
     local before after status
-    before=$(cd "$PIPELINE_SB/proj/Output/VCF" && ls | sort)
+    before=$(cd "$PIPELINE_SB/store/Output/VCF" && ls | sort)
     local sums_before sums_after
-    sums_before=$(md5sum "$PIPELINE_SB"/proj/Output/Frequencies/*.tsv | awk '{print $1}')
+    sums_before=$(md5sum "$PIPELINE_SB"/store/Output/Frequencies/*.tsv | awk '{print $1}')
     status=$(run_pipeline "$PIPELINE_SB")
     assert_status 0 "$status" "the rerun should succeed"
-    after=$(cd "$PIPELINE_SB/proj/Output/VCF" && ls | sort)
-    sums_after=$(md5sum "$PIPELINE_SB"/proj/Output/Frequencies/*.tsv | awk '{print $1}')
+    after=$(cd "$PIPELINE_SB/store/Output/VCF" && ls | sort)
+    sums_after=$(md5sum "$PIPELINE_SB"/store/Output/Frequencies/*.tsv | awk '{print $1}')
     assert_eq "$before" "$after" "Output/VCF should be unchanged by a rerun"
     assert_eq "$sums_before" "$sums_after" "frequency tables should be unchanged by a rerun"
     local split_log
-    split_log=$(cat "$PIPELINE_SB"/proj/Logs/7_vcf2freq/s4_SplitSNPsAndINDELs/*.log 2>/dev/null)
+    split_log=$(cat "$PIPELINE_SB"/store/Logs/7_vcf2freq/s4_SplitSNPsAndINDELs/*.log 2>/dev/null)
     local reruns
     reruns=$(printf '%s' "$split_log" | grep -c "Processing SNPs")
     assert_count 1 "$reruns" "SplitSNPsAndINDELs should do its work once, not again on the rerun"
@@ -158,7 +158,7 @@ test_rerunning_a_finished_project_changes_nothing() {
 test_each_step_runs_once_per_sample() {
     needs_run || return
     local samples
-    samples=$(find "$PIPELINE_SB/proj/Data" -name '*_R1.fq.gz' | wc -l)
+    samples=$(find "$PIPELINE_SB/store/Data" -name '*_R1.fq.gz' | wc -l)
     [ "$samples" -gt 1 ] || { skip_case "fixture has $samples samples; nothing to fan out"; return; }
 
     local p
@@ -197,9 +197,9 @@ test_a_second_reference_builds_its_own_snpeff_database() {
     sb=$(make_pipeline_sandbox "twogenome")
     # Same sequence and annotation under a second name - what differs is the database name
     # snpEff derives from gffFile, which is exactly what the marker has to distinguish.
-    cp "$sb/proj/reference.fasta.gz" "$sb/proj/genomeB.fasta.gz"
-    cp "$sb/proj/reference.gff.gz"   "$sb/proj/genomeB.gff.gz"
-    : > "$sb/proj/.step0_token"
+    cp "$sb/store/reference.fasta.gz" "$sb/store/genomeB.fasta.gz"
+    cp "$sb/store/reference.gff.gz"   "$sb/store/genomeB.gff.gz"
+    : > "$sb/store/.step0_token"
     write_sandbox_config "$sb"
 
     status=$(run_dictionaries_only "$sb")
@@ -211,7 +211,7 @@ test_a_second_reference_builds_its_own_snpeff_database() {
     status=$(run_dictionaries_only "$sb")
     assert_status 0 "$status" "the second genome's dictionaries should build"
 
-    db="$sb/proj/Reference/snpEff/data"
+    db="$sb/store/Reference/snpEff/data"
     assert_file "$db/reference.gff/.build_complete"  "the first genome should keep its marker"
     assert_file "$db/genomeB.gff/.build_complete"    "the second genome should get its own marker"
     assert_file "$db/genomeB.gff/snpEffectPredictor.bin" \
@@ -220,13 +220,13 @@ test_a_second_reference_builds_its_own_snpeff_database() {
     # snpEff reads every entry in the config, so it has to name both genomes. A plain
     # overwrite left only the most recent one, which made the earlier genome unannotatable
     # while its database sat on disk intact.
-    local cfg; cfg=$(cat "$sb/proj/Reference/snpEff/snpEff.config")
+    local cfg; cfg=$(cat "$sb/store/Reference/snpEff/snpEff.config")
     assert_contains "$cfg" "reference.gff.genome" "the config should still name the first genome"
     assert_contains "$cfg" "genomeB.gff.genome"   "the config should also name the second genome"
 
     # Both references' indexes coexist too - already true, and worth holding to.
-    assert_file "$sb/proj/Reference/reference.fasta.fai" "the first genome's fai should survive"
-    assert_file "$sb/proj/Reference/genomeB.fasta.fai"   "the second genome should get its own fai"
+    assert_file "$sb/store/Reference/reference.fasta.fai" "the first genome's fai should survive"
+    assert_file "$sb/store/Reference/genomeB.fasta.fai"   "the second genome should get its own fai"
 }
 
 # cutadapt applies -m after -l, so a minimum length above the computed read length limit
@@ -238,15 +238,15 @@ test_min_length_above_the_computed_limit_fails_loudly() {
     local sb status out
     sb=$(make_pipeline_sandbox "minlen")
     # Two samples are enough, and the run stops at step 2 anyway.
-    rm -f "$sb"/proj/Data/TestSample[3-9]_R*.fq.gz
-    grep -v -E '^TestSample[3-9],' "$sb/proj/RGTags.csv" > "$sb/proj/rg" && mv "$sb/proj/rg" "$sb/proj/RGTags.csv"
+    rm -f "$sb"/store/Data/TestSample[3-9]_R*.fq.gz
+    grep -v -E '^TestSample[3-9],' "$sb/store/RGTags.csv" > "$sb/store/rg" && mv "$sb/store/rg" "$sb/store/RGTags.csv"
     write_sandbox_config "$sb" 's|^        options        = ""|        options        = "-m 200"|'
     status=$(run_pipeline "$sb")
     out=$(cat "$sb/run.out")
     assert_status 1 "$status" "the run should fail rather than clip everything away"
     assert_contains "$out" "would discard every read" "should say what is wrong"
     assert_contains "$out" "minimum length of 200" "should quote the configured minimum"
-    assert_count 0 "$(find "$sb/proj/Output" -name '*_clipped.fq.gz' 2>/dev/null | wc -l)" \
+    assert_count 0 "$(find "$sb/store/Output" -name '*_clipped.fq.gz' 2>/dev/null | wc -l)" \
         "no clipped output should be published"
 }
 
@@ -255,11 +255,11 @@ test_a_legitimate_min_length_still_runs() {
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
     local sb status
     sb=$(make_pipeline_sandbox "minlen-ok")
-    rm -f "$sb"/proj/Data/TestSample[3-9]_R*.fq.gz
-    grep -v -E '^TestSample[3-9],' "$sb/proj/RGTags.csv" > "$sb/proj/rg" && mv "$sb/proj/rg" "$sb/proj/RGTags.csv"
+    rm -f "$sb"/store/Data/TestSample[3-9]_R*.fq.gz
+    grep -v -E '^TestSample[3-9],' "$sb/store/RGTags.csv" > "$sb/store/rg" && mv "$sb/store/rg" "$sb/store/RGTags.csv"
     write_sandbox_config "$sb" 's|^        options        = ""|        options        = "-m 50"|'
     status=$(run_pipeline "$sb")
     assert_status 0 "$status" "a minimum below the computed limit should run normally"
-    assert_count 4 "$(find "$sb/proj/Output" -name '*_clipped.fq.gz' 2>/dev/null | wc -l)" \
+    assert_count 4 "$(find "$sb/store/Output" -name '*_clipped.fq.gz' 2>/dev/null | wc -l)" \
         "both samples should produce clipped reads"
 }

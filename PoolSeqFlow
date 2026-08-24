@@ -39,6 +39,53 @@ usage() {
     exit 1
 }
 
+# Where this copy of PoolSeqFlow lives: the pipeline, scripts/ and the bin/ helpers. It is
+# not the project you are running - that is the directory you are standing in.
+#
+# POOLSEQFLOW_HOME wins when set. That is how a wrapper installed onto PATH points back at
+# its own payload, and how a developer points at a checkout without installing.  Otherwise
+# it is derived from this script's own resolved path, so a symlinked wrapper still finds the
+# code it belongs to rather than the directory the symlink sits in.
+if [ -n "${POOLSEQFLOW_HOME:-}" ]; then
+    INSTALL="$POOLSEQFLOW_HOME"
+else
+    INSTALL=$(cd "$(dirname "$(readlink -f "$0")")" && pwd -P)
+fi
+export POOLSEQFLOW_HOME="$INSTALL"
+
+# Confirm the payload is actually there, for the subcommands that need it.
+#
+# Checked lazily rather than at startup: `version`, `cite`, `list`, `uninstall` and
+# `uninstall_all` are answerable from this script alone, and refusing them because the
+# pipeline is missing would take away the commands most likely to be wanted when an
+# installation is broken.
+require_install() {
+    [ -f "$INSTALL/poolseqflow.nf" ] && return 0
+    echo "ERROR: cannot find the PoolSeqFlow installation." >&2
+    echo "  Looked in: $INSTALL" >&2
+    echo "  Expected to find poolseqflow.nf there, alongside scripts/ and bin/." >&2
+    echo "  Set POOLSEQFLOW_HOME to the directory holding it." >&2
+    exit 1
+}
+
+# Refuse early when the current directory is not a project.
+#
+# Checked here rather than left to Nextflow: a missing include surfaces as
+# "ERROR ~ Unable to parse config file" with the real cause - a NullPointerException -
+# only in .nextflow.log, which is not a message anyone can act on.
+require_project_config() {
+    [ -f parameters.config ] && return 0
+    echo "ERROR: no parameters.config in $(pwd)" >&2
+    echo "" >&2
+    echo "PoolSeqFlow runs in your project's directory, not in its own installation." >&2
+    echo "Create the project, put a parameters.config in it, and run from there:" >&2
+    echo "    mkdir -p /path/to/project" >&2
+    echo "    cp $INSTALL/parameters.config.template /path/to/project/parameters.config" >&2
+    echo "    cd /path/to/project" >&2
+    echo "    $(basename "$0") $COMMAND" >&2
+    exit 1
+}
+
 # `conda env list` prints "<name>  [*]  <path>" per environment, so grepping the whole
 # line for the name also matches any OTHER environment whose path happens to contain it.
 # That is not hypothetical here: the repository directory is itself called PoolSeqFlow,
@@ -117,8 +164,12 @@ report_other_envs() {
 # Resolve a setting through Nextflow rather than parsing parameters.config by hand -
 # values are interpolated (workDir is built from mainDir), so text matching gets them
 # wrong. Requires the conda environment to be active.
+#
+# The installation is named explicitly because that is where nextflow.config lives, while
+# the current directory supplies parameters.config. Verified to resolve both correctly from
+# a project directory: ${launchDir} entries come from here, ${projectDir} entries from there.
 nf_config_value() {
-    nextflow config -flat 2>/dev/null | sed -n "s|^$1 = ||p" | head -1 | tr -d "'\""
+    nextflow config -flat "$INSTALL" 2>/dev/null | sed -n "s|^$1 = ||p" | head -1 | tr -d "'\""
 }
 
 if [ "$#" -ne 1 ]; then
@@ -152,10 +203,11 @@ LEGACY_ENV="PoolSeqFlow"
 # than hardcoded there, so the two can never disagree about which one this copy uses.
 export ENV_NAME
 
-ENV_FILE="install/environment.yml"  # Make sure this file exists in the project root
+ENV_FILE="$INSTALL/install/environment.yml"
 
 case $COMMAND in
     install)
+        require_install
         echo "Installing conda environment '$ENV_NAME'..."
         if env_exists "$ENV_NAME"; then
             echo "Environment '$ENV_NAME' already exists."
@@ -173,12 +225,13 @@ case $COMMAND in
         # otherwise surface partway through a run, hours in. `set -e` means a
         # failed check fails the install.
         conda activate "$ENV_NAME"
-        bash install/check_install.sh
+        bash "$INSTALL/install/check_install.sh"
         ;;
 
     check)
+        require_install
         require_env
-        bash install/check_install.sh
+        bash "$INSTALL/install/check_install.sh"
         ;;
     run|resume)
         # PoolSeqFlow resumes through its own filesystem checks: every step looks for
@@ -188,17 +241,25 @@ case $COMMAND in
         if [ "$COMMAND" = "resume" ]; then
             echo "Note: 'resume' is deprecated - 'run' already resumes automatically."
         fi
-        echo "Running pipeline..."
+        require_install
+        require_project_config
+        echo "Running pipeline in $(pwd)..."
         require_env
-        nextflow run poolseqflow.nf
+        # Named by absolute path: the pipeline lives with the installation, while the
+        # directory we are standing in is the project and supplies parameters.config.
+        nextflow run "$INSTALL/poolseqflow.nf"
         wait
         conda deactivate
         ;;
     migrate_config)
-        MIGRATE="bin/config_migrate.sh"
+        require_install
+        require_project_config
+        MIGRATE="$INSTALL/bin/config_migrate.sh"
+        TEMPLATE="$INSTALL/parameters.config.template"
         [ -f "$MIGRATE" ] || { echo "ERROR: $MIGRATE not found." >&2; exit 1; }
+        [ -f "$TEMPLATE" ] || { echo "ERROR: $TEMPLATE not found." >&2; exit 1; }
         echo "-------------------------------------------------------------------------"
-        echo " WARNING: this rewrites parameters.config."
+        echo " WARNING: this rewrites parameters.config in $(pwd)."
         echo ""
         echo " Migration is a convenience, not a guarantee. It carries across settings"
         echo " whose parameter still exists and has the same meaning. It cannot know"
@@ -206,19 +267,24 @@ case $COMMAND in
         echo " like a plain value, so a migrated file can be silently wrong."
         echo ""
         echo " Read the report below, then diff your file against the template:"
-        echo "     diff parameters.config parameters.config.template"
+        echo "     diff parameters.config $TEMPLATE"
         echo ""
         echo " Every release adds parameters, so starting from the template and"
         echo " re-entering your settings by hand is often the safer choice:"
-        echo "     cp parameters.config.template parameters.config"
+        echo "     cp $TEMPLATE parameters.config"
         echo "-------------------------------------------------------------------------"
         echo ""
-        bash "$MIGRATE"
+        # The old config and the migrated output are the project's, in the current
+        # directory; the template is the installation's. Passed explicitly because
+        # config_migrate.sh defaults all three to the current directory.
+        bash "$MIGRATE" parameters.config "$TEMPLATE" parameters.config
         echo ""
         echo "Now compare the result against the template before running:"
-        echo "    diff parameters.config parameters.config.template"
+        echo "    diff parameters.config $TEMPLATE"
         ;;
     clean)
+        require_install
+        require_project_config
         echo "Cleaning Nextflow work directory..."
         require_env
         WORKDIR=$(nf_config_value workDir)
@@ -236,6 +302,8 @@ case $COMMAND in
         echo "Cleaned."
         ;;
     reset)
+        require_install
+        require_project_config
         require_env
         WORKDIR=$(nf_config_value workDir)
         STORAGE=$(nf_config_value params.storageDir)

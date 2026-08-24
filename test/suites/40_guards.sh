@@ -52,7 +52,7 @@ guards_ready() {
 # would quietly return the previous run's report - which looks like a passing assertion.
 guard_report() {
     local store
-    store=$(sed -n 's|^    storageDir *= *"\(.*\)"|\1|p' "$GUARD_SB/parameters.config" | head -1)
+    store=$(sed -n 's|^    storageDir *= *"\(.*\)"|\1|p' "$GUARD_SB/main/parameters.config" | head -1)
     [ -n "$store" ] || { echo "test harness: could not read storageDir from the sandbox config" >&2; return 1; }
     cat "$store/Output/Reports/0_verify_environment.txt" 2>/dev/null
 }
@@ -61,13 +61,13 @@ guard_report() {
 # reads the last line of .poolseqflow_versions to decide whether a change in the parameter
 # SET came from a release or from the user editing their own config.
 pretend_earlier_release() {
-    printf '2.1.0\t2026-01-01\n' > "$GUARD_SB/proj/.poolseqflow_versions"
+    printf '2.1.0\t2026-01-01\n' > "$GUARD_SB/store/.poolseqflow_versions"
 }
 
 # Drop a key from the stored manifest, standing in for a release that did not have it.
 forget_stored_parameter() {
-    grep -v "^$1=" "$GUARD_SB/proj/.poolseqflow_params" > "$GUARD_SB/proj/.tmp_params"
-    mv "$GUARD_SB/proj/.tmp_params" "$GUARD_SB/proj/.poolseqflow_params"
+    grep -v "^$1=" "$GUARD_SB/store/.poolseqflow_params" > "$GUARD_SB/store/.tmp_params"
+    mv "$GUARD_SB/store/.tmp_params" "$GUARD_SB/store/.poolseqflow_params"
 }
 
 test_an_unchanged_project_passes() {
@@ -158,7 +158,7 @@ test_a_pinned_core_count_cascades_into_the_values_computed_from_it() {
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
     local sb status cpus
     sb=$(make_pipeline_sandbox "pinned-cores")
-    : > "$sb/proj/.step0_token"
+    : > "$sb/store/.step0_token"
     # threads is 4 in the sandbox, so samtools would compute to 1 and javaGc to 2. The pin
     # is deliberately small: process.resourceLimits caps cpus at `threads`, so a javaGc above
     # 4 would be clamped on the way to the trace and the test would measure the ceiling
@@ -167,7 +167,7 @@ test_a_pinned_core_count_cascades_into_the_values_computed_from_it() {
     status=$(run_dictionaries_only "$sb")
     assert_status 0 "$status" "the dictionaries should build; see $sb/run.out"
     cpus=$(awk -F'\t' 'NR > 1 { split($4, a, " "); if (a[1] == "BuildDictionaries:BuildSnpEffDb") print $10 }' \
-           "$sb/proj/Output/Reports/PoolSeqFlow_pipeline_trace.txt" 2>/dev/null)
+           "$sb/store/Output/Reports/PoolSeqFlow_pipeline_trace.txt" 2>/dev/null)
     assert_eq "3" "$cpus" "javaGc should be the pinned samtools + 1, not the computed 1 + 1"
 }
 
@@ -183,7 +183,7 @@ test_a_pinned_option_string_is_used_verbatim() {
         's|^        maxDepth        = 2000|        maxDepth        = 2000\n        mpileupOptions = "PINNED -d 99"|'
     status=$(run_verify_only "$sb")
     assert_status 0 "$status" "a fresh project should verify; see $sb/run.out"
-    params=$(cat "$sb/proj/Output/run_parameters.txt" 2>/dev/null)
+    params=$(cat "$sb/store/Output/run_parameters.txt" 2>/dev/null)
     assert_contains "$params" "bcftools.mpileupOptions=PINNED -d 99" \
         "the written option string should reach the run untouched"
     assert_not_contains "$params" "-a AD,DP,SP,INFO/AD" \
@@ -195,7 +195,7 @@ test_a_pinned_option_string_is_used_verbatim() {
 # if both name one directory.
 test_equal_main_and_storage_directories_fail() {
     guards_ready || return
-    write_sandbox_config "$GUARD_SB" "s|^    storageDir .*|    storageDir      = \"$GUARD_SB\"|"
+    write_sandbox_config "$GUARD_SB" "s|^    storageDir .*|    storageDir      = \"$GUARD_SB/main\"|"
     local status report
     status=$(run_verify_only "$GUARD_SB")
     report=$(guard_report)
@@ -209,25 +209,26 @@ test_equal_main_and_storage_directories_fail() {
 test_the_same_directory_spelled_differently_is_still_caught() {
     guards_ready || return
     local status
-    # '..' back out of the child directory lands on mainDir again.
-    write_sandbox_config "$GUARD_SB" "s|^    storageDir .*|    storageDir      = \"$GUARD_SB/proj/..\"|"
+    # '..' back out of storageDir and down into mainDir - a different string for the
+    # directory mainDir already names.
+    write_sandbox_config "$GUARD_SB" "s|^    storageDir .*|    storageDir      = \"$GUARD_SB/store/../main\"|"
     status=$(run_verify_only "$GUARD_SB")
     assert_status 1 "$status" "a '..' spelling of mainDir should be caught"
     assert_contains "$(guard_report)" "are the same directory" "should resolve before comparing"
 
     # And through a symlink, where the two strings have nothing in common at all.
-    ln -sfn "$GUARD_SB" "$GUARD_SB/proj/tierlink"
-    write_sandbox_config "$GUARD_SB" "s|^    storageDir .*|    storageDir      = \"$GUARD_SB/proj/tierlink\"|"
+    ln -sfn "$GUARD_SB/main" "$GUARD_SB/store/tierlink"
+    write_sandbox_config "$GUARD_SB" "s|^    storageDir .*|    storageDir      = \"$GUARD_SB/store/tierlink\"|"
     status=$(run_verify_only "$GUARD_SB")
     assert_status 1 "$status" "a symlink to mainDir should be caught"
     assert_contains "$(guard_report)" "are the same directory" "should follow the symlink"
-    rm -f "$GUARD_SB/proj/tierlink"
+    rm -f "$GUARD_SB/store/tierlink"
 }
 
-# Two genuinely different directories are the normal case and must not be flagged - the
-# fixture nests storageDir inside mainDir, which is fine: containment is not the problem,
-# identity is.
-test_distinct_directories_pass_even_when_nested() {
+# Two genuinely different directories are the normal case and must not be flagged. Identity
+# is the problem, not proximity: the sandbox's roots are siblings under one parent, and that
+# is as it should be.
+test_distinct_directories_pass() {
     guards_ready || return
     # Run rather than reading the copied baseline report: that one was produced in the
     # baseline sandbox, under different paths, so asserting against it would prove nothing
@@ -236,8 +237,95 @@ test_distinct_directories_pass_even_when_nested() {
     status=$(run_verify_only "$GUARD_SB")
     assert_status 0 "$status" "distinct directories should verify cleanly"
     report=$(guard_report)
-    assert_contains "$report" "The two storage tiers are distinct" "nesting should not be flagged"
+    assert_contains "$report" "The two storage tiers are distinct" "siblings should not be flagged"
     assert_contains "$report" "DIRECTORY CHECK:       STATUS=PASS" "the stage should pass"
+}
+
+# The installation is a tool, not a workspace: one copy serves any number of projects, and an
+# upgrade replaces it wholesale. A project kept inside it would not survive that, so this is
+# refused outright rather than warned about.
+test_maindir_may_not_be_the_installation() {
+    guards_ready || return
+    write_sandbox_config "$GUARD_SB" "s|^    mainDir .*|    mainDir         = \"$GUARD_SB/install\"|"
+    local status report
+    status=$(run_verify_only "$GUARD_SB")
+    report=$(guard_report)
+    assert_status 1 "$status" "mainDir pointing at the installation should fail"
+    assert_contains "$report" "is the PoolSeqFlow installation itself" "should say what is wrong"
+    assert_contains "$report" "DIRECTORY CHECK:       STATUS=FAIL" "the stage should record a failure"
+}
+
+# The same rule for the other root, and the worse case of the two: an upgrade replaces the
+# installation, so results kept inside it go with it - along with the manifests recording
+# what produced them.
+test_storagedir_may_not_be_the_installation() {
+    guards_ready || return
+    write_sandbox_config "$GUARD_SB" "s|^    storageDir .*|    storageDir      = \"$GUARD_SB/install\"|"
+    local status report
+    status=$(run_verify_only "$GUARD_SB")
+    report=$(guard_report)
+    assert_status 1 "$status" "storageDir pointing at the installation should fail"
+    assert_contains "$report" "storageDir is the PoolSeqFlow installation itself" \
+        "should say what is wrong"
+    assert_contains "$report" "DIRECTORY CHECK:       STATUS=FAIL" "the stage should record a failure"
+    # The failed run still publishes its report, which lands wherever storageDir pointed.
+    # Clear it so it cannot be mistaken for part of the installation by a later case.
+    rm -rf "$GUARD_SB/install/Output" "$GUARD_SB/install/Logs"
+}
+
+# Containment is a different matter from identity. Nothing collides, so the run proceeds -
+# but the lifetimes differ sharply enough that it is said out loud rather than discovered
+# during an upgrade.
+test_maindir_inside_the_installation_warns_but_runs() {
+    guards_ready || return
+    mkdir -p "$GUARD_SB/install/inner"
+    write_sandbox_config "$GUARD_SB" "s|^    mainDir .*|    mainDir         = \"$GUARD_SB/install/inner\"|"
+    local status report
+    status=$(run_verify_only "$GUARD_SB")
+    report=$(guard_report)
+    assert_status 0 "$status" "containment should not stop the run"
+    assert_contains "$report" "mainDir is inside the installation" "should warn about the containment"
+    assert_contains "$report" "DIRECTORY CHECK:       STATUS=PASS" "but it should still pass"
+}
+
+# The point of separating the installation from the project: one copy of the code, any number
+# of projects, each with its own settings and its own results. Until 3.0 this was impossible -
+# parameters.config was read from beside the pipeline, so an installation was a single
+# project and switching meant editing the file in place.
+#
+# poolSize differs between the two so the assertion can tell configurations apart. If the
+# second project were somehow reading the first one's config, both manifests would agree.
+test_two_projects_share_one_installation() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status1 status2
+    sb=$(make_pipeline_sandbox "twoprojects")
+    write_sandbox_config "$sb"
+
+    # A second project beside the first, with its own data and its own storage, sharing the
+    # installation. Derived from the first config so the sandbox's threads/memory carry over.
+    mkdir -p "$sb/main2" "$sb/store2"
+    cp -r "$REPO_ROOT/test/data/base/." "$sb/store2"/
+    sed -e "s|^    mainDir .*|    mainDir         = \"$sb/main2\"|" \
+        -e "s|^    storageDir .*|    storageDir      = \"$sb/store2\"|" \
+        -e "s|^    poolSize .*|    poolSize        = 250|" \
+        "$sb/main/parameters.config" > "$sb/main2/parameters.config"
+
+    status1=$(run_verify_only "$sb")
+    status2=$(SANDBOX_PROJECT_DIR="$sb/main2" SANDBOX_RUN_OUT="$sb/run2.out" run_verify_only "$sb")
+
+    assert_status 0 "$status1" "the first project should verify; see $sb/run.out"
+    assert_status 0 "$status2" "the second should verify against the same installation; see $sb/run2.out"
+
+    assert_contains "$(cat "$sb/store/.poolseqflow_params" 2>/dev/null)" "poolSize=100" \
+        "the first project should record its own parameters"
+    assert_contains "$(cat "$sb/store2/.poolseqflow_params" 2>/dev/null)" "poolSize=250" \
+        "the second project should record its own, not the first's"
+
+    # Neither run may write into the installation. Nextflow's cache follows the launch
+    # directory and work/ follows mainDir, so both belong to the project.
+    assert_count 0 "$(find "$sb/install" -maxdepth 1 -name '.nextflow*' -o -maxdepth 1 -name 'work' | wc -l)" \
+        "a run must leave no state in the installation"
 }
 
 # dataSource names the subdirectory the reads come from, so two datasets under one
@@ -246,7 +334,7 @@ test_distinct_directories_pass_even_when_nested() {
 # the sample id alone, and nothing recorded which data produced a set of outputs.
 test_pointing_at_a_different_dataset_is_caught() {
     guards_ready || return
-    cp -r "$GUARD_SB/proj/Data" "$GUARD_SB/proj/OtherData"
+    cp -r "$GUARD_SB/store/Data" "$GUARD_SB/store/OtherData"
     write_sandbox_config "$GUARD_SB" "s|^    dataSource .*|    dataSource      = 'OtherData'|"
     local status report
     status=$(run_verify_only "$GUARD_SB")

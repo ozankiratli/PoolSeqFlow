@@ -27,26 +27,46 @@ guard_path() {
     printf '%s' "$resolved"
 }
 
-# A directory holding the pipeline code plus a project built from a committed fixture.
-# Echoes the sandbox path. Optional second argument names the fixture (default: base).
+# A sandbox holding the three directories a real deployment keeps apart. Echoes the sandbox
+# path. Optional second argument names the fixture (default: base).
+#
+#   $sb/install   the installed pipeline. One copy serves any number of projects, so it is
+#                 not under either of the others, and a run never writes to it.
+#   $sb/main      mainDir, and the project directory: parameters.config and work/. This is
+#                 where a run is launched from.
+#   $sb/store     storageDir: the fixture's data, and everything a run produces.
+#
+# The code and mainDir were one directory until 3.0, which left the suite blind to the
+# distinction it now exists to test: `dir.bin` was "${mainDir}/bin" and appeared to work only
+# because the two were the same place. Kept apart here so that a path assuming otherwise
+# fails a test instead of passing by coincidence.
+#
+# The fixture goes to storageDir because that is still where the data lives: every dir.*
+# entry except scripts/bin resolves there. Moving Data/ and Reference/ onto mainDir is the
+# next stage, and the fixture moves with them - keeping them here for now is what lets this
+# stage prove it changed no result.
 make_pipeline_sandbox() {
     local name="$1" fixture="${2:-base}" sb
     sb=$(guard_path "$TEST_TMPDIR/$name")
     rm -rf "$sb"
-    mkdir -p "$sb"
-    cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$sb"/
-    cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/nextflow.config "$sb"/
-    cp -r "$REPO_ROOT/test/data/$fixture" "$sb/proj"
+    mkdir -p "$sb/install" "$sb/main" "$sb/store"
+    cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$sb/install"/
+    cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/nextflow.config "$sb/install"/
+    cp -r "$REPO_ROOT/test/data/$fixture/." "$sb/store"/
     printf '%s' "$sb"
 }
 
 # Write a parameters.config into a sandbox, derived from the shipped template so the test
 # exercises the real defaults. Extra `key=value` style sed expressions may follow.
+#
+# It lands in $sb/main, not beside the code: nextflow.config includes
+# "${launchDir}/parameters.config", so the config is found because the run is launched in the
+# project directory. A config left beside the installation is simply not read.
 write_sandbox_config() {
     local sb="$1"; shift
     local -a seds=(
-        -e "s|^    mainDir .*|    mainDir         = \"$sb\"|"
-        -e "s|^    storageDir .*|    storageDir      = \"$sb/proj\"|"
+        -e "s|^    mainDir .*|    mainDir         = \"$sb/main\"|"
+        -e "s|^    storageDir .*|    storageDir      = \"$sb/store\"|"
         -e "s|^    threads .*|    threads         = 4|"
         -e "s|^    memory .*|    memory          = '6 GB'|"
     )
@@ -54,7 +74,7 @@ write_sandbox_config() {
     for expr in "$@"; do
         seds+=(-e "$expr")
     done
-    sed "${seds[@]}" "$REPO_ROOT/parameters.config.template" > "$sb/parameters.config"
+    sed "${seds[@]}" "$REPO_ROOT/parameters.config.template" > "$sb/main/parameters.config"
 
     # Checked rather than assumed. These substitutions are keyed on parameter names, and a
     # rename in the template would silently stop them matching - leaving the sandbox config
@@ -62,21 +82,18 @@ write_sandbox_config() {
     # because the bad path never passes through it.
     local dir
     for dir in mainDir storageDir; do
-        grep -q "^    $dir  *= \"$sb" "$sb/parameters.config" || {
+        grep -q "^    $dir  *= \"$sb" "$sb/main/parameters.config" || {
             echo "test harness: $dir was not redirected into the sandbox." >&2
             echo "  The template parameter has probably been renamed; update" >&2
             echo "  write_sandbox_config in test/lib/sandbox.sh to match." >&2
             exit 1
         }
     done
-    grep -q '/path/to/' "$sb/parameters.config" && {
-        echo "test harness: a placeholder path survived into $sb/parameters.config" >&2
+    grep -q '/path/to/' "$sb/main/parameters.config" && {
+        echo "test harness: a placeholder path survived into $sb/main/parameters.config" >&2
         exit 1
     }
     return 0
-    # The suite runs tools from the conda environment already on PATH rather than letting
-    # Nextflow build one per process, which would dominate the runtime.
-    echo "conda.enabled = false" >> "$sb/parameters.config"
 }
 
 # Run the pipeline inside a sandbox. Stores combined output in $sb/run.out and echoes the
@@ -103,7 +120,7 @@ run_pipeline() {
 # dies on a null - which looks like a bug in that process rather than a missing setup call.
 run_dictionaries_only() {
     local sb="$1"
-    cat > "$sb/dictionaries_only.nf" <<'ENTRY'
+    cat > "$sb/install/dictionaries_only.nf" <<'ENTRY'
 nextflow.enable.dsl=2
 
 include { resolveParameters } from './scripts/resolve_parameters.nf'
@@ -121,7 +138,7 @@ ENTRY
 # generate-rather-than-commit reasoning as run_dictionaries_only.
 run_verify_only() {
     local sb="$1"
-    cat > "$sb/verify_only.nf" <<'ENTRY'
+    cat > "$sb/install/verify_only.nf" <<'ENTRY'
 nextflow.enable.dsl=2
 
 include { resolveParameters } from './scripts/resolve_parameters.nf'
@@ -136,14 +153,32 @@ ENTRY
 }
 
 # Shared runner for the generated entry scripts above and for run_pipeline.
+#
+# Launched from the project directory and pointed at the installation by absolute path,
+# exactly as ./PoolSeqFlow does it. That is what makes ${launchDir} the project (so
+# parameters.config is found) and ${projectDir} the installation (so dir.bin and the entry
+# scripts' './scripts/...' includes resolve against the code).
+#
+# run.out is written outside all three roots. Inside one, it would show up in the directory
+# listings the tests assert on.
+# SANDBOX_PROJECT_DIR and SANDBOX_RUN_OUT let a single call launch from somewhere other than
+# the sandbox's own mainDir. Only the several-projects-one-installation case needs them, and
+# it sets them for the duration of one call rather than for the suite:
+#
+#     status=$(SANDBOX_PROJECT_DIR="$sb/main2" SANDBOX_RUN_OUT="$sb/run2.out" run_verify_only "$sb")
+#
+# A positional argument would collide with the extra arguments run_pipeline forwards to
+# `nextflow run`.
 _run_entry() {
     local sb="$1" entry="$2"; shift 2
+    local proj="${SANDBOX_PROJECT_DIR:-$sb/main}"
+    local out="${SANDBOX_RUN_OUT:-$sb/run.out}"
     (
-        cd "$sb" || exit 1
+        cd "$proj" || exit 1
         export JAVA_HOME="$TEST_CONDA_ENV" JAVA_CMD="$TEST_CONDA_ENV/bin/java"
         export PATH="$TEST_CONDA_ENV/bin:$PATH"
         export NXF_HOME="$sb/nxfhome" NXF_VER="${TEST_NXF_VER:-26.04.6}"
-        nextflow -q run "$entry" "$@" > run.out 2>&1
+        nextflow -q run "$sb/install/$entry" "$@" > "$out" 2>&1
     )
     printf '%s' "$?"
 }
@@ -158,7 +193,7 @@ _run_entry() {
 # once instead of N times.
 task_count() {
     local sb="$1" process="$2" trace
-    trace="$sb/proj/Output/Reports/PoolSeqFlow_pipeline_trace.txt"
+    trace="$sb/store/Output/Reports/PoolSeqFlow_pipeline_trace.txt"
     [ -f "$trace" ] || { printf 'no-trace'; return; }
     awk -F'\t' -v want="$process" '
         NR > 1 {
@@ -223,6 +258,10 @@ run_launcher_with_envs() {
     printf '#!/bin/bash\necho "STUB check_install ran"\n' > "$sb/install/check_install.sh"
     printf 'name: stub\n' > "$sb/install/environment.yml"
     chmod +x "$sb/install/check_install.sh"
+    # The wrapper locates its own installation from its resolved path and refuses to run a
+    # subcommand that needs the pipeline when poolseqflow.nf is not beside it. Empty is
+    # enough: nothing here ever runs Nextflow.
+    : > "$sb/poolseqflow.nf"
     # shellcheck disable=SC2086
     make_stub_conda "$sb" $envs_spec
     LAUNCHER_CONDA_LOG="$sb/conda.log"

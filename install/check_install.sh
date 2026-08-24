@@ -22,7 +22,13 @@
 
 set -uo pipefail
 
+# Two directories, and they are no longer the same one. The installation holds the tools,
+# the helpers and nextflow.config; the directory the check was invoked from is the project
+# and holds parameters.config. Captured before the cd, because everything below runs from
+# the installation.
+PROJECT_DIR="$PWD"
 cd "$(dirname "$0")/.." || exit 1
+INSTALL_DIR="$PWD"
 
 # Which environment this copy expects. ./PoolSeqFlow exports it; derived from the same
 # source here so the epilogue still names the right one when this script is run directly,
@@ -102,17 +108,18 @@ source_note=""
 
 # Say which list is in use and, when it is the fallback, why - "no config yet" and
 # "nextflow could not read the config" send you to very different places.
-if [ ! -f parameters.config ]; then
-    source_note="canonical list - no parameters.config yet"
+if [ ! -f "$PROJECT_DIR/parameters.config" ]; then
+    source_note="canonical list - no parameters.config in $PROJECT_DIR"
 elif ! command -v nextflow >/dev/null 2>&1; then
     source_note="canonical list - nextflow not available to read parameters.config"
 else
     # Values are interpolated by Nextflow, so this reads what the pipeline will
-    # actually invoke rather than what the file appears to say.
+    # actually invoke rather than what the file appears to say. Read from the project
+    # directory, against the installation, exactly as a run would.
     while read -r n c; do
         [ -n "$n" ] || continue
         NAMES+=("$n"); CMDS+=("$c")
-    done < <(nextflow config -flat 2>/dev/null |
+    done < <(cd "$PROJECT_DIR" && nextflow config -flat "$INSTALL_DIR" 2>/dev/null |
              sed -n "s|^params\.software\.\([A-Za-z_][A-Za-z0-9_]*\) = '\(.*\)'$|\1 \2|p")
     if [ ${#NAMES[@]} -gt 0 ]; then
         source_note="params.software in parameters.config"
@@ -148,8 +155,10 @@ for f in atomic_mv.sh config_migrate.sh createDepthFile.sh \
         printf '  %-28s %sMISSING%s\n' "$f" "$RED" "$RESET"
         missing=$((missing + 1))
     elif [ ! -x "bin/$f" ]; then
-        # nextflow.config puts bin/ on PATH and the process scripts call these by
-        # bare name, so a lost executable bit fails mid-run rather than here.
+        # Nextflow puts the pipeline's own bin/ on every task's PATH, and the process
+        # scripts call these by bare name, so a lost executable bit fails mid-run rather
+        # than here. (nextflow.config also prepends dir.bin, but that is belt over braces -
+        # until 3.0 it named a directory that never existed and the helpers still resolved.)
         printf '  %-28s %sNOT EXECUTABLE%s  chmod +x bin/%s\n' "$f" "$RED" "$RESET" "$f"
         missing=$((missing + 1))
     else
@@ -163,14 +172,14 @@ echo
 echo "Configuration"
 echo
 
-if [ ! -f parameters.config ]; then
-    printf '  %-28s %sNOT YET CREATED%s\n' "parameters.config" "$YELLOW" "$RESET"
-    echo "    cp parameters.config.template parameters.config"
+if [ ! -f "$PROJECT_DIR/parameters.config" ]; then
+    printf '  %-28s %sNOT YET CREATED%s  in %s\n' "parameters.config" "$YELLOW" "$RESET" "$PROJECT_DIR"
+    echo "    cp $INSTALL_DIR/parameters.config.template $PROJECT_DIR/parameters.config"
 elif ! command -v nextflow >/dev/null 2>&1; then
     printf '  %-28s %sSKIPPED%s  nextflow not available\n' "parameters.config" "$YELLOW" "$RESET"
 else
     checked=$((checked + 1))
-    if err=$(nextflow config 2>&1 >/dev/null); then
+    if err=$(cd "$PROJECT_DIR" && nextflow config "$INSTALL_DIR" 2>&1 >/dev/null); then
         printf '  %-28s %sPARSES%s\n' "parameters.config" "$GREEN" "$RESET"
     else
         printf '  %-28s %sFAILED TO PARSE%s\n' "parameters.config" "$RED" "$RESET"
