@@ -747,44 +747,35 @@ CURRENT_PARAMS
         # config is settled by ${versions}: it records every release that has run here, and
         # this block runs before the version line below is appended, so its last entry is
         # still the release that produced the outputs on disk.
-        classify_manifest() {
-            awk '
-                FNR == NR {
-                    eq = index(\$0, "=")
-                    if (eq > 0) {
-                        k = substr(\$0, 1, eq - 1)
-                        old[k] = substr(\$0, eq + 1)
-                        order[++n] = k
-                    }
-                    next
-                }
-                {
-                    eq = index(\$0, "=")
-                    if (eq == 0) next
-                    k = substr(\$0, 1, eq - 1)
-                    v = substr(\$0, eq + 1)
-                    seen[k] = 1
-                    if (!(k in old))      { printf "ADDED\\t%s\\t\\t%s\\n", k, v; a++ }
-                    else if (old[k] != v) { printf "CHANGED\\t%s\\t%s\\t%s\\n", k, old[k], v; c++ }
-                }
-                END {
-                    for (i = 1; i <= n; i++)
-                        if (!(order[i] in seen)) {
-                            printf "REMOVED\\t%s\\t%s\\t\\n", order[i], old[order[i]]
-                            r++
-                        }
-                    printf "COUNTS\\t%d\\t%d\\t%d\\n", a + 0, c + 0, r + 0
-                }
-            ' "\$1" "\$2"
-        }
-
+        # The classification itself lives in bin/classify_manifest.sh so it can be called and
+        # tested directly. Every case it has to get right - a value containing '=', an empty
+        # value, a key present twice, a manifest with no trailing newline - is a one-second
+        # unit test there, where checking the same thing through a pipeline run costs a JVM
+        # start each time. What stays here is the part that is genuinely about this pipeline:
+        # deciding which kind of difference invalidates existing outputs.
+        #
         # Emitted once and read several times, so the classification cannot disagree with
         # itself between the counts and the listings.
-        classify_manifest "${stored}" current_params.txt > param_diff.txt
+        classify_manifest.sh "${stored}" current_params.txt > param_diff.txt
 
         N_ADDED=\$(awk -F'\\t' '\$1 == "COUNTS" { print \$2 }' param_diff.txt)
         N_CHANGED=\$(awk -F'\\t' '\$1 == "COUNTS" { print \$3 }' param_diff.txt)
         N_REMOVED=\$(awk -F'\\t' '\$1 == "COUNTS" { print \$4 }' param_diff.txt)
+        N_MALFORMED=\$(awk -F'\\t' '\$1 == "COUNTS" { print \$5 }' param_diff.txt)
+
+        # A manifest is machine-written, so a line that does not parse means something is
+        # wrong upstream - and a dropped line hides a key from the comparison, which can make
+        # a real change look like no change at all. Never silent.
+        if [ "\${N_MALFORMED:-0}" -gt 0 ]; then
+            log_message "RUN PARAMETERS:        \$N_MALFORMED unparseable line(s) in a parameter manifest:"
+            while IFS=\$'\\t' read -r kind line which _rest; do
+                [ "\$kind" = "MALFORMED" ] || continue
+                printf '  %-8s %s\\n' "\$which" "\$line" | tee -a \$REPORTFILE
+            done < param_diff.txt
+            log_message "RUN PARAMETERS:        ${stored} is written by the pipeline and should not be"
+            log_message "RUN PARAMETERS:        edited by hand. Restore it, or start a fresh run."
+            STATUS="FAIL"
+        fi
 
         PREVIOUS_RELEASE=""
         if [ -f "${versions}" ]; then

@@ -27,6 +27,115 @@ fa() {
     FA_ERR=$(cat "$errfile")
 }
 
+CM_OUT=""
+CM_STATUS=0
+
+# Classify two manifests written inline. Every case below costs a millisecond; checking the
+# same thing through a pipeline run costs a JVM start, which is why this logic was pulled out
+# of the process script in the first place.
+cm() {
+    local stored="$1" current="$2"
+    printf '%s' "$stored"  > "$HELPERS_DIR/stored.txt"
+    printf '%s' "$current" > "$HELPERS_DIR/current.txt"
+    CM_OUT=$("$REPO_ROOT/bin/classify_manifest.sh" "$HELPERS_DIR/stored.txt" "$HELPERS_DIR/current.txt" 2>"$HELPERS_DIR/stderr")
+    CM_STATUS=$?
+}
+
+cm_counts() {   # added changed removed malformed
+    printf '%s' "$CM_OUT" | awk -F'\t' '$1 == "COUNTS" { print $2, $3, $4, $5 }'
+}
+
+test_classify_manifest_reports_no_difference() {
+    helpers_sandbox
+    cm 'a=1
+b=2
+' 'a=1
+b=2
+'
+    assert_status 0 "$CM_STATUS" "classifying is not a verdict and should always succeed"
+    assert_eq "0 0 0 0" "$(cm_counts)" "identical manifests should differ in nothing"
+}
+
+test_classify_manifest_separates_the_three_kinds() {
+    helpers_sandbox
+    cm 'gone=9
+same=1
+moved=old
+' 'same=1
+moved=new
+fresh=7
+'
+    assert_eq "1 1 1 0" "$(cm_counts)" "one added, one changed, one removed"
+    assert_contains "$CM_OUT" "CHANGED	moved	old	new" "should carry both values for a change"
+    assert_contains "$CM_OUT" "ADDED	fresh		7" "an added key has no previous value"
+    assert_contains "$CM_OUT" "REMOVED	gone	9" "a removed key has no new value"
+}
+
+# Option strings contain '='. Splitting anywhere but the first one corrupts the value, and a
+# corrupted value compares unequal to itself - which would report a change that never
+# happened, on every run, for a parameter nobody touched.
+test_classify_manifest_splits_on_the_first_equals_only() {
+    helpers_sandbox
+    cm 'opts=-a X=1 -b Y=2
+' 'opts=-a X=1 -b Y=3
+'
+    assert_eq "0 1 0 0" "$(cm_counts)" "a value containing '=' is one changed parameter"
+    assert_contains "$CM_OUT" "CHANGED	opts	-a X=1 -b Y=2	-a X=1 -b Y=3" "the whole value should survive"
+}
+
+test_classify_manifest_handles_an_empty_value() {
+    helpers_sandbox
+    cm 'adapter1=ACGT
+' 'adapter1=
+'
+    assert_eq "0 1 0 0" "$(cm_counts)" "clearing a value is a change"
+    assert_contains "$CM_OUT" "CHANGED	adapter1	ACGT	" "should show the value going empty"
+}
+
+# analysisParams() sorts and joins, so a manifest written by an older release may lack the
+# final newline. Losing the last line would hide a parameter from the comparison entirely.
+test_classify_manifest_reads_a_file_with_no_trailing_newline() {
+    helpers_sandbox
+    cm 'a=1
+b=2' 'a=1
+b=3'
+    assert_eq "0 1 0 0" "$(cm_counts)" "the last line must still be compared"
+    assert_contains "$CM_OUT" "CHANGED	b	2	3" "should catch the change on the final line"
+}
+
+test_classify_manifest_ignores_blank_lines() {
+    helpers_sandbox
+    cm 'a=1
+
+b=2
+' 'a=1
+b=2
+
+'
+    assert_eq "0 0 0 0" "$(cm_counts)" "padding is not a difference"
+}
+
+# A manifest is machine-written, so a line that does not parse means something upstream is
+# wrong. Dropping it silently would hide a key and make a real change look like none.
+test_classify_manifest_reports_an_unparseable_line() {
+    helpers_sandbox
+    cm 'a=1
+this line has no equals sign
+' 'a=1
+'
+    assert_eq "0 0 0 1" "$(cm_counts)" "the bad line should be counted, not skipped"
+    assert_contains "$CM_OUT" "MALFORMED	this line has no equals sign	stored" "should quote it and say which file"
+}
+
+test_classify_manifest_rejects_a_missing_file() {
+    helpers_sandbox
+    : > "$HELPERS_DIR/only.txt"
+    local err
+    err=$("$REPO_ROOT/bin/classify_manifest.sh" "$HELPERS_DIR/only.txt" "$HELPERS_DIR/nope.txt" 2>&1)
+    assert_status 2 "$?" "a missing manifest is a usage error"
+    assert_contains "$err" "not a file" "should say which file is missing"
+}
+
 test_find_artifact_returns_the_first_root_that_has_it() {
     helpers_sandbox
     mkdir -p "$HELPERS_DIR/cold/Trimmed/S1" "$HELPERS_DIR/hot/Trimmed/S1"

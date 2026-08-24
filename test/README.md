@@ -28,6 +28,28 @@ the same arrangement `dev/` uses.
 | `suites/20_launcher.sh` | `./PoolSeqFlow` environment handling, against a stub conda |
 | `suites/30_pipeline.sh` | End-to-end runs against the fixture. The slow one |
 | `suites/40_guards.sh` | The step 0 change guards, via step-0-only runs |
+| `suites/50_helpers.sh` | Unit coverage for `bin/`, called directly. No conda, no fixture |
+
+## What to run, and when
+
+| | Cases | Time | |
+|---|---|---|---|
+| `--fast` | 51 | ~8s | static, migrate, launcher, helpers. Run it constantly |
+| everything | 71 | ~4 min | Run it at stage boundaries |
+
+The two slow suites are slow for one reason: a Nextflow run costs about **21 seconds of
+startup**, flat, cached or not. Nothing in the pipeline dominates that at fixture scale, so
+suite runtime is essentially a count of `nextflow run` invocations. Two consequences worth
+knowing before adding a case:
+
+- Prefer a **unit test in `50_helpers.sh`** over an end-to-end one. `bin/classify_manifest.sh`
+  exists as a separate script for exactly this reason — its edge cases (a value containing
+  `=`, an empty value, no trailing newline, an unparseable line) are milliseconds there and a
+  JVM start each through a pipeline run. When new guard logic is worth testing thoroughly,
+  extract it to `bin/` first.
+- Never give a case its own setup run. `40_guards.sh` builds one verified project and each
+  case works on a copy — 22ms against 21s. Doing it per case was most of that suite's
+  runtime and tested nothing.
 
 ## Two rules the suite is built around
 

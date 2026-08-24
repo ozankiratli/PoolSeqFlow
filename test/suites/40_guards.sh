@@ -8,19 +8,42 @@
 # its results.
 
 GUARD_SB=""
+GUARDS_BASELINE=""
 
-# A sandbox that has already been verified once, so .poolseqflow_params and
+# A verified project, built once for the whole suite: .poolseqflow_params and
 # .poolseqflow_versions exist and describe a completed check.
+#
+# Built once and copied because a step 0 run costs about 21 seconds - Nextflow startup, flat,
+# whether or not anything is cached - while copying the sandbox costs 22 milliseconds. Every
+# case having its own baseline run was most of this suite's runtime and tested nothing.
+guards_baseline() {
+    [ -n "$GUARDS_BASELINE" ] && return 0
+    local sb status
+    sb=$(make_pipeline_sandbox "guards-baseline")
+    write_sandbox_config "$sb"
+    status=$(run_verify_only "$sb")
+    [ "$status" = "0" ] || return 1
+    GUARDS_BASELINE="$sb"
+    return 0
+}
+
+# A fresh copy of that baseline for one case to mutate.
+#
+# The config is rewritten for the copy's own paths. That is safe precisely because the
+# manifest is path-independent - analysisParams() excludes mainDir, storageDir and every
+# dir.* entry - so the stored manifest still matches after the move. If that ever stops being
+# true, these cases fail loudly rather than drifting.
 guards_ready() {
     if ! have_tools; then skip_case "no conda environment"; return 1; fi
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return 1; fi
-    GUARD_SB=$(make_pipeline_sandbox "guards")
-    write_sandbox_config "$GUARD_SB"
-    local status; status=$(run_verify_only "$GUARD_SB")
-    if [ "$status" != "0" ]; then
-        fail_case "the baseline verification failed (status $status); see $GUARD_SB/run.out"
+    if ! guards_baseline; then
+        fail_case "the baseline verification failed; see $TEST_TMPDIR/guards-baseline/run.out"
         return 1
     fi
+    GUARD_SB=$(guard_path "$TEST_TMPDIR/guards")
+    rm -rf "$GUARD_SB"
+    cp -a "$GUARDS_BASELINE" "$GUARD_SB"
+    write_sandbox_config "$GUARD_SB"
     return 0
 }
 
@@ -161,7 +184,13 @@ test_the_same_directory_spelled_differently_is_still_caught() {
 # identity is.
 test_distinct_directories_pass_even_when_nested() {
     guards_ready || return
-    local report; report=$(guard_report)
+    # Run rather than reading the copied baseline report: that one was produced in the
+    # baseline sandbox, under different paths, so asserting against it would prove nothing
+    # about this case's configuration.
+    local status report
+    status=$(run_verify_only "$GUARD_SB")
+    assert_status 0 "$status" "distinct directories should verify cleanly"
+    report=$(guard_report)
     assert_contains "$report" "The two storage tiers are distinct" "nesting should not be flagged"
     assert_contains "$report" "DIRECTORY CHECK:       STATUS=PASS" "the stage should pass"
 }
