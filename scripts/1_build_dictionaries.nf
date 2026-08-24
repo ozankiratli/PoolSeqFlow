@@ -18,7 +18,7 @@ process UngzipReference {
     #    exit 1
     #fi
 
-    mkdir -p ${params.dir.references}
+    mkdir -p ${params.dir.dictionaries}
 
     echo "UNGZIP ${params.referenceFile}:             Start unzipping reference file..."
     if [ -f ${refOut} ]; then
@@ -30,7 +30,7 @@ process UngzipReference {
     else
         echo "UNGZIP ${params.referenceFile}:             Unzipping reference file..."
         gunzip -c ${refIn} > ${params.referenceFa}
-        echo "UNGZIP ${params.referenceFile}:             Moving ${params.referenceFa} to ${params.dir.references}"
+        echo "UNGZIP ${params.referenceFile}:             Moving ${params.referenceFa} to ${params.dir.dictionaries}"
         atomic_mv.sh ${params.referenceFa} ${refOut}
         echo "UNGZIP ${params.referenceFile}:             Creating symbolic link..."
         ln -s ${refOut} .
@@ -54,7 +54,7 @@ process CreateBwaIndex {
     path "${params.referenceFa}.{bwt,ann,amb,pac,sa}", emit: bwa_index
 
     script:
-    referenceDir = params.dir.references
+    referenceDir = params.dir.dictionaries
     dir_log = "${params.dir.logs}/1_build_dictionaries/s2_1_CreateBwaIndex"
 
     """
@@ -110,7 +110,7 @@ process CreateSamtoolsFaiIndex {
     path "${params.referenceFa}.fai", emit: fai_index
 
     script:
-    referenceDir = params.dir.references
+    referenceDir = params.dir.dictionaries
     dir_log = "${params.dir.logs}/1_build_dictionaries/s2_2_CreateSamtoolsFaiIndex"
 
     """

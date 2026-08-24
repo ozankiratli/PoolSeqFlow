@@ -26,6 +26,10 @@ params {
     // directory the pipeline script lives in, and a params entry of that name shadows it.
     // Renamed from projectDir - `./PoolSeqFlow migrate_config` carries the old value over.
     storageDir      = "/path/to/permanent/storage"
+    // The names of the files you place, and where they go, all relative to mainDir:
+    //   mainDir/Data/            the reads              (dataSource names it)
+    //   mainDir/Reference/       reference + annotation (referenceFile, gffFile)
+    //   mainDir/RGTags.csv       your read-group table  (rgTagsFile)
     dataSource      = 'Data'
     readPattern     = "*_R{1,2}.fq.gz"
     referenceFile   = 'reference.fasta.gz'
@@ -36,9 +40,6 @@ params {
     gffFile         = 'reference.gff.gz'
 
     referenceFa     = "${params.referenceFile.replace('.gz', '')}"
-    referencePath   = "${params.storageDir}/${params.referenceFile}"
-    gffPath         = "${params.storageDir}/${params.gffFile}"
-    rgTagsPath      = "${params.storageDir}/${params.rgTagsFile}"
 
     // Core allocation. Every value below is computed from `threads` above, in
     // scripts/resolve_parameters.nf, and is left commented out here so that changing
@@ -172,11 +173,33 @@ params {
         runOptions      = "-v"
     }
     
-    // directories
+    // Directories.
+    //
+    // Everything the run reads repeatedly is on mainDir; everything it has finished with is
+    // on storageDir. Before 3.0 every entry here resolved to storageDir, so mainDir held
+    // only work/ - which, under the symlink strategy, holds symlinks. Reads and reference
+    // therefore crossed the slower volume on every access, and nothing in the configuration
+    // made that visible.
     dir {
-        data            = "${params.storageDir}/${params.dataSource}"
+        // Placed by you, and never moved or deleted by the pipeline.
+        data            = "${params.mainDir}/${params.dataSource}"
+        references      = "${params.mainDir}/Reference"
+        // Derived from your reference by step 1: the decompressed FASTA, the bwa index, the
+        // .fai and the snpEff database. Kept separate from Reference/ itself so it is plain
+        // which files are yours and which the pipeline may delete and rebuild.
+        //
+        // They stay here rather than being archived. mainDir is durable, every name in here
+        // is keyed by the reference it came from, so several genomes coexist safely - and a
+        // later run against a genome already built here skips step 1 entirely.
+        dictionaries    = "${params.dir.references}/Dictionaries"
+        // Outputs land here first and move to Output/ once the step that consumes them has
+        // succeeded, so each byte crosses to storageDir once instead of being read across it
+        // many times. Mirrors Output/'s own tree. `clean` leaves it alone; `reset` removes it.
+        //
+        // Nothing writes here yet - the promotion steps come later in the 3.0 series.
+        utilized        = "${params.mainDir}/Utilized"
+
         outputs         = "${params.storageDir}/Output"
-        references      = "${params.storageDir}/Reference"
         // The installed pipeline's own directories, which are not under either of your two
         // storage roots: one installation serves any number of projects.
         //
@@ -195,7 +218,7 @@ params {
         scripts         = "${projectDir}/scripts"
         bin             = "${projectDir}/bin"
         logs            = "${params.storageDir}/Logs"
-        snpEff          = "${params.dir.references}/snpEff"
+        snpEff          = "${params.dir.dictionaries}/snpEff"
 
         output {
             aligned         = "${params.dir.outputs}/Aligned"
@@ -216,9 +239,18 @@ params {
         }
     }
 
-    // setting reference and data full paths
-    reference       = "${params.dir.references}/${params.referenceFile.replace('.gz', '')}"
-    gff             = "${params.dir.references}/${params.gffFile.replace('.gz', '')}" 
+    // Full paths to the files you place, and to what step 1 derives from them.
+    //
+    // These sit below the dir block rather than beside the file names above because config
+    // interpolation is a single forward pass: a parameter may only reference one that is
+    // already defined. A forward reference fails with "Unable to parse config file" and
+    // leaves the real cause - a NullPointerException - only in .nextflow.log.
+    referencePath   = "${params.dir.references}/${params.referenceFile}"
+    gffPath         = "${params.dir.references}/${params.gffFile}"
+    rgTagsPath      = "${params.mainDir}/${params.rgTagsFile}"
+
+    reference       = "${params.dir.dictionaries}/${params.referenceFile.replace('.gz', '')}"
+    gff             = "${params.dir.dictionaries}/${params.gffFile.replace('.gz', '')}"
     reads           = "${params.dir.data}/${params.readPattern}"
 
 

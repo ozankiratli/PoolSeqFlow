@@ -186,4 +186,65 @@ show REFORMAT "Format changed this release - template value used"  "  %-30s now 
 show NEW      "New in this release - review these defaults"   "  %-30s %s%s\n"
 show DROPPED  "No longer used - dropped"                      "  %-30s was %s%s\n"
 
+# --- inputs that have to move ---------------------------------------------------------
+#
+# 3.0 puts the project's own files on mainDir. Before it, every dir.* entry resolved to
+# storageDir, so that is where an existing project keeps its reads, reference and RGTags.csv.
+# The config migrates automatically; the files cannot. They are large, they are the user's,
+# and moving them is not a decision a config tool should take on its own - so this detects
+# and reports, and never performs.
+#
+# Read from the backup, not from $OLD: they are the same file whenever the output path is
+# left at its default, and by this point it holds the migrated config.
+cfg_value() {
+    [ -f "$1" ] || return 0
+    sed -n "s|^[[:space:]]*$2[[:space:]]*=[[:space:]]*||p" "$1" \
+        | head -1 \
+        | sed -e 's|[[:space:]]*//.*$||' -e 's|[[:space:]]*$||' -e "s|^['\"]||" -e "s|['\"]\$||" \
+        || true
+}
+
+OLD_STORE=$(cfg_value "$BAK" storageDir)
+if [ -z "$OLD_STORE" ]; then OLD_STORE=$(cfg_value "$BAK" projectDir); fi
+NEW_MAIN=$(cfg_value "$OUT" mainDir)
+DATASRC=$(cfg_value "$OUT" dataSource)
+REFFILE=$(cfg_value "$OUT" referenceFile)
+GFFFILE=$(cfg_value "$OUT" gffFile)
+RGFILE=$(cfg_value "$OUT" rgTagsFile)
+
+MOVES=()
+if [ -n "$OLD_STORE" ] && [ -n "$NEW_MAIN" ]; then
+    if [ -n "$DATASRC" ] && [ -d "$OLD_STORE/$DATASRC" ]; then
+        MOVES+=("mv $OLD_STORE/$DATASRC $NEW_MAIN/")
+    fi
+    if [ -n "$REFFILE" ] && [ -f "$OLD_STORE/$REFFILE" ]; then
+        MOVES+=("mv $OLD_STORE/$REFFILE $NEW_MAIN/Reference/")
+    fi
+    if [ -n "$GFFFILE" ] && [ -f "$OLD_STORE/$GFFFILE" ]; then
+        MOVES+=("mv $OLD_STORE/$GFFFILE $NEW_MAIN/Reference/")
+    fi
+    if [ -n "$RGFILE" ] && [ -f "$OLD_STORE/$RGFILE" ]; then
+        MOVES+=("mv $OLD_STORE/$RGFILE $NEW_MAIN/")
+    fi
+fi
+
+printf 'Files to move yourself (%s)\n' "${#MOVES[@]}"
+if [ "${#MOVES[@]}" -eq 0 ]; then
+    echo "  none"
+else
+    echo "  Your reads, reference and read-group table are still under storageDir, where"
+    echo "  releases before 3.0 kept them. From 3.0 they belong on mainDir. Nothing is moved"
+    echo "  for you - run these yourself, and check them first:"
+    echo
+    echo "      mkdir -p $NEW_MAIN/Reference"
+    for m in "${MOVES[@]}"; do echo "      $m"; done
+    if [ -d "$OLD_STORE/Reference" ]; then
+        echo
+        echo "  $OLD_STORE/Reference holds the decompressed FASTA, the indexes and the snpEff"
+        echo "  database built by an earlier release. All of it is derived, and 3.0 rebuilds it"
+        echo "  under $NEW_MAIN/Reference/Dictionaries, so it can be deleted once a run succeeds."
+    fi
+fi
+echo
+
 echo "Review $OUT before running the pipeline."

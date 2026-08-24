@@ -278,7 +278,10 @@ test_storagedir_may_not_be_the_installation() {
 # during an upgrade.
 test_maindir_inside_the_installation_warns_but_runs() {
     guards_ready || return
-    mkdir -p "$GUARD_SB/install/inner"
+    # A real project, not an empty directory: mainDir holds the inputs now, so pointing it
+    # somewhere empty would fail on the missing reference and never reach the check at issue.
+    rm -rf "$GUARD_SB/install/inner"
+    cp -a "$GUARD_SB/main" "$GUARD_SB/install/inner"
     write_sandbox_config "$GUARD_SB" "s|^    mainDir .*|    mainDir         = \"$GUARD_SB/install/inner\"|"
     local status report
     status=$(run_verify_only "$GUARD_SB")
@@ -305,7 +308,7 @@ test_two_projects_share_one_installation() {
     # A second project beside the first, with its own data and its own storage, sharing the
     # installation. Derived from the first config so the sandbox's threads/memory carry over.
     mkdir -p "$sb/main2" "$sb/store2"
-    cp -r "$REPO_ROOT/test/data/base/." "$sb/store2"/
+    cp -r "$REPO_ROOT/test/data/base/." "$sb/main2"/
     sed -e "s|^    mainDir .*|    mainDir         = \"$sb/main2\"|" \
         -e "s|^    storageDir .*|    storageDir      = \"$sb/store2\"|" \
         -e "s|^    poolSize .*|    poolSize        = 250|" \
@@ -334,7 +337,7 @@ test_two_projects_share_one_installation() {
 # the sample id alone, and nothing recorded which data produced a set of outputs.
 test_pointing_at_a_different_dataset_is_caught() {
     guards_ready || return
-    cp -r "$GUARD_SB/store/Data" "$GUARD_SB/store/OtherData"
+    cp -r "$GUARD_SB/main/Data" "$GUARD_SB/main/OtherData"
     write_sandbox_config "$GUARD_SB" "s|^    dataSource .*|    dataSource      = 'OtherData'|"
     local status report
     status=$(run_verify_only "$GUARD_SB")

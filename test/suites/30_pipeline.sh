@@ -56,7 +56,7 @@ test_frequency_table_columns_follow_the_rgtags_order() {
     needs_run || return
     local header expected
     header=$(head -1 "$PIPELINE_SB/store/Output/Frequencies/Test_snp_freq.tsv" | cut -f6-)
-    expected=$(tail -n +2 "$PIPELINE_SB/store/RGTags.csv" | cut -d, -f1 | tr '\n' '\t' | sed 's/\t$//')
+    expected=$(tail -n +2 "$PIPELINE_SB/main/RGTags.csv" | cut -d, -f1 | tr '\n' '\t' | sed 's/\t$//')
     assert_eq "$expected" "$header" "sample columns should match RGTags row order"
 }
 
@@ -116,7 +116,7 @@ test_sites_planted_absent_stay_absent() {
             }
         }
         END { printf "CHECKED %d\n", checked + 0 }
-    ' "$PIPELINE_SB/store/planted.tsv" "$PIPELINE_SB/store/Output/Frequencies/Test_snp_freq.tsv")
+    ' "$PIPELINE_SB/main/planted.tsv" "$PIPELINE_SB/store/Output/Frequencies/Test_snp_freq.tsv")
 
     checked=$(printf '%s' "$report" | sed -n 's/^CHECKED //p')
     bad=$(printf '%s' "$report" | grep -c "planted 0.0 but reported")
@@ -158,7 +158,7 @@ test_rerunning_a_finished_project_changes_nothing() {
 test_each_step_runs_once_per_sample() {
     needs_run || return
     local samples
-    samples=$(find "$PIPELINE_SB/store/Data" -name '*_R1.fq.gz' | wc -l)
+    samples=$(find "$PIPELINE_SB/main/Data" -name '*_R1.fq.gz' | wc -l)
     [ "$samples" -gt 1 ] || { skip_case "fixture has $samples samples; nothing to fan out"; return; }
 
     local p
@@ -197,8 +197,8 @@ test_a_second_reference_builds_its_own_snpeff_database() {
     sb=$(make_pipeline_sandbox "twogenome")
     # Same sequence and annotation under a second name - what differs is the database name
     # snpEff derives from gffFile, which is exactly what the marker has to distinguish.
-    cp "$sb/store/reference.fasta.gz" "$sb/store/genomeB.fasta.gz"
-    cp "$sb/store/reference.gff.gz"   "$sb/store/genomeB.gff.gz"
+    cp "$sb/main/Reference/reference.fasta.gz" "$sb/main/Reference/genomeB.fasta.gz"
+    cp "$sb/main/Reference/reference.gff.gz"   "$sb/main/Reference/genomeB.gff.gz"
     : > "$sb/store/.step0_token"
     write_sandbox_config "$sb"
 
@@ -211,7 +211,10 @@ test_a_second_reference_builds_its_own_snpeff_database() {
     status=$(run_dictionaries_only "$sb")
     assert_status 0 "$status" "the second genome's dictionaries should build"
 
-    db="$sb/store/Reference/snpEff/data"
+    # Derived artifacts live beside the reference they came from, under Dictionaries/ - which
+    # is what keeps them clearly the pipeline's to delete and rebuild, and the user's two
+    # files clearly theirs.
+    db="$sb/main/Reference/Dictionaries/snpEff/data"
     assert_file "$db/reference.gff/.build_complete"  "the first genome should keep its marker"
     assert_file "$db/genomeB.gff/.build_complete"    "the second genome should get its own marker"
     assert_file "$db/genomeB.gff/snpEffectPredictor.bin" \
@@ -220,13 +223,13 @@ test_a_second_reference_builds_its_own_snpeff_database() {
     # snpEff reads every entry in the config, so it has to name both genomes. A plain
     # overwrite left only the most recent one, which made the earlier genome unannotatable
     # while its database sat on disk intact.
-    local cfg; cfg=$(cat "$sb/store/Reference/snpEff/snpEff.config")
+    local cfg; cfg=$(cat "$sb/main/Reference/Dictionaries/snpEff/snpEff.config")
     assert_contains "$cfg" "reference.gff.genome" "the config should still name the first genome"
     assert_contains "$cfg" "genomeB.gff.genome"   "the config should also name the second genome"
 
     # Both references' indexes coexist too - already true, and worth holding to.
-    assert_file "$sb/store/Reference/reference.fasta.fai" "the first genome's fai should survive"
-    assert_file "$sb/store/Reference/genomeB.fasta.fai"   "the second genome should get its own fai"
+    assert_file "$sb/main/Reference/Dictionaries/reference.fasta.fai" "the first genome's fai should survive"
+    assert_file "$sb/main/Reference/Dictionaries/genomeB.fasta.fai"   "the second genome should get its own fai"
 }
 
 # cutadapt applies -m after -l, so a minimum length above the computed read length limit
@@ -238,8 +241,8 @@ test_min_length_above_the_computed_limit_fails_loudly() {
     local sb status out
     sb=$(make_pipeline_sandbox "minlen")
     # Two samples are enough, and the run stops at step 2 anyway.
-    rm -f "$sb"/store/Data/TestSample[3-9]_R*.fq.gz
-    grep -v -E '^TestSample[3-9],' "$sb/store/RGTags.csv" > "$sb/store/rg" && mv "$sb/store/rg" "$sb/store/RGTags.csv"
+    rm -f "$sb"/main/Data/TestSample[3-9]_R*.fq.gz
+    grep -v -E '^TestSample[3-9],' "$sb/main/RGTags.csv" > "$sb/main/rg" && mv "$sb/main/rg" "$sb/main/RGTags.csv"
     write_sandbox_config "$sb" 's|^        options        = ""|        options        = "-m 200"|'
     status=$(run_pipeline "$sb")
     out=$(cat "$sb/run.out")
@@ -255,8 +258,8 @@ test_a_legitimate_min_length_still_runs() {
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
     local sb status
     sb=$(make_pipeline_sandbox "minlen-ok")
-    rm -f "$sb"/store/Data/TestSample[3-9]_R*.fq.gz
-    grep -v -E '^TestSample[3-9],' "$sb/store/RGTags.csv" > "$sb/store/rg" && mv "$sb/store/rg" "$sb/store/RGTags.csv"
+    rm -f "$sb"/main/Data/TestSample[3-9]_R*.fq.gz
+    grep -v -E '^TestSample[3-9],' "$sb/main/RGTags.csv" > "$sb/main/rg" && mv "$sb/main/rg" "$sb/main/RGTags.csv"
     write_sandbox_config "$sb" 's|^        options        = ""|        options        = "-m 50"|'
     status=$(run_pipeline "$sb")
     assert_status 0 "$status" "a minimum below the computed limit should run normally"

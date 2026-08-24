@@ -308,6 +308,9 @@ case $COMMAND in
         WORKDIR=$(nf_config_value workDir)
         STORAGE=$(nf_config_value params.storageDir)
         DATADIR=$(nf_config_value params.dir.data)
+        REFDIR=$(nf_config_value params.dir.references)
+        DICTDIR=$(nf_config_value params.dir.dictionaries)
+        UTILDIR=$(nf_config_value params.dir.utilized)
         conda deactivate
         if [ -z "$STORAGE" ]; then
             echo "ERROR: could not resolve params.storageDir - is parameters.config present?" >&2
@@ -318,14 +321,17 @@ case $COMMAND in
         echo "    $STORAGE/Output      - every result produced so far"
         echo "    $STORAGE/Reports     - only if a pre-2.1 version put reports here"
         echo "    $STORAGE/Logs"
-        echo "    $STORAGE/Reference   - indices and the SnpEff database"
+        echo "    $STORAGE/Reference   - only if a pre-3.0 version built indices there"
+        [ -n "$DICTDIR" ] && echo "    $DICTDIR - the indices and SnpEff database built from your reference"
+        [ -n "$UTILDIR" ] && echo "    $UTILDIR - outputs not yet moved to permanent storage"
         echo "    $STORAGE/.poolseqflow_params"
         echo "    $STORAGE/.poolseqflow_rgtags"
         echo "    $STORAGE/.poolseqflow_versions"
         echo "    $(pwd)/.nextflow*    - Nextflow's own history and cache"
         [ -n "$WORKDIR" ] && echo "    $WORKDIR"
         echo ""
-        echo "Your raw sequencing data in $DATADIR is not touched."
+        echo "Your reads in $DATADIR are not touched, and neither are the reference and"
+        echo "annotation files you placed in $REFDIR - only what was built from them."
         echo ""
         printf 'Type DELETE_MY_ANALYSIS to confirm: '
         if ! read -r CONFIRM; then
@@ -341,7 +347,9 @@ case $COMMAND in
         rm -rf .nextflow*
         if [ -n "$WORKDIR" ]; then rm -rf "$WORKDIR"; fi
         # `$STORAGE/Reports` only exists for projects created before 2.1.0, when reports
-        # were written outside Output/. Harmless when absent, so it stays.
+        # were written outside Output/. `$STORAGE/Reference` likewise only exists for
+        # projects created before 3.0.0, when the reference and everything derived from it
+        # lived on storageDir; both are on mainDir now. Harmless when absent, so they stay.
         #
         # `$STORAGE/PoolSeqFlow_*` used to be removed here too. It was dropped: the
         # PoolSeqFlow_pipeline_{dag,trace,timeline,report} files have gone to
@@ -351,6 +359,13 @@ case $COMMAND in
         # "PoolSeqFlow_", undisclosed and with rm -rf.
         rm -rf "$STORAGE"/Reports "$STORAGE"/Logs "$STORAGE"/Output \
                "$STORAGE"/Reference
+        # Everything step 1 derives from your reference, and any output that has not yet been
+        # moved to permanent storage. The two files the dictionaries are derived FROM are
+        # yours, sit one level up in Reference/, and are not touched. An empty value means
+        # parameters.config predates the parameter, in which case the `$STORAGE/Reference`
+        # line above is the one that applies.
+        if [ -n "$DICTDIR" ]; then rm -rf "$DICTDIR"; fi
+        if [ -n "$UTILDIR" ]; then rm -rf "$UTILDIR"; fi
         # These record the parameters, RG tags and pipeline versions behind outputs that
         # no longer exist; leaving them would make the next run fail its checks for no
         # reason, and would attribute fresh results to an earlier release.

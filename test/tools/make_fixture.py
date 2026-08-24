@@ -198,12 +198,16 @@ def main():
     site_positions = sorted(sites)
 
     # --- emit -----------------------------------------------------------------------------
+    # The fixture is a mainDir: the layout a user prepares by hand before the first run -
+    # reads under Data/, reference and annotation under Reference/, RGTags.csv alongside
+    # them. storageDir starts empty and the pipeline fills it, so nothing here belongs to it.
     out = args.out
     os.makedirs(os.path.join(out, "Data"), exist_ok=True)
+    os.makedirs(os.path.join(out, "Reference"), exist_ok=True)
 
     seq = "".join(genome)
     fasta = [">chr1"] + [seq[i:i + 80] for i in range(0, len(seq), 80)]
-    write_gz(os.path.join(out, "reference.fasta.gz"), "\n".join(fasta) + "\n")
+    write_gz(os.path.join(out, "Reference", "reference.fasta.gz"), "\n".join(fasta) + "\n")
 
     gff = ["##gff-version 3", f"##sequence-region chr1 1 {args.genome_size}"]
     for i, (start, end) in enumerate(genes, 1):
@@ -214,7 +218,7 @@ def main():
                 (f"ID=gene{i};Name=gene{i}", f"ID=mrna{i};Parent=gene{i}",
                  f"ID=exon{i};Parent=mrna{i}", f"ID=cds{i};Parent=mrna{i}")):
             gff.append(f"chr1\ttest\t{feature}\t{start + 1}\t{end}\t.\t+\t{phase}\t{attr}")
-    write_gz(os.path.join(out, "reference.gff.gz"), "\n".join(gff) + "\n")
+    write_gz(os.path.join(out, "Reference", "reference.gff.gz"), "\n".join(gff) + "\n")
 
     qual = "I" * rlen
     max_start = args.genome_size - args.insert_mean - 4 * args.insert_sd

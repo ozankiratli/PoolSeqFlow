@@ -32,19 +32,18 @@ guard_path() {
 #
 #   $sb/install   the installed pipeline. One copy serves any number of projects, so it is
 #                 not under either of the others, and a run never writes to it.
-#   $sb/main      mainDir, and the project directory: parameters.config and work/. This is
-#                 where a run is launched from.
-#   $sb/store     storageDir: the fixture's data, and everything a run produces.
+#   $sb/main      mainDir, and the project directory: the fixture's inputs, parameters.config
+#                 and work/. This is where a run is launched from.
+#   $sb/store     storageDir: everything a run produces, and nothing before the first run.
 #
 # The code and mainDir were one directory until 3.0, which left the suite blind to the
 # distinction it now exists to test: `dir.bin` was "${mainDir}/bin" and appeared to work only
 # because the two were the same place. Kept apart here so that a path assuming otherwise
 # fails a test instead of passing by coincidence.
 #
-# The fixture goes to storageDir because that is still where the data lives: every dir.*
-# entry except scripts/bin resolves there. Moving Data/ and Reference/ onto mainDir is the
-# next stage, and the fixture moves with them - keeping them here for now is what lets this
-# stage prove it changed no result.
+# The fixture is a mainDir - Data/, Reference/ and RGTags.csv, exactly what a user prepares
+# by hand - so it is copied there whole. Nothing is seeded into storageDir: if a test finds
+# something there, the run put it there.
 make_pipeline_sandbox() {
     local name="$1" fixture="${2:-base}" sb
     sb=$(guard_path "$TEST_TMPDIR/$name")
@@ -52,7 +51,7 @@ make_pipeline_sandbox() {
     mkdir -p "$sb/install" "$sb/main" "$sb/store"
     cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$sb/install"/
     cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/nextflow.config "$sb/install"/
-    cp -r "$REPO_ROOT/test/data/$fixture/." "$sb/store"/
+    cp -r "$REPO_ROOT/test/data/$fixture/." "$sb/main"/
     printf '%s' "$sb"
 }
 
