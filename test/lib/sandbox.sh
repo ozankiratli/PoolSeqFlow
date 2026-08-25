@@ -51,8 +51,26 @@ make_pipeline_sandbox() {
     mkdir -p "$sb/install" "$sb/main" "$sb/store"
     cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$sb/install"/
     cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/nextflow.config "$sb/install"/
+    # The wrapper too, so cases can exercise clean/reset against a real project instead of
+    # reimplementing what they do.
+    cp "$REPO_ROOT/PoolSeqFlow" "$sb/install"/
     cp -r "$REPO_ROOT/test/data/$fixture/." "$sb/main"/
+    # A fingerprint of the installation as deployed. One installation serves any number of
+    # projects, so a run that wrote inside it would corrupt every other project on the
+    # machine - and would do it silently. Recorded here, checked by whichever case wants to
+    # prove nothing moved. Kept outside the three roots, like run.out.
+    install_fingerprint "$sb" > "$sb/install.before"
     printf '%s' "$sb"
+}
+
+# Every file in the installation and its checksum, in a stable order.
+#
+# Only meaningful for a sandbox driven by run_pipeline. run_dictionaries_only and
+# run_trim_only generate their entry scripts INTO the installation, so comparing a
+# fingerprint after one of those reports a difference the harness caused rather than the
+# pipeline - which is a true statement about the files and a misleading one about the run.
+install_fingerprint() {
+    ( cd "$1/install" && find . -type f -exec md5sum {} + | sort -k2 )
 }
 
 # Write a parameters.config into a sandbox, derived from the shipped template so the test
@@ -255,6 +273,35 @@ make_stub_conda() {
     chmod +x "$dir/bin/conda"
 }
 
+# Run the real ./PoolSeqFlow wrapper against a real project sandbox.
+#
+# The conda side is stubbed exactly as the launcher suite stubs it - `activate` is a no-op,
+# nothing is created or removed - so this cannot touch an operator's environments. Everything
+# else is real: the project's own parameters.config, the deployed payload, and `nextflow
+# config`, which is how the wrapper learns the paths it is about to delete. That last part is
+# the reason a stub project would be worthless here.
+#
+# Results land in WRAPPER_OUTPUT / WRAPPER_STATUS. Not written as `out=$(run_project_wrapper
+# ...)`: a function called in a command substitution runs in a subshell and its assignments
+# never reach the caller. Feed stdin with a herestring, not a pipe, for the same reason.
+run_project_wrapper() {
+    local sb="$1"; shift
+    guard_path "$sb" > /dev/null
+    local version stub
+    version=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/PoolSeqFlow" | head -1)
+    stub="$sb/stub"
+    make_stub_conda "$stub" base "PoolSeqFlow-$version"
+    WRAPPER_OUTPUT=$(cd "$sb/main" && \
+        PATH="$stub/bin:$TEST_CONDA_ENV/bin:$PATH" \
+        JAVA_HOME="$TEST_CONDA_ENV" JAVA_CMD="$TEST_CONDA_ENV/bin/java" \
+        NXF_HOME="$sb/nxfhome" NXF_VER="${TEST_NXF_VER:-26.04.6}" \
+        POOLSEQFLOW_HOME="$sb/install" \
+        "$sb/install/PoolSeqFlow" "$@" 2>&1)
+    WRAPPER_STATUS=$?
+}
+
+WRAPPER_OUTPUT=""
+WRAPPER_STATUS=0
 LAUNCHER_OUTPUT=""
 LAUNCHER_STATUS=0
 LAUNCHER_CONDA_LOG=""

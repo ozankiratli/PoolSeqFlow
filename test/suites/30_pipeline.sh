@@ -553,3 +553,110 @@ test_only_real_vcfs_reach_storage() {
     assert_count 0 "$(find "$PIPELINE_SB/main/Utilized" -name '*.vcf' 2>/dev/null | wc -l)" \
         "no VCF should be left on the working volume"
 }
+
+# One installation serves any number of projects, so a run that wrote inside it would corrupt
+# every other project on the machine - and would do it silently, since nothing about a
+# successful run would look wrong. The fingerprint is taken when the sandbox is built and
+# compared after a full run, so this covers every step rather than any one of them.
+test_a_run_never_writes_inside_the_installation() {
+    needs_run || return
+    local diff_out
+    diff_out=$(diff "$PIPELINE_SB/install.before" <(install_fingerprint "$PIPELINE_SB") 2>&1)
+    if [ -n "$diff_out" ]; then
+        fail_case "the installation changed during a run:"
+        fail_case "$diff_out"
+    fi
+}
+
+# `clean` throws away scratch. `reset` throws away results. The difference is the whole reason
+# there are two commands, and from 3.0 it is sharper than it used to be: Utilized/ sits beside
+# work/ under mainDir and holds real outputs a run produced but has not yet moved to permanent
+# storage. Deleting it as though it were scratch would silently discard finished work.
+#
+# Runs the real wrapper against a copy of the finished project. The conda side is stubbed, so
+# nothing here can touch an operator's environments; everything else - the project's config,
+# the payload, and the `nextflow config` call the wrapper uses to learn what it is about to
+# delete - is real, which is the part that matters.
+test_clean_removes_scratch_and_keeps_everything_else() {
+    needs_run || return
+    local sb
+    sb=$(guard_path "$TEST_TMPDIR/clean-scope")
+    rm -rf "$sb"; cp -r "$PIPELINE_SB" "$sb"; rm -f "$sb/run.out"
+    write_sandbox_config "$sb"
+
+    # A finished run leaves Utilized empty - everything has been promoted - so an interrupted
+    # one is staged by hand. This file is the case.
+    mkdir -p "$sb/main/Utilized/Trimmed/TestSample1"
+    echo "not yet promoted" > "$sb/main/Utilized/Trimmed/TestSample1/TestSample1_R1_clipped.fq.gz"
+    [ -d "$sb/main/work" ] || fail_case "the copied project should still have a work directory"
+
+    run_project_wrapper "$sb" clean
+    assert_status 0 "$WRAPPER_STATUS" "clean should succeed: $WRAPPER_OUTPUT"
+
+    # Named, not merely deleted. `.nextflow*` used to be removed below the branch that
+    # reports on workDir, so it was deleted without ever being mentioned.
+    assert_contains "$WRAPPER_OUTPUT" ".nextflow" "clean should name Nextflow's own files"
+    assert_contains "$WRAPPER_OUTPUT" "Not removed" "clean should say what it leaves alone"
+
+    assert_no_file "$sb/main/work"        "the work directory should be gone"
+    assert_no_file "$sb/main/.nextflow"   "Nextflow's cache directory should be gone"
+
+    assert_file "$sb/main/Utilized/Trimmed/TestSample1/TestSample1_R1_clipped.fq.gz" \
+        "clean must not touch outputs waiting to be promoted"
+    assert_file "$sb/store/Output/Frequencies/Test_snp_freq.tsv" "results should survive clean"
+    assert_file "$sb/main/Reference/Dictionaries/reference.fasta" "dictionaries should survive clean"
+    assert_file "$sb/main/Data/TestSample1_R1.fq.gz"             "your reads should survive clean"
+    assert_file "$sb/main/parameters.config"                     "your config should survive clean"
+}
+
+# reset is the destructive one, so what it does NOT delete is the assertion that matters. A
+# reset that took the reads, the reference or the configuration with it would leave a project
+# that cannot be re-run at all - and the reads are the one thing here that cannot be recreated.
+test_reset_removes_results_but_keeps_what_you_provided() {
+    needs_run || return
+    local sb
+    sb=$(guard_path "$TEST_TMPDIR/reset-scope")
+    rm -rf "$sb"; cp -r "$PIPELINE_SB" "$sb"; rm -f "$sb/run.out"
+    write_sandbox_config "$sb"
+    mkdir -p "$sb/main/Utilized/VCF"
+    echo "not yet promoted" > "$sb/main/Utilized/VCF/Test.vcf"
+
+    run_project_wrapper "$sb" reset <<< "DELETE_MY_ANALYSIS"
+    assert_status 0 "$WRAPPER_STATUS" "reset should succeed: $WRAPPER_OUTPUT"
+
+    # Gone: everything the pipeline produced or derived.
+    assert_no_file "$sb/store/Output"                        "results should be removed"
+    assert_no_file "$sb/store/Logs"                          "logs should be removed"
+    assert_no_file "$sb/store/.poolseqflow_params"           "the parameter manifest should be removed"
+    assert_no_file "$sb/store/.poolseqflow_rgtags"           "the rgtags baseline should be removed"
+    assert_no_file "$sb/main/Utilized"                       "unpromoted outputs should be removed"
+    assert_no_file "$sb/main/Reference/Dictionaries"         "derived dictionaries should be removed"
+    assert_no_file "$sb/main/work"                           "the work directory should be removed"
+
+    # Kept: everything you put there yourself.
+    assert_file "$sb/main/Data/TestSample1_R1.fq.gz"   "your reads must survive reset"
+    assert_file "$sb/main/Reference/reference.fasta.gz" "your reference must survive reset"
+    assert_file "$sb/main/Reference/reference.gff.gz"   "your annotation must survive reset"
+    assert_file "$sb/main/parameters.config"            "your config must survive reset"
+    assert_file "$sb/main/RGTags.csv"                   "your RGTags file must survive reset"
+}
+
+# The branch that fires when the wrapper cannot read the config at all - a real state, since a
+# malformed parameters.config is exactly when someone reaches for clean. It used to report
+# "leaving it in place" about workDir and then delete .nextflow* anyway, unmentioned. The
+# deletion is correct; being told about it is the fix.
+test_clean_still_reports_what_it_removes_when_the_config_is_unreadable() {
+    needs_run || return
+    local sb
+    sb=$(guard_path "$TEST_TMPDIR/clean-broken")
+    rm -rf "$sb"; cp -r "$PIPELINE_SB" "$sb"; rm -f "$sb/run.out"
+    printf 'params {\n    mainDir = "unterminated\n' > "$sb/main/parameters.config"
+    mkdir -p "$sb/main/Utilized/Trimmed"
+    echo "not yet promoted" > "$sb/main/Utilized/Trimmed/keep_me"
+
+    run_project_wrapper "$sb" clean
+    assert_contains "$WRAPPER_OUTPUT" ".nextflow" \
+        "clean must still name Nextflow's own files when workDir cannot be resolved"
+    assert_contains "$WRAPPER_OUTPUT" "could not resolve workDir" "it should say why"
+    assert_file "$sb/main/Utilized/Trimmed/keep_me" "and still leave unpromoted outputs alone"
+}

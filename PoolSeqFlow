@@ -460,12 +460,36 @@ case $COMMAND in
         echo "Cleaning Nextflow work directory..."
         require_env
         WORKDIR=$(nf_config_value workDir)
+        UTILDIR=$(nf_config_value params.dir.utilized)
+
+        # Everything that will be removed is listed before anything is, including the case
+        # where workDir cannot be resolved.
+        #
+        # `rm -rf .nextflow*` used to sit below the if/else that reports on workDir rather
+        # than inside it, so a project whose workDir could not be read was told only that
+        # the work directory was being left in place - while Nextflow's history and cache
+        # were deleted anyway, unmentioned. The deletion was right; the silence was not.
+        echo ""
+        echo "Removing:"
+        if [ -n "$WORKDIR" ]; then
+            echo "    $WORKDIR - Nextflow's task directories"
+        fi
+        echo "    $(pwd)/.nextflow*    - Nextflow's own history and cache"
+        echo ""
+        # Stated out loud because it is the whole difference between clean and reset, and
+        # because from 3.0 Utilized holds real outputs - produced by a run and not yet moved
+        # to permanent storage - rather than scratch. A user reaching for `clean` after an
+        # interrupted run needs to know those survive it.
+        echo "Not removed:"
+        [ -n "$UTILDIR" ] && echo "    $UTILDIR - outputs not yet moved to permanent storage"
+        echo "    your results and logs, and the reads, reference and configuration you placed"
+        echo ""
+
         nextflow clean -f || true
         wait
         conda deactivate
         wait
         if [ -n "$WORKDIR" ]; then
-            echo "Removing $WORKDIR and log files"
             rm -rf "$WORKDIR"
         else
             echo "WARNING: could not resolve workDir; leaving it in place." >&2
@@ -483,6 +507,7 @@ case $COMMAND in
         REFDIR=$(nf_config_value params.dir.references)
         DICTDIR=$(nf_config_value params.dir.dictionaries)
         UTILDIR=$(nf_config_value params.dir.utilized)
+        RGTAGS=$(nf_config_value params.rgTagsPath)
         conda deactivate
         if [ -z "$STORAGE" ]; then
             echo "ERROR: could not resolve params.storageDir - is parameters.config present?" >&2
@@ -504,6 +529,17 @@ case $COMMAND in
         echo ""
         echo "Your reads in $DATADIR are not touched, and neither are the reference and"
         echo "annotation files you placed in $REFDIR - only what was built from them."
+        # Named explicitly because they now live in this directory rather than beside the
+        # results, and because a reset that took the configuration with it would leave a
+        # project that could not be re-run at all. Written as two whole sentences rather
+        # than one sentence with a conditional tail: an unresolvable rgTagsPath would
+        # otherwise leave the line ending in "and".
+        if [ -n "$RGTAGS" ]; then
+            echo "Nothing you wrote in $(pwd) is removed either - not parameters.config,"
+            echo "and not $RGTAGS."
+        else
+            echo "Nothing you wrote in $(pwd) is removed either, parameters.config included."
+        fi
         echo ""
         printf 'Type DELETE_MY_ANALYSIS to confirm: '
         if ! read -r CONFIRM; then
