@@ -39,6 +39,22 @@ params {
     annotate        = true
     gffFile         = 'reference.gff.gz'
 
+    // Several runs from one invocation - the same reads against two references, or one
+    // reference at a few trimming settings.
+    //
+    // false means every parameter comes from this file and nothing else is read. It is NOT
+    // "a table with one row": a single run has no RunID, its outputs are not filed under
+    // one, and nothing here is suffixed. Turning this on is what introduces all of that.
+    //
+    // true reads multiRunFile below, in this directory. Its header is parameter names as
+    // they are spelt here, without the `params.` prefix, and one column must be RunID. Each
+    // row carries only the parameters that differ from the values above; anything left blank
+    // comes from this file as usual, so a table stays as short as the difference between the
+    // runs. Runs share mainDir and each gets its own storageDir, ${storageDir}/${RunID} by
+    // default - add a storageDir column to send one somewhere else.
+    multiRun        = false
+    multiRunFile    = 'runs.csv'
+
     referenceFa     = "${params.referenceFile.replace('.gz', '')}"
 
     // Core allocation. Every value below is computed from `threads` above, in
@@ -274,6 +290,7 @@ params {
     referencePath   = "${params.dir.references}/${params.referenceFile}"
     gffPath         = "${params.dir.references}/${params.gffFile}"
     rgTagsPath      = "${params.mainDir}/${params.rgTagsFile}"
+    multiRunPath    = "${params.mainDir}/${params.multiRunFile}"
 
     reference       = "${params.dir.dictionaries}/${params.referenceFile.replace('.gz', '')}"
     gff             = "${params.dir.dictionaries}/${params.gffFile.replace('.gz', '')}"

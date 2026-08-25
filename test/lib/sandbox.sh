@@ -173,6 +173,66 @@ ENTRY
     _run_entry "$sb" trim_only.nf
 }
 
+# Dump what runDefinitions() produces, without running any of the pipeline.
+#
+# One JVM start covers as many divergence scenarios as the table has rows, which is what makes
+# it affordable to check a dozen parameter combinations rather than one. Output is one
+# `RUN <runId> <dotted.key>=<value>` line per value asked for, plus `AGREE`/`DRIFT` lines for
+# the single-run case.
+#
+# The DRIFT lines are the point of the single-run case. deriveRunPaths() in
+# resolve_parameters.nf is a second copy of derivations that also live in parameters.config -
+# unavoidable, because config interpolation runs once at parse time while a run needs its own
+# values, and the config's copy cannot go because `nextflow config -flat` is how the wrapper
+# learns the paths clean/reset delete. Nothing but this check keeps the two in step.
+run_definitions_only() {
+    local sb="$1"
+    cat > "$sb/install/dump_runs.nf" <<'ENTRY'
+nextflow.enable.dsl=2
+
+include { runDefinitions; resolveParameters } from './scripts/resolve_parameters.nf'
+
+// Values worth asserting on: one per derivation family, plus the per-run roots.
+//
+// A function, not `def REPORT = [...]`. A top-level assignment is a STATEMENT under the
+// strict parser - "Statements cannot be mixed with script declarations" - and generated entry
+// scripts are not covered by `nextflow lint .`, so it fails at run time instead.
+def reportKeys() {
+    return ['poolSize', 'diploidy', 'filterFalsePositives.sensitivity',
+            'trim_galore.quality', 'trim_galore.options',
+            'bcftools.maxDepth', 'bcftools.mpileupOptions',
+            'threads', 'cores.bwa', 'referenceFile', 'reference', 'snpEff.db',
+            'storageDir', 'dir.utilized', 'dir.output.vcf', 'dir.dictionaries']
+}
+
+def dig(Map m, String dotted) {
+    def cur = m
+    dotted.tokenize('.').each { part -> cur = cur[part] }
+    return cur
+}
+
+workflow {
+    // runDefinitions() BEFORE resolveParameters(), which is the required order: afterwards a
+    // pinned value cannot be told from a filled one and re-derivation stops working.
+    def runs = runDefinitions()
+    resolveParameters()
+
+    runs.each { r ->
+        reportKeys().each { key -> println "RUN ${r.runId} ${key}=${dig(r, key)}" }
+    }
+
+    if (!params.multiRun) {
+        reportKeys().each { key ->
+            def a = dig(runs[0], key)
+            def b = dig(params, key)
+            println(a.toString() == b.toString() ? "AGREE ${key}" : "DRIFT ${key} run=${a} config=${b}")
+        }
+    }
+}
+ENTRY
+    _run_entry "$sb" dump_runs.nf
+}
+
 # Run step 0 by itself, for tests about the environment and parameter guards. Same
 # generate-rather-than-commit reasoning as run_dictionaries_only.
 run_verify_only() {

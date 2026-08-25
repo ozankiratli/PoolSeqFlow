@@ -1,0 +1,92 @@
+# Multi-run table — EXAMPLE, not a template.
+#
+# Nothing copies this file. Read it, then write your own table with only the rows and columns
+# your comparison actually needs. It is deliberately not called .template for that reason: the
+# .template files are the ones the tooling copies for you, and a table copied wholesale would
+# describe someone else's experiment.
+#
+# To use one:
+#     1. write your table, anywhere in your project directory
+#     2. in parameters.config, set   multiRun     = true
+#                                    multiRunFile = 'your-table.csv'
+#
+# Step 0 reads it before any compute is spent, prints what it expands to, and refuses to start
+# if it cannot be used - so a mistake here costs you a few seconds, not a night of alignment.
+#
+# ---------------------------------------------------------------------------------------
+# THE RULES, ALL FOUR OF THEM
+#
+# 1. One column must be RunID. It names the run and becomes a directory, so keep it to
+#    letters, digits, dot, dash and underscore. Results go to storageDir/<RunID>/.
+#
+# 2. Every other column is a parameter name spelt exactly as parameters.config spells it,
+#    with NO `params.` prefix. Nested ones are dotted: trim_galore.quality, bcftools.maxDepth.
+#    ANY parameter may be varied - including the ones the pipeline normally computes for
+#    itself, because pinning one is a legitimate thing to want. A name that is not a
+#    parameter is refused rather than ignored; that is a typo, not a preference.
+#
+# 3. A BLANK CELL MEANS "take it from parameters.config". That is what keeps a table as short
+#    as the difference between the runs. Consequence worth knowing: there is no way to set a
+#    parameter to an empty string here, because blank already means something else.
+#
+# 4. A value containing a comma must be quoted - "-a AD,DP,SP,INFO/AD". The default
+#    readPattern, *_R{1,2}.fq.gz, is exactly such a value.
+#
+# Blank lines and lines starting with # are ignored, so you can keep a run in the file with a
+# # in front of it instead of deleting it.
+#
+# ---------------------------------------------------------------------------------------
+# WHAT HAPPENS TO THE VALUES YOU SET
+#
+# Setting an INPUT to a computed value moves the computed value with it: poolSize re-derives
+# filterFalsePositives.sensitivity, trim_galore.quality re-derives trim_galore.options,
+# bcftools.maxDepth re-derives bcftools.mpileupOptions, threads re-derives the whole cores
+# ladder. You do not have to keep those in step by hand.
+#
+# Setting a COMPUTED value directly is used exactly as written, and then nothing is derived
+# from its inputs any more - pin bcftools.mpileupOptions and bcftools.maxDepth stops meaning
+# anything for that run. Step 0 names any column that does this, so it is a choice rather
+# than a surprise.
+#
+# ---------------------------------------------------------------------------------------
+# FOUR EXAMPLES. Pick the shape you need; do not use all of them at once.
+
+# --- one: the same reads against two reference genomes ---------------------------------
+# The commonest reason to want this. Everything else comes from parameters.config.
+#
+# RunID,referenceFile,gffFile
+# lab_strain,lab_strain.fasta.gz,lab_strain.gff.gz
+# field_isolate,field_isolate.fasta.gz,field_isolate.gff.gz
+
+# --- two: one reference, three trimming stringencies ------------------------------------
+# Note the blank cell on the first row: it takes the configured quality, so the baseline is
+# whatever parameters.config already says rather than a number repeated here.
+#
+# RunID,trim_galore.quality
+# trim_default,
+# trim_20,20
+# trim_30,30
+
+# --- three: a filtering sweep ------------------------------------------------------------
+# These diverge late - nothing before variant calling differs between them.
+#
+# RunID,vcffilter.minDP,vcffilter.minQUAL,filterFalsePositives.sampleThreshold
+# lenient,10,20,0.1
+# standard,20,30,0.2
+# strict,40,50,0.3
+
+# --- four: varying pool size, and pinning something outright -----------------------------
+# pool_50 and pool_200 let sensitivity be re-derived from poolSize. pinned_depth does the
+# opposite: it writes the mpileup options itself, so bcftools.maxDepth no longer feeds them.
+# Step 0 will point that column out.
+#
+# RunID,poolSize,bcftools.mpileupOptions
+# pool_50,50,
+# pool_200,200,
+# pinned_depth,,"-B -C 50 -q 30 -Q 30 -d 8000 -a AD,DP,SP,INFO/AD -Ou"
+
+# ---------------------------------------------------------------------------------------
+# A REAL, USABLE TABLE. Two references, and the second trimmed harder. Delete or replace it.
+RunID,referenceFile,gffFile,trim_galore.quality
+reference_a,reference_a.fasta.gz,reference_a.gff.gz,
+reference_b,reference_b.fasta.gz,reference_b.gff.gz,30

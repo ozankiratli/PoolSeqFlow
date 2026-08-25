@@ -114,7 +114,8 @@ require_project_config() {
 # a file added to the release without being added here fails a test rather than going missing
 # from every install.
 PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf nextflow.config scripts bin install \
-parameters.config.template RGTags.csv.template README.md CHANGELOG.md LICENSE"
+parameters.config.template RGTags.csv.template multi-run.csv.example \
+README.md CHANGELOG.md LICENSE"
 
 # Where installations live. POOLSEQFLOW_PREFIX chooses; ~/.local by default, because it needs
 # no privileges and is already on PATH for many users.

@@ -245,3 +245,140 @@ test_find_artifact_does_not_count_a_broken_symlink() {
     assert_status 0 "$FA_STATUS" "the real copy should still be found"
     assert_eq "$HELPERS_DIR/hot/VCF/Test.vcf" "$FA_OUT" "a dangling symlink must not win"
 }
+
+MR_OUT=""
+MR_ERR=""
+MR_STATUS=0
+
+# Parse a multi-run table written inline. Every case here is a millisecond; the same coverage
+# through step 0 would be a JVM start each, which is the whole reason the parsing is a script.
+mr() {
+    helpers_sandbox
+    printf '%s' "$1" > "$HELPERS_DIR/runs.csv"
+    MR_OUT=$(python3 "$REPO_ROOT/bin/parse_multirun.py" "$HELPERS_DIR/runs.csv" 2>"$HELPERS_DIR/stderr")
+    MR_STATUS=$?
+    MR_ERR=$(cat "$HELPERS_DIR/stderr")
+}
+
+test_multirun_reads_a_plain_table() {
+    mr 'RunID,referenceFile
+refA,a.fasta.gz
+refB,b.fasta.gz
+'
+    assert_status 0 "$MR_STATUS" "a valid table should be accepted"
+    assert_contains "$MR_OUT" '"RunID": "refA"' "the first run should be there"
+    assert_contains "$MR_OUT" '"referenceFile": "b.fasta.gz"' "so should the second's value"
+}
+
+# The reason this is Python and not awk. readPattern's default is *_R{1,2}.fq.gz, so the
+# single most likely thing to vary between runs contains a comma. Splitting on commas would
+# cut it in half and report the row as having too many fields - a different mistake entirely.
+test_multirun_keeps_a_quoted_value_containing_a_comma() {
+    mr 'RunID,readPattern
+r1,"*_R{1,2}.fq.gz"
+'
+    assert_status 0 "$MR_STATUS" "a quoted value with a comma is legal CSV"
+    assert_contains "$MR_OUT" '*_R{1,2}.fq.gz' "the pattern should survive intact"
+}
+
+# A row carries only what differs, so a blank cell means "take it from parameters.config".
+# The key must be absent from the run rather than present and empty, because those mean
+# opposite things to the resolver.
+test_multirun_treats_a_blank_cell_as_inherit() {
+    mr 'RunID,trim_galore.quality,poolSize
+r1,,50
+'
+    assert_status 0 "$MR_STATUS" "blank cells are ordinary"
+    assert_not_contains "$MR_OUT" 'trim_galore.quality' "a blank cell must not become an override"
+    assert_contains "$MR_OUT" '"poolSize": "50"' "a filled cell still counts"
+}
+
+test_multirun_ignores_comments_and_blank_lines() {
+    mr '# two references
+
+RunID,referenceFile
+
+refA,a.fasta.gz
+# refB is disabled for now
+'
+    assert_status 0 "$MR_STATUS" "comments and blank lines should be skipped"
+    assert_contains "$MR_OUT" 'refA' "the real row should still be read"
+    assert_not_contains "$MR_OUT" 'refB' "a commented-out row is not a run"
+}
+
+test_multirun_rejects_a_duplicate_run_id() {
+    mr 'RunID,poolSize
+r1,10
+r1,20
+'
+    assert_status 1 "$MR_STATUS" "two runs cannot share a name"
+    assert_contains "$MR_ERR" "each run needs its own name" "and should say why"
+}
+
+test_multirun_rejects_a_missing_run_id_column() {
+    mr 'referenceFile
+a.fasta.gz
+'
+    assert_status 1 "$MR_STATUS" "a table without RunID is unusable"
+    assert_contains "$MR_ERR" "RunID" "the message should name the missing column"
+}
+
+# The header is parameter names as parameters.config spells them. Writing params.poolSize is
+# the obvious mistake to make, so it gets its own message rather than "not a parameter name".
+test_multirun_rejects_the_params_prefix_by_name() {
+    mr 'RunID,params.poolSize
+r1,10
+'
+    assert_status 1 "$MR_STATUS" "the params. prefix does not belong here"
+    assert_contains "$MR_ERR" "write 'poolSize'" "and should say what to write instead"
+}
+
+test_multirun_rejects_a_ragged_row() {
+    mr 'RunID,poolSize,diploidy
+r1,10
+'
+    assert_status 1 "$MR_STATUS" "a short row is a mistake, not an inherit"
+    assert_contains "$MR_ERR" "must be quoted" "and should point at the likely cause"
+}
+
+# A RunID becomes a directory name, so it has to be usable as one.
+test_multirun_rejects_a_run_id_that_is_not_a_directory_name() {
+    mr 'RunID,poolSize
+../escape,10
+'
+    assert_status 1 "$MR_STATUS" "a RunID with a path separator should be refused"
+    assert_contains "$MR_ERR" "directory name" "and should say why"
+}
+
+# One fix-and-rerun cycle, not four. Each message carries the line it is about.
+test_multirun_reports_every_problem_at_once() {
+    mr 'RunID,poolSize,poolSize
+r1,10,20
+,30,40
+'
+    assert_status 1 "$MR_STATUS" "the table is unusable"
+    assert_contains "$MR_ERR" "appears 2 times" "the duplicate column should be reported"
+    assert_contains "$MR_ERR" "RunID is empty"  "and the empty RunID in the same pass"
+}
+
+test_multirun_rejects_a_header_with_no_rows() {
+    mr 'RunID,poolSize
+'
+    assert_status 1 "$MR_STATUS" "a table with no runs is not a table"
+    assert_contains "$MR_ERR" "no runs" "and should say so"
+}
+
+test_multirun_reports_a_missing_file_rather_than_crashing() {
+    helpers_sandbox
+    MR_STATUS=0
+    python3 "$REPO_ROOT/bin/parse_multirun.py" "$HELPERS_DIR/absent.csv" >/dev/null 2>"$HELPERS_DIR/stderr" || MR_STATUS=$?
+    assert_status 1 "$MR_STATUS" "a missing table is an error, not a traceback"
+    assert_contains "$(cat "$HELPERS_DIR/stderr")" "no such file" "and should say what is missing"
+}
+
+# Usage mistakes exit 2, so a caller can tell "your file is wrong" from "you called me wrong".
+test_multirun_separates_a_usage_mistake_from_a_bad_table() {
+    MR_STATUS=0
+    python3 "$REPO_ROOT/bin/parse_multirun.py" >/dev/null 2>&1 || MR_STATUS=$?
+    assert_status 2 "$MR_STATUS" "no argument is a usage error"
+}

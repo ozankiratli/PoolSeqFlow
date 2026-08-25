@@ -385,3 +385,172 @@ test_an_rgtags_edit_is_caught_when_the_bams_are_not_yet_promoted() {
     assert_eq "$before" "$after" \
         "the stored baseline must not be overwritten - doing so hides the mismatch for good"
 }
+
+# The multi-run table, checked before any compute is spent on it.
+#
+# These build their own sandbox rather than copying the shared baseline. Flipping multiRun on
+# a copy would change the parameter SET against a manifest recorded without it, so the run
+# would fail the change guard instead of reaching the check under test - a real behaviour, and
+# the wrong one to be measuring here.
+multirun_sandbox() {
+    local name="$1" table="$2" sb
+    sb=$(make_pipeline_sandbox "$name")
+    printf '%s' "$table" > "$sb/main/runs.csv"
+    write_sandbox_config "$sb" 's|^    multiRun .*|    multiRun        = true|'
+    printf '%s' "$sb"
+}
+
+# What the table expands to has to be visible before it starts costing hours: which runs
+# exist, where each one's results will go, and what actually differs between them.
+test_a_multirun_table_is_reported_before_anything_runs() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status report
+    sb=$(multirun_sandbox "multirun-ok" '# same reads, two references
+RunID,referenceFile,gffFile,trim_galore.quality,bcftools.mpileupOptions
+refA,reference.fasta.gz,reference.gff.gz,,
+refB,reference.fasta.gz,reference.gff.gz,30,"-B -C 50 -q 30 -Q 30 -d 4000 -a AD,DP,SP,INFO/AD -Ou"
+')
+    status=$(run_verify_only "$sb")
+    assert_status 0 "$status" "a valid table should pass step 0; see $sb/run.out"
+    report=$(cat "$sb/store/Output/Reports/0_verify_environment.txt")
+
+    assert_contains "$report" "2 runs"      "the run count should be reported"
+    assert_contains "$report" "refA -> $sb/store/refA" "each run's storageDir should be named"
+    assert_contains "$report" "refB -> $sb/store/refB" "and defaulted from RunID"
+    assert_contains "$report" "trim_galore.quality = 30" "what differs should be listed"
+
+    # A blank cell means inherit, so it must not be reported as something refA sets.
+    assert_not_contains "$report" "refA
+MULTI-RUN CHECK:           trim_galore.quality" "a blank cell is not an override"
+
+    # Pinning a derived value is allowed and is why there is no column whitelist - but it
+    # detaches that value from whatever it was computed from, which is worth saying once
+    # here rather than leaving someone to find it in a result months later.
+    assert_contains "$report" "replace a value the pipeline would compute" \
+        "an override of a derived parameter should be called out"
+    assert_contains "$report" "bcftools.mpileupOptions" "by name"
+
+    # The value contains commas. If the parsing were splitting on them this is where it
+    # would show, as a mangled value rather than an error.
+    assert_contains "$report" "-d 4000 -a AD,DP,SP,INFO/AD" "a quoted value should survive whole"
+}
+
+# An unusable table must stop the run at step 0. The whole point of checking here is that the
+# alternative is discovering it after the first alignment.
+test_an_unusable_multirun_table_stops_the_run() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status report
+    sb=$(multirun_sandbox "multirun-bad" 'RunID,params.poolSize
+r1,10
+r1,20
+')
+    status=$(run_verify_only "$sb")
+    assert_status 1 "$status" "an unusable table should fail step 0"
+    report=$(cat "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)
+    assert_contains "$report" "MULTI-RUN CHECK:       STATUS=FAIL" "the check should report FAIL"
+    assert_contains "$report" "write 'poolSize'"        "the params. prefix should be named"
+    assert_contains "$report" "each run needs its own name" "and the duplicate RunID too"
+}
+
+# What a run definition actually resolves to, across several kinds of divergence at once.
+#
+# One table, one JVM start, many scenarios: each row varies a different family of parameter,
+# so this covers re-derivation, isolation between runs, per-run roots and type handling
+# together. The alternative - a run per scenario - would cost 21 seconds each and tell us the
+# same thing.
+#
+# The claim under test is the settled resolver semantics: apply the row, derive, apply the row
+# again. Setting an INPUT to a derivation moves the derived value with it; setting a derived
+# value directly wins outright. Both must hold at once, and neither may leak into another run.
+test_run_definitions_resolve_each_kind_of_divergence() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status out
+    sb=$(make_pipeline_sandbox "rundefs")
+    cat > "$sb/main/runs.csv" <<'TABLE'
+# each row diverges in a different way
+RunID,poolSize,trim_galore.quality,bcftools.maxDepth,bcftools.mpileupOptions,threads,referenceFile
+base,,,,,,
+pool,50,,,,,
+trim,,30,,,,
+depth,,,4000,,,
+pinned,,,4000,"-B -C 50 -q 30 -Q 30 -d 999 -a AD,DP,SP,INFO/AD -Ou",,
+cores,,,,,2,
+ref,,,,,,other.fasta.gz
+TABLE
+    write_sandbox_config "$sb" 's|^    multiRun .*|    multiRun        = true|'
+    status=$(run_definitions_only "$sb")
+    assert_status 0 "$status" "run definitions should resolve; see $sb/run.out"
+    out=$(cat "$sb/run.out")
+
+    # Nothing set: the base run must match parameters.config exactly.
+    assert_contains "$out" "RUN base poolSize=100"              "an empty row inherits"
+    assert_contains "$out" "RUN base filterFalsePositives.sensitivity=0.0025" "and its derived values"
+
+    # An INPUT to a derivation moves the derived value. 1/(2*2*50) = 0.005.
+    assert_contains "$out" "RUN pool poolSize=50"               "the row's own value"
+    assert_contains "$out" "RUN pool filterFalsePositives.sensitivity=0.005" \
+        "poolSize must re-derive sensitivity"
+    # ...and must not leak sideways.
+    assert_contains "$out" "RUN trim poolSize=100"              "another run keeps the base value"
+
+    # Same again through a different derivation family.
+    assert_contains "$out" "RUN trim trim_galore.quality=30"    "the row's own value"
+    assert_contains "$out" "RUN trim trim_galore.options=--fastqc --paired --retain_unpaired -q 30 " \
+        "trim_galore.quality must re-derive options"
+    assert_contains "$out" "RUN depth bcftools.mpileupOptions=-B -C 50 -q 30 -Q 30 -d 4000 -a AD,DP,SP,INFO/AD -Ou" \
+        "bcftools.maxDepth must re-derive mpileupOptions"
+
+    # A row setting a DERIVED value directly wins, even against its own input in the same row.
+    # This is why the row is applied twice, and why there is no column whitelist.
+    assert_contains "$out" "RUN pinned bcftools.mpileupOptions=-B -C 50 -q 30 -Q 30 -d 999 -a AD,DP,SP,INFO/AD -Ou" \
+        "a pinned derived value must survive its own derivation"
+
+    # threads drives the cores ladder, per run.
+    assert_contains "$out" "RUN cores threads=2"    "threads is varyable like anything else"
+    assert_contains "$out" "RUN cores cores.bwa=2"  "and re-derives the cores ladder"
+    assert_contains "$out" "RUN base cores.bwa=4"   "without disturbing the others"
+
+    # A different reference moves everything downstream of it, including snpEff's database
+    # name, and the dictionaries stay keyed by reference rather than by run.
+    assert_contains "$out" "RUN ref reference=$sb/main/Reference/Dictionaries/other.fasta" \
+        "referenceFile must re-derive the dictionary path"
+    assert_contains "$out" "RUN ref dir.dictionaries=$sb/main/Reference/Dictionaries" \
+        "dictionaries are shared between runs, keyed by reference name"
+
+    # Per-run roots. Utilized_<RunID> is load-bearing: dir.utilized hangs off mainDir and runs
+    # share mainDir, so without the suffix every run would write Test.vcf to one path and the
+    # second run's skip check would symlink the first run's file.
+    assert_contains "$out" "RUN pool storageDir=$sb/store/pool"        "each run gets its own storage"
+    assert_contains "$out" "RUN pool dir.utilized=$sb/main/Utilized_pool" "and its own working tree"
+    assert_contains "$out" "RUN pool dir.output.vcf=$sb/store/pool/Output/VCF" "with the tree hung off it"
+}
+
+# The drift guard for the one piece of duplicated logic in the resolver.
+#
+# deriveRunPaths() recomputes what parameters.config computes, because config interpolation
+# runs once at parse time against one set of values while a run needs its own. The config's
+# copy cannot be removed either - `nextflow config -flat` is how the wrapper learns the paths
+# clean and reset delete. So for a single run the two must agree exactly, and nothing but this
+# case keeps them in step: drift would send one run's output somewhere its own config does not
+# name, silently.
+test_the_resolver_reproduces_what_the_config_computed() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status out drift
+    sb=$(make_pipeline_sandbox "rundefs-single")
+    write_sandbox_config "$sb"
+    status=$(run_definitions_only "$sb")
+    assert_status 0 "$status" "a single run should resolve; see $sb/run.out"
+    out=$(cat "$sb/run.out")
+
+    drift=$(printf '%s' "$out" | grep '^DRIFT ' || true)
+    [ -z "$drift" ] || fail_case "resolver and config disagree: $drift"
+    assert_contains "$out" "AGREE dir.output.vcf" "the check should actually have run"
+
+    # Settled rule 3: a single run has no RunID and nothing is suffixed.
+    assert_contains "$out" "RUN null dir.utilized=$sb/main/Utilized" "no suffix without multiRun"
+    assert_contains "$out" "RUN null storageDir=$sb/store"           "and no run subdirectory"
+}

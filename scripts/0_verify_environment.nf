@@ -1,3 +1,6 @@
+include { derivedParameterNames } from './resolve_parameters.nf'
+include { knownParameterNames } from './resolve_parameters.nf'
+
 // Flatten the nested params map into dotted keys (dir.output.report.align and so on).
 def flattenParams(Map m, String prefix, Map out) {
     m.each { k, v ->
@@ -23,7 +26,7 @@ def analysisParams() {
     // Nothing recorded which data produced a set of outputs.
     def skipKey = [
         'mainDir', 'storageDir',
-        'referencePath', 'gffPath', 'rgTagsPath', 'referenceFa', 'reference', 'gff', 'reads',
+        'referencePath', 'gffPath', 'rgTagsPath', 'multiRunPath', 'referenceFa', 'reference', 'gff', 'reads',
         'threads', 'memory'
     ] as Set
     def skipPrefix = ['dir.', 'cores.', 'java.', 'software.']
@@ -976,6 +979,125 @@ CURRENT_PARAMS
     """
 }
 
+// Stage 9: the multi-run table, when there is one.
+//
+// The parsing and the syntactic checks are in bin/parse_multirun.py rather than here. Two
+// reasons, and the first is a correctness one: the values in that file are parameter values,
+// and readPattern - which is exactly the sort of thing people vary between runs - defaults to
+// `*_R{1,2}.fq.gz`, a value with a comma in it. Splitting on commas would cut it in half and
+// produce a row with the wrong number of fields, reported as a completely different mistake.
+// Python's csv module implements the real quoting rules. The second reason is that a script
+// can be unit-tested in milliseconds, while every check written here costs a JVM start.
+//
+// What this stage adds on top is the part that needs to know the parameters: which columns
+// name a value the pipeline would otherwise compute for itself.
+process CheckMultiRun {
+    output:
+    path 'verify_environment_stage9.txt', emit: report
+
+    script:
+    dir_log = "${params.dir.logs}/0_verify_environment/s9_CheckMultiRun"
+    derived = derivedParameterNames().join(' ')
+    known = knownParameterNames().join(' ')
+    """
+    REPORTFILE="verify_environment.txt"
+
+    log_message() {
+        echo "\$1" >> \$REPORTFILE
+        echo "\$1"
+    }
+
+    STATUS="PASS"
+
+    if [ "${params.multiRun}" != "true" ]; then
+        log_message "MULTI-RUN CHECK:       single run - every parameter comes from parameters.config"
+        log_message "MULTI-RUN CHECK:       STATUS=\$STATUS"
+        mv \$REPORTFILE verify_environment_stage9.txt
+        mkdir -p ${dir_log}
+        {
+            echo ""
+            echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+            cat .command.log
+        } >> ${dir_log}/0_VerifyEnvironment_s9_CheckMultiRun_nextflow.log
+        exit 0
+    fi
+
+    log_message "MULTI-RUN CHECK:       table ${params.multiRunPath}"
+
+    if [ ! -f "${params.multiRunPath}" ]; then
+        log_message "MULTI-RUN CHECK:       multiRun is on but that file is not there."
+        log_message "MULTI-RUN CHECK:       Either create it, or set multiRun = false to run the single"
+        log_message "MULTI-RUN CHECK:       set of parameters in parameters.config."
+        STATUS="FAIL"
+    elif ! RUNS=\$(parse_multirun.py "${params.multiRunPath}" 2> parse_errors.txt); then
+        while IFS= read -r line; do
+            log_message "MULTI-RUN CHECK:       \$line"
+        done < parse_errors.txt
+        STATUS="FAIL"
+    else
+        printf '%s' "\$RUNS" > runs.json
+
+        # Every RunID, and what each row actually sets. Printed in full because this is the
+        # only place the expansion is visible before it starts costing compute.
+        printf '%s\\n' ${known} > known_params.txt
+        python3 - runs.json "${params.storageDir}" known_params.txt ${derived} <<'PYEOF' >> \$REPORTFILE || STATUS="FAIL"
+import json, sys
+
+runs = json.load(open(sys.argv[1]))
+storage = sys.argv[2]
+known = {line.strip() for line in open(sys.argv[3]) if line.strip()}
+derived = set(sys.argv[4:])
+
+print(f"MULTI-RUN CHECK:       {len(runs)} runs")
+for run in runs:
+    run_id = run["RunID"]
+    where = run.get("storageDir", f"{storage}/{run_id}")
+    print(f"MULTI-RUN CHECK:       {run_id} -> {where}")
+    varied = {k: v for k, v in run.items() if k not in ("RunID", "storageDir")}
+    if varied:
+        for key, value in sorted(varied.items()):
+            print(f"MULTI-RUN CHECK:           {key} = {value}")
+    else:
+        print("MULTI-RUN CHECK:           (nothing differs from parameters.config)")
+
+# A column naming something the pipeline computes is allowed on purpose - benchmarking a
+# pinned thread count or an options string outright is a real use. It is reported because
+# the value then stops tracking whatever it was derived from, which is easy to set up by
+# accident and impossible to see afterwards.
+# A column that is not a parameter at all. Any parameter may be varied - that is settled,
+# and there is deliberately no whitelist - but a name that is not one cannot be, and
+# accepting it would mean a run whose setting was silently ignored. Almost always a typo.
+unknown = sorted({k for run in runs for k in run if k != "RunID" and k not in known})
+if unknown:
+    print("MULTI-RUN CHECK:       these columns do not name a parameter in parameters.config:")
+    for key in unknown:
+        print(f"MULTI-RUN CHECK:           {key}")
+    print("MULTI-RUN CHECK:       nothing would read them, so the run would quietly ignore")
+    print("MULTI-RUN CHECK:       whatever you set. Check the spelling, or add the parameter")
+    print("MULTI-RUN CHECK:       to parameters.config first.")
+    sys.exit(1)
+
+overrides = sorted({k for run in runs for k in run if k in derived})
+if overrides:
+    print("MULTI-RUN CHECK:       these columns replace a value the pipeline would compute:")
+    for key in overrides:
+        print(f"MULTI-RUN CHECK:           {key}")
+    print("MULTI-RUN CHECK:       used exactly as written; nothing is re-derived from them.")
+PYEOF
+    fi
+
+    log_message "MULTI-RUN CHECK:       STATUS=\$STATUS"
+
+    mv \$REPORTFILE verify_environment_stage9.txt
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/0_VerifyEnvironment_s9_CheckMultiRun_nextflow.log
+    """
+}
+
 process VerifyAll {
     errorStrategy 'finish'
 
@@ -988,6 +1110,7 @@ process VerifyAll {
     val trim_log
     val runparam_log
     val directory_log
+    val multirun_log
 
     output:
     path '0_verify_environment.txt'
@@ -1027,7 +1150,7 @@ process VerifyAll {
     log_message "========================================================================="
     log_message ""
 
-    cat ${reference_log} ${gffFile_log} ${dataSource_log} ${rgtags_log} ${software_log} ${trim_log} ${runparam_log} ${directory_log} | tee -a \$REPORTFILE
+    cat ${reference_log} ${gffFile_log} ${dataSource_log} ${rgtags_log} ${software_log} ${trim_log} ${runparam_log} ${directory_log} ${multirun_log} | tee -a \$REPORTFILE
     log_message ""
     log_message "========================================================================="
 
@@ -1070,7 +1193,8 @@ workflow VerifyEnvironment {
     CheckTrimParameters()
     CheckRunParameters()
     CheckDirectories()
-    VerifyAll(CheckReference.out.report, gff_report, CheckData.out.report, CheckRGTagsFile.out.report, CheckInstalledSoftware.out.report, CheckTrimParameters.out.report, CheckRunParameters.out.report, CheckDirectories.out.report)
+    CheckMultiRun()
+    VerifyAll(CheckReference.out.report, gff_report, CheckData.out.report, CheckRGTagsFile.out.report, CheckInstalledSoftware.out.report, CheckTrimParameters.out.report, CheckRunParameters.out.report, CheckDirectories.out.report, CheckMultiRun.out.report)
 
     emit:
     VerifyAll.out
