@@ -236,6 +236,7 @@ make_stub_conda() {
 LAUNCHER_OUTPUT=""
 LAUNCHER_STATUS=0
 LAUNCHER_CONDA_LOG=""
+LAUNCHER_PREFIX=""
 
 # Run ./PoolSeqFlow against a stub conda, in a copy of the repository with the slow parts
 # stubbed out. Results land in LAUNCHER_OUTPUT / LAUNCHER_STATUS / LAUNCHER_CONDA_LOG.
@@ -250,20 +251,32 @@ run_launcher_with_envs() {
     local sb
     sb=$(guard_path "$TEST_TMPDIR/launcher")
     rm -rf "$sb"
-    mkdir -p "$sb/install" "$sb/bin"
+    mkdir -p "$sb/install" "$sb/bin" "$sb/scripts"
     cp "$REPO_ROOT/PoolSeqFlow" "$sb/"
     # check_install.sh does real work against a real environment; these tests are about
     # environment selection, so it is stubbed to a success.
     printf '#!/bin/bash\necho "STUB check_install ran"\n' > "$sb/install/check_install.sh"
     printf 'name: stub\n' > "$sb/install/environment.yml"
     chmod +x "$sb/install/check_install.sh"
-    # The wrapper locates its own installation from its resolved path and refuses to run a
-    # subcommand that needs the pipeline when poolseqflow.nf is not beside it. Empty is
-    # enough: nothing here ever runs Nextflow.
+    # A complete payload, because `install` refuses to deploy an incomplete copy - it would
+    # otherwise produce an installation missing a file, which is worse than failing. Empty
+    # placeholders are enough: nothing here ever runs Nextflow.
     : > "$sb/poolseqflow.nf"
+    local f
+    for f in nextflow.config parameters.config.template RGTags.csv.template \
+             README.md CHANGELOG.md LICENSE; do
+        : > "$sb/$f"
+    done
+    # The stub conda goes in its own directory rather than $sb/bin, which belongs to the
+    # pipeline and is part of what `install` deploys - a fake conda inside the payload would
+    # be copied into every test installation.
     # shellcheck disable=SC2086
-    make_stub_conda "$sb" $envs_spec
-    LAUNCHER_CONDA_LOG="$sb/conda.log"
-    LAUNCHER_OUTPUT=$(cd "$sb" && PATH="$sb/bin:$PATH" ./PoolSeqFlow "$@" 2>&1)
+    make_stub_conda "$sb/stub" $envs_spec
+    LAUNCHER_CONDA_LOG="$sb/stub/conda.log"
+    # Installs go inside the sandbox, never into the operator's real ~/.local. Without this
+    # a launcher test would deploy a stub payload over a working installation.
+    LAUNCHER_PREFIX="$sb/prefix"
+    LAUNCHER_OUTPUT=$(cd "$sb" && PATH="$sb/stub/bin:$PATH" \
+                      POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow "$@" 2>&1)
     LAUNCHER_STATUS=$?
 }

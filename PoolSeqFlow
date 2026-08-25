@@ -6,7 +6,9 @@
 #
 # Wrapper script for PoolSeqFlow
 # Usage: ./PoolSeqFlow {install|check|run|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}
-#  install        - creates the conda environment using environment.yml, then verifies it
+#  install        - installs this release: creates its conda environment, copies the
+#                   pipeline to <prefix>/opt/PoolSeqFlow-<version>, puts wrappers in
+#                   <prefix>/bin, then verifies the result
 #  check          - verifies the installation: every tool resolves, helpers are
 #                   executable, and parameters.config parses
 #  run            - runs the pipeline; completed steps are detected and skipped
@@ -16,12 +18,22 @@
 #  reset          - cleans the Nextflow work directory and deletes all output files. (Use with caution!)
 #  version        - prints the version of this copy
 #  cite           - prints how to cite this copy, and which DOI to use
-#  list           - lists the PoolSeqFlow conda environments installed on this machine
-#  uninstall      - removes this version's conda environment
-#  uninstall_all  - removes every PoolSeqFlow conda environment, after confirmation
+#  list           - lists the installed pipelines and conda environments on this machine
+#  uninstall      - removes this version's conda environment and installed pipeline
+#  uninstall_all  - removes every PoolSeqFlow environment and installation, after confirmation
 #
-# The conda environment is named after the release (PoolSeqFlow-<version>), so each version
-# installs and runs against its own pinned tool set.
+# Each subcommand takes no arguments of its own: the wrapper accepts exactly one word and
+# rejects anything else. Two environment variables adjust it instead:
+#
+#  POOLSEQFLOW_PREFIX - where `install` puts things, and where `list` and `uninstall` look.
+#                       Defaults to ~/.local, or to the prefix an installed copy already
+#                       lives in, so it usually need not be set at all.
+#  POOLSEQFLOW_HOME   - the pipeline to use, overriding the copy this wrapper belongs to.
+#                       For running a checkout without installing it.
+#
+# The conda environment is named after the release (PoolSeqFlow-<version>), and the pipeline
+# is installed under the same name, so each version runs against its own pinned tool set and
+# an old result stays reproducible.
 
 set -e
 eval "$(conda shell.bash hook)"
@@ -39,15 +51,25 @@ usage() {
     exit 1
 }
 
+# Stamped by `install` into the copy it deploys; empty in the source tree and in a checkout
+# run in place. Written rather than derived because the installed wrapper is reached through a
+# symlink on PATH, and resolving a symlink back to its target is the one step in all of this
+# that varies between systems - `readlink -f` is GNU, and BSD readlink has no -f at all.
+#
+# It is a default, not an override: POOLSEQFLOW_HOME still wins, so a developer can point an
+# installed wrapper at a checkout without reinstalling.
+POOLSEQFLOW_INSTALLED_HOME=""
+
 # Where this copy of PoolSeqFlow lives: the pipeline, scripts/ and the bin/ helpers. It is
 # not the project you are running - that is the directory you are standing in.
 #
-# POOLSEQFLOW_HOME wins when set. That is how a wrapper installed onto PATH points back at
-# its own payload, and how a developer points at a checkout without installing.  Otherwise
-# it is derived from this script's own resolved path, so a symlinked wrapper still finds the
-# code it belongs to rather than the directory the symlink sits in.
+# Three sources, in order: the environment, so a checkout can be pointed at explicitly; the
+# stamp above, for an installed copy; and failing both, this script's own resolved path, which
+# is what makes a plain `./PoolSeqFlow` in a clone work with no setup at all.
 if [ -n "${POOLSEQFLOW_HOME:-}" ]; then
     INSTALL="$POOLSEQFLOW_HOME"
+elif [ -n "$POOLSEQFLOW_INSTALLED_HOME" ]; then
+    INSTALL="$POOLSEQFLOW_INSTALLED_HOME"
 else
     INSTALL=$(cd "$(dirname "$(readlink -f "$0")")" && pwd -P)
 fi
@@ -84,6 +106,148 @@ require_project_config() {
     echo "    cd /path/to/project" >&2
     echo "    $(basename "$0") $COMMAND" >&2
     exit 1
+}
+
+# What an installation consists of: exactly the set `git archive` puts in a release tarball,
+# which .gitattributes defines by exclusion. Installing from a clone and installing from a
+# download therefore deploy identical trees. test/suites/00_static.sh checks the two agree, so
+# a file added to the release without being added here fails a test rather than going missing
+# from every install.
+PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf nextflow.config scripts bin install \
+parameters.config.template RGTags.csv.template README.md CHANGELOG.md LICENSE"
+
+# Where installations live. POOLSEQFLOW_PREFIX chooses; ~/.local by default, because it needs
+# no privileges and is already on PATH for many users.
+#
+# An environment variable rather than a --prefix flag: the wrapper takes exactly one
+# subcommand and rejects everything else, and that contract is worth keeping. `make install
+# PREFIX=...` has the same shape.
+#
+# When neither is given, an installed wrapper works it out from its own stamp. A payload
+# always sits at <prefix>/opt/PoolSeqFlow-<version>, so two components back is the prefix.
+# That is what makes `list` and `uninstall` correct without the user having to remember which
+# prefix they installed into - otherwise both would look under ~/.local, find nothing, and
+# report that nothing is installed while several copies sat elsewhere.
+#
+# A wrapper run from a clone has no stamp and falls back to the default. That is the case
+# where a prefix is being chosen rather than recalled, so there is nothing to get wrong.
+install_prefix() {
+    if [ -n "${POOLSEQFLOW_PREFIX:-}" ]; then
+        printf '%s' "$POOLSEQFLOW_PREFIX"
+    elif [ -n "$POOLSEQFLOW_INSTALLED_HOME" ]; then
+        printf '%s' "$(dirname "$(dirname "$POOLSEQFLOW_INSTALLED_HOME")")"
+    else
+        printf '%s' "$HOME/.local"
+    fi
+}
+
+# Every version installed under a prefix, oldest first. Sorted by version rather than by
+# mtime: reinstalling an older release must not make it the newest.
+installed_payload_versions() {
+    local prefix="$1" d
+    for d in "$prefix"/opt/PoolSeqFlow-*; do
+        [ -d "$d" ] || continue
+        printf '%s\n' "${d##*/PoolSeqFlow-}"
+    done | sort -V
+}
+
+newest_installed_version() {
+    installed_payload_versions "$1" | tail -1
+}
+
+# Remove one version's payload and its wrapper, then re-point the plain wrapper at whatever
+# is left - or remove it, if nothing is. A dangling `PoolSeqFlow` would be a command on PATH
+# with no code behind it, which fails far less clearly than its absence.
+#
+# Removing the payload you are currently running from is safe on Linux: the shell holds the
+# script open, and unlinking an open file keeps its contents readable until the last close.
+# Verified rather than assumed - see the self-uninstall case in test/suites/20_launcher.sh.
+remove_payload() {
+    local version="$1" prefix dest bindir newest
+    prefix=$(install_prefix)
+    dest="$prefix/opt/PoolSeqFlow-${version}"
+    bindir="$prefix/bin"
+    [ -d "$dest" ] || return 1
+
+    rm -rf "$dest"
+    rm -f "$bindir/PoolSeqFlow-${version}"
+    echo "Removed $dest"
+    newest=$(newest_installed_version "$prefix")
+    if [ -n "$newest" ]; then
+        ln -sfn "$prefix/opt/PoolSeqFlow-${newest}/PoolSeqFlow" "$bindir/PoolSeqFlow"
+        echo "  $bindir/PoolSeqFlow now points at v$newest"
+    else
+        rm -f "$bindir/PoolSeqFlow"
+        echo "  $bindir/PoolSeqFlow removed - no installed versions remain"
+    fi
+    return 0
+}
+
+# Copy the runtime to $PREFIX/opt/PoolSeqFlow-<version> and put wrappers on PATH.
+#
+# $PREFIX/bin gets one symlink per version plus a plain `PoolSeqFlow` pointing at the newest
+# installed, so a bare `PoolSeqFlow run` means the newest and any specific version stays
+# reachable by name. Both are symlinks into the versioned payload, so removing a version
+# removes its wrapper's target rather than leaving a working command with no code behind it.
+deploy_payload() {
+    local prefix dest bindir here item newest
+    prefix=$(install_prefix)
+    dest="$prefix/opt/PoolSeqFlow-${VERSION}"
+    bindir="$prefix/bin"
+    here=$(cd "$INSTALL" && pwd -P)
+
+    if [ "$here" = "$dest" ]; then
+        echo "The pipeline is already installed at $dest."
+    else
+        for item in $PAYLOAD_ITEMS; do
+            [ -e "$INSTALL/$item" ] || {
+                echo "ERROR: $INSTALL/$item is missing." >&2
+                echo "  This copy is incomplete, so installing from it would deploy a broken tree." >&2
+                exit 1
+            }
+        done
+        echo "Installing the pipeline into $dest..."
+        rm -rf "$dest"
+        mkdir -p "$dest"
+        for item in $PAYLOAD_ITEMS; do
+            cp -r "$INSTALL/$item" "$dest"/
+        done
+        # Stamp the copy with its own location. See POOLSEQFLOW_INSTALLED_HOME above.
+        sed -i "s|^POOLSEQFLOW_INSTALLED_HOME=\"\"$|POOLSEQFLOW_INSTALLED_HOME=\"$dest\"|" \
+            "$dest/PoolSeqFlow"
+        grep -q "^POOLSEQFLOW_INSTALLED_HOME=\"$dest\"$" "$dest/PoolSeqFlow" || {
+            echo "ERROR: could not stamp the installed wrapper with its location." >&2
+            echo "  The placeholder line in PoolSeqFlow has probably changed." >&2
+            exit 1
+        }
+        chmod +x "$dest/PoolSeqFlow"
+    fi
+
+    mkdir -p "$bindir"
+    ln -sfn "$dest/PoolSeqFlow" "$bindir/PoolSeqFlow-${VERSION}"
+    newest=$(newest_installed_version "$prefix")
+    ln -sfn "$prefix/opt/PoolSeqFlow-${newest}/PoolSeqFlow" "$bindir/PoolSeqFlow"
+
+    echo ""
+    echo "Installed:"
+    echo "    $dest"
+    echo "    $bindir/PoolSeqFlow-${VERSION}"
+    printf '    %-40s -> v%s, the newest installed\n' "$bindir/PoolSeqFlow" "$newest"
+    echo ""
+    case ":$PATH:" in
+        *":$bindir:"*)
+            echo "$bindir is on your PATH, so both commands work from anywhere."
+            ;;
+        *)
+            echo "$bindir is NOT on your PATH, so neither command will be found by name yet."
+            echo "Add it - in ~/.bashrc, ~/.zshrc or wherever your shell reads:"
+            echo ""
+            echo "    export PATH=\"$bindir:\$PATH\""
+            echo ""
+            echo "Until then, call the wrapper by its full path."
+            ;;
+    esac
+    echo ""
 }
 
 # `conda env list` prints "<name>  [*]  <path>" per environment, so grepping the whole
@@ -217,15 +381,23 @@ case $COMMAND in
             # which is the behaviour the versioned name exists to end.
             conda env create -n "$ENV_NAME" -f "$ENV_FILE"
         fi
-        echo "Installation complete."
         echo
+        # The environment and the code are installed together and versioned together: the
+        # pinned tools are part of what produced a result, so a payload without its matching
+        # environment - or the reverse - cannot reproduce anything.
+        deploy_payload
         report_other_envs
         # An environment that was created but is missing a tool is not an install.
         # Verify before reporting success: a tool that is absent here would
         # otherwise surface partway through a run, hours in. `set -e` means a
         # failed check fails the install.
+        #
+        # Checked against the DEPLOYED copy rather than this one, because that is the copy
+        # that will run - a helper that lost its executable bit in the copy would otherwise
+        # go unnoticed until a run reached it.
         conda activate "$ENV_NAME"
-        bash "$INSTALL/install/check_install.sh"
+        bash "$(install_prefix)/opt/PoolSeqFlow-${VERSION}/install/check_install.sh"
+        echo "Installation complete."
         ;;
 
     check)
@@ -374,10 +546,28 @@ case $COMMAND in
         echo "Reset complete."
         ;;
     list)
+        # Two families, reported together: the code and the tools it was pinned against are
+        # installed as a pair, and either one alone cannot reproduce a result.
+        PREFIX=$(install_prefix)
+        PAYLOADS=$(installed_payload_versions "$PREFIX")
+        echo "Installed pipelines under $PREFIX/opt:"
+        if [ -z "$PAYLOADS" ]; then
+            echo "    none"
+        else
+            for v in $PAYLOADS; do
+                if [ "$v" = "$VERSION" ]; then
+                    printf '  * %-12s %s\n' "v$v" "this copy"
+                else
+                    printf '    %-12s\n' "v$v"
+                fi
+            done
+        fi
+        echo ""
+
         INSTALLED=$(poolseqflow_envs)
         if [ -z "$INSTALLED" ]; then
             echo "No PoolSeqFlow conda environments are installed."
-            echo "Install this version's with:  ./$(basename "$0") install"
+            echo "Install this version's with:  $(basename "$0") install"
             exit 0
         fi
         echo "PoolSeqFlow conda environments:"
@@ -453,8 +643,18 @@ EOF
         # Checked rather than attempted: `conda env remove` on an absent environment exits
         # non-zero, and under `set -e` that surfaced as a raw conda error with no indication
         # of which environments do exist.
-        if ! env_exists "$ENV_NAME"; then
-            echo "Environment '$ENV_NAME' is not installed." >&2
+        # The environment and the payload are installed together, but they can be missing
+        # independently - an interrupted install, or a manual `conda env remove`. Each is
+        # removed if present, and only the case where neither exists is an error.
+        PREFIX=$(install_prefix)
+        HAVE_ENV=0
+        if env_exists "$ENV_NAME"; then HAVE_ENV=1; fi
+        HAVE_PAYLOAD=0
+        if [ -d "$PREFIX/opt/PoolSeqFlow-${VERSION}" ]; then HAVE_PAYLOAD=1; fi
+
+        if [ "$HAVE_ENV" -eq 0 ] && [ "$HAVE_PAYLOAD" -eq 0 ]; then
+            echo "Environment '$ENV_NAME' is not installed, and neither is v$VERSION of the" >&2
+            echo "pipeline under $PREFIX/opt." >&2
             INSTALLED=$(poolseqflow_envs)
             if [ -n "$INSTALLED" ]; then
                 echo "" >&2
@@ -465,9 +665,19 @@ EOF
             fi
             exit 1
         fi
-        echo "Uninstalling conda environment '$ENV_NAME'..."
-        conda deactivate
-        conda env remove -n "$ENV_NAME"
+
+        if [ "$HAVE_ENV" -eq 1 ]; then
+            echo "Uninstalling conda environment '$ENV_NAME'..."
+            conda deactivate
+            conda env remove -n "$ENV_NAME"
+        else
+            echo "Conda environment '$ENV_NAME' is already absent."
+        fi
+        if [ "$HAVE_PAYLOAD" -eq 1 ]; then
+            remove_payload "$VERSION"
+        else
+            echo "No pipeline installed at $PREFIX/opt/PoolSeqFlow-${VERSION}."
+        fi
         ;;
 
     uninstall_all)
@@ -478,12 +688,22 @@ EOF
             echo "No PoolSeqFlow conda environments are installed. Nothing to do."
             exit 0
         fi
+        PREFIX=$(install_prefix)
+        PAYLOADS=$(installed_payload_versions "$PREFIX")
         echo ""
         echo "This removes every PoolSeqFlow conda environment on this machine:"
         echo "$INSTALLED" | sed 's/^/    /'
+        if [ -n "$PAYLOADS" ]; then
+            echo ""
+            echo "and every installed pipeline under $PREFIX/opt:"
+            for v in $PAYLOADS; do echo "    v$v"; done
+            echo ""
+            echo "including the wrappers in $PREFIX/bin."
+        fi
         echo ""
-        echo "Only the environments go. Your project data, outputs, logs and"
-        echo "parameters.config are untouched - none of them live in a conda environment."
+        echo "Only the software goes. Your project directories - parameters.config, Data/,"
+        echo "Reference/ - and everything in storageDir are untouched: none of them live"
+        echo "inside an installation."
         echo "Reinstall this version afterwards with:"
         echo "    ./$(basename "$0") install"
         echo ""
@@ -511,8 +731,14 @@ EOF
             echo "Removing $env..."
             conda env remove -n "$env" -y
         done
+        # Same reasoning for the payloads. remove_payload re-points the plain wrapper each
+        # time and removes it once the last version is gone, so the loop leaves nothing on
+        # PATH pointing at a directory that is no longer there.
+        for v in $PAYLOADS; do
+            remove_payload "$v" || true
+        done
         echo ""
-        echo "All PoolSeqFlow environments removed."
+        echo "All PoolSeqFlow environments and installations removed."
         ;;
     *)
         usage

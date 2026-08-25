@@ -44,6 +44,67 @@ test_install_creates_the_versioned_name_explicitly() {
         "install must pass -n to override the name: key in environment.yml"
 }
 
+PSF_VERSION="${VERSIONED_ENV#PoolSeqFlow-}"
+
+# `install` deploys the code as well as the environment. The two are versioned together
+# because the pinned tools are part of what produced a result, so a payload without its
+# matching environment reproduces nothing.
+test_install_deploys_the_pipeline_and_wrappers() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    assert_status 0 "$LAUNCHER_STATUS" "install should succeed"
+    local dest="$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION"
+    assert_file "$dest/poolseqflow.nf"   "the pipeline should be deployed"
+    assert_file "$dest/PoolSeqFlow"      "the wrapper should be deployed beside it"
+    assert_file "$LAUNCHER_PREFIX/bin/PoolSeqFlow-$PSF_VERSION" "a versioned wrapper should go on PATH"
+    assert_file "$LAUNCHER_PREFIX/bin/PoolSeqFlow"              "so should the plain one"
+    # The message is the whole point of the PATH note: a prefix nobody has on PATH gives
+    # commands that cannot be found by name, with nothing to say why.
+    assert_contains "$LAUNCHER_OUTPUT" "$LAUNCHER_PREFIX/bin" "should name the wrapper directory"
+    assert_contains "$LAUNCHER_OUTPUT" "PATH" "should say something about PATH"
+}
+
+# The deployed copy is reached through a symlink, so it carries its own location rather than
+# resolving one. The copy in a clone must stay unstamped, or a checkout would point at an
+# installation instead of itself.
+test_the_deployed_wrapper_is_stamped_and_the_source_is_not() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    local dest="$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION"
+    assert_contains "$(grep '^POOLSEQFLOW_INSTALLED_HOME=' "$dest/PoolSeqFlow")" "$dest" \
+        "the installed wrapper should know its own payload"
+    assert_eq 'POOLSEQFLOW_INSTALLED_HOME=""' \
+        "$(grep '^POOLSEQFLOW_INSTALLED_HOME=' "$REPO_ROOT/PoolSeqFlow")" \
+        "the source wrapper must stay unstamped"
+}
+
+# By version order, not install order: reinstalling an older release must not capture the
+# plain name and quietly become what `PoolSeqFlow run` means.
+test_the_plain_wrapper_points_at_the_newest_version() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    assert_status 0 "$LAUNCHER_STATUS" "the first install should succeed"
+    local sb; sb=$(dirname "$LAUNCHER_PREFIX")
+    mkdir -p "$LAUNCHER_PREFIX/opt/PoolSeqFlow-99.9.9"
+    : > "$LAUNCHER_PREFIX/opt/PoolSeqFlow-99.9.9/PoolSeqFlow"
+    ( cd "$sb" && PATH="$sb/stub/bin:$PATH" POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" \
+      ./PoolSeqFlow install ) >/dev/null 2>&1
+    assert_contains "$(readlink "$LAUNCHER_PREFIX/bin/PoolSeqFlow")" "PoolSeqFlow-99.9.9" \
+        "the plain wrapper should follow the highest version, not the last installed"
+    assert_file "$LAUNCHER_PREFIX/bin/PoolSeqFlow-$PSF_VERSION" \
+        "this version's own wrapper should still be there"
+}
+
+# Both halves go, and nothing is left on PATH pointing at a directory that no longer exists.
+test_uninstall_removes_the_pipeline_as_well_as_the_environment() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    local sb; sb=$(dirname "$LAUNCHER_PREFIX")
+    local out; out=$( cd "$sb" && PATH="$sb/stub/bin:$PATH" \
+        POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow uninstall 2>&1 )
+    assert_contains "$out" "Removed" "should say the pipeline was removed"
+    assert_count 0 "$(find "$LAUNCHER_PREFIX/opt" -maxdepth 1 -name 'PoolSeqFlow-*' | wc -l)" \
+        "the payload should be gone"
+    assert_count 0 "$(find "$LAUNCHER_PREFIX/bin" -maxdepth 1 -name 'PoolSeqFlow*' | wc -l)" \
+        "and so should both wrappers, rather than dangling"
+}
+
 test_install_reports_environments_left_from_other_versions() {
     run_launcher_with_envs "base PoolSeqFlow PoolSeqFlow-0.1.0" install
     assert_contains "$LAUNCHER_OUTPUT" "Other PoolSeqFlow environments" "should report what else is installed"

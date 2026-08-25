@@ -145,6 +145,21 @@ test_release_prep_logs_are_not_tracked() {
 
 # The committed fixture must be reproducible from the generator, or the reference outputs
 # cannot be regenerated after a change to it.
+# Two lists describe the same thing and must not drift: PAYLOAD_ITEMS in the wrapper decides
+# what `install` deploys, and .gitattributes decides what `git archive` puts in a release
+# tarball. A file added to the release but not to PAYLOAD_ITEMS goes missing from every
+# installation; one added the other way makes `install` refuse a downloaded copy as incomplete.
+test_install_payload_matches_the_release_archive() {
+    local archive payload
+    archive=$(cd "$REPO_ROOT" && git archive HEAD | tar -t | sed 's|/.*||' | sort -u)
+    # Evaluated rather than parsed: the assignment spans a line continuation, and letting the
+    # shell join it is exact where a regex would be approximate.
+    payload=$(eval "$(sed -n '/^PAYLOAD_ITEMS=/,/[^\\]$/p' "$REPO_ROOT/PoolSeqFlow")"
+              printf '%s\n' $PAYLOAD_ITEMS | sort)
+    assert_eq "$archive" "$payload" \
+        "PAYLOAD_ITEMS and the release archive should list the same top-level entries"
+}
+
 test_fixture_generator_is_deterministic() {
     local out
     out="$TEST_TMPDIR/fixture-determinism"
