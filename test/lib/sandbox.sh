@@ -133,6 +133,28 @@ ENTRY
     _run_entry "$sb" dictionaries_only.nf
 }
 
+# Run step 2 on its own, for tests about where the trimmed reads are looked for and left.
+# Same generate-rather-than-commit reasoning as run_dictionaries_only.
+#
+# TrimReads' `verify` input is an ordering barrier - it is staged and never named in the
+# script body - so a placeholder file stands in for step 0, and step 1 is not needed at all
+# because nothing in step 2 touches the reference.
+run_trim_only() {
+    local sb="$1"
+    cat > "$sb/install/trim_only.nf" <<'ENTRY'
+nextflow.enable.dsl=2
+
+include { resolveParameters } from './scripts/resolve_parameters.nf'
+include { TrimQcClip } from './scripts/2_trim_reads.nf'
+
+workflow {
+    resolveParameters()
+    TrimQcClip(channel.value(file("${params.storageDir}/.step0_token")))
+}
+ENTRY
+    _run_entry "$sb" trim_only.nf
+}
+
 # Run step 0 by itself, for tests about the environment and parameter guards. Same
 # generate-rather-than-commit reasoning as run_dictionaries_only.
 run_verify_only() {

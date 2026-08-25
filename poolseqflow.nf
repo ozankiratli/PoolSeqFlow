@@ -90,11 +90,13 @@ workflow {
     //
     // The signal is the consuming step having finished, not the artifact itself - several
     // processes here take an input purely for ordering and read an absolute path instead, so
-    // holding the file proves nothing about who is done with it.
-    //
-    // Both are inert at this stage; see scripts/9_completion.nf.
-    CompleteAfterAlign('trimmed reads', AlignReads.out)
-    CompleteAfterClean('alignments', SortCleanBams.out.ready_bam)
+    // holding the file proves nothing about who is done with it. What is passed is the
+    // sample id carried by that signal, which is also the key the promotion table needs; see
+    // scripts/9_completion.nf for why it is derived from the signal rather than zipped
+    // alongside it.
+    CompleteAfterAlign('trimmed reads', AlignReads.out.map { pair_id, _bam -> pair_id })
+    // Still inert - the aligned BAMs are promoted in the next stage.
+    CompleteAfterClean('alignments', SortCleanBams.out.ready_bam.map { pair_id, _bam -> pair_id })
     
     GenerateReports(SortCleanBams.out.ready_bam,SortCleanBams.out.ready_bai)
     VariantCalling(SortCleanBams.out.ready_bam, BuildDictionaries.out.fai_index)

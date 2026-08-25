@@ -195,8 +195,6 @@ params {
         // Outputs land here first and move to Output/ once the step that consumes them has
         // succeeded, so each byte crosses to storageDir once instead of being read across it
         // many times. Mirrors Output/'s own tree. `clean` leaves it alone; `reset` removes it.
-        //
-        // Nothing writes here yet - the promotion steps come later in the 3.0 series.
         utilized        = "${params.mainDir}/Utilized"
 
         outputs         = "${params.storageDir}/Output"
@@ -220,21 +218,49 @@ params {
         logs            = "${params.storageDir}/Logs"
         snpEff          = "${params.dir.dictionaries}/snpEff"
 
-        output {
-            aligned         = "${params.dir.outputs}/Aligned"
-            ready           = "${params.dir.outputs}/Ready"
-            trimmed         = "${params.dir.outputs}/Trimmed"
-            unpaired        = "${params.dir.outputs}/Unpaired"
-            vcf             = "${params.dir.outputs}/VCF"
-            freq            = "${params.dir.outputs}/Frequencies"
-            reports         = "${params.dir.outputs}/Reports"
-            temp            = "${params.dir.outputs}/Temp"
+        // The names below are relative to EITHER root, because Utilized/ mirrors Output/
+        // exactly. That mirror is the whole reason a skip check can ask which volume holds
+        // an artifact by trying one relative path against both roots
+        // (bin/find_artifact.sh), rather than translating between two layouts - so the two
+        // trees are built from one set of names here instead of being written out twice
+        // and left to drift.
+        subpath {
+            aligned         = "Aligned"
+            ready           = "Ready"
+            trimmed         = "Trimmed"
+            unpaired        = "Unpaired"
+            vcf             = "VCF"
+            freq            = "Frequencies"
+            reports         = "Reports"
+            temp            = "Temp"
 
             report {
-                align           = "${params.dir.output.reports}/Alignment"
-                coverage        = "${params.dir.output.reports}/Coverage"
-                fastqc          = "${params.dir.output.reports}/Fastqc"
-                trim            = "${params.dir.output.reports}/Trimming"
+                align           = "${params.dir.subpath.reports}/Alignment"
+                coverage        = "${params.dir.subpath.reports}/Coverage"
+                fastqc          = "${params.dir.subpath.reports}/Fastqc"
+                trim            = "${params.dir.subpath.reports}/Trimming"
+            }
+        }
+
+        // Permanent storage: where an artifact ends up. A step whose output is read again
+        // writes to "${params.dir.utilized}/<the same subpath>" instead, and is promoted
+        // here once the step that consumes it has succeeded - the two paths differ only in
+        // their root. A step whose output is never read again writes here directly.
+        output {
+            aligned         = "${params.dir.outputs}/${params.dir.subpath.aligned}"
+            ready           = "${params.dir.outputs}/${params.dir.subpath.ready}"
+            trimmed         = "${params.dir.outputs}/${params.dir.subpath.trimmed}"
+            unpaired        = "${params.dir.outputs}/${params.dir.subpath.unpaired}"
+            vcf             = "${params.dir.outputs}/${params.dir.subpath.vcf}"
+            freq            = "${params.dir.outputs}/${params.dir.subpath.freq}"
+            reports         = "${params.dir.outputs}/${params.dir.subpath.reports}"
+            temp            = "${params.dir.outputs}/${params.dir.subpath.temp}"
+
+            report {
+                align           = "${params.dir.outputs}/${params.dir.subpath.report.align}"
+                coverage        = "${params.dir.outputs}/${params.dir.subpath.report.coverage}"
+                fastqc          = "${params.dir.outputs}/${params.dir.subpath.report.fastqc}"
+                trim            = "${params.dir.outputs}/${params.dir.subpath.report.trim}"
             }
         }
     }

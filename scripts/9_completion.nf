@@ -45,48 +45,175 @@
 
 nextflow.enable.dsl=2
 
-// The scaffold. It reports what reached it and moves nothing.
+// THE ARTIFACT -> GATE TABLE.
 //
-// Deliberately inert at this stage. The risk in this refactor is not the moving, which is a
-// rename; it is the wiring, which can change the shape of the graph without changing its
-// result. Landing the attachment points first - with task counts asserted against the same
-// fixture - separates "the graph still has the shape we think" from "the moves are correct",
-// so that when something does change we know which of the two caused it.
-process RecordCompletion {
+// Which files a completed step releases, and where they go. Nextflow's own dependency graph
+// cannot answer this - all three of its limits here were found by probing, not assumed:
+//
+//   * it asserts dependencies that are not reads (the six ordering-barrier inputs above),
+//   * it misses reads that are never declared (VerifyAll and CheckRGTagsFile take `val` for
+//     files and then read them by absolute path into other tasks' work directories), and
+//   * it describes one session, while an artifact's lifetime here spans runs - this
+//     pipeline resumes by looking at the filesystem, `-resume` is unused, and
+//     `cleanup = true` removes the work directories behind it.
+//
+// So the table is written out, and it grows ONE ROW PER STAGE: each row lands with the
+// change that makes it true and is reviewed alongside it. A stage that has no row yet
+// returns null and is recorded without moving anything. A stage that is not in the table at
+// all is an error rather than a no-op, because a mistyped name would otherwise promote
+// nothing, silently, on every run from then on.
+//
+// `subpath` is relative to both roots - Utilized/ and Output/ differ only in their root,
+// which is what makes promotion a move between two spellings of one path.
+def promotionRow(String stage, String key) {
+    def table = [
+        // Step 2's clipped reads are step 3's only input, and nothing after step 3 reads
+        // them, so a sample's alignment succeeding releases that sample's reads. The
+        // *_val_* reads written into the same directory are deliberately not here:
+        // ClipReads deletes them outright, so they never become a result to promote.
+        'trimmed reads': [ subpath : "${params.dir.subpath.trimmed}/${key}",
+                           patterns: ['*_clipped.fq.gz'] ],
+
+        // Not yet - the aligned BAMs are the next stage's work.
+        'alignments'   : null,
+    ]
+
+    if (!table.containsKey(stage)) {
+        throw new IllegalArgumentException(
+            "Completion: no promotion row for stage '${stage}'. Either add one to " +
+            "promotionRow() in scripts/9_completion.nf, or correct the stage name at " +
+            "the call site in poolseqflow.nf.")
+    }
+    return table[stage]
+}
+
+// The move itself. One task per (stage, key); `key` is the sample a per-sample artifact
+// belongs to, and is empty for artifacts that belong to the run as a whole.
+process PromoteArtifacts {
+    tag { key ? "${stage} ${key}" : stage }
+
     input:
     val stage
-    val token
+    val key
 
     output:
     val stage, emit: done
 
     script:
-    dir_log = "${params.dir.logs}/9_completion/s1_RecordCompletion"
-    """
-    echo "COMPLETION:            stage ${stage} finished; promotion is not yet enabled"
-    echo "COMPLETION:            utilized  ${params.dir.utilized}"
-    echo "COMPLETION:            outputs   ${params.dir.outputs}"
+    row = promotionRow(stage, key)
+    label = key ? "${stage} ${key}" : stage
+    // One writer per log file, as everywhere else in the pipeline: these tasks run
+    // concurrently, so a shared file would interleave their output.
+    slug = key ? "${stage}_${key}" : stage
+    slug = slug.replaceAll(/[^A-Za-z0-9]+/, '_')
+    dir_log = "${params.dir.logs}/9_completion/s1_PromoteArtifacts"
+    log_file = "${dir_log}/9_Completion_s1_PromoteArtifacts_${slug}_nextflow.log"
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/9_Completion_s1_RecordCompletion_nextflow.log
-    """
+    src = row ? "${params.dir.utilized}/${row.subpath}" : ''
+    dst = row ? "${params.dir.outputs}/${row.subpath}" : ''
+    // Quoted, so that the loops below iterate over the patterns themselves instead of
+    // whatever they happen to match in the task directory.
+    patterns = row ? row.patterns.collect { p -> "'${p}'" }.join(' ') : ''
+
+    if (row == null)
+        """
+        echo "PROMOTING ${label}: finished; nothing is promoted for this stage yet"
+
+        mkdir -p ${dir_log}
+        {
+            echo ""
+            echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+            cat .command.log
+        } >> ${log_file}
+        """
+    else
+        """
+        set -eo pipefail
+
+        echo "PROMOTING ${label}: ${src}"
+        echo "PROMOTING ${label}:   -> ${dst}"
+
+        moved=0
+        if [ -d "${src}" ]; then
+            mkdir -p "${dst}"
+            for pattern in ${patterns}; do
+                for f in "${src}"/\$pattern; do
+                    if [ -e "\$f" ]; then
+                        atomic_mv.sh "\$f" "${dst}/"
+                        moved=\$(( moved + 1 ))
+                    fi
+                done
+            done
+        fi
+
+        # The source must be GONE, not merely copied. find_artifact.sh reports the first
+        # root that has an artifact, and the working volume is searched second, so a copy
+        # left behind is harmless now and wrong the moment the promoted one is edited,
+        # replaced or reset - it would go on satisfying every later skip check.
+        left=0
+        for pattern in ${patterns}; do
+            for f in "${src}"/\$pattern; do
+                if [ -e "\$f" ]; then
+                    echo "PROMOTING ${label}: still present after promotion: \$f" >&2
+                    left=\$(( left + 1 ))
+                fi
+            done
+        done
+        if [ "\$left" -ne 0 ]; then
+            echo "PROMOTING ${label}: ERROR: \$left file(s) remain under ${src}." >&2
+            exit 1
+        fi
+
+        if [ "\$moved" -eq 0 ]; then
+            # Already promoted by an earlier run is the ordinary case. In neither root is
+            # not: the gate reported success, so the artifact has to exist somewhere, and
+            # the likeliest cause is a wrong subpath in the table above.
+            present=0
+            for pattern in ${patterns}; do
+                for f in "${dst}"/\$pattern; do
+                    if [ -e "\$f" ]; then present=\$(( present + 1 )); fi
+                done
+            done
+            if [ "\$present" -eq 0 ]; then
+                echo "PROMOTING ${label}: ERROR: nothing matching ${patterns} in either" >&2
+                echo "PROMOTING ${label}: ${src}" >&2
+                echo "PROMOTING ${label}: or ${dst}, but the step that consumes it succeeded." >&2
+                exit 1
+            fi
+            echo "PROMOTING ${label}: already in permanent storage; nothing to move"
+        else
+            echo "PROMOTING ${label}: moved \$moved file(s)"
+        fi
+
+        # Only if it is genuinely empty. Anything still in there is worth keeping visible.
+        rmdir "${src}" 2>/dev/null || true
+
+        mkdir -p ${dir_log}
+        {
+            echo ""
+            echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+            cat .command.log
+        } >> ${log_file}
+        """
 }
 
-// One call per attachment point. `trigger` is the consuming step's own output - the signal
-// that it finished - and is never the artifact itself; see constraint 1 above.
+// One call per attachment point.
+//
+// `gate` carries the consuming step's completion - the signal that it finished - and never
+// the artifact itself; see constraint 1 above. Its VALUE is the key the row is resolved
+// with, so for a per-sample artifact the call site maps the consumer's output down to its
+// sample id. Deriving the key from the signal rather than pairing two channels is
+// deliberate: two channels would be matched by arrival order, and a promotion aimed at the
+// wrong sample would delete a file another task still needs.
 workflow Completion {
     take:
     stage
-    trigger
+    gate
 
     main:
-    RecordCompletion(stage, trigger)
+    PromoteArtifacts(stage, gate)
 
     // Unnamed: with a single emit, naming it is what `nextflow lint` objects to.
     emit:
-    RecordCompletion.out.done
+    PromoteArtifacts.out.done
 }

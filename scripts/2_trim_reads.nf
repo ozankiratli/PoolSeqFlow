@@ -15,15 +15,22 @@ process TrimReads {
         path("*_val_2_fastqc.zip"), emit: fastqc_files
 
     script:
-    target_folder_trimmed = "${params.dir.output.trimmed}/${pair_id}"
+    // The reads this step produces are read again - by ClipReads, then by step 3 - so they
+    // are working data and stay on the working volume until alignment has finished with
+    // them. Utilized/ and Output/ take the same relative path, which is what lets the skip
+    // checks below ask find_artifact.sh which volume actually holds a file.
+    rel_trimmed = "${params.dir.subpath.trimmed}/${pair_id}"
+    target_folder_trimmed = "${params.dir.utilized}/${rel_trimmed}"
+    // The rest of what this step writes is never read again - unpaired reads, the trim
+    // reports, the FastQC htmls - so it goes straight to permanent storage and never
+    // enters Utilized. (The FastQC *zips* alongside them are the exception: ClipReads
+    // unzips them. They are still written here; see the note in ClipReads.)
     target_folder_unpaired = "${params.dir.output.unpaired}/${pair_id}"
     target_folder_fastqc = "${params.dir.output.report.fastqc}/${pair_id}"
     target_folder_report_trim = "${params.dir.output.report.trim}/${pair_id}"
 
     clipped1 = "${pair_id}_R1_clipped.fq.gz"
     clipped2 = "${pair_id}_R2_clipped.fq.gz"
-    target_file_clipped1 = "${target_folder_trimmed}/${clipped1}"
-    target_file_clipped2 = "${target_folder_trimmed}/${clipped2}"
 
     val1 = "${pair_id}_val_1.fq.gz"
     val2 = "${pair_id}_val_2.fq.gz"
@@ -46,10 +53,20 @@ process TrimReads {
     """
     set -eo pipefail
 
+    # The clipped reads are the artifact that can be on either volume: still under
+    # Utilized/ if alignment has not finished with them, in Output/ if it has. Asking one
+    # directory would re-trim a sample whose reads an earlier run already promoted. The
+    # roots are given permanent-first, so a residue copy cannot outrank a finished one.
+    #
+    # An absent artifact is find_artifact.sh's ordinary answer, not an error, so its exit
+    # status is discarded here and emptiness is what the branch tests.
+    clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
+    clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
+
     echo "TRIMMING READS ${pair_id}: Trimming the reads..."
-    if [ -f ${target_file_clipped1} ] && [ -f ${target_file_clipped2} ]; then
+    if [ -n "\$clipped1_at" ] && [ -n "\$clipped2_at" ]; then
         echo "TRIMMING READS ${pair_id}: Found existing clipped files"
-        echo "TRIMMING READS ${pair_id}: Found: ${target_file_clipped1} ${target_file_clipped2}"
+        echo "TRIMMING READS ${pair_id}: Found: \$clipped1_at \$clipped2_at"
         echo "TRIMMING READS ${pair_id}: Creating dummy files..."
         touch ${val1}
         touch ${val2}
@@ -57,8 +74,11 @@ process TrimReads {
         touch ${fastqc2}
         echo "TRIMMING READS ${pair_id}: COMPLETED"
     elif [ -f ${target_file_fastqc1} ] && [ -f ${target_file_fastqc2} ] && [ -f ${target_file_val1} ] && [ -f ${target_file_val2} ]; then
+        # One root each, deliberately. The *_val_* reads are deleted by ClipReads rather
+        # than promoted, so Utilized/ is the only place they can ever be; the FastQC zips
+        # are written straight to permanent storage.
         echo "TRIMMING READS ${pair_id}: Found existing trimmed files and FASTQC zip files"
-        echo "TRIMMING READS ${pair_id}: Found: ${target_file_clipped1} ${target_file_clipped2}"
+        echo "TRIMMING READS ${pair_id}: Found: ${target_file_val1} ${target_file_val2}"
         echo "TRIMMING READS ${pair_id}: Creating symbolic links..."
         ln -s ${target_file_val1} .
         ln -s ${target_file_val2} .
@@ -120,7 +140,15 @@ process ClipReads {
         path("*_R2_clipped.fq.gz"), emit: clipped_fastqs
 
     script:
-    target_folder_trimmed = "${params.dir.output.trimmed}/${pair_id}"
+    // Step 3 reads these, so they stay on the working volume and are promoted once
+    // alignment has succeeded for this sample. See TrimReads above.
+    rel_trimmed = "${params.dir.subpath.trimmed}/${pair_id}"
+    target_folder_trimmed = "${params.dir.utilized}/${rel_trimmed}"
+    // The clipped FastQC zips and htmls have no consumer, so they go straight to permanent
+    // storage. Note that the *_val_* zips in the same directory DO have one - this process
+    // unzips them - so by settled rule 2 they belong on the working volume. They are left
+    // here for now: their gate is ClipReads finishing, not alignment, which makes them a
+    // separate row of the promotion table and a separate attachment point.
     target_folder_fastqc = "${params.dir.output.report.fastqc}/${pair_id}"
 
     clipped1 = "${pair_id}_R1_clipped.fq.gz"
@@ -139,13 +167,19 @@ process ClipReads {
     # FastQC is a JVM program; give it the cores this task reserved.
     export _JAVA_OPTIONS="${params.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
 
+    # Either volume, for the same reason as TrimReads: promotion may already have moved
+    # these to permanent storage. The link goes to wherever they actually are, not to
+    # where this process would have written them.
+    clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
+    clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
+
     echo "CLIPPING READS ${pair_id}: Clipping the reads..."
-    if [ -f ${target_file_clipped1} ] && [ -f ${target_file_clipped2} ]; then
+    if [ -n "\$clipped1_at" ] && [ -n "\$clipped2_at" ]; then
         echo "CLIPPING READS ${pair_id}: Found existing clipped files"
-        echo "CLIPPING READS ${pair_id}: Found ${target_file_clipped1} ${target_file_clipped2}"
+        echo "CLIPPING READS ${pair_id}: Found \$clipped1_at \$clipped2_at"
         echo "CLIPPING READS ${pair_id}: Creating symbolic links..."
-        ln -s ${target_file_clipped1} .
-        ln -s ${target_file_clipped2} .
+        ln -s "\$clipped1_at" .
+        ln -s "\$clipped2_at" .
         echo "CLIPPING READS ${pair_id}: COMPLETED"
     else
         echo "CLIPPING READS ${pair_id}: Extracting FastQC data" 

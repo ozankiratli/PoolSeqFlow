@@ -173,7 +173,7 @@ test_each_step_runs_once_per_sample() {
     # things attached to this graph, so if an inserted operator ever turns one of these paths
     # from a value channel into a queue channel, the count that moves is likely to be one of
     # theirs - and a wrong count here is visible where a wrong result would not be.
-    for p in CompleteAfterAlign:RecordCompletion CompleteAfterClean:RecordCompletion; do
+    for p in CompleteAfterAlign:PromoteArtifacts CompleteAfterClean:PromoteArtifacts; do
         assert_count "$samples" "$(task_count "$PIPELINE_SB" "$p")" "$p should run once per sample"
     done
 
@@ -324,4 +324,92 @@ test_a_legitimate_min_length_still_runs() {
     assert_status 0 "$status" "a minimum below the computed limit should run normally"
     assert_count 4 "$(find "$sb/store/Output" -name '*_clipped.fq.gz' 2>/dev/null | wc -l)" \
         "both samples should produce clipped reads"
+}
+
+# The first stage where an artifact actually moves. Step 2's clipped reads are step 3's only
+# input and nothing after step 3 reads them, so a sample's alignment succeeding is what
+# releases that sample's reads to permanent storage.
+#
+# Both halves are asserted, because only the pair is the property that matters. Present in
+# Output/ says the move happened; ABSENT from Utilized/ says it was a move and not a copy -
+# and that second half is the one with teeth. find_artifact.sh reports the first root that
+# has an artifact and searches the working volume second, so a copy left behind is invisible
+# until the promoted one is replaced or reset, at which point it wins every skip check.
+test_trimmed_reads_are_promoted_after_alignment() {
+    needs_run || return
+    local s stored left
+    for s in $(cut -d, -f1 "$PIPELINE_SB/main/RGTags.csv" | tail -n +2); do
+        stored="$PIPELINE_SB/store/Output/Trimmed/$s"
+        assert_file "$stored/${s}_R1_clipped.fq.gz" "$s R1 should reach permanent storage"
+        assert_file "$stored/${s}_R2_clipped.fq.gz" "$s R2 should reach permanent storage"
+    done
+    left=$(find "$PIPELINE_SB/main/Utilized" -name '*_clipped.fq.gz' 2>/dev/null | wc -l)
+    assert_count 0 "$left" "clipped reads left on the working volume after promotion"
+
+    # The *_val_* reads are the other half of what step 2 writes. They are never promoted -
+    # ClipReads deletes them - so finding one here would mean that deletion stopped working
+    # and the working volume is now growing by the size of the raw data every run.
+    left=$(find "$PIPELINE_SB/main/Utilized" -name '*_val_[12].fq.gz' 2>/dev/null | wc -l)
+    assert_count 0 "$left" "intermediate trimmed reads left behind"
+}
+
+# The skip check has to consult BOTH roots, because a promoted artifact and an unpromoted
+# one are equally valid answers to "has this already been done". Asking one directory would
+# re-trim every sample whose reads an earlier run had already moved to storage - silently,
+# and at full cost.
+#
+# One run covers both roots by splitting the samples between them: half seeded where
+# promotion would have left them, half where the writing step would have. A second run would
+# have cost another minute and told us less, since it could only ever exercise one root at a
+# time.
+#
+# Step 2 alone, and the seeded files are the fixture's own reads under a clipped name: the
+# skip branches only test for existence and symlink what they find, so nothing reads them.
+test_step_2_finds_its_clipped_reads_in_either_root() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status s dest n log
+    sb=$(make_pipeline_sandbox "either-root")
+    : > "$sb/store/.step0_token"
+    write_sandbox_config "$sb"
+
+    for n in 1 2 3 4 5 6; do
+        s="TestSample$n"
+        if [ "$n" -le 3 ]; then
+            dest="$sb/store/Output/Trimmed/$s"      # promoted by an earlier run
+        else
+            dest="$sb/main/Utilized/Trimmed/$s"     # written but not yet promoted
+        fi
+        mkdir -p "$dest"
+        cp "$sb/main/Data/${s}_R1.fq.gz" "$dest/${s}_R1_clipped.fq.gz"
+        cp "$sb/main/Data/${s}_R2.fq.gz" "$dest/${s}_R2_clipped.fq.gz"
+    done
+
+    status=$(run_trim_only "$sb")
+    assert_status 0 "$status" "step 2 should complete; see $sb/run.out"
+
+    # Process output goes to the per-process log, never to Nextflow's stdout.
+    for n in 1 2 3 4 5 6; do
+        s="TestSample$n"
+        log="$sb/store/Logs/2_trim_reads/s1_TrimReads/$s/2_TrimQcClip_s1_TrimReads_${s}_nextflow.log"
+        if [ -f "$log" ]; then
+            assert_contains "$(cat "$log")" "Found existing clipped files" \
+                "$s should have been skipped, not re-trimmed"
+        else
+            fail_case "no TrimReads log for $s at $log"
+        fi
+    done
+
+    # What trimming actually produces, none of which may appear if every sample was skipped.
+    assert_no_file "$sb/store/Output/Reports/Trimming" "no trim report should be written"
+    assert_no_file "$sb/store/Output/Unpaired"         "no unpaired reads should be written"
+    assert_count 0 "$(find "$sb/main/Utilized" -name '*_val_[12].fq.gz' 2>/dev/null | wc -l)" \
+        "no reads should have been trimmed"
+
+    # And nothing was moved between the roots: promotion is step 3's business, and step 3
+    # did not run here.
+    assert_file "$sb/store/Output/Trimmed/TestSample1/TestSample1_R1_clipped.fq.gz" \
+        "a promoted sample should stay promoted"
+    assert_file "$sb/main/Utilized/Trimmed/TestSample6/TestSample6_R1_clipped.fq.gz" \
+        "an unpromoted sample should stay where it was"
 }
