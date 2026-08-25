@@ -23,9 +23,16 @@ process SortCleanBam {
     set -eo pipefail
 
     echo "SORT AND CLEAN BAM ${pair_id}: Sorting and Cleaning BAM file..."
-    if [ -f ${target_bam_ready} ]; then
-        echo "SORT AND CLEAN BAM ${pair_id}: Found existing BAM file"
+    # BOTH files, not just the BAM. The skip branch links the index as well, and `ln -s`
+    # does not check that its target exists - so testing only the BAM produced a dangling
+    # link that still satisfied this process's `*_ready.bam.bai` output glob, and the run
+    # carried on with an index that was not there. A BAM without its index is reachable
+    # whenever indexing was interrupted, and from E1q it becomes reachable a second way,
+    # when the pair is promoted between the two volumes.
+    if [ -f ${target_bam_ready} ] && [ -f ${target_bai_ready} ]; then
+        echo "SORT AND CLEAN BAM ${pair_id}: Found existing BAM file and index"
         echo "SORT AND CLEAN BAM ${pair_id}: Found: ${target_bam_ready}"
+        echo "SORT AND CLEAN BAM ${pair_id}: Found: ${target_bai_ready}"
         echo "SORT AND CLEAN BAM ${pair_id}: Marking step as completed!"
         echo "SORT AND CLEAN BAM ${pair_id}: Creating symbolic links..."
         ln -s ${target_bam_ready} .

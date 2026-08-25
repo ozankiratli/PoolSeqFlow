@@ -21,10 +21,16 @@ process TrimReads {
     // checks below ask find_artifact.sh which volume actually holds a file.
     rel_trimmed = "${params.dir.subpath.trimmed}/${pair_id}"
     target_folder_trimmed = "${params.dir.utilized}/${rel_trimmed}"
-    // The rest of what this step writes is never read again - unpaired reads, the trim
-    // reports, the FastQC htmls - so it goes straight to permanent storage and never
-    // enters Utilized. (The FastQC *zips* alongside them are the exception: ClipReads
-    // unzips them. They are still written here; see the note in ClipReads.)
+    // The FastQC zips are read again too - ClipReads unzips them to work out the clipping
+    // bounds - so they are working data by the same rule, small though they are. They are
+    // promoted when ClipReads succeeds, which is a different gate from the reads above and
+    // therefore a separate attachment point. The htmls that FastQC writes beside them have
+    // no consumer at all, so those go straight to permanent storage and the two are split
+    // across the roots here rather than moved together.
+    rel_fastqc = "${params.dir.subpath.report.fastqc}/${pair_id}"
+    target_folder_fastqc_work = "${params.dir.utilized}/${rel_fastqc}"
+    // The rest is never read again - unpaired reads, the trim reports, the FastQC htmls -
+    // so it goes straight to permanent storage and never enters Utilized.
     target_folder_unpaired = "${params.dir.output.unpaired}/${pair_id}"
     target_folder_fastqc = "${params.dir.output.report.fastqc}/${pair_id}"
     target_folder_report_trim = "${params.dir.output.report.trim}/${pair_id}"
@@ -39,8 +45,8 @@ process TrimReads {
 
     fastqc1 = "${pair_id}_val_1_fastqc.zip"
     fastqc2 = "${pair_id}_val_2_fastqc.zip"
-    target_file_fastqc1 = "${target_folder_fastqc}/${fastqc1}"
-    target_file_fastqc2 = "${target_folder_fastqc}/${fastqc2}"
+    target_file_fastqc1 = "${target_folder_fastqc_work}/${fastqc1}"
+    target_file_fastqc2 = "${target_folder_fastqc_work}/${fastqc2}"
 
     dir_log = "${params.dir.logs}/2_trim_reads/s1_TrimReads/${pair_id}"
 
@@ -62,6 +68,8 @@ process TrimReads {
     # status is discarded here and emptiness is what the branch tests.
     clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
     clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
+    fastqc1_at=\$(find_artifact.sh "${rel_fastqc}/${fastqc1}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
+    fastqc2_at=\$(find_artifact.sh "${rel_fastqc}/${fastqc2}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
 
     echo "TRIMMING READS ${pair_id}: Trimming the reads..."
     if [ -n "\$clipped1_at" ] && [ -n "\$clipped2_at" ]; then
@@ -73,17 +81,18 @@ process TrimReads {
         touch ${fastqc1}
         touch ${fastqc2}
         echo "TRIMMING READS ${pair_id}: COMPLETED"
-    elif [ -f ${target_file_fastqc1} ] && [ -f ${target_file_fastqc2} ] && [ -f ${target_file_val1} ] && [ -f ${target_file_val2} ]; then
-        # One root each, deliberately. The *_val_* reads are deleted by ClipReads rather
-        # than promoted, so Utilized/ is the only place they can ever be; the FastQC zips
-        # are written straight to permanent storage.
+    elif [ -n "\$fastqc1_at" ] && [ -n "\$fastqc2_at" ] && [ -f ${target_file_val1} ] && [ -f ${target_file_val2} ]; then
+        # The *_val_* reads are looked for in one place on purpose: ClipReads deletes them
+        # rather than promoting them, so the working volume is the only place they can ever
+        # be. The zips it consumes are promoted, so those take both roots.
         echo "TRIMMING READS ${pair_id}: Found existing trimmed files and FASTQC zip files"
         echo "TRIMMING READS ${pair_id}: Found: ${target_file_val1} ${target_file_val2}"
+        echo "TRIMMING READS ${pair_id}: Found: \$fastqc1_at \$fastqc2_at"
         echo "TRIMMING READS ${pair_id}: Creating symbolic links..."
         ln -s ${target_file_val1} .
         ln -s ${target_file_val2} .
-        ln -s ${target_file_fastqc1} .
-        ln -s ${target_file_fastqc2} .
+        ln -s "\$fastqc1_at" .
+        ln -s "\$fastqc2_at" .
         echo "TRIMMING READS ${pair_id}: COMPLETED"
     else
         echo "TRIMMING READS ${pair_id}: Trimming paired reads..."
@@ -91,9 +100,17 @@ process TrimReads {
             --cores ${trim_cores} --fastqc_args "-t ${task.cpus}" \\
             --basename ${pair_id} ${read1} ${read2}
 
-        echo "TRIMMING READS ${pair_id}: Moving FASTQC reports and zips to ${target_folder_fastqc}"
+        # Split by whether anything reads it again. The zips are ClipReads' input, so they
+        # go to the working volume and are promoted once it has succeeded; the htmls are
+        # for you to look at and go straight to permanent storage. They end up in the same
+        # directory either way - Utilized/ mirrors Output/ - just not at the same time.
+        echo "TRIMMING READS ${pair_id}: Moving FASTQC zips to ${target_folder_fastqc_work}"
+        mkdir -p ${target_folder_fastqc_work}
+        for f in *.zip; do atomic_mv.sh "\$f" ${target_folder_fastqc_work}/; done
+
+        echo "TRIMMING READS ${pair_id}: Moving FASTQC reports to ${target_folder_fastqc}"
         mkdir -p ${target_folder_fastqc}
-        for f in *.zip *.html; do atomic_mv.sh "\$f" ${target_folder_fastqc}/; done
+        for f in *.html; do atomic_mv.sh "\$f" ${target_folder_fastqc}/; done
 
         echo "TRIMMING READS ${pair_id}: Moving trim reports to ${target_folder_report_trim}"
         mkdir -p ${target_folder_report_trim}
@@ -144,11 +161,10 @@ process ClipReads {
     // alignment has succeeded for this sample. See TrimReads above.
     rel_trimmed = "${params.dir.subpath.trimmed}/${pair_id}"
     target_folder_trimmed = "${params.dir.utilized}/${rel_trimmed}"
-    // The clipped FastQC zips and htmls have no consumer, so they go straight to permanent
-    // storage. Note that the *_val_* zips in the same directory DO have one - this process
-    // unzips them - so by settled rule 2 they belong on the working volume. They are left
-    // here for now: their gate is ClipReads finishing, not alignment, which makes them a
-    // separate row of the promotion table and a separate attachment point.
+    // The clipped FastQC zips and htmls this process produces have no consumer, so they go
+    // straight to permanent storage. The *_val_* zips it CONSUMES are the other case: they
+    // are on the working volume, staged in above, and promoted into this same directory
+    // once this process succeeds.
     target_folder_fastqc = "${params.dir.output.report.fastqc}/${pair_id}"
 
     clipped1 = "${pair_id}_R1_clipped.fq.gz"

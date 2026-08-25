@@ -16,6 +16,7 @@ include { AnnotateVCF }         from './scripts/8_annotate_variants.nf'
 // "Process 'X' has been already used" - and aliasing is the supported way round it whenever
 // the number of call sites is known while the script is being read, which is the case here:
 // the DAG's shape is fixed, and only multi-run's N comes from data.
+include { Completion as CompleteAfterClip }  from './scripts/9_completion.nf'
 include { Completion as CompleteAfterAlign } from './scripts/9_completion.nf'
 include { Completion as CompleteAfterClean } from './scripts/9_completion.nf'
 
@@ -94,8 +95,8 @@ workflow {
     // sample id carried by that signal, which is also the key the promotion table needs; see
     // scripts/9_completion.nf for why it is derived from the signal rather than zipped
     // alongside it.
+    CompleteAfterClip('fastqc zips', TrimQcClip.out.map { pair_id, _r1, _r2 -> pair_id })
     CompleteAfterAlign('trimmed reads', AlignReads.out.map { pair_id, _bam -> pair_id })
-    // Still inert - the aligned BAMs are promoted in the next stage.
     CompleteAfterClean('alignments', SortCleanBams.out.ready_bam.map { pair_id, _bam -> pair_id })
     
     GenerateReports(SortCleanBams.out.ready_bam,SortCleanBams.out.ready_bai)

@@ -173,7 +173,8 @@ test_each_step_runs_once_per_sample() {
     # things attached to this graph, so if an inserted operator ever turns one of these paths
     # from a value channel into a queue channel, the count that moves is likely to be one of
     # theirs - and a wrong count here is visible where a wrong result would not be.
-    for p in CompleteAfterAlign:PromoteArtifacts CompleteAfterClean:PromoteArtifacts; do
+    for p in CompleteAfterClip:PromoteArtifacts CompleteAfterAlign:PromoteArtifacts \
+             CompleteAfterClean:PromoteArtifacts; do
         assert_count "$samples" "$(task_count "$PIPELINE_SB" "$p")" "$p should run once per sample"
     done
 
@@ -412,4 +413,90 @@ test_step_2_finds_its_clipped_reads_in_either_root() {
         "a promoted sample should stay promoted"
     assert_file "$sb/main/Utilized/Trimmed/TestSample6/TestSample6_R1_clipped.fq.gz" \
         "an unpromoted sample should stay where it was"
+}
+
+# The aligned BAMs, released when cleaning has succeeded for that sample. Same pair of claims
+# as the trimmed reads: present in permanent storage, and gone from the working volume.
+#
+# This directory is flat rather than per-sample, so all six promotions move files out of one
+# shared folder concurrently. That is the case where a promotion aimed at the wrong sample
+# would be invisible - it would still leave the folder looking right.
+test_aligned_bams_are_promoted_after_cleaning() {
+    needs_run || return
+    local s left
+    for s in $(cut -d, -f1 "$PIPELINE_SB/main/RGTags.csv" | tail -n +2); do
+        assert_file "$PIPELINE_SB/store/Output/Aligned/${s}_aligned.bam" \
+            "$s should reach permanent storage"
+    done
+    left=$(find "$PIPELINE_SB/main/Utilized" -name '*_aligned.bam' 2>/dev/null | wc -l)
+    assert_count 0 "$left" "aligned BAMs left on the working volume after promotion"
+}
+
+# The FastQC zips are the small case: ~250KB against gigabyte read files, and kept on the
+# working volume anyway because ClipReads reads them. Rule 2 has no size exception, so this
+# case exists to keep it that way.
+#
+# The htmls FastQC writes beside them are the control. Nothing reads those, so they go
+# straight to permanent storage and must never appear under Utilized at all - the two halves
+# of one FastQC run taking different routes to the same directory.
+test_fastqc_zips_are_promoted_but_htmls_go_straight_to_storage() {
+    needs_run || return
+    local s d left
+    for s in $(cut -d, -f1 "$PIPELINE_SB/main/RGTags.csv" | tail -n +2); do
+        d="$PIPELINE_SB/store/Output/Reports/Fastqc/$s"
+        assert_file "$d/${s}_val_1_fastqc.zip"  "$s R1 zip should reach permanent storage"
+        assert_file "$d/${s}_val_2_fastqc.zip"  "$s R2 zip should reach permanent storage"
+        assert_file "$d/${s}_val_1_fastqc.html" "$s R1 html should be written straight to storage"
+    done
+    left=$(find "$PIPELINE_SB/main/Utilized" -name '*_fastqc.zip' 2>/dev/null | wc -l)
+    assert_count 0 "$left" "FastQC zips left on the working volume after promotion"
+    left=$(find "$PIPELINE_SB/main/Utilized" -name '*_fastqc.html' 2>/dev/null | wc -l)
+    assert_count 0 "$left" "FastQC htmls should never enter the working volume"
+}
+
+# A BAM whose index is missing is not a finished step.
+#
+# The skip test used to check the BAM alone while the skip branch symlinked both it and the
+# index, and `ln -s` does not check that its target exists. So a missing index produced a
+# dangling link that still satisfied the `*_ready.bam.bai` output glob, and the run carried
+# on as though the index were there. Reachable whenever indexing was interrupted, and from
+# E1q reachable a second way, when the pair is promoted between the volumes.
+#
+# Runs against a copy of the finished project, so the cost is a run of skips rather than a
+# fresh analysis. Copying is safe for the same reason 40_guards relies on it: the stored
+# manifest excludes mainDir, storageDir and every dir.* entry, so it still matches after the
+# move. This also exercises the other half of E1p - the rebuilt sample's aligned BAM has been
+# promoted, so Align has to find it in permanent storage rather than where it wrote it.
+test_a_missing_index_is_not_treated_as_a_finished_bam() {
+    needs_run || return
+    local sb sample status log
+    sb=$(guard_path "$TEST_TMPDIR/missing-bai")
+    rm -rf "$sb"
+    cp -r "$PIPELINE_SB" "$sb"
+    rm -f "$sb/run.out"
+    write_sandbox_config "$sb"
+
+    sample=$(cut -d, -f1 "$sb/main/RGTags.csv" | tail -n +2 | head -1)
+    rm -f "$sb/store/Output/Ready/${sample}_ready.bam.bai"
+    assert_file "$sb/store/Output/Ready/${sample}_ready.bam" "the BAM itself should still be there"
+
+    status=$(run_pipeline "$sb")
+    assert_status 0 "$status" "the run should recover; see $sb/run.out"
+
+    assert_file "$sb/store/Output/Ready/${sample}_ready.bam.bai" "the index should be rebuilt"
+
+    log="$sb/store/Logs/4_clean/$sample/4_SortCleanBam_${sample}_nextflow.log"
+    if [ -f "$log" ]; then
+        assert_contains "$(cat "$log")" "Processing BAM file" \
+            "$sample should have been reprocessed, not skipped"
+    else
+        fail_case "no SortCleanBam log for $sample at $log"
+    fi
+
+    # Every other sample was complete, so nothing else may have been redone.
+    local others
+    others=$(cut -d, -f1 "$sb/main/RGTags.csv" | tail -n +2 | grep -vx "$sample" | head -1)
+    log="$sb/store/Logs/4_clean/$others/4_SortCleanBam_${others}_nextflow.log"
+    assert_contains "$(tail -30 "$log")" "Found existing BAM file and index" \
+        "$others was complete and should have been skipped"
 }

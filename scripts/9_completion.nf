@@ -74,8 +74,20 @@ def promotionRow(String stage, String key) {
         'trimmed reads': [ subpath : "${params.dir.subpath.trimmed}/${key}",
                            patterns: ['*_clipped.fq.gz'] ],
 
-        // Not yet - the aligned BAMs are the next stage's work.
-        'alignments'   : null,
+        // The zips FastQC writes beside the trimmed reads. ClipReads unzips them to work
+        // out its clipping bounds, so they are working data by the same rule as the reads,
+        // small though they are - but their gate is ClipReads finishing rather than
+        // alignment, which is why they are a row and an attachment point of their own. The
+        // htmls are not here: nothing reads those, so they never enter Utilized at all.
+        'fastqc zips'  : [ subpath : "${params.dir.subpath.report.fastqc}/${key}",
+                           patterns: ['*_val_1_fastqc.zip', '*_val_2_fastqc.zip'] ],
+
+        // Aligned BAMs, released when cleaning has succeeded for the sample. This
+        // directory is flat rather than per-sample, so the key selects the file instead of
+        // the folder - which is the reason `subpath` and `patterns` are both resolved
+        // against the key rather than only the first.
+        'alignments'   : [ subpath : "${params.dir.subpath.aligned}",
+                           patterns: ["${key}_aligned.bam"] ],
     ]
 
     if (!table.containsKey(stage)) {
