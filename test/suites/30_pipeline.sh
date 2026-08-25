@@ -168,6 +168,15 @@ test_each_step_runs_once_per_sample() {
         assert_count "$samples" "$(task_count "$PIPELINE_SB" "$p")" "$p should run once per sample"
     done
 
+    # The promotion attachment points, which hang off those same per-sample channels as
+    # additional consumers. Asserted for their own sake and as a canary: they are the newest
+    # things attached to this graph, so if an inserted operator ever turns one of these paths
+    # from a value channel into a queue channel, the count that moves is likely to be one of
+    # theirs - and a wrong count here is visible where a wrong result would not be.
+    for p in CompleteAfterAlign:RecordCompletion CompleteAfterClean:RecordCompletion; do
+        assert_count "$samples" "$(task_count "$PIPELINE_SB" "$p")" "$p should run once per sample"
+    done
+
     # The cohort side of the boundary. VariantCall gathers every BAM through toSortedList,
     # so more than one task here would mean samples were called separately.
     for p in BuildDictionaries:UngzipReference BuildDictionaries:CreateBwaIndex \

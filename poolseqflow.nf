@@ -12,6 +12,12 @@ include { GenerateReports }     from './scripts/5_reports.nf'
 include { VariantCalling }      from './scripts/6_variant_call.nf'
 include { VCF2Frequencies }     from './scripts/7_vcf2freq.nf'
 include { AnnotateVCF }         from './scripts/8_annotate_variants.nf'
+// One alias per attachment point. A workflow cannot be invoked twice - Nextflow answers
+// "Process 'X' has been already used" - and aliasing is the supported way round it whenever
+// the number of call sites is known while the script is being read, which is the case here:
+// the DAG's shape is fixed, and only multi-run's N comes from data.
+include { Completion as CompleteAfterAlign } from './scripts/9_completion.nf'
+include { Completion as CompleteAfterClean } from './scripts/9_completion.nf'
 
 // Each task appends its own log to Logs/<step>/*_nextflow.log. One writer per file, so
 // tasks never contend - but a run ends up scattered across dozens of files. By the time
@@ -75,8 +81,20 @@ workflow {
     BuildDictionaries(VerifyEnvironment.out)
     
     TrimQcClip(VerifyEnvironment.out)
-    AlignReads(TrimQcClip.out, BuildDictionaries.out.bwa_index)  
+    AlignReads(TrimQcClip.out, BuildDictionaries.out.bwa_index)
     SortCleanBams(AlignReads.out)
+
+    // Promotion attachment points. Each hangs off a step's output ALONGSIDE that output's
+    // real consumer rather than in front of it: nothing upstream changes shape, so no value
+    // channel can be turned into a queue channel and quietly reduce N tasks to 1.
+    //
+    // The signal is the consuming step having finished, not the artifact itself - several
+    // processes here take an input purely for ordering and read an absolute path instead, so
+    // holding the file proves nothing about who is done with it.
+    //
+    // Both are inert at this stage; see scripts/9_completion.nf.
+    CompleteAfterAlign('trimmed reads', AlignReads.out)
+    CompleteAfterClean('alignments', SortCleanBams.out.ready_bam)
     
     GenerateReports(SortCleanBams.out.ready_bam,SortCleanBams.out.ready_bai)
     VariantCalling(SortCleanBams.out.ready_bam, BuildDictionaries.out.fai_index)
