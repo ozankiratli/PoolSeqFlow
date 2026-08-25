@@ -199,6 +199,56 @@ test_each_step_runs_once_per_sample() {
 #
 # Uses the step-1-only entry script: this is entirely a reference-handling question, and a
 # full run per genome would cost a minute each for nothing.
+# What the reference tier is for: everything derived from your genome is built once, on the
+# working volume, and stays there. It is never promoted to permanent storage and never
+# rebuilt while it is still valid, so a second run against a genome already built here starts
+# at step 2.
+#
+# Two runs rather than one, because "it was built in the right place" and "it was not built
+# again" are different claims and only the second one is about reuse. Modification times are
+# the evidence: a rebuild that happened to produce identical bytes would still be a rebuild,
+# and comparing content would call it a pass.
+#
+# This is also the one step where the two-root problem does not arise. Its artifacts never
+# move, so its skip checks have exactly one place to look - unlike every promoted artifact
+# from E1o onwards, which can legitimately be in either root.
+test_dictionaries_are_built_on_maindir_and_reused() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status dict before after
+    sb=$(make_pipeline_sandbox "dict-reuse")
+    : > "$sb/store/.step0_token"
+    write_sandbox_config "$sb"
+    dict="$sb/main/Reference/Dictionaries"
+
+    status=$(run_dictionaries_only "$sb")
+    assert_status 0 "$status" "the first build should succeed; see $sb/run.out"
+
+    # Yours at the top of Reference/, the pipeline's one level down. That split is what makes
+    # it plain which files reset may clear and which it must never touch.
+    assert_file "$sb/main/Reference/reference.fasta.gz" "your reference should stay where you put it"
+    assert_file "$dict/reference.fasta"                 "the decompressed FASTA belongs under Dictionaries"
+    assert_file "$dict/reference.fasta.fai"             "and so does the fai"
+    assert_file "$dict/reference.fasta.bwt"             "and the bwa index"
+    assert_count 0 "$(find "$sb/store" -maxdepth 1 -name 'Reference' | wc -l)" \
+        "nothing derived from the reference should reach permanent storage"
+
+    before=$(find "$dict" -type f -printf '%p %T@\n' | sort)
+    status=$(run_dictionaries_only "$sb")
+    assert_status 0 "$status" "the second run should succeed"
+    after=$(find "$dict" -type f -printf '%p %T@\n' | sort)
+
+    assert_eq "$before" "$after" "a second run must not rebuild anything under Dictionaries"
+
+    # From the per-process log, not run.out: a process's own echo output goes to its task's
+    # .command.log and from there to Logs/, while run.out holds only what Nextflow itself
+    # prints. The log accumulates across runs, so a plain search is enough - this message
+    # exists only on a run that found an index already built.
+    assert_contains "$(cat "$sb/store/Logs/1_build_dictionaries/s2_1_CreateBwaIndex/"*.log)" \
+        "Found a complete existing index" \
+        "the second run should say it reused the index rather than rebuilding it"
+}
+
 test_a_second_reference_builds_its_own_snpeff_database() {
     if ! have_tools; then skip_case "no conda environment"; return; fi
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
