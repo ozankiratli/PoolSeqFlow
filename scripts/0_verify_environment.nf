@@ -246,6 +246,19 @@ process CheckRGTagsFile {
     // a time. Literal, so it holds for non-numeric mates (_F/_R) too.
     stripMate = mateAlts.collect { alt -> 'base="${base%' + matePrefix + alt + mateTail + '}"' }.join('; ')
     storedRg = "${params.storageDir}/.poolseqflow_rgtags"
+    // Both roots for the two that are promoted. This is not cosmetic: the branch below
+    // treats "no BAMs and no VCF" as "nothing has consumed RGTags.csv yet" and RECORDS A
+    // NEW BASELINE. Looking only at permanent storage would therefore, for a project whose
+    // BAMs are written but not yet promoted, silently adopt an edited RGTags.csv as the
+    // baseline for BAMs that carry the old tags - and no later run could detect it, because
+    // the baseline now says they agree. Every other wrong existence answer in this pipeline
+    // costs redundant work; this one costs the guard itself.
+    readyDirOut = "${params.dir.output.ready}"
+    readyDirWork = "${params.dir.utilized}/${params.dir.subpath.ready}"
+    vcfDirOut = "${params.dir.output.vcf}"
+    vcfDirWork = "${params.dir.utilized}/${params.dir.subpath.vcf}"
+    // The frequency tables have no consumer, so they are never promoted and permanent
+    // storage is the only place they can be.
     readyDir = "${params.dir.output.ready}"
     vcfDir = "${params.dir.output.vcf}"
     freqDir = "${params.dir.output.freq}"
@@ -449,8 +462,9 @@ process CheckRGTagsFile {
             done
             return 1
         }
-        HAVE_BAMS=0; any_exists ${readyDir}/*_ready.bam && HAVE_BAMS=1
-        HAVE_VCF=0;  any_exists ${vcfDir}/*.vcf ${vcfDir}/*.vcf.gz && HAVE_VCF=1
+        HAVE_BAMS=0; any_exists ${readyDirOut}/*_ready.bam ${readyDirWork}/*_ready.bam && HAVE_BAMS=1
+        HAVE_VCF=0;  any_exists ${vcfDirOut}/*.vcf ${vcfDirOut}/*.vcf.gz \\
+                                ${vcfDirWork}/*.vcf ${vcfDirWork}/*.vcf.gz && HAVE_VCF=1
 
         record_baseline() {
             mkdir -p "\$(dirname "${storedRg}")"

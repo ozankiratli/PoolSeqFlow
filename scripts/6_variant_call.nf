@@ -11,18 +11,27 @@ process VariantCall {
     script:
     reference = params.reference
     vcf_file = "${params.vcf.fileName}.vcf"
-    target_vcf_folder = "${params.dir.output.vcf}"
+    // Read by step 7 always, and by step 8 whenever annotation is on, so it stays on the
+    // working volume until both have finished - the only VCF here that is promoted rather
+    // than consumed and deleted.
+    rel_vcf = "${params.dir.subpath.vcf}"
+    target_vcf_folder = "${params.dir.utilized}/${rel_vcf}"
     target_vcf_file = "${target_vcf_folder}/${vcf_file}"
     dir_log = "${params.dir.logs}/6_variant_call"
 
     """
     set -eo pipefail
+
+    # Either volume: still here while step 7 or step 8 may read it, in permanent storage
+    # once both are done.
+    vcf_at=\$(find_artifact.sh "${rel_vcf}/${vcf_file}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
+
     echo "VARIANT CALL ${vcf_file}: Variant calling started..."
-    if [ -f ${target_vcf_file} ]; then
-        echo "VARIANT CALL ${vcf_file}: Found existing VCF file" 
-        echo "VARIANT CALL ${vcf_file}: Found: ${target_vcf_file}"
+    if [ -n "\$vcf_at" ]; then
+        echo "VARIANT CALL ${vcf_file}: Found existing VCF file"
+        echo "VARIANT CALL ${vcf_file}: Found: \$vcf_at"
         echo "VARIANT CALL ${vcf_file}: Creating symbolic link..."
-        ln -s ${target_vcf_file} .
+        ln -s "\$vcf_at" .
         echo "VARIANT CALL ${vcf_file}: COMPLETED"
     else
         echo "VARIANT CALL ${vcf_file}: Creating VCF file..."

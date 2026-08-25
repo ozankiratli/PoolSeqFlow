@@ -19,6 +19,8 @@ include { AnnotateVCF }         from './scripts/8_annotate_variants.nf'
 include { Completion as CompleteAfterClip }  from './scripts/9_completion.nf'
 include { Completion as CompleteAfterAlign } from './scripts/9_completion.nf'
 include { Completion as CompleteAfterClean } from './scripts/9_completion.nf'
+include { Completion as CompleteAfterUse }   from './scripts/9_completion.nf'
+include { Completion as CompleteAfterVcf }   from './scripts/9_completion.nf'
 
 // Each task appends its own log to Logs/<step>/*_nextflow.log. One writer per file, so
 // tasks never contend - but a run ends up scattered across dozens of files. By the time
@@ -98,11 +100,42 @@ workflow {
     CompleteAfterClip('fastqc zips', TrimQcClip.out.map { pair_id, _r1, _r2 -> pair_id })
     CompleteAfterAlign('trimmed reads', AlignReads.out.map { pair_id, _bam -> pair_id })
     CompleteAfterClean('alignments', SortCleanBams.out.ready_bam.map { pair_id, _bam -> pair_id })
-    
+
     GenerateReports(SortCleanBams.out.ready_bam,SortCleanBams.out.ready_bai)
     VariantCalling(SortCleanBams.out.ready_bam, BuildDictionaries.out.fai_index)
     VCF2Frequencies(VariantCalling.out)
     if (params.annotate) {
         AnnotateVCF(VariantCalling.out, BuildDictionaries.out.snpeff_db_verify)
     }
+
+    // The two artifacts with more than one consumer. Everything above is released by a
+    // single step finishing; these two need every reader to be done, so the gate is
+    // assembled here rather than being one step's output.
+    //
+    // Ready BAMs: step 5 per sample, step 6 for the cohort. `combine` waits for calling to
+    // finish and then re-emits each sample's own signal, so the result is still one task
+    // per sample - the sample identity comes from step 5's side, and calling contributes
+    // only its completion.
+    CompleteAfterUse('ready bams',
+        GenerateReports.out.combine(VariantCalling.out).map { pair_id, _vcf -> pair_id })
+
+    // The called VCF: step 7 always, step 8 only when annotation is on - so the gate is
+    // built differently depending on a parameter, which is the case settled rule 2 does not
+    // cover. `collect` turns "every task of that step" into a single signal, and `combine`
+    // then waits for both.
+    //
+    // ONE closure parameter, not one per step. `combine` FLATTENS: what arrives is a single
+    // list holding everything both steps produced, not a tuple of two lists. Naming two
+    // parameters here looked right and failed at runtime with "Invalid method invocation
+    // `call` with arguments: [...] (java.util.LinkedList)". Nothing reads the contents -
+    // only the arrival matters - so it maps straight to the key, which is empty because
+    // this artifact belongs to the run rather than to any one sample.
+    if (params.annotate) {
+        vcf_released = VCF2Frequencies.out.collect()
+            .combine(AnnotateVCF.out.collect())
+            .map { _done -> '' }
+    } else {
+        vcf_released = VCF2Frequencies.out.collect().map { _done -> '' }
+    }
+    CompleteAfterVcf('called vcf', vcf_released)
 }

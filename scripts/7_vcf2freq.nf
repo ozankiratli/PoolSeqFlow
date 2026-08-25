@@ -1,3 +1,19 @@
+// Step 7 turns the called VCF into frequency tables, through four intermediates.
+//
+// WHERE EACH FILE LIVES. Only Test.vcf coming in and the *_freq.tsv tables going out are
+// results. Everything between them - _sort, _sort_fp, _sort_fp_dq and the two split VCFs -
+// is consumed and deleted by the next process in the chain, so those never leave the
+// working volume and never need a two-root lookup: there is only ever one place they can
+// be. The frequency tables have no consumer at all and are written straight to permanent
+// storage. Test.vcf itself is promoted, but by step 6, not here.
+//
+// THE SKIP CHECKS LOOK DOWNSTREAM, not at their own output. A process here asks "has
+// anything later in the chain already been produced?" and if so writes a zero-byte
+// placeholder for its own output rather than redoing work whose result has already been
+// superseded. That is why SortRefAltByFrequency has five branches: it can be satisfied by
+// any of four later artifacts. Those later artifacts are all either transient or terminal,
+// which is what keeps every one of these checks single-rooted.
+
 process SortRefAltByFrequency {
     tag { vcf.baseName }
 
@@ -8,7 +24,9 @@ process SortRefAltByFrequency {
     path "*_sort.vcf", emit: sorted_vcf
 
     script:
-    target_folder_vcf = "${params.dir.output.vcf}"
+    // Transient - see the header: consumed and deleted by the next process, so it stays
+    // on the working volume for its whole life.
+    target_folder_vcf = "${params.dir.utilized}/${params.dir.subpath.vcf}"
     target_folder_freq = "${params.dir.output.freq}"
 
     sorted_base = "${vcf.baseName}_sort"
@@ -113,7 +131,9 @@ process FilterPotentialFalsePositives {
     path "*_fp.vcf", emit: filterfp_vcf
 
     script:
-    target_folder_vcf = "${params.dir.output.vcf}"
+    // Transient - see the header: consumed and deleted by the next process, so it stays
+    // on the working volume for its whole life.
+    target_folder_vcf = "${params.dir.utilized}/${params.dir.subpath.vcf}"
     target_folder_freq = "${params.dir.output.freq}"
 
     filterfp_base = "${vcf.baseName}_fp"
@@ -199,10 +219,12 @@ process FilterPotentialFalsePositives {
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Creating symbolic link..."
         ln -s ${target_filterfp_vcf} .
 
-        if [ \$? -eq 0 ]; then
-            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Removing input VCF file: ${vcf}..."
-            rm \$(realpath ${vcf})
-        fi
+        # No status check here. `set -eo pipefail` has already aborted the task if the
+        # move above failed, so reaching this line means the replacement is in place.
+        # This was guarded by `[ \$? -eq 0 ]`, which read the exit status of the `ln -s`
+        # on the line above rather than of the move it was written to check.
+        echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Removing input VCF file: ${vcf}..."
+        rm \$(realpath ${vcf})
 
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: COMPLETED"
     fi
@@ -226,7 +248,9 @@ process DepthAndQualityFilter {
     path "*_dq.vcf", emit: filterdq_vcf
 
     script:
-    target_folder_vcf = "${params.dir.output.vcf}"
+    // Transient - see the header: consumed and deleted by the next process, so it stays
+    // on the working volume for its whole life.
+    target_folder_vcf = "${params.dir.utilized}/${params.dir.subpath.vcf}"
     target_folder_freq = "${params.dir.output.freq}"
 
     // Depth-filtered intermediate. Stays in the task directory and is never moved to
@@ -292,10 +316,12 @@ process DepthAndQualityFilter {
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Creating symbolic link..."
         ln -s ${target_filterdq_vcf} .
 
-        if [ \$? -eq 0 ]; then
-            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Removing input VCF file: ${vcf}..."
-            rm \$(realpath ${vcf})
-        fi
+        # No status check here. `set -eo pipefail` has already aborted the task if the
+        # move above failed, so reaching this line means the replacement is in place.
+        # This was guarded by `[ \$? -eq 0 ]`, which read the exit status of the `ln -s`
+        # on the line above rather than of the move it was written to check.
+        echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Removing input VCF file: ${vcf}..."
+        rm \$(realpath ${vcf})
 
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: COMPLETED"
     fi
@@ -320,7 +346,9 @@ process SplitSNPsAndINDELs {
     path "*_indel.vcf", emit: indel_vcf
 
     script:
-    target_folder_vcf = "${params.dir.output.vcf}"
+    // Transient - see the header: consumed and deleted by the next process, so it stays
+    // on the working volume for its whole life.
+    target_folder_vcf = "${params.dir.utilized}/${params.dir.subpath.vcf}"
     target_folder_freq = "${params.dir.output.freq}"
 
     snp_base = "${vcf.baseName}_snp"
@@ -398,6 +426,14 @@ process SplitSNPsAndINDELs {
             ln -s ${target_indel_vcf} .
             echo "SPLIT SNPS AND INDELS ${vcf}: COMPLETED"
         fi
+
+        # Removed here and not a line earlier: this process is the one place in the chain
+        # that reads its input TWICE - once to pull out the SNPs, once for the INDELs - so
+        # it can only go after both passes. That is why the deletion was missing from this
+        # process alone while its three siblings had it, and why _sort_fp_dq.vcf was left
+        # sitting in Output/VCF beside the real results on every run since 1.0.
+        echo "SPLIT SNPS AND INDELS ${vcf}: Removing input VCF file: ${vcf}..."
+        rm \$(realpath ${vcf})
     fi
 
     mkdir -p ${dir_log}
@@ -444,11 +480,13 @@ process CalculateFrequencies {
         atomic_mv.sh ${freq_file} ${target_freq_file}
         echo "CALCULATE FREQUENCIES ${vcf}: Creating symbolic link..."
         ln -s ${target_freq_file} .
-        
-        if [ \$? -eq 0 ]; then
-            echo "CALCULATE FREQUENCIES ${vcf}: Removing input VCF file: ${vcf}..."
-            rm \$(realpath ${vcf})
-        fi
+
+        # No status check here. `set -eo pipefail` has already aborted the task if the
+        # move above failed, so reaching this line means the replacement is in place.
+        # This was guarded by `[ \$? -eq 0 ]`, which read the exit status of the `ln -s`
+        # on the line above rather than of the move it was written to check.
+        echo "CALCULATE FREQUENCIES ${vcf}: Removing input VCF file: ${vcf}..."
+        rm \$(realpath ${vcf})
         echo "CALCULATE FREQUENCIES ${vcf}: COMPLETED"
     fi
 

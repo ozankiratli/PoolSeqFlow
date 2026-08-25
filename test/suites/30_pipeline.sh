@@ -174,7 +174,7 @@ test_each_step_runs_once_per_sample() {
     # from a value channel into a queue channel, the count that moves is likely to be one of
     # theirs - and a wrong count here is visible where a wrong result would not be.
     for p in CompleteAfterClip:PromoteArtifacts CompleteAfterAlign:PromoteArtifacts \
-             CompleteAfterClean:PromoteArtifacts; do
+             CompleteAfterClean:PromoteArtifacts CompleteAfterUse:PromoteArtifacts; do
         assert_count "$samples" "$(task_count "$PIPELINE_SB" "$p")" "$p should run once per sample"
     done
 
@@ -182,7 +182,7 @@ test_each_step_runs_once_per_sample() {
     # so more than one task here would mean samples were called separately.
     for p in BuildDictionaries:UngzipReference BuildDictionaries:CreateBwaIndex \
              BuildDictionaries:CreateSamtoolsFaiIndex VariantCalling:VariantCall \
-             VCF2Frequencies:SplitSNPsAndINDELs; do
+             VCF2Frequencies:SplitSNPsAndINDELs CompleteAfterVcf:PromoteArtifacts; do
         assert_count 1 "$(task_count "$PIPELINE_SB" "$p")" "$p should run exactly once"
     done
 
@@ -499,4 +499,57 @@ test_a_missing_index_is_not_treated_as_a_finished_bam() {
     log="$sb/store/Logs/4_clean/$others/4_SortCleanBam_${others}_nextflow.log"
     assert_contains "$(tail -30 "$log")" "Found existing BAM file and index" \
         "$others was complete and should have been skipped"
+}
+
+# The first artifact with two consumers: step 5 reads the ready BAMs for its reports, step 6
+# for calling. Releasing on either one alone would delete a file the other still needs, so the
+# gate is both - and because calling is a cohort step, no sample's BAM can go until every
+# sample has been called.
+#
+# The index is asserted alongside its BAM. Nothing in step 5 names the index; both processes
+# just expect it beside the file, so a BAM promoted without one would look complete and fail
+# only later, somewhere else.
+test_ready_bams_are_promoted_after_both_consumers() {
+    needs_run || return
+    local s left
+    for s in $(cut -d, -f1 "$PIPELINE_SB/main/RGTags.csv" | tail -n +2); do
+        assert_file "$PIPELINE_SB/store/Output/Ready/${s}_ready.bam" \
+            "$s BAM should reach permanent storage"
+        assert_file "$PIPELINE_SB/store/Output/Ready/${s}_ready.bam.bai" \
+            "$s index should travel with its BAM"
+    done
+    left=$(find "$PIPELINE_SB/main/Utilized" -name '*_ready.bam*' 2>/dev/null | wc -l)
+    assert_count 0 "$left" "ready BAMs left on the working volume after promotion"
+}
+
+# The called VCF is the parameter-dependent gate: step 7 always reads it, step 8 only when
+# annotate is on. The shared run has annotate on, so this is the both-consumers path.
+#
+# The rest of the case is about what must NOT be in Output/VCF. Every intermediate in step 7
+# is consumed and deleted by the next process, so a finished project should hold exactly the
+# called VCF and the annotated one. _sort_fp_dq.vcf used to be the exception - the only step 7
+# process that reads its input twice was also the only one that never deleted it, so a
+# filtered intermediate was published beside the real results on every run since 1.0.
+test_only_real_vcfs_reach_storage() {
+    needs_run || return
+    local o="$PIPELINE_SB/store/Output/VCF" listed expected
+    assert_file "$o/Test.vcf"           "the called VCF should be promoted"
+    assert_file "$o/Test_annotated.vcf" "the annotated VCF is a result and stays"
+
+    assert_no_file "$o/Test_sort.vcf"           "the sorted intermediate should not be published"
+    assert_no_file "$o/Test_sort_fp.vcf"        "the FP-filtered intermediate should not be published"
+    assert_no_file "$o/Test_sort_fp_dq.vcf"     "the DQ-filtered intermediate should not be published"
+    assert_no_file "$o/Test_sort_fp_dq_snp.vcf" "the split SNP VCF should not be published"
+    assert_no_file "$o/Test_sort_fp_dq_indel.vcf" "the split INDEL VCF should not be published"
+
+    # Stated as a whole set as well, so a future intermediate that nobody thought to list
+    # above still fails here. LC_ALL=C because the default collation orders "_" before ".",
+    # which would make this assertion depend on the machine's locale rather than on the
+    # pipeline.
+    listed=$(cd "$o" && ls | LC_ALL=C sort | tr '\n' ' ')
+    expected="Test.vcf Test_annotated.vcf "
+    assert_eq "$expected" "$listed" "Output/VCF should hold only the two real VCFs"
+
+    assert_count 0 "$(find "$PIPELINE_SB/main/Utilized" -name '*.vcf' 2>/dev/null | wc -l)" \
+        "no VCF should be left on the working volume"
 }

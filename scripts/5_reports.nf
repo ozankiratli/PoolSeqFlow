@@ -4,6 +4,14 @@ process AlignmentReport {
     input:
     tuple val(pair_id), path(ready_bam), path(ready_bai)
 
+    // Declared so that finishing is observable. Until 3.0 neither report process declared
+    // any output at all, which made this step invisible to the graph: it could not be
+    // waited on, and Nextflow tracked nothing it produced. The ready BAMs are read by this
+    // step AND by variant calling, so promoting them needs to know when BOTH are done -
+    // and that is impossible for a step that never says it finished.
+    output:
+    tuple val(pair_id), path("*_alignment_report.txt"), emit: report
+
     script:
     report_file = "${pair_id}_alignment_report.txt"
     target_folder = "${params.dir.output.report.align}"
@@ -50,6 +58,10 @@ process CoverageReport {
 
     input:
     tuple val(pair_id), path(ready_bam), path(ready_bai)
+
+    // See AlignmentReport above.
+    output:
+    tuple val(pair_id), path("*_coverage_report.txt"), emit: report
 
     script:
     report_file = "${pair_id}_coverage_report.txt"
@@ -103,4 +115,11 @@ workflow GenerateReports {
     ready_data = ready_bams.join(ready_bais)
     AlignmentReport(ready_data)
     CoverageReport(ready_data)
+
+    // Both reports for a sample, joined back to one signal per sample. A caller that needs
+    // "step 5 has finished with this BAM" means both of them, not whichever landed first.
+    emit:
+    AlignmentReport.out.report
+        .join(CoverageReport.out.report)
+        .map { pair_id, _align, _coverage -> pair_id }
 }

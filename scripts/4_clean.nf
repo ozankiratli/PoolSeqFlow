@@ -12,7 +12,11 @@ process SortCleanBam {
     script:
     target_bam = "${pair_id}_ready.bam"
     target_bai = "${pair_id}_ready.bam.bai"
-    target_folder_ready = "${params.dir.output.ready}"
+    // Read by BOTH step 5 and step 6, so these stay on the working volume until each of
+    // those has finished with them - the first artifact here with more than one consumer.
+    // Flat, like Aligned/: the sample is in the file name, not a folder.
+    rel_ready = "${params.dir.subpath.ready}"
+    target_folder_ready = "${params.dir.utilized}/${rel_ready}"
     target_bam_ready = "${target_folder_ready}/${target_bam}"
     target_bai_ready = "${target_folder_ready}/${target_bai}"
     rgTagsFile = params.rgTagsPath
@@ -22,21 +26,28 @@ process SortCleanBam {
     """
     set -eo pipefail
 
+    # BOTH files, and on either volume.
+    #
+    # Both, because the skip branch links the index as well and `ln -s` does not check that
+    # its target exists - so testing only the BAM produced a dangling link that still
+    # satisfied this process's `*_ready.bam.bai` output glob, and the run carried on with an
+    # index that was not there. Reachable whenever indexing was interrupted.
+    #
+    # Either volume, because these are promoted once steps 5 and 6 have both finished with
+    # them. The pair is looked up independently rather than assumed to travel together, so
+    # a half-finished promotion is caught here instead of downstream.
+    bam_at=\$(find_artifact.sh "${rel_ready}/${target_bam}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
+    bai_at=\$(find_artifact.sh "${rel_ready}/${target_bai}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
+
     echo "SORT AND CLEAN BAM ${pair_id}: Sorting and Cleaning BAM file..."
-    # BOTH files, not just the BAM. The skip branch links the index as well, and `ln -s`
-    # does not check that its target exists - so testing only the BAM produced a dangling
-    # link that still satisfied this process's `*_ready.bam.bai` output glob, and the run
-    # carried on with an index that was not there. A BAM without its index is reachable
-    # whenever indexing was interrupted, and from E1q it becomes reachable a second way,
-    # when the pair is promoted between the two volumes.
-    if [ -f ${target_bam_ready} ] && [ -f ${target_bai_ready} ]; then
+    if [ -n "\$bam_at" ] && [ -n "\$bai_at" ]; then
         echo "SORT AND CLEAN BAM ${pair_id}: Found existing BAM file and index"
-        echo "SORT AND CLEAN BAM ${pair_id}: Found: ${target_bam_ready}"
-        echo "SORT AND CLEAN BAM ${pair_id}: Found: ${target_bai_ready}"
+        echo "SORT AND CLEAN BAM ${pair_id}: Found: \$bam_at"
+        echo "SORT AND CLEAN BAM ${pair_id}: Found: \$bai_at"
         echo "SORT AND CLEAN BAM ${pair_id}: Marking step as completed!"
         echo "SORT AND CLEAN BAM ${pair_id}: Creating symbolic links..."
-        ln -s ${target_bam_ready} .
-        ln -s ${target_bai_ready} .
+        ln -s "\$bam_at" .
+        ln -s "\$bai_at" .
         echo "SORT AND CLEAN BAM ${pair_id}: COMPLETED"
     else
         echo "SORT AND CLEAN BAM ${pair_id}: Processing BAM file..."

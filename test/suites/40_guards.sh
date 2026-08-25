@@ -345,3 +345,43 @@ test_pointing_at_a_different_dataset_is_caught() {
     assert_status 1 "$status" "a different dataSource should fail against existing outputs"
     assert_contains "$report" "dataSource" "should name dataSource as the difference"
 }
+
+# The RGTags guard has to look on BOTH volumes, and this is the case that shows why it is not
+# a cosmetic point.
+#
+# Everywhere else in this pipeline a wrong answer to "does this artifact exist" costs redundant
+# work. Here it costs the guard itself: the branch that fires when there are no BAMs and no VCF
+# reads the situation as "nothing has consumed RGTags.csv yet, so an edit is free" and RECORDS A
+# NEW BASELINE. From 3.0 the cleaned BAMs live on the working volume until both of their
+# consumers are done, so a run interrupted between cleaning and calling leaves exactly that
+# state - and a guard that only looked in permanent storage would adopt an edited RGTags.csv as
+# the baseline for BAMs that carry the old tags. Nothing later could detect it, because the
+# baseline would now say they agree.
+#
+# The assertion that matters is the second one. Failing the run is the visible half; leaving the
+# stored baseline alone is the half that keeps the next run honest.
+test_an_rgtags_edit_is_caught_when_the_bams_are_not_yet_promoted() {
+    guards_ready || return
+    local before after status report
+
+    before=$(md5sum < "$GUARD_SB/store/.poolseqflow_rgtags")
+
+    # Cleaned but not yet promoted: on the working volume, absent from permanent storage.
+    # Existence is all the guard tests, so an empty file stands in for the BAM.
+    mkdir -p "$GUARD_SB/main/Utilized/Ready"
+    : > "$GUARD_SB/main/Utilized/Ready/TestSample1_ready.bam"
+    [ -e "$GUARD_SB/store/Output/Ready" ] && fail_case "storage should hold no ready BAMs for this case"
+
+    # Change a tag value, which is the kind of edit that invalidates the BAMs.
+    sed -i '2s/,/_EDITED,/2' "$GUARD_SB/main/RGTags.csv"
+
+    status=$(run_verify_only "$GUARD_SB")
+    report=$(guard_report)
+
+    assert_status 1 "$status" "an edit against unpromoted BAMs should fail the run"
+    assert_contains "$report" "RGTAGS CHANGE CHECK:   FAIL" "the change should be reported"
+
+    after=$(md5sum < "$GUARD_SB/store/.poolseqflow_rgtags")
+    assert_eq "$before" "$after" \
+        "the stored baseline must not be overwritten - doing so hides the mismatch for good"
+}

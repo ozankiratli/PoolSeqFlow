@@ -88,6 +88,21 @@ def promotionRow(String stage, String key) {
         // against the key rather than only the first.
         'alignments'   : [ subpath : "${params.dir.subpath.aligned}",
                            patterns: ["${key}_aligned.bam"] ],
+
+        // The first artifact with TWO consumers - step 5 reads it for the reports, step 6
+        // for calling - so its gate is both of them, assembled at the call site. The index
+        // travels with its BAM: nothing here reads the index by name, both step-5 processes
+        // just expect it beside the file, so promoting one without the other would leave a
+        // BAM that looks complete and is not.
+        'ready bams'   : [ subpath : "${params.dir.subpath.ready}",
+                           patterns: ["${key}_ready.bam", "${key}_ready.bam.bai"] ],
+
+        // Also two consumers, and here the second is conditional: step 7 always, step 8
+        // only when annotate is on. So this gate is parameter-dependent - the one place
+        // settled rule 2's "the step that consumes it" is not a single step. No key: one
+        // VCF for the whole run, not one per sample.
+        'called vcf'   : [ subpath : "${params.dir.subpath.vcf}",
+                           patterns: ["${params.vcf.fileName}.vcf"] ],
     ]
 
     if (!table.containsKey(stage)) {
