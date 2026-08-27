@@ -413,7 +413,11 @@ refB,reference.fasta.gz,reference.gff.gz,30,"-B -C 50 -q 30 -Q 30 -d 4000 -a AD,
 ')
     status=$(run_verify_only "$sb")
     assert_status 0 "$status" "a valid table should pass step 0; see $sb/run.out"
-    report=$(cat "$sb/store/Output/Reports/0_verify_environment.txt")
+    # Under multiRun each run publishes its own report under its own storageDir - there is no
+    # longer one at the base. The multi-run stage describes the whole invocation, so its
+    # section is the same in every run's copy; refA's is read here because one of them has to
+    # be.
+    report=$(cat "$sb/store/refA/Output/Reports/0_verify_environment.txt")
 
     assert_contains "$report" "2 runs"      "the run count should be reported"
     assert_contains "$report" "refA -> $sb/store/refA" "each run's storageDir should be named"
@@ -436,22 +440,33 @@ MULTI-RUN CHECK:           trim_galore.quality" "a blank cell is not an override
     assert_contains "$report" "-d 4000 -a AD,DP,SP,INFO/AD" "a quoted value should survive whole"
 }
 
-# An unusable table must stop the run at step 0. The whole point of checking here is that the
-# alternative is discovering it after the first alignment.
+# An unusable table must stop the run before it costs anything. The whole point of checking is
+# that the alternative is discovering it after the first alignment.
+#
+# WHERE THE REFUSAL COMES FROM CHANGED WITH E1u, and the assertion follows it. The table used
+# to be checked only by step 0, which reported FAIL and let VerifyAll publish the report. Now
+# the runs have to exist before the DAG can be built at all, so the resolver parses the table
+# first and throws - EARLIER than step 0, not later. There is no published report because no
+# task ran, so what is asserted is the console output.
+#
+# What must not change is the part the user cares about: every problem at once, with line
+# numbers, in seconds. That is the same message either way, because both routes come from
+# bin/parse_multirun.py.
 test_an_unusable_multirun_table_stops_the_run() {
     if ! have_tools; then skip_case "no conda environment"; return; fi
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
-    local sb status report
+    local sb status out
     sb=$(multirun_sandbox "multirun-bad" 'RunID,params.poolSize
 r1,10
 r1,20
 ')
     status=$(run_verify_only "$sb")
-    assert_status 1 "$status" "an unusable table should fail step 0"
-    report=$(cat "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)
-    assert_contains "$report" "MULTI-RUN CHECK:       STATUS=FAIL" "the check should report FAIL"
-    assert_contains "$report" "write 'poolSize'"        "the params. prefix should be named"
-    assert_contains "$report" "each run needs its own name" "and the duplicate RunID too"
+    assert_status 1 "$status" "an unusable table should stop the run"
+    out=$(cat "$sb/run.out")
+    assert_contains "$out" "cannot be used as a multi-run table" "it should say what is wrong"
+    assert_contains "$out" "write 'poolSize'"        "the params. prefix should be named"
+    assert_contains "$out" "each run needs its own name" "and the duplicate RunID too"
+    assert_contains "$out" "completed=0" "and nothing should have run first"
 }
 
 # What a run definition actually resolves to, across several kinds of divergence at once.
@@ -553,4 +568,55 @@ test_the_resolver_reproduces_what_the_config_computed() {
     # Settled rule 3: a single run has no RunID and nothing is suffixed.
     assert_contains "$out" "RUN null dir.utilized=$sb/main/Utilized" "no suffix without multiRun"
     assert_contains "$out" "RUN null storageDir=$sb/store"           "and no run subdirectory"
+}
+
+# Step 1 writes to mainDir, which every run shares, so two runs naming one reference resolve
+# to one set of output paths. Building it once would give one of them a dictionary made to the
+# other's settings, and nothing downstream could detect that. Building it twice is not an
+# option either - atomic_mv.sh has no locking, so that is a race on the user's own reference
+# directory. Which of the two settings should win is the user's decision, so it is refused.
+#
+# Runs the real entry point, and costs no more than a JVM start: the check happens while the
+# DAG is being built, so the run dies before the first task is submitted.
+test_multi_run_refuses_a_shared_dictionary_two_runs_disagree_about() {
+    have_tools || { skip_case "no conda environment"; return; }
+    local sb status out
+    sb=$(make_pipeline_sandbox "dictionary-conflict")
+    write_sandbox_config "$sb" 's|^    multiRun .*|    multiRun        = true|'
+    cat > "$sb/main/runs.csv" <<'TABLE'
+RunID,snpEff.buildOptions
+a,
+b,-gff3 -v
+TABLE
+    status=$(run_pipeline "$sb")
+    out=$(cat "$sb/run.out")
+
+    assert_status 1 "$status" "a disagreement about a shared dictionary should stop the run"
+    assert_contains "$out" "build their dictionaries in the same place but disagree" \
+        "and should say what the problem is"
+    assert_contains "$out" "snpEff.buildOptions" "naming the parameter they disagree about"
+    assert_contains "$out" "'a' and 'b'" "and the two runs involved"
+    assert_contains "$out" "completed=0" "nothing should have been computed before it stopped"
+}
+
+# The cohort completeness guard. bcftools calls whatever samples it is handed and writes a VCF
+# that looks entirely normal with a column missing, so a short cohort is a wrong ANSWER rather
+# than a failure - and no later step could detect it. Checked at the gather point, where the
+# number of samples the run started with is still known.
+test_variant_calling_refuses_a_short_cohort() {
+    have_tools || { skip_case "no conda environment"; return; }
+    local sb status out
+    sb=$(make_pipeline_sandbox "short-cohort")
+    write_sandbox_config "$sb"
+    status=$(run_multirun_guards "$sb")
+    out=$(cat "$sb/run.out")
+
+    assert_status 1 "$status" "a short cohort should stop the run"
+    assert_contains "$out" "received 3 ready BAM(s) but the run started with 4" \
+        "and should say how many it expected"
+    assert_contains "$out" "s1, s2, s3" "and which samples it did get"
+
+    # Beside it, because the same entry script proves it: two runs that agree about their
+    # dictionary share one build rather than racing for it.
+    assert_contains "$out" "GROUPS 1" "runs that agree should share a single dictionary build"
 }

@@ -1,13 +1,13 @@
 process SortCleanBam {
-    tag { pair_id }
-    cpus { params.cores.samtools + 1 }
+    tag { run.runId ? "${run.runId}:${pair_id}" : pair_id }
+    cpus { run.cores.samtools + 1 }
 
     input:
-    tuple val(pair_id), path(input_bam)
+    tuple val(run), val(pair_id), path(input_bam)
 
     output:
-    tuple val(pair_id), path("*_ready.bam"), emit: ready_bam
-    tuple val(pair_id), path("*_ready.bam.bai"), emit: ready_bai
+    tuple val(run), val(pair_id), path("*_ready.bam"), emit: ready_bam
+    tuple val(run), val(pair_id), path("*_ready.bam.bai"), emit: ready_bai
 
     script:
     target_bam = "${pair_id}_ready.bam"
@@ -15,13 +15,13 @@ process SortCleanBam {
     // Read by BOTH step 5 and step 6, so these stay on the working volume until each of
     // those has finished with them - the first artifact here with more than one consumer.
     // Flat, like Aligned/: the sample is in the file name, not a folder.
-    rel_ready = "${params.dir.subpath.ready}"
-    target_folder_ready = "${params.dir.utilized}/${rel_ready}"
+    rel_ready = "${run.dir.subpath.ready}"
+    target_folder_ready = "${run.dir.utilized}/${rel_ready}"
     target_bam_ready = "${target_folder_ready}/${target_bam}"
     target_bai_ready = "${target_folder_ready}/${target_bai}"
-    rgTagsFile = params.rgTagsPath
+    rgTagsFile = run.rgTagsPath
 
-    dir_log = "${params.dir.logs}/4_clean/${pair_id}"
+    dir_log = "${run.dir.logs}/4_clean/${pair_id}"
 
     """
     set -eo pipefail
@@ -36,8 +36,8 @@ process SortCleanBam {
     # Either volume, because these are promoted once steps 5 and 6 have both finished with
     # them. The pair is looked up independently rather than assumed to travel together, so
     # a half-finished promotion is caught here instead of downstream.
-    bam_at=\$(find_artifact.sh "${rel_ready}/${target_bam}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
-    bai_at=\$(find_artifact.sh "${rel_ready}/${target_bai}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
+    bam_at=\$(find_artifact.sh "${rel_ready}/${target_bam}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
+    bai_at=\$(find_artifact.sh "${rel_ready}/${target_bai}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
 
     echo "SORT AND CLEAN BAM ${pair_id}: Sorting and Cleaning BAM file..."
     if [ -n "\$bam_at" ] && [ -n "\$bai_at" ]; then
@@ -79,40 +79,40 @@ process SortCleanBam {
         echo "SORT AND CLEAN BAM ${pair_id}: 7. Index final BAM"
 
         echo "SORT AND CLEAN BAM ${pair_id}: Sorting and cleaning ${input_bam} with samtools"
-        ${params.software.samtools} sort \
+        ${run.software.samtools} sort \
             -n \
             -@ ${task.cpus - 1} \
             ${input_bam} | \
-        ${params.software.samtools} fixmate \
-            -@ \$(( ${params.threads} - 1 )) \
+        ${run.software.samtools} fixmate \
+            -@ \$(( ${run.threads} - 1 )) \
             -m \
             - \
             - | \
-        ${params.software.samtools} sort \
+        ${run.software.samtools} sort \
             -@ ${task.cpus - 1} \
             - | \
-        ${params.software.samtools} markdup \
+        ${run.software.samtools} markdup \
             -@ ${task.cpus - 1} \
             -r \
             -s \
             - \
             - | \
-        ${params.software.samtools} addreplacerg \
+        ${run.software.samtools} addreplacerg \
             -@ ${task.cpus - 1} \
             -r "\$rg_string" \
             - \
             - | \
-        ${params.software.samtools} view \
+        ${run.software.samtools} view \
             -@ ${task.cpus - 1} \
-            -F ${params.samtools.filter} \
-            -f ${params.samtools.required} \
-            -q ${params.samtools.mapq} \
+            -F ${run.samtools.filter} \
+            -f ${run.samtools.required} \
+            -q ${run.samtools.mapq} \
             -b \
             -o ${target_bam} \
             -
 
         echo "SORT AND CLEAN BAM ${pair_id}: Indexing ${target_bam}..."
-        ${params.software.samtools} index ${target_bam}
+        ${run.software.samtools} index ${target_bam}
 
         echo "SORT AND CLEAN BAM ${pair_id}: Moving ${target_bam} and ${target_bai} to ${target_folder_ready}..."
         mkdir -p ${target_folder_ready}

@@ -1,27 +1,29 @@
 process AnnotateVariants {
-    tag { vcf.baseName }
-    cpus { params.cores.javaGc }
+    tag { run.runId ? "${run.runId}:${vcf.baseName}" : vcf.baseName }
+    cpus { run.cores.javaGc }
 
     input:
-    path vcf
-    path snpeff_db_verify
+    // One tuple, not two inputs: the database marker is a per-run singleton and separate
+    // inputs are matched positionally, so with N runs in flight it could be paired with
+    // another run's VCF.
+    tuple val(run), path(vcf), path(snpeff_db_verify)
 
     output:
-    path "*_annotated.vcf", emit: annotated_vcf
+    tuple val(run), path("*_annotated.vcf"), emit: annotated_vcf
 
     script:
     annotated_vcf_file = "${vcf.baseName}_annotated.vcf"
-    report_folder = "${params.dir.output.reports}"
+    report_folder = "${run.dir.output.reports}"
     report_file = "${report_folder}/snpeff_summary.html"
-    target_folder = "${params.dir.output.vcf}"
+    target_folder = "${run.dir.output.vcf}"
     target_annotated_vcf = "${target_folder}/${annotated_vcf_file}"
 
-    dir_log = "${params.dir.logs}/8_annotate_variants"
+    dir_log = "${run.dir.logs}/8_annotate_variants"
 
     """
     set -eo pipefail
 
-    export _JAVA_OPTIONS="${params.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
+    export _JAVA_OPTIONS="${run.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
 
     echo "ANNOTATING VCF ${vcf}: Annotating VCF file..."
     if [ -f ${target_annotated_vcf} ]; then
@@ -32,7 +34,7 @@ process AnnotateVariants {
         echo "ANNOTATING VCF ${vcf}: COMPLETED"
     else
         echo "ANNOTATING VCF ${vcf}: Creating symbolic links for snpEff database"
-        ln -s ${params.dir.snpEff}/* .
+        ln -s ${run.dir.snpEff}/* .
         # Keep the temp in the task directory rather than system /tmp: it is the same
         # order of magnitude as the call set, so it belongs on the filesystem sized for
         # the run, and `cleanup = true` reaps it. The trap removes it however the task
@@ -42,13 +44,13 @@ process AnnotateVariants {
         trap 'rm -f "\$TMPFILE"' EXIT
         
         echo "ANNOTATING VCF ${vcf}: Converting multiallelic sites into separate lines..."
-        ${params.software.bcftools} norm -m - ${vcf} > \${TMPFILE}
+        ${run.software.bcftools} norm -m - ${vcf} > \${TMPFILE}
         echo "ANNOTATING VCF ${vcf}: Running snpEff annotation..."
-        ${params.software.snpEff} \
-            ${params.snpEff.runOptions} \
-            -c ${params.snpEff.config} \
+        ${run.software.snpEff} \
+            ${run.snpEff.runOptions} \
+            -c ${run.snpEff.config} \
             -stats ${report_file} \
-            ${params.snpEff.db} \
+            ${run.snpEff.db} \
             \${TMPFILE} \
             > ${annotated_vcf_file}
 
@@ -71,11 +73,11 @@ process AnnotateVariants {
 
 workflow AnnotateVCF {
     take:
-    vcf
-    snpeff_db_verify
+    vcf                 // [run, called vcf] - only the runs that annotate
+    snpeff_db_verify    // [run, database marker]
 
     main:
-    AnnotateVariants(vcf,snpeff_db_verify)
+    AnnotateVariants(vcf.join(snpeff_db_verify, by: 0))
 
     emit:
     AnnotateVariants.out.annotated_vcf

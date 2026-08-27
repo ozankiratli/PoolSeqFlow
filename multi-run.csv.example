@@ -10,8 +10,9 @@
 #     2. in parameters.config, set   multiRun     = true
 #                                    multiRunFile = 'your-table.csv'
 #
-# Step 0 reads it before any compute is spent, prints what it expands to, and refuses to start
-# if it cannot be used - so a mistake here costs you a few seconds, not a night of alignment.
+# The table is read before any compute is spent: an unusable one stops the run outright, and a
+# usable one is printed in full - the runs, where each one's results go, and what differs - in
+# step 0's report. A mistake here costs you a few seconds, not a night of alignment.
 #
 # ---------------------------------------------------------------------------------------
 # THE RULES, ALL FOUR OF THEM

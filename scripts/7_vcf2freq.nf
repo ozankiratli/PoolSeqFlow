@@ -15,19 +15,19 @@
 // which is what keeps every one of these checks single-rooted.
 
 process SortRefAltByFrequency {
-    tag { vcf.baseName }
+    tag { run.runId ? "${run.runId}:${vcf.baseName}" : vcf.baseName }
 
     input:
-    file vcf
+    tuple val(run), path(vcf)
 
     output:
-    path "*_sort.vcf", emit: sorted_vcf
+    tuple val(run), path("*_sort.vcf"), emit: sorted_vcf
 
     script:
     // Transient - see the header: consumed and deleted by the next process, so it stays
     // on the working volume for its whole life.
-    target_folder_vcf = "${params.dir.utilized}/${params.dir.subpath.vcf}"
-    target_folder_freq = "${params.dir.output.freq}"
+    target_folder_vcf = "${run.dir.utilized}/${run.dir.subpath.vcf}"
+    target_folder_freq = "${run.dir.output.freq}"
 
     sorted_base = "${vcf.baseName}_sort"
     sorted_vcf = "${sorted_base}.vcf"
@@ -57,15 +57,15 @@ process SortRefAltByFrequency {
     // step ever writes - so on a rerun of a finished project the guards never matched, the
     // vcftools passes ran again, and the split VCFs reappeared in Output/VCF after
     // CalculateFrequencies had already consumed them.
-    snp_freq_base = "${params.vcf.fileName}_snp_freq"
+    snp_freq_base = "${run.vcf.fileName}_snp_freq"
     snp_freq_tsv = "${snp_freq_base}.tsv"
     target_snp_freq_tsv = "${target_folder_freq}/${snp_freq_tsv}"
 
-    indel_freq_base = "${params.vcf.fileName}_indel_freq"
+    indel_freq_base = "${run.vcf.fileName}_indel_freq"
     indel_freq_tsv = "${indel_freq_base}.tsv"
     target_indel_freq_tsv = "${target_folder_freq}/${indel_freq_tsv}"
 
-    dir_log = "${params.dir.logs}/7_vcf2freq/s1_SortRefAltByFrequency"
+    dir_log = "${run.dir.logs}/7_vcf2freq/s1_SortRefAltByFrequency"
 
     """
     set -eo pipefail
@@ -122,19 +122,19 @@ process SortRefAltByFrequency {
 }
 
 process FilterPotentialFalsePositives {
-    tag { vcf.baseName }
+    tag { run.runId ? "${run.runId}:${vcf.baseName}" : vcf.baseName }
 
     input:
-    path vcf
+    tuple val(run), path(vcf)
 
     output:
-    path "*_fp.vcf", emit: filterfp_vcf
+    tuple val(run), path("*_fp.vcf"), emit: filterfp_vcf
 
     script:
     // Transient - see the header: consumed and deleted by the next process, so it stays
     // on the working volume for its whole life.
-    target_folder_vcf = "${params.dir.utilized}/${params.dir.subpath.vcf}"
-    target_folder_freq = "${params.dir.output.freq}"
+    target_folder_vcf = "${run.dir.utilized}/${run.dir.subpath.vcf}"
+    target_folder_freq = "${run.dir.output.freq}"
 
     filterfp_base = "${vcf.baseName}_fp"
     filterfp_vcf = "${filterfp_base}.vcf"
@@ -152,19 +152,19 @@ process FilterPotentialFalsePositives {
     indel_vcf = "${indel_base}.vcf"
     target_indel_vcf = "${target_folder_vcf}/${indel_vcf}"
 
-    snp_freq_base = "${params.vcf.fileName}_snp_freq"
+    snp_freq_base = "${run.vcf.fileName}_snp_freq"
     snp_freq_tsv = "${snp_freq_base}.tsv"
     target_snp_freq_tsv = "${target_folder_freq}/${snp_freq_tsv}"
 
-    indel_freq_base = "${params.vcf.fileName}_indel_freq"
+    indel_freq_base = "${run.vcf.fileName}_indel_freq"
     indel_freq_tsv = "${indel_freq_base}.tsv"
     target_indel_freq_tsv = "${target_folder_freq}/${indel_freq_tsv}"
 
 
-    sensitivity = params.filterFalsePositives.sensitivity
-    threshold = params.filterFalsePositives.sampleThreshold
+    sensitivity = run.filterFalsePositives.sensitivity
+    threshold = run.filterFalsePositives.sampleThreshold
 
-    dir_log = "${params.dir.logs}/7_vcf2freq/s2_FilterPotentialFalsePositives"
+    dir_log = "${run.dir.logs}/7_vcf2freq/s2_FilterPotentialFalsePositives"
 
     """
     set -eo pipefail
@@ -209,7 +209,7 @@ process FilterPotentialFalsePositives {
         # 7. Reorders alleles to match the reference.
 
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Filtering possible false positives..."
-        filterFalsePositives.sh -v ${vcf} -t ${threshold} -s ${sensitivity} -b ${params.software.bcftools} > "\$TMP_FILE"
+        filterFalsePositives.sh -v ${vcf} -t ${threshold} -s ${sensitivity} -b ${run.software.bcftools} > "\$TMP_FILE"
 
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Order might change after filtering, reordering alleles again..."
         MajorAlleleToRef.py "\$TMP_FILE" "${filterfp_vcf}"
@@ -239,19 +239,19 @@ process FilterPotentialFalsePositives {
 }
 
 process DepthAndQualityFilter {
-    tag { vcf.baseName }
+    tag { run.runId ? "${run.runId}:${vcf.baseName}" : vcf.baseName }
 
     input:
-    path vcf
+    tuple val(run), path(vcf)
 
     output:
-    path "*_dq.vcf", emit: filterdq_vcf
+    tuple val(run), path("*_dq.vcf"), emit: filterdq_vcf
 
     script:
     // Transient - see the header: consumed and deleted by the next process, so it stays
     // on the working volume for its whole life.
-    target_folder_vcf = "${params.dir.utilized}/${params.dir.subpath.vcf}"
-    target_folder_freq = "${params.dir.output.freq}"
+    target_folder_vcf = "${run.dir.utilized}/${run.dir.subpath.vcf}"
+    target_folder_freq = "${run.dir.output.freq}"
 
     // Depth-filtered intermediate. Stays in the task directory and is never moved to
     // permanent storage - only the quality-filtered result is kept. Named _dp so it
@@ -271,15 +271,15 @@ process DepthAndQualityFilter {
     indel_vcf = "${indel_base}.vcf"
     target_indel_vcf = "${target_folder_vcf}/${indel_vcf}"
 
-    snp_freq_base = "${params.vcf.fileName}_snp_freq"
+    snp_freq_base = "${run.vcf.fileName}_snp_freq"
     snp_freq_tsv = "${snp_freq_base}.tsv"
     target_snp_freq_tsv = "${target_folder_freq}/${snp_freq_tsv}"
 
-    indel_freq_base = "${params.vcf.fileName}_indel_freq"
+    indel_freq_base = "${run.vcf.fileName}_indel_freq"
     indel_freq_tsv = "${indel_freq_base}.tsv"
     target_indel_freq_tsv = "${target_folder_freq}/${indel_freq_tsv}"
 
-    dir_log = "${params.dir.logs}/7_vcf2freq/s3_DepthAndQualityFilter"
+    dir_log = "${run.dir.logs}/7_vcf2freq/s3_DepthAndQualityFilter"
 
     """
     set -eo pipefail
@@ -304,10 +304,10 @@ process DepthAndQualityFilter {
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: COMPLETED"
     else
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Depth Filtering VCF..."
-        ${params.software.bcftools} view -e "FMT/DP<${params.vcffilter.minDP}" -Ov -o ${filterdp_vcf} ${vcf}
+        ${run.software.bcftools} view -e "FMT/DP<${run.vcffilter.minDP}" -Ov -o ${filterdp_vcf} ${vcf}
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Quality Filtering VCF..."
-        ${params.software.vcftools} --vcf ${filterdp_vcf} \
-            --minQ ${params.vcffilter.minQUAL} \
+        ${run.software.vcftools} --vcf ${filterdp_vcf} \
+            --minQ ${run.vcffilter.minQUAL} \
             --recode --recode-INFO-all \
             --out ${filterdq_base}
 
@@ -336,20 +336,20 @@ process DepthAndQualityFilter {
 }
 
 process SplitSNPsAndINDELs {
-    tag { vcf.baseName }
+    tag { run.runId ? "${run.runId}:${vcf.baseName}" : vcf.baseName }
 
     input:
-    file vcf
+    tuple val(run), path(vcf)
 
     output:
-    path "*_snp.vcf", emit: snp_vcf
-    path "*_indel.vcf", emit: indel_vcf
+    tuple val(run), path("*_snp.vcf"), emit: snp_vcf
+    tuple val(run), path("*_indel.vcf"), emit: indel_vcf
 
     script:
     // Transient - see the header: consumed and deleted by the next process, so it stays
     // on the working volume for its whole life.
-    target_folder_vcf = "${params.dir.utilized}/${params.dir.subpath.vcf}"
-    target_folder_freq = "${params.dir.output.freq}"
+    target_folder_vcf = "${run.dir.utilized}/${run.dir.subpath.vcf}"
+    target_folder_freq = "${run.dir.output.freq}"
 
     snp_base = "${vcf.baseName}_snp"
     snp_vcf = "${snp_base}.vcf"
@@ -361,15 +361,15 @@ process SplitSNPsAndINDELs {
     indel_recode_vcf = "${indel_base}.recode.vcf"
     target_indel_vcf = "${target_folder_vcf}/${indel_vcf}"
     
-    snp_freq_base = "${params.vcf.fileName}_snp_freq"
+    snp_freq_base = "${run.vcf.fileName}_snp_freq"
     snp_freq_tsv = "${snp_freq_base}.tsv"
     target_snp_freq_tsv = "${target_folder_freq}/${snp_freq_tsv}"
 
-    indel_freq_base = "${params.vcf.fileName}_indel_freq"
+    indel_freq_base = "${run.vcf.fileName}_indel_freq"
     indel_freq_tsv = "${indel_freq_base}.tsv"
     target_indel_freq_tsv = "${target_folder_freq}/${indel_freq_tsv}"
 
-    dir_log = "${params.dir.logs}/7_vcf2freq/s4_SplitSNPsAndINDELs"
+    dir_log = "${run.dir.logs}/7_vcf2freq/s4_SplitSNPsAndINDELs"
 
     """
     set -eo pipefail
@@ -396,7 +396,7 @@ process SplitSNPsAndINDELs {
             ln -s ${target_snp_vcf} .
         else
             echo "SPLIT SNPS AND INDELS ${vcf}: Processing SNPs..."
-            ${params.software.vcftools} --vcf ${vcf} \
+            ${run.software.vcftools} --vcf ${vcf} \
             --remove-indels \
             --recode --recode-INFO-all \
             --out ${snp_base}
@@ -415,7 +415,7 @@ process SplitSNPsAndINDELs {
             echo "SPLIT SNPS AND INDELS ${vcf}: COMPLETED"
         else
             echo "SPLIT SNPS AND INDELS ${vcf}: Processing INDELS..."
-            ${params.software.vcftools} --vcf ${vcf} \
+            ${run.software.vcftools} --vcf ${vcf} \
             --keep-only-indels \
             --recode --recode-INFO-all \
             --out ${indel_base}
@@ -446,20 +446,20 @@ process SplitSNPsAndINDELs {
 }
 
 process CalculateFrequencies {
-    tag { vcf.baseName }
+    tag { run.runId ? "${run.runId}:${vcf.baseName}" : vcf.baseName }
 
     input:
-    path vcf
+    tuple val(run), path(vcf)
 
     output:
-    path "${vcf.baseName.replace('_sort_fp_dq', '')}_freq.tsv", emit: frequencies
+    tuple val(run), path("${vcf.baseName.replace('_sort_fp_dq', '')}_freq.tsv"), emit: frequencies
 
     script:
-    target_folder_freq = "${params.dir.output.freq}"
+    target_folder_freq = "${run.dir.output.freq}"
     freq_base = "${vcf.baseName.replace('_sort_fp_dq', '')}"
     freq_file = "${freq_base}_freq.tsv"
-    target_freq_file = "${params.dir.output.freq}/${freq_file}"
-    dir_log = "${params.dir.logs}/7_vcf2freq/s5_CalculateFrequencies"
+    target_freq_file = "${run.dir.output.freq}/${freq_file}"
+    dir_log = "${run.dir.logs}/7_vcf2freq/s5_CalculateFrequencies"
 
     """
     set -eo pipefail
@@ -473,7 +473,7 @@ process CalculateFrequencies {
         echo "CALCULATE FREQUENCIES ${vcf}: COMPLETED"
     else
         echo "CALCULATE FREQUENCIES ${vcf}: Calculating frequencies for ${freq_file}..."
-        createDepthFile.sh -v ${vcf} -b ${params.software.bcftools} | depth2freq.awk > ${freq_file}
+        createDepthFile.sh -v ${vcf} -b ${run.software.bcftools} | depth2freq.awk > ${freq_file}
         
         echo "CALCULATE FREQUENCIES ${vcf}: Moving ${freq_file} to ${target_folder_freq}..."
         mkdir -p ${target_folder_freq}
@@ -509,9 +509,11 @@ workflow VCF2Frequencies {
     DepthAndQualityFilter(FilterPotentialFalsePositives.out.filterfp_vcf)
 
     prepared_vcfs = SplitSNPsAndINDELs(DepthAndQualityFilter.out.filterdq_vcf)
+    // Both halves carry their own run, so mixing them keeps each frequency table attached to
+    // the run that produced it - two tasks per run rather than two per invocation.
     all_vcfs = prepared_vcfs.snp_vcf
         .mix(prepared_vcfs.indel_vcf)
-    
+
     CalculateFrequencies(all_vcfs)
 
     emit:

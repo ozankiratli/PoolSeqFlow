@@ -31,12 +31,13 @@
 //      poolseqflow.nf. So a promotion trigger can be parameter-dependent, and anything that
 //      assumes one consumer will delete a file another step is about to read.
 //
-//   3. Cardinality is fragile. Every singleton artifact here rides a value channel, which is
-//      what lets one reference index broadcast against N samples; an operator inserted into
-//      such a path turns it into a queue channel and silently reduces N tasks to 1 while the
-//      run still reports success. This module therefore attaches as an ADDITIONAL CONSUMER
-//      of an existing channel - alongside the real consumer, never in front of it. Nothing
-//      upstream changes shape, so there is nothing to flip.
+//   3. Cardinality is fragile. This module therefore attaches as an ADDITIONAL CONSUMER of an
+//      existing channel - alongside the real consumer, never in front of it. Nothing upstream
+//      changes shape, so there is nothing to flip. That mattered most while every singleton
+//      here rode an implicit value channel, where inserting an operator would have turned it
+//      into a queue channel and silently reduced N tasks to 1 with the run still reporting
+//      success. From multiRun onwards the singletons are per run and are broadcast explicitly
+//      by key, but the rule is unchanged and the failure it prevents is the same one.
 //
 // Artifacts with no consumer at all - unpaired reads, trim reports, the FastQC htmls, both
 // step 5 reports - are never "an output that becomes an input", so they are written straight
@@ -65,13 +66,18 @@ nextflow.enable.dsl=2
 //
 // `subpath` is relative to both roots - Utilized/ and Output/ differ only in their root,
 // which is what makes promotion a move between two spellings of one path.
-def promotionRow(String stage, String key) {
+//
+// The run is a parameter because subpath and the VCF's file name are both parameters, and
+// under multiRun each run has its own. The roots the row is resolved against come from the
+// run for the same reason - Utilized_<RunID> is per run precisely so that two runs cannot
+// promote each other's files.
+def promotionRow(Map run, String stage, String key) {
     def table = [
         // Step 2's clipped reads are step 3's only input, and nothing after step 3 reads
         // them, so a sample's alignment succeeding releases that sample's reads. The
         // *_val_* reads written into the same directory are deliberately not here:
         // ClipReads deletes them outright, so they never become a result to promote.
-        'trimmed reads': [ subpath : "${params.dir.subpath.trimmed}/${key}",
+        'trimmed reads': [ subpath : "${run.dir.subpath.trimmed}/${key}",
                            patterns: ['*_clipped.fq.gz'] ],
 
         // The zips FastQC writes beside the trimmed reads. ClipReads unzips them to work
@@ -79,14 +85,14 @@ def promotionRow(String stage, String key) {
         // small though they are - but their gate is ClipReads finishing rather than
         // alignment, which is why they are a row and an attachment point of their own. The
         // htmls are not here: nothing reads those, so they never enter Utilized at all.
-        'fastqc zips'  : [ subpath : "${params.dir.subpath.report.fastqc}/${key}",
+        'fastqc zips'  : [ subpath : "${run.dir.subpath.report.fastqc}/${key}",
                            patterns: ['*_val_1_fastqc.zip', '*_val_2_fastqc.zip'] ],
 
         // Aligned BAMs, released when cleaning has succeeded for the sample. This
         // directory is flat rather than per-sample, so the key selects the file instead of
         // the folder - which is the reason `subpath` and `patterns` are both resolved
         // against the key rather than only the first.
-        'alignments'   : [ subpath : "${params.dir.subpath.aligned}",
+        'alignments'   : [ subpath : "${run.dir.subpath.aligned}",
                            patterns: ["${key}_aligned.bam"] ],
 
         // The first artifact with TWO consumers - step 5 reads it for the reports, step 6
@@ -94,15 +100,15 @@ def promotionRow(String stage, String key) {
         // travels with its BAM: nothing here reads the index by name, both step-5 processes
         // just expect it beside the file, so promoting one without the other would leave a
         // BAM that looks complete and is not.
-        'ready bams'   : [ subpath : "${params.dir.subpath.ready}",
+        'ready bams'   : [ subpath : "${run.dir.subpath.ready}",
                            patterns: ["${key}_ready.bam", "${key}_ready.bam.bai"] ],
 
         // Also two consumers, and here the second is conditional: step 7 always, step 8
         // only when annotate is on. So this gate is parameter-dependent - the one place
         // settled rule 2's "the step that consumes it" is not a single step. No key: one
         // VCF for the whole run, not one per sample.
-        'called vcf'   : [ subpath : "${params.dir.subpath.vcf}",
-                           patterns: ["${params.vcf.fileName}.vcf"] ],
+        'called vcf'   : [ subpath : "${run.dir.subpath.vcf}",
+                           patterns: ["${run.vcf.fileName}.vcf"] ],
     ]
 
     if (!table.containsKey(stage)) {
@@ -114,30 +120,41 @@ def promotionRow(String stage, String key) {
     return table[stage]
 }
 
-// The move itself. One task per (stage, key); `key` is the sample a per-sample artifact
+// What a promotion task calls itself, in its tag and in every line of its log. One function
+// so the two cannot drift apart.
+def promotionLabel(Map run, String stage, String key) {
+    def what = key ? "${stage} ${key}" : stage
+    return run.runId ? "${run.runId}:${what}" : "${what}"
+}
+
+// The move itself. One task per (run, stage, key); `key` is the sample a per-sample artifact
 // belongs to, and is empty for artifacts that belong to the run as a whole.
 process PromoteArtifacts {
-    tag { key ? "${stage} ${key}" : stage }
+    tag { promotionLabel(run, stage, key) }
 
     input:
+    // `stage` stays a separate input because it is a literal at the call site and therefore
+    // a value channel that broadcasts. The run travels WITH the key: they are one fact - who
+    // released what - and separating them would match them by arrival order.
     val stage
-    val key
+    tuple val(run), val(key)
 
     output:
-    val stage, emit: done
+    tuple val(run), val(stage), emit: done
 
     script:
-    row = promotionRow(stage, key)
-    label = key ? "${stage} ${key}" : stage
+    row = promotionRow(run, stage, key)
+    label = promotionLabel(run, stage, key)
     // One writer per log file, as everywhere else in the pipeline: these tasks run
-    // concurrently, so a shared file would interleave their output.
+    // concurrently, so a shared file would interleave their output. The run is not in the
+    // slug because dir.logs is already per run.
     slug = key ? "${stage}_${key}" : stage
     slug = slug.replaceAll(/[^A-Za-z0-9]+/, '_')
-    dir_log = "${params.dir.logs}/9_completion/s1_PromoteArtifacts"
+    dir_log = "${run.dir.logs}/9_completion/s1_PromoteArtifacts"
     log_file = "${dir_log}/9_Completion_s1_PromoteArtifacts_${slug}_nextflow.log"
 
-    src = row ? "${params.dir.utilized}/${row.subpath}" : ''
-    dst = row ? "${params.dir.outputs}/${row.subpath}" : ''
+    src = row ? "${run.dir.utilized}/${row.subpath}" : ''
+    dst = row ? "${run.dir.outputs}/${row.subpath}" : ''
     // Quoted, so that the loops below iterate over the patterns themselves instead of
     // whatever they happen to match in the task directory.
     patterns = row ? row.patterns.collect { p -> "'${p}'" }.join(' ') : ''
@@ -235,7 +252,7 @@ process PromoteArtifacts {
 workflow Completion {
     take:
     stage
-    gate
+    gate     // [run, key]
 
     main:
     PromoteArtifacts(stage, gate)

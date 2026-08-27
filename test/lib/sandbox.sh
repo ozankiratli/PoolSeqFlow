@@ -128,24 +128,25 @@ run_pipeline() {
 # './scripts/...' to resolve where it runs, and a committed copy under test/lib/ carrying
 # that path cannot resolve from its own location, so `nextflow lint .` fails on it.
 #
-# BuildDictionaries' `verify` input is a pure ordering barrier - UngzipReference stages it
-# and never reads it (its only references are commented out), and BuildSnpEffDb never names
-# it in its script body at all - so a placeholder file stands in for step 0.
+# BuildDictionaries' `verify` input is a pure ordering barrier - no process in step 1 ever
+# names it in a script body - so a placeholder value stands in for step 0.
 #
-# Every entry script must call resolveParameters() first, exactly as poolseqflow.nf does.
-# Without it the computed parameters are simply absent, and the first process to read one
-# dies on a null - which looks like a bug in that process rather than a missing setup call.
+# Every entry script must call runDefinitions() and then resolveParameters(), in that order,
+# exactly as poolseqflow.nf does. Without resolveParameters() the computed parameters are
+# simply absent and the first process to read one dies on a null; with the two in the wrong
+# order a run that changes an input to a derivation silently keeps the base value.
 run_dictionaries_only() {
     local sb="$1"
     cat > "$sb/install/dictionaries_only.nf" <<'ENTRY'
 nextflow.enable.dsl=2
 
-include { resolveParameters } from './scripts/resolve_parameters.nf'
-include { BuildDictionaries } from './scripts/1_build_dictionaries.nf'
+include { runDefinitions; resolveParameters } from './scripts/resolve_parameters.nf'
+include { BuildDictionaries; dictionaryRuns } from './scripts/1_build_dictionaries.nf'
 
 workflow {
+    def runs = runDefinitions()
     resolveParameters()
-    BuildDictionaries(channel.value(file("${params.storageDir}/.step0_token")))
+    BuildDictionaries(channel.fromList(dictionaryRuns(runs)), channel.value('step0'))
 }
 ENTRY
     _run_entry "$sb" dictionaries_only.nf
@@ -154,20 +155,22 @@ ENTRY
 # Run step 2 on its own, for tests about where the trimmed reads are looked for and left.
 # Same generate-rather-than-commit reasoning as run_dictionaries_only.
 #
-# TrimReads' `verify` input is an ordering barrier - it is staged and never named in the
-# script body - so a placeholder file stands in for step 0, and step 1 is not needed at all
-# because nothing in step 2 touches the reference.
+# TrimReads' `verify` input is an ordering barrier - it is never named in the script body -
+# so a placeholder value stands in for step 0, and step 1 is not needed at all because nothing
+# in step 2 touches the reference.
 run_trim_only() {
     local sb="$1"
     cat > "$sb/install/trim_only.nf" <<'ENTRY'
 nextflow.enable.dsl=2
 
-include { resolveParameters } from './scripts/resolve_parameters.nf'
-include { TrimQcClip } from './scripts/2_trim_reads.nf'
+include { runDefinitions; resolveParameters } from './scripts/resolve_parameters.nf'
+include { TrimQcClip; readPairChannel } from './scripts/2_trim_reads.nf'
 
 workflow {
+    def runs = runDefinitions()
     resolveParameters()
-    TrimQcClip(channel.value(file("${params.storageDir}/.step0_token")))
+    TrimQcClip(readPairChannel(runs),
+               channel.fromList(runs).map { run -> tuple(run, 'step0') })
 }
 ENTRY
     _run_entry "$sb" trim_only.nf
@@ -233,6 +236,49 @@ ENTRY
     _run_entry "$sb" dump_runs.nf
 }
 
+# The cohort completeness guard, and the dictionary grouping it sits beside.
+#
+# No analysis runs: the grouping prints and returns, and the cohort check is a deliberately
+# short channel, which throws and takes the run with it - so the caller expects a non-zero
+# status. Both are DAG-side, which is why they can be exercised this cheaply and also why they
+# need exercising at all: neither shows up in any task's exit status.
+#
+# The conflicting-dictionary case is deliberately NOT here. Catching that exception inside a
+# workflow body wraps it in an InvocationTargetException whose own message is null, so a test
+# written that way would be asserting on the harness rather than on what a user sees. It runs
+# the real entry point instead - which costs nothing extra, because it fails while the DAG is
+# still being built.
+run_multirun_guards() {
+    local sb="$1"
+    cat > "$sb/install/multirun_guards.nf" <<'ENTRY'
+nextflow.enable.dsl=2
+
+include { runDefinitions; resolveParameters; deepCopy } from './scripts/resolve_parameters.nf'
+include { dictionaryRuns } from './scripts/1_build_dictionaries.nf'
+include { VariantCalling } from './scripts/6_variant_call.nf'
+
+workflow {
+    def runs = runDefinitions()
+    resolveParameters()
+    def base = runs[0]
+
+    // Two runs that agree share one build rather than racing for it.
+    def c = deepCopy(base); c.runId = 'c'
+    def d = deepCopy(base); d.runId = 'd'
+    println "GROUPS ${dictionaryRuns([c, d]).size()}"
+
+    // Three BAMs where the run started with four. Any file will do - the guard fires before
+    // anything is handed to bcftools.
+    def stand_in = file("${base.rgTagsPath}")
+    VariantCalling(
+        channel.fromList(['s1', 's2', 's3']).map { s -> tuple(base, s, stand_in) },
+        channel.of(tuple(base, stand_in)),
+        channel.of(tuple(base, 4)))
+}
+ENTRY
+    _run_entry "$sb" multirun_guards.nf
+}
+
 # Run step 0 by itself, for tests about the environment and parameter guards. Same
 # generate-rather-than-commit reasoning as run_dictionaries_only.
 run_verify_only() {
@@ -240,12 +286,13 @@ run_verify_only() {
     cat > "$sb/install/verify_only.nf" <<'ENTRY'
 nextflow.enable.dsl=2
 
-include { resolveParameters } from './scripts/resolve_parameters.nf'
+include { runDefinitions; resolveParameters } from './scripts/resolve_parameters.nf'
 include { VerifyEnvironment } from './scripts/0_verify_environment.nf'
 
 workflow {
+    def runs = runDefinitions()
     resolveParameters()
-    VerifyEnvironment()
+    VerifyEnvironment(channel.fromList(runs))
 }
 ENTRY
     _run_entry "$sb" verify_only.nf
@@ -298,6 +345,33 @@ task_count() {
         NR > 1 {
             split($4, a, " ")        # strip the "(tag)" suffix Nextflow appends
             if (a[1] == want) n++
+        }
+        END { print n + 0 }
+    ' "$trace"
+}
+
+# The same count, for one run of a multi-run invocation.
+#
+# The total is not enough on its own: eighteen Align tasks could be six samples across three
+# runs, which is right, or one run's six samples attempted three times, which is not - and both
+# report SUCCESS. Every per-run process tags itself `<RunID>:<sample>`, or `<RunID>` alone for
+# the step-0 stages, so the run can be read back out of the trace.
+#
+# Step 1's processes deliberately carry NO run tag, so this returns 0 for them whichever run is
+# asked. That is the correct answer rather than a gap: a dictionary is shared between the runs
+# that use it and belongs to none of them.
+run_task_count() {
+    local sb="$1" process="$2" run="$3" trace
+    trace="$sb/store/Output/Reports/PoolSeqFlow_pipeline_trace.txt"
+    [ -f "$trace" ] || { printf 'no-trace'; return; }
+    awk -F'\t' -v want="$process" -v run="$run" '
+        NR > 1 {
+            split($4, a, " ")
+            if (a[1] != want) next
+            tag = $4
+            sub(/^[^ ]* \(/, "", tag)     # drop the process name and the opening paren
+            sub(/\)$/, "", tag)           # and the closing one
+            if (tag == run || index(tag, run ":") == 1) n++
         }
         END { print n + 0 }
     ' "$trace"
@@ -375,6 +449,16 @@ LAUNCHER_PREFIX=""
 # subshell exits - the status would never reach the caller. Feed stdin with a herestring
 # (`run_launcher_with_envs ... <<< y`) rather than a pipe, for the same reason: a pipeline
 # puts the function in a subshell too.
+# What `install` deploys, read out of the wrapper itself. Extracted and eval'd rather than
+# parsed, because the assignment is a plain shell one with line continuations, and eval is the
+# thing that already knows how to read those.
+payload_items() {
+    local assignment
+    assignment=$(awk '/^PAYLOAD_ITEMS=/{p=1} p{print; if ($0 !~ /\\$/) exit}' "$REPO_ROOT/PoolSeqFlow")
+    eval "$assignment"
+    printf '%s' "$PAYLOAD_ITEMS"
+}
+
 run_launcher_with_envs() {
     local envs_spec="$1"; shift   # space-separated environment names, may be empty
     local sb
@@ -390,11 +474,16 @@ run_launcher_with_envs() {
     # A complete payload, because `install` refuses to deploy an incomplete copy - it would
     # otherwise produce an installation missing a file, which is worse than failing. Empty
     # placeholders are enough: nothing here ever runs Nextflow.
-    : > "$sb/poolseqflow.nf"
+    #
+    # The list is read out of the wrapper rather than repeated here. A hand-kept copy drifts
+    # the moment a release adds a file to the payload, and it does it silently in the worst
+    # way: every launcher case fails at once, on a message about an incomplete installation
+    # that has nothing to do with what any of them is testing. That is exactly what happened
+    # when multi-run.csv.example was added.
     local f
-    for f in nextflow.config parameters.config.template RGTags.csv.template \
-             README.md CHANGELOG.md LICENSE; do
-        : > "$sb/$f"
+    for f in $(payload_items); do
+        [ "$f" = "PoolSeqFlow" ] && continue   # copied above, and it must be the real one
+        if [ -d "$REPO_ROOT/$f" ]; then mkdir -p "$sb/$f"; else : > "$sb/$f"; fi
     done
     # The stub conda goes in its own directory rather than $sb/bin, which belongs to the
     # pipeline and is part of what `install` deploys - a fake conda inside the payload would

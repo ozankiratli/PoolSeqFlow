@@ -660,3 +660,288 @@ test_clean_still_reports_what_it_removes_when_the_config_is_unreadable() {
     assert_contains "$WRAPPER_OUTPUT" "could not resolve workDir" "it should say why"
     assert_file "$sb/main/Utilized/Trimmed/keep_me" "and still leave unpromoted outputs alone"
 }
+
+# ---------------------------------------------------------------------------------------
+# Multi-run: N runs from one invocation.
+#
+# ONE PIPELINE RUN, MANY SCENARIOS. A three-row table costs three analyses - several minutes -
+# so the table is built to make every divergence shape the design has to get right visible in
+# the same run rather than paying for one run per question:
+#
+#   inherit    every cell blank. The run that changes nothing must still work, and must get
+#              the values parameters.config holds.
+#   filter     a late divergence. Nothing before variant calling differs, so it also proves
+#              two runs that agree for six steps still keep their results apart.
+#   plain      annotate off AND poolSize changed. `annotate` is the branchiest parameter in
+#              the pipeline - it decides a step-0 stage, a step-1 process, a step-8 process
+#              and the shape of the VCF promotion gate - and poolSize is the re-derivation
+#              case, because sensitivity is computed from it.
+#
+# WHY THESE VALUES. The fixture's reads are uniformly Q40, so a trimming-quality column would
+# produce three identical answers and prove nothing; and after false-positive filtering the
+# QUAL range is 468-1487, so minQUAL has to be inside that to bite at all. Both were measured,
+# not guessed.
+MULTIRUN_SB=""
+MULTIRUN_STATUS=""
+
+multirun_run() {
+    if [ -n "$MULTIRUN_STATUS" ]; then
+        [ "$MULTIRUN_STATUS" = "0" ]
+        return
+    fi
+    have_tools || return 1
+    MULTIRUN_SB=$(make_pipeline_sandbox "multirun")
+    # multiRun is itself an analysis parameter, so flipping it legitimately trips the change
+    # guard. Its own sandbox, never a copy of the shared one.
+    write_sandbox_config "$MULTIRUN_SB" "s|^    multiRun .*|    multiRun        = true|"
+    cat > "$MULTIRUN_SB/main/runs.csv" <<'CSV'
+RunID,vcffilter.minQUAL,poolSize,annotate
+inherit,,,
+filter,1000,,
+plain,,25,false
+CSV
+    MULTIRUN_STATUS=$(run_pipeline "$MULTIRUN_SB")
+    [ "$MULTIRUN_STATUS" = "0" ]
+}
+
+needs_multirun() {
+    if ! have_tools; then skip_case "no conda environment"; return 1; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return 1; fi
+    if ! multirun_run; then
+        fail_case "the multi-run failed (status $MULTIRUN_STATUS); see $MULTIRUN_SB/run.out"
+        return 1
+    fi
+    return 0
+}
+
+test_every_run_produces_its_own_complete_results() {
+    needs_multirun || return
+    local run
+    for run in inherit filter plain; do
+        local o="$MULTIRUN_SB/store/$run/Output"
+        assert_file "$o/Reports/0_verify_environment.txt" "$run should publish its step 0 report"
+        assert_file "$o/VCF/Test.vcf"                     "$run should produce the raw VCF"
+        assert_file "$o/Frequencies/Test_snp_freq.tsv"    "$run should produce the SNP table"
+        assert_file "$o/Frequencies/Test_indel_freq.tsv"  "$run should produce the INDEL table"
+        [ -d "$o/Ready" ] || fail_case "$run should leave ready BAMs"
+    done
+}
+
+# The cardinality assertion, which is what a status check cannot see. A run that quietly did
+# one run's work instead of three would still report SUCCESS.
+#
+# The two counts that are NOT N x runs are the point of the design: step 1 writes to mainDir,
+# which every run shares, so it is deduplicated by its output paths; and the two step-0 stages
+# that describe the machine rather than a run happen once.
+test_multi_run_fans_out_per_run_and_not_per_invocation() {
+    needs_multirun || return
+    local samples runs expected p
+    samples=$(find "$MULTIRUN_SB/main/Data" -name '*_R1.fq.gz' | wc -l)
+    runs=3
+    expected=$(( samples * runs ))
+
+    for p in TrimQcClip:TrimReads TrimQcClip:ClipReads AlignReads:Align \
+             SortCleanBams:SortCleanBam GenerateReports:AlignmentReport \
+             GenerateReports:CoverageReport CompleteAfterClip:PromoteArtifacts \
+             CompleteAfterAlign:PromoteArtifacts CompleteAfterClean:PromoteArtifacts \
+             CompleteAfterUse:PromoteArtifacts; do
+        assert_count "$expected" "$(task_count "$MULTIRUN_SB" "$p")" \
+            "$p should run once per (run, sample)"
+    done
+
+    for p in VariantCalling:VariantCall VCF2Frequencies:SplitSNPsAndINDELs \
+             CompleteAfterVcf:PromoteArtifacts VerifyEnvironment:VerifyAll \
+             VerifyEnvironment:CheckReference VerifyEnvironment:CheckRunParameters; do
+        assert_count "$runs" "$(task_count "$MULTIRUN_SB" "$p")" "$p should run once per run"
+    done
+
+    # The totals above are necessary and not sufficient: eighteen Align tasks could be six
+    # samples across three runs, which is right, or one run's six attempted three times, which
+    # is not - and both report SUCCESS. Read back per run from the tags.
+    local run
+    for run in inherit filter plain; do
+        assert_count "$samples" "$(run_task_count "$MULTIRUN_SB" AlignReads:Align "$run")" \
+            "$run should have aligned every sample"
+        assert_count "$samples" "$(run_task_count "$MULTIRUN_SB" SortCleanBams:SortCleanBam "$run")" \
+            "$run should have cleaned every sample"
+        assert_count 1 "$(run_task_count "$MULTIRUN_SB" VariantCalling:VariantCall "$run")" \
+            "$run should have called its cohort exactly once"
+        assert_count 1 "$(run_task_count "$MULTIRUN_SB" VerifyEnvironment:VerifyAll "$run")" \
+            "$run should have verified its own environment"
+    done
+
+    # Shared by construction, so deduplicated rather than repeated.
+    for p in BuildDictionaries:UngzipReference BuildDictionaries:CreateBwaIndex \
+             BuildDictionaries:CreateSamtoolsFaiIndex BuildDictionaries:BuildSnpEffDb; do
+        assert_count 1 "$(task_count "$MULTIRUN_SB" "$p")" \
+            "$p should be built once for the reference all three runs share"
+        # ...and belongs to no run, which is why it carries no run tag.
+        assert_count 0 "$(run_task_count "$MULTIRUN_SB" "$p" inherit)" \
+            "$p is shared, so it should not be filed under a run"
+    done
+
+    # About the invocation, not about a run.
+    assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckInstalledSoftware)" \
+        "the software check describes the machine, so it runs once"
+    assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckMultiRun)" \
+        "the multi-run check describes the fan-out, so it runs once"
+    # It WRITES to a file every run shares; N concurrent repairs would be a race.
+    assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:RepairRGTagsLineEndings)" \
+        "one RGTags table means one line-ending repair"
+}
+
+# Each run records the parameters it actually used. Before analysisParams() took the run,
+# it flattened the global params and wrote three identical manifests - so every run would
+# have claimed the base configuration's settings and the change guard could never fire.
+test_each_run_records_the_parameters_it_actually_used() {
+    needs_multirun || return
+    local inherit="$MULTIRUN_SB/store/inherit/.poolseqflow_params"
+    local filter="$MULTIRUN_SB/store/filter/.poolseqflow_params"
+    local plain="$MULTIRUN_SB/store/plain/.poolseqflow_params"
+    assert_file "$inherit" "each run should record its own manifest"
+    assert_file "$filter"  "each run should record its own manifest"
+    assert_file "$plain"   "each run should record its own manifest"
+
+    # A run that sets nothing gets parameters.config, exactly.
+    assert_contains "$(cat "$inherit")" "vcffilter.minQUAL=30" "a blank cell should inherit"
+    assert_contains "$(cat "$inherit")" "poolSize=100"         "a blank cell should inherit"
+    assert_contains "$(cat "$inherit")" "annotate=true"        "a blank cell should inherit"
+
+    # ...and exactly the column it set differs from it.
+    assert_eq "vcffilter.minQUAL=30
+vcffilter.minQUAL=1000" \
+        "$(diff "$inherit" "$filter" | sed -n 's/^[<>] //p')" \
+        "filter should differ from inherit in minQUAL and nothing else"
+
+    # A re-derivation moves with its input: sensitivity is 1 / (2 * diploidy * poolSize).
+    assert_contains "$(cat "$plain")" "poolSize=25" "plain should use its own pool size"
+    assert_contains "$(cat "$plain")" "filterFalsePositives.sensitivity=0.01" \
+        "sensitivity should be re-derived from the run's poolSize, not inherited"
+    assert_contains "$(cat "$inherit")" "filterFalsePositives.sensitivity=0.0025" \
+        "and the other runs should keep theirs"
+}
+
+# The whole point: a per-run parameter has to reach the task that reads it. A manifest saying
+# minQUAL=1000 while vcftools was handed 30 would look entirely correct from the outside.
+test_a_diverging_parameter_changes_that_runs_numbers() {
+    needs_multirun || return
+    local inherit_rows filter_rows
+    inherit_rows=$(awk 'END{print NR}' "$MULTIRUN_SB/store/inherit/Output/Frequencies/Test_snp_freq.tsv")
+    filter_rows=$(awk 'END{print NR}' "$MULTIRUN_SB/store/filter/Output/Frequencies/Test_snp_freq.tsv")
+    [ "$filter_rows" -lt "$inherit_rows" ] || fail_case \
+        "minQUAL=1000 should keep fewer sites than minQUAL=30 (got $filter_rows vs $inherit_rows)"
+
+    # And it really was the filter doing it. Asserted as "not the inherited value" rather than
+    # as the literal 1000: vcftools echoes its own parsed parameter, so the log says
+    # `--minQ 1e+03` even though the command line carried 1000.
+    local filter_log inherit_log
+    filter_log=$(cat "$MULTIRUN_SB/store/filter/Logs/7_vcf2freq/s3_DepthAndQualityFilter"/*.log)
+    inherit_log=$(cat "$MULTIRUN_SB/store/inherit/Logs/7_vcf2freq/s3_DepthAndQualityFilter"/*.log)
+    assert_contains "$inherit_log" "--minQ 30" "the inheriting run should get the configured value"
+    assert_not_contains "$filter_log" "--minQ 30" "and the diverging run must not"
+    assert_contains "$filter_log" "Sites" "vcftools should have reported what it kept"
+}
+
+# `annotate` decides a step-0 stage, a step-1 process, a step-8 process and the shape of the
+# VCF promotion gate. Before E1u all four read the base config, so one run's setting decided
+# for every run.
+test_annotate_is_decided_per_run() {
+    needs_multirun || return
+    assert_file    "$MULTIRUN_SB/store/inherit/Output/VCF/Test_annotated.vcf" "inherit annotates"
+    assert_file    "$MULTIRUN_SB/store/filter/Output/VCF/Test_annotated.vcf"  "filter annotates"
+    assert_no_file "$MULTIRUN_SB/store/plain/Output/VCF/Test_annotated.vcf" \
+        "plain sets annotate = false, so it must not produce an annotated VCF"
+
+    assert_count 2 "$(task_count "$MULTIRUN_SB" AnnotateVCF:AnnotateVariants)" \
+        "step 8 should run for the two runs that asked for it"
+    assert_count 2 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckGFF)" \
+        "step 0 should check the GFF for those two"
+    assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:SkipGFFCheck)" \
+        "and skip it for the one that does not annotate"
+
+    assert_contains "$(cat "$MULTIRUN_SB/store/plain/Output/Reports/0_verify_environment.txt")" \
+        "GFF FILE CHECK:        STATUS=SKIPPED" "plain's own report should say so"
+    assert_contains "$(cat "$MULTIRUN_SB/store/inherit/Output/Reports/0_verify_environment.txt")" \
+        "GFF FILE CHECK:        STATUS=PASS" "and inherit's should not"
+}
+
+# dir.utilized hangs off mainDir and runs share mainDir, so without the RunID suffix every run
+# would write Utilized/VCF/Test.vcf to one path - and the second run's skip check would find
+# the first run's file and symlink to it, silently, for the whole VCF chain.
+# Each run gets its own combined log, and the shared work gets the project's.
+#
+# The combined log is assembled in a `workflow.onComplete` handler, which is the most dangerous
+# place in the pipeline to have untested code: when such a handler throws, Nextflow reports ITS
+# failure instead of the error that actually stopped the run. This one did exactly that during
+# E1u - it referenced a workflow-body `def` local, which is not visible to the handler when it
+# runs, and a careful multi-run configuration error came out as a line about logging. So the
+# handler is asserted on directly rather than assumed to work because the run succeeded.
+test_each_run_gets_its_own_combined_log() {
+    needs_multirun || return
+    local run
+    for run in inherit filter plain; do
+        assert_file "$MULTIRUN_SB/store/$run/Logs/poolseqflow_last_run.log" \
+            "$run should have its own combined log"
+    done
+    # The shared work has no run to belong to, so it goes to the project's own Logs.
+    assert_file "$MULTIRUN_SB/store/Logs/poolseqflow_last_run.log" \
+        "the dictionaries are shared, so their log belongs to the project"
+
+    # Not merely present - actually holding this run's blocks. An empty file would pass a
+    # existence check while telling you nothing about the run.
+    local blocks
+    blocks=$(awk '/^##########/' "$MULTIRUN_SB/store/inherit/Logs/poolseqflow_last_run.log" | wc -l)
+    [ "$blocks" -gt 1 ] || fail_case "inherit's combined log gathered $blocks process log(s)"
+}
+
+# reset must clear a multi-run project completely, and say what it is clearing.
+#
+# `nextflow config -flat` is the wrapper's only path oracle and it reports the BASE
+# configuration, so it cannot name storageDir/<RunID> - which means a reset written against it
+# alone would delete the base tree, report success, and leave every run's results behind. Those
+# would then be REUSED rather than ignored: the pipeline resumes by looking for output files,
+# not by asking what produced them. Silent stale results, from a command whose whole purpose is
+# to guarantee a clean slate.
+#
+# Runs against a copy so the shared multi-run sandbox survives for the other cases.
+test_reset_clears_every_run_of_a_multi_run_project() {
+    needs_multirun || return
+    local sb run
+    sb=$(guard_path "$TEST_TMPDIR/multirun-reset")
+    rm -rf "$sb"; cp -r "$MULTIRUN_SB" "$sb"; rm -f "$sb/run.out"
+    # The copy's parameters.config still names the original sandbox; point it at this one, or
+    # reset would resolve - and delete - the wrong project.
+    sed -i "s|$MULTIRUN_SB|$sb|g" "$sb/main/parameters.config"
+
+    run_project_wrapper "$sb" reset <<< "DELETE_MY_ANALYSIS"
+    assert_status 0 "$WRAPPER_STATUS" "reset should succeed; got: $WRAPPER_OUTPUT"
+
+    for run in inherit filter plain; do
+        assert_contains "$WRAPPER_OUTPUT" "$sb/store/$run" "reset should name $run's results before deleting them"
+        [ -d "$sb/store/$run" ] && fail_case "reset left $run's results behind"
+    done
+    [ -d "$sb/store/Output" ] && fail_case "reset left the session reports behind"
+
+    # And still keeps everything the user provided.
+    assert_file "$sb/main/RGTags.csv"          "reset must keep the RGTags table"
+    assert_file "$sb/main/runs.csv"            "reset must keep the multi-run table"
+    assert_file "$sb/main/parameters.config"   "reset must keep the configuration"
+    [ -d "$sb/main/Data" ] || fail_case "reset must keep the reads"
+    assert_file "$sb/main/Reference/reference.fasta.gz" "reset must keep the reference"
+    return 0
+}
+
+test_each_run_keeps_its_working_files_apart_and_leaves_none_behind() {
+    needs_multirun || return
+    local run
+    for run in inherit filter plain; do
+        [ -d "$MULTIRUN_SB/main/Utilized_$run" ] || fail_case \
+            "$run should have had its own working directory Utilized_$run"
+    done
+    assert_no_file "$MULTIRUN_SB/main/Utilized/VCF/Test.vcf" \
+        "no run should have written to an unsuffixed Utilized/"
+
+    local left
+    left=$(find "$MULTIRUN_SB/main" -maxdepth 1 -name 'Utilized*' -exec find {} -type f \; | wc -l)
+    assert_count 0 "$left" "every artifact should have been promoted out of the working volume"
+}

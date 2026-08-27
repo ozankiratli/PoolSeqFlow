@@ -1,16 +1,33 @@
+// The (run, sample) read channel.
+//
+// Takes the run LIST rather than a channel because channel.fromFilePairs is a factory: it
+// globs the filesystem while the DAG is being built and fixes N there, so it has to be handed
+// a concrete run. Reproducing its sample-id derivation by hand is exactly what step 0's
+// CheckRGTagsFile must agree with, and having two implementations of that rule is how they
+// come to disagree - so the factory is called once per run instead.
+def readPairChannel(List runDefs) {
+    def per = runDefs.collect { run ->
+        channel.fromFilePairs("${run.reads}", checkIfExists: true)
+            .map { id, files -> tuple(run, id, files[0], files[1]) }
+    }
+    return per.size() == 1 ? per[0] : per.inject { a, b -> a.mix(b) }
+}
+
 process TrimReads {
-    tag { pair_id }
-    cpus { params.cores.trimTotal }
+    tag { run.runId ? "${run.runId}:${pair_id}" : pair_id }
+    cpus { run.cores.trimTotal }
 
     input:
-    tuple val(pair_id), path(read1), path(read2)
-    file verify
+    // `verify` is step 0's completion for THIS run and nothing more - the script body never
+    // names it. `val`, not `file`: it was staged and never read, and under multiRun every run
+    // publishes a report of the same name.
+    tuple val(run), val(pair_id), path(read1), path(read2), val(verify)
 
     output:
-    tuple val(pair_id),
+    tuple val(run), val(pair_id),
         path("*_val_1.fq.gz"),
         path("*_val_2.fq.gz"), emit: trimmed_fastqs
-    tuple val(pair_id),
+    tuple val(run), val(pair_id),
         path("*_val_1_fastqc.zip"),
         path("*_val_2_fastqc.zip"), emit: fastqc_files
 
@@ -19,21 +36,21 @@ process TrimReads {
     // are working data and stay on the working volume until alignment has finished with
     // them. Utilized/ and Output/ take the same relative path, which is what lets the skip
     // checks below ask find_artifact.sh which volume actually holds a file.
-    rel_trimmed = "${params.dir.subpath.trimmed}/${pair_id}"
-    target_folder_trimmed = "${params.dir.utilized}/${rel_trimmed}"
+    rel_trimmed = "${run.dir.subpath.trimmed}/${pair_id}"
+    target_folder_trimmed = "${run.dir.utilized}/${rel_trimmed}"
     // The FastQC zips are read again too - ClipReads unzips them to work out the clipping
     // bounds - so they are working data by the same rule, small though they are. They are
     // promoted when ClipReads succeeds, which is a different gate from the reads above and
     // therefore a separate attachment point. The htmls that FastQC writes beside them have
     // no consumer at all, so those go straight to permanent storage and the two are split
     // across the roots here rather than moved together.
-    rel_fastqc = "${params.dir.subpath.report.fastqc}/${pair_id}"
-    target_folder_fastqc_work = "${params.dir.utilized}/${rel_fastqc}"
+    rel_fastqc = "${run.dir.subpath.report.fastqc}/${pair_id}"
+    target_folder_fastqc_work = "${run.dir.utilized}/${rel_fastqc}"
     // The rest is never read again - unpaired reads, the trim reports, the FastQC htmls -
     // so it goes straight to permanent storage and never enters Utilized.
-    target_folder_unpaired = "${params.dir.output.unpaired}/${pair_id}"
-    target_folder_fastqc = "${params.dir.output.report.fastqc}/${pair_id}"
-    target_folder_report_trim = "${params.dir.output.report.trim}/${pair_id}"
+    target_folder_unpaired = "${run.dir.output.unpaired}/${pair_id}"
+    target_folder_fastqc = "${run.dir.output.report.fastqc}/${pair_id}"
+    target_folder_report_trim = "${run.dir.output.report.trim}/${pair_id}"
 
     clipped1 = "${pair_id}_R1_clipped.fq.gz"
     clipped2 = "${pair_id}_R2_clipped.fq.gz"
@@ -48,7 +65,7 @@ process TrimReads {
     target_file_fastqc1 = "${target_folder_fastqc_work}/${fastqc1}"
     target_file_fastqc2 = "${target_folder_fastqc_work}/${fastqc2}"
 
-    dir_log = "${params.dir.logs}/2_trim_reads/s1_TrimReads/${pair_id}"
+    dir_log = "${run.dir.logs}/2_trim_reads/s1_TrimReads/${pair_id}"
 
     // `cpus` reserves Trim Galore's full footprint, because --cores N actually runs N+4
     // threads (N workers + 2 decompressors + 1 batcher + 1 writer). Map back to the
@@ -66,10 +83,10 @@ process TrimReads {
     #
     # An absent artifact is find_artifact.sh's ordinary answer, not an error, so its exit
     # status is discarded here and emptiness is what the branch tests.
-    clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
-    clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
-    fastqc1_at=\$(find_artifact.sh "${rel_fastqc}/${fastqc1}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
-    fastqc2_at=\$(find_artifact.sh "${rel_fastqc}/${fastqc2}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
+    clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
+    clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
+    fastqc1_at=\$(find_artifact.sh "${rel_fastqc}/${fastqc1}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
+    fastqc2_at=\$(find_artifact.sh "${rel_fastqc}/${fastqc2}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
 
     echo "TRIMMING READS ${pair_id}: Trimming the reads..."
     if [ -n "\$clipped1_at" ] && [ -n "\$clipped2_at" ]; then
@@ -96,7 +113,7 @@ process TrimReads {
         echo "TRIMMING READS ${pair_id}: COMPLETED"
     else
         echo "TRIMMING READS ${pair_id}: Trimming paired reads..."
-        ${params.software.trim_galore} ${params.trim_galore.options} \\
+        ${run.software.trim_galore} ${run.trim_galore.options} \\
             --cores ${trim_cores} --fastqc_args "-t ${task.cpus}" \\
             --basename ${pair_id} ${read1} ${read2}
 
@@ -143,51 +160,51 @@ process TrimReads {
 }
 
 process ClipReads {
-    tag { pair_id }
-    cpus { params.cores.cutadapt }
+    tag { run.runId ? "${run.runId}:${pair_id}" : pair_id }
+    cpus { run.cores.cutadapt }
     errorStrategy 'retry'
     maxRetries 3
 
     input:
-    tuple val(pair_id), path(trimmed_read1), path(trimmed_read2), path(zip1), path(zip2)
+    tuple val(run), val(pair_id), path(trimmed_read1), path(trimmed_read2), path(zip1), path(zip2)
 
     output:
-    tuple val(pair_id),
+    tuple val(run), val(pair_id),
         path("*_R1_clipped.fq.gz"),
         path("*_R2_clipped.fq.gz"), emit: clipped_fastqs
 
     script:
     // Step 3 reads these, so they stay on the working volume and are promoted once
     // alignment has succeeded for this sample. See TrimReads above.
-    rel_trimmed = "${params.dir.subpath.trimmed}/${pair_id}"
-    target_folder_trimmed = "${params.dir.utilized}/${rel_trimmed}"
+    rel_trimmed = "${run.dir.subpath.trimmed}/${pair_id}"
+    target_folder_trimmed = "${run.dir.utilized}/${rel_trimmed}"
     // The clipped FastQC zips and htmls this process produces have no consumer, so they go
     // straight to permanent storage. The *_val_* zips it CONSUMES are the other case: they
     // are on the working volume, staged in above, and promoted into this same directory
     // once this process succeeds.
-    target_folder_fastqc = "${params.dir.output.report.fastqc}/${pair_id}"
+    target_folder_fastqc = "${run.dir.output.report.fastqc}/${pair_id}"
 
     clipped1 = "${pair_id}_R1_clipped.fq.gz"
     clipped2 = "${pair_id}_R2_clipped.fq.gz"
     target_file_clipped1 = "${target_folder_trimmed}/${clipped1}"
     target_file_clipped2 = "${target_folder_trimmed}/${clipped2}"
 
-    at_gc_upper_limit = 1 + params.cutadapt.at_gc_error
-    at_gc_lower_limit = 1 - params.cutadapt.at_gc_error
+    at_gc_upper_limit = 1 + run.cutadapt.at_gc_error
+    at_gc_lower_limit = 1 - run.cutadapt.at_gc_error
 
-    dir_log = "${params.dir.logs}/2_trim_reads/${pair_id}"
+    dir_log = "${run.dir.logs}/2_trim_reads/${pair_id}"
 
     """
     set -eo pipefail
 
     # FastQC is a JVM program; give it the cores this task reserved.
-    export _JAVA_OPTIONS="${params.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
+    export _JAVA_OPTIONS="${run.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
 
     # Either volume, for the same reason as TrimReads: promotion may already have moved
     # these to permanent storage. The link goes to wherever they actually are, not to
     # where this process would have written them.
-    clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
-    clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" "${params.dir.outputs}" "${params.dir.utilized}" || true)
+    clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
+    clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
 
     echo "CLIPPING READS ${pair_id}: Clipping the reads..."
     if [ -n "\$clipped1_at" ] && [ -n "\$clipped2_at" ]; then
@@ -199,8 +216,8 @@ process ClipReads {
         echo "CLIPPING READS ${pair_id}: COMPLETED"
     else
         echo "CLIPPING READS ${pair_id}: Extracting FastQC data" 
-        ${params.software.unzip} -o ${zip1}
-        ${params.software.unzip} -o ${zip2}
+        ${run.software.unzip} -o ${zip1}
+        ${run.software.unzip} -o ${zip2}
 
         fqcDir1=\$(echo ${zip1} | sed 's/.zip//')
         fqcDir2=\$(echo ${zip2} | sed 's/.zip//')
@@ -250,7 +267,7 @@ process ClipReads {
 
         clip_range_failed() {
             echo "CLIPPING READS ${pair_id}: ERROR: no usable clip range in \$1" >&2
-            echo "CLIPPING READS ${pair_id}: exit 3 = unexpected FastQC header; 4 = no cycle within at_gc_error (${params.cutadapt.at_gc_error})" >&2
+            echo "CLIPPING READS ${pair_id}: exit 3 = unexpected FastQC header; 4 = no cycle within at_gc_error (${run.cutadapt.at_gc_error})" >&2
             exit 1
         }
 
@@ -294,7 +311,7 @@ process ClipReads {
         # params.cutadapt.min_length, because that options line is user-edited and may carry
         # a literal instead. No -m at all - the default - means nothing to check.
         clip_min_length() {
-            set -- ${params.cutadapt.options}
+            set -- ${run.cutadapt.options}
             while [ \$# -gt 0 ]; do
                 case "\$1" in
                     -m|--minimum-length) printf '%s' "\${2-}"; return 0 ;;
@@ -339,11 +356,11 @@ process ClipReads {
         fi
 
         echo "CLIPPING READS ${pair_id}: Clipping reads..."
-        ${params.software.cutadapt} ${params.cutadapt.options} --cores ${task.cpus} -u \$Clip5 -U \$Clip5 -l \$readLengthLimit \
+        ${run.software.cutadapt} ${run.cutadapt.options} --cores ${task.cpus} -u \$Clip5 -U \$Clip5 -l \$readLengthLimit \
             -o ${pair_id}_R1_clipped.fq.gz -p ${pair_id}_R2_clipped.fq.gz ${trimmed_read1} ${trimmed_read2}
 
         echo "CLIPPING READS ${pair_id}: QC on clipped reads..." 
-        ${params.software.fastqc} ${params.fastqc.options} -t ${task.cpus} ${pair_id}_R1_clipped.fq.gz ${pair_id}_R2_clipped.fq.gz
+        ${run.software.fastqc} ${run.fastqc.options} -t ${task.cpus} ${pair_id}_R1_clipped.fq.gz ${pair_id}_R2_clipped.fq.gz
 
         echo "CLIPPING READS ${pair_id}: Cleaning up..." 
         rm -r \$fqcDir1 \$fqcDir2
@@ -378,14 +395,20 @@ process ClipReads {
 
 workflow TrimQcClip{
     take:
-    verify
+    reads     // [run, pair_id, read1, read2], from readPairChannel()
+    verify    // [run, step 0 completion for that run]
 
     main:
-    rawFiles = channel.fromFilePairs("${params.reads}", checkIfExists: true)
-        .map { id, files -> tuple(id, files[0], files[1]) }
+    // combine, not join, and by the run rather than positionally. Step 0 emits ONE report
+    // per run against N samples, so this is the broadcast a value channel used to do
+    // implicitly - written out, because with N runs in flight there is no longer a single
+    // value to broadcast.
+    TrimReads(reads.combine(verify, by: 0))
 
-    TrimReads(rawFiles,verify)
-    trimmed_and_qc = TrimReads.out.trimmed_fastqs.join(TrimReads.out.fastqc_files)
+    // by: [0,1] - the run AND the sample. Joining on the sample alone would pair one run's
+    // reads with another run's zips whenever both trim a sample of the same name, which is
+    // the ordinary case: multi-run's whole point is the same data under different settings.
+    trimmed_and_qc = TrimReads.out.trimmed_fastqs.join(TrimReads.out.fastqc_files, by: [0, 1])
     ClipReads(trimmed_and_qc)
 
     emit:

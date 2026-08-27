@@ -18,20 +18,29 @@ def flattenParams(Map m, String prefix, Map out) {
 // This is an exclusion list on purpose: a parameter added in a later release is treated
 // as analysis-affecting until someone decides otherwise, which fails safe. Add new path
 // or resource parameters here.
-def analysisParams() {
+//
+// Takes the run's own effective parameters rather than reading the global `params`. Called
+// once per run, it would otherwise write N identical manifests describing the base config -
+// so every run would record settings it did not use, and the guard would never fire.
+def analysisParams(Map p) {
     // dataSource is deliberately NOT excluded. It names the subdirectory the reads are read
     // from, so two different datasets under one storageDir are two different analyses - and
     // while it was excluded, both passed this check and the second run reused the first
     // dataset's trimmed reads, because step 2 keys its skip test on the sample id alone.
     // Nothing recorded which data produced a set of outputs.
+    //
+    // runId is excluded for the same reason mainDir and storageDir are: it names where the
+    // results go, not what they are. It is also the one key here that does not exist in
+    // parameters.config at all, so leaving it in would add a line to every manifest and fail
+    // the change check on every project that upgrades into 3.0.
     def skipKey = [
-        'mainDir', 'storageDir',
+        'mainDir', 'storageDir', 'runId',
         'referencePath', 'gffPath', 'rgTagsPath', 'multiRunPath', 'referenceFa', 'reference', 'gff', 'reads',
         'threads', 'memory'
     ] as Set
     def skipPrefix = ['dir.', 'cores.', 'java.', 'software.']
-    return flattenParams(params, '', [:])
-        .findAll { k, _v -> !skipKey.contains(k) && !skipPrefix.any { p -> k.startsWith(p) } }
+    return flattenParams(p, '', [:])
+        .findAll { k, _v -> !skipKey.contains(k) && !skipPrefix.any { prefix -> k.startsWith(prefix) } }
         .collect { k, v -> "${k}=${v}" }
         .sort()
         .join('\n')
@@ -57,12 +66,17 @@ def findNameExpr(String pattern) {
 }
 
 process CheckReference {
+    tag { run.runId ?: '-' }
+
+    input:
+    val run
+
     output:
-    path 'verify_environment_stage1.txt', emit: report
+    tuple val(run), path('verify_environment_stage1.txt'), emit: report
 
     script:
-    refIn = params.referencePath
-    dir_log = "${params.dir.logs}/0_verify_environment/s1_CheckReference"
+    refIn = run.referencePath
+    dir_log = "${run.dir.logs}/0_verify_environment/s1_CheckReference"
     """
     REFFILE=${refIn}
     REPORTFILE="verify_environment.txt"
@@ -93,12 +107,17 @@ process CheckReference {
 }
 
 process CheckGFF {
+    tag { run.runId ?: '-' }
+
+    input:
+    val run
+
     output:
-    path 'verify_environment_stage2.txt', emit: report
+    tuple val(run), path('verify_environment_stage2.txt'), emit: report
 
     script:
-    gffIn = params.gffPath
-    dir_log = "${params.dir.logs}/0_verify_environment/s2_CheckGFF"
+    gffIn = run.gffPath
+    dir_log = "${run.dir.logs}/0_verify_environment/s2_CheckGFF"
 
     """
     GFFFILE=${gffIn}
@@ -130,11 +149,16 @@ process CheckGFF {
 }
 
 process SkipGFFCheck {
+    tag { run.runId ?: '-' }
+
+    input:
+    val run
+
     output:
-    path 'verify_environment_stage2.txt', emit: report
+    tuple val(run), path('verify_environment_stage2.txt'), emit: report
 
     script:
-    dir_log = "${params.dir.logs}/0_verify_environment/s2_CheckGFF"
+    dir_log = "${run.dir.logs}/0_verify_environment/s2_CheckGFF"
     """
     REPORTFILE="verify_environment.txt"
     log_message() {
@@ -154,13 +178,18 @@ process SkipGFFCheck {
 }
 
 process CheckData {
+    tag { run.runId ?: '-' }
+
+    input:
+    val run
+
     output:
-    path 'verify_environment_stage3.txt', emit: report
+    tuple val(run), path('verify_environment_stage3.txt'), emit: report
 
     script:
-    dataDir = params.dir.data
-    dir_log = "${params.dir.logs}/0_verify_environment/s3_CheckData"
-    read_pattern = findNameExpr(params.readPattern)
+    dataDir = run.dir.data
+    dir_log = "${run.dir.logs}/0_verify_environment/s3_CheckData"
+    read_pattern = findNameExpr("${run.readPattern}")
 
     """
     DATADIR=${dataDir}
@@ -181,13 +210,13 @@ process CheckData {
         log_message "Data directory is found at: \$DATADIR"
         log_message "DATA FOLDER CHECK:     PASS"
 
-        log_message "The data source is set to: ${params.dataSource}"
+        log_message "The data source is set to: ${run.dataSource}"
 
         # Check for FASTQ files
         FASTQ_COUNT=\$(find \$DATADIR ${read_pattern} | wc -l)
         if [ \$FASTQ_COUNT -eq 0 ]; then
             log_message "No FASTQ files found in data directory!"
-            log_message "Expected pattern: ${params.readPattern}"
+            log_message "Expected pattern: ${run.readPattern}"
             log_message "DATA FILES CHECK:      FAIL"
             STATUS="FAIL"
         else
@@ -215,27 +244,105 @@ process CheckData {
     """
 }
 
-process CheckRGTagsFile {
+// Repair Windows line endings in the RGTags file - the one thing step 0 CHANGES rather than
+// checks, and therefore the one thing that cannot be done once per run.
+//
+// A file saved from Excel on Windows ends every line with CR, which rides along into the last
+// field of each row: the header check in CheckRGTagsFile rejects 'PU\r' as an invalid tag,
+// and were it to get past that, the CR would end up inside the RG tag written into the BAM.
+// Neither failure names the real cause, so it is fixed here and said out loud.
+//
+// KEYED ON THE PATH, NOT THE RUN. rgTagsFile is a parameter like any other, so a multi-run
+// table may point two runs at two different tables - or, far more usually, at the same one.
+// N runs repairing one file at the same time is a race on a user's own data, and the write is
+// `cat tmp > file` rather than an atomic rename, so a loser leaves it truncated. One task per
+// distinct path is both correct cases at once: shared file, one repair; separate files, one
+// each.
+//
+// It reports rather than fixing silently, and its report is folded into stage 4 below so the
+// output reads exactly as it did when the repair lived there.
+process RepairRGTagsLineEndings {
+    tag { rgTagsPath }
+
     input:
-    val verify
+    val rgTagsPath
 
     output:
-    path 'verify_environment_stage4.txt', emit: report
+    tuple val(rgTagsPath), path('rgtags_lineendings.txt'), emit: report
 
     script:
-    rgTagsFile = params.rgTagsPath
-    dataDir = params.dir.data
-    readPattern = findNameExpr(params.readPattern)
+    dir_log = "${params.dir.logs}/0_verify_environment/s4_RepairRGTagsLineEndings"
+    """
+    REPORTFILE="rgtags_lineendings.txt"
+    : > \$REPORTFILE
+
+    log_message() {
+        echo "\$1" >> \$REPORTFILE
+        echo "\$1"
+    }
+
+    # A missing or unreadable file is stage 4's business, not this one's: it has the message
+    # for it, and reporting the same thing twice would put it in the report twice.
+    if [ ! -f "${rgTagsPath}" ]; then
+        exit 0
+    fi
+
+    # Detection and repair use the same expression, so a file that is reported as fixed really
+    # is fixed - a mismatch between the two would report it on every run.
+    if ! sed 's/\\r\$//' ${rgTagsPath} | cmp -s - ${rgTagsPath}; then
+        # Rewrite the file's contents rather than replacing the file. 'sed -i' swaps in a new
+        # inode and does not carry the mode across - it turned a 444 file into a 644 one in
+        # testing, quietly making a deliberately read-only RGTags file writable. Redirecting
+        # into the existing path keeps mode and ownership, and fails honestly when the file
+        # really is not writable.
+        if sed 's/\\r\$//' ${rgTagsPath} > rgtags_norm.tmp && [ -s rgtags_norm.tmp ] &&
+           cat rgtags_norm.tmp > ${rgTagsPath} 2>/dev/null; then
+            log_message "RGTags file had Windows (CRLF) line endings - repaired in place"
+            log_message "RGTAGS LINE ENDING CHECK: FIXED"
+        else
+            log_message "RGTags file has Windows (CRLF) line endings and could not be rewritten"
+            log_message "Convert it yourself with:"
+            log_message "    sed -i 's/\\\\r\$//' ${rgTagsPath}"
+            log_message "RGTAGS LINE ENDING CHECK: FAIL"
+        fi
+    else
+        log_message "RGTAGS LINE ENDING CHECK: PASS"
+    fi
+
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/0_VerifyEnvironment_s4_RepairRGTagsLineEndings_nextflow.log
+    """
+}
+
+process CheckRGTagsFile {
+    tag { run.runId ?: '-' }
+
+    input:
+    // `lineendings` is RepairRGTagsLineEndings' report for THIS run's table, matched on the
+    // path rather than on arrival - one repair task may serve several runs.
+    tuple val(run), val(verify), val(lineendings)
+
+    output:
+    tuple val(run), path('verify_environment_stage4.txt'), emit: report
+
+    script:
+    rgTagsFile = run.rgTagsPath
+    dataDir = run.dir.data
+    readPattern = findNameExpr(run.readPattern)
     // A sample ID is the part of a FASTQ name that precedes the mate token. Take that
     // token from readPattern rather than assuming _R1/_R2: step 2 keys every sample off
     // Channel.fromFilePairs, which derives the prefix from the glob and accepts any
     // {1,2} scheme, so this check has to agree with it or it rejects valid layouts.
-    mateBrace = params.readPattern.indexOf('{')
-    mateClose = params.readPattern.indexOf('}')
+    mateBrace = run.readPattern.indexOf('{')
+    mateClose = run.readPattern.indexOf('}')
     hasMateGroup = mateBrace >= 0 && mateClose > mateBrace
-    matePrefix = hasMateGroup ? params.readPattern.substring(0, mateBrace).replaceAll(/^.*\*/, '') : ''
-    mateTail = hasMateGroup ? params.readPattern.substring(mateClose + 1) : ''
-    mateAlts = hasMateGroup ? params.readPattern.substring(mateBrace + 1, mateClose).split(',').collect { alt -> alt.trim() } : []
+    matePrefix = hasMateGroup ? run.readPattern.substring(0, mateBrace).replaceAll(/^.*\*/, '') : ''
+    mateTail = hasMateGroup ? run.readPattern.substring(mateClose + 1) : ''
+    mateAlts = hasMateGroup ? run.readPattern.substring(mateBrace + 1, mateClose).split(',').collect { alt -> alt.trim() } : []
 
     // The mate token must be separated from the sample name. Without a separator the
     // split is guesswork: Sample11/Sample12 are equally readable as one sample's two
@@ -248,7 +355,7 @@ process CheckRGTagsFile {
     // Strip the exact text the pattern says follows the sample name, one alternative at
     // a time. Literal, so it holds for non-numeric mates (_F/_R) too.
     stripMate = mateAlts.collect { alt -> 'base="${base%' + matePrefix + alt + mateTail + '}"' }.join('; ')
-    storedRg = "${params.storageDir}/.poolseqflow_rgtags"
+    storedRg = "${run.storageDir}/.poolseqflow_rgtags"
     // Both roots for the two that are promoted. This is not cosmetic: the branch below
     // treats "no BAMs and no VCF" as "nothing has consumed RGTags.csv yet" and RECORDS A
     // NEW BASELINE. Looking only at permanent storage would therefore, for a project whose
@@ -256,16 +363,16 @@ process CheckRGTagsFile {
     // baseline for BAMs that carry the old tags - and no later run could detect it, because
     // the baseline now says they agree. Every other wrong existence answer in this pipeline
     // costs redundant work; this one costs the guard itself.
-    readyDirOut = "${params.dir.output.ready}"
-    readyDirWork = "${params.dir.utilized}/${params.dir.subpath.ready}"
-    vcfDirOut = "${params.dir.output.vcf}"
-    vcfDirWork = "${params.dir.utilized}/${params.dir.subpath.vcf}"
+    readyDirOut = "${run.dir.output.ready}"
+    readyDirWork = "${run.dir.utilized}/${run.dir.subpath.ready}"
+    vcfDirOut = "${run.dir.output.vcf}"
+    vcfDirWork = "${run.dir.utilized}/${run.dir.subpath.vcf}"
     // The frequency tables have no consumer, so they are never promoted and permanent
     // storage is the only place they can be.
-    readyDir = "${params.dir.output.ready}"
-    vcfDir = "${params.dir.output.vcf}"
-    freqDir = "${params.dir.output.freq}"
-    dir_log = "${params.dir.logs}/0_verify_environment/s4_CheckRGTagsFile"
+    readyDir = "${run.dir.output.ready}"
+    vcfDir = "${run.dir.output.vcf}"
+    freqDir = "${run.dir.output.freq}"
+    dir_log = "${run.dir.logs}/0_verify_environment/s4_CheckRGTagsFile"
 
     """
     REPORTFILE="verify_environment.txt"
@@ -295,33 +402,14 @@ process CheckRGTagsFile {
         log_message "RGTags file exists: ${rgTagsFile}"
         log_message "RGTAGS FILE CHECK:     PASS"
 
-        # Repair Windows line endings in place. A file saved from Excel on Windows ends
-        # every line with CR, which rides along into the last field of each row: the
-        # header check below rejects 'PU\\r' as an invalid tag, and were it to get past
-        # that, the CR would end up inside the RG tag written into the BAM. Neither
-        # failure names the real cause, so fix it here and say so.
-        #
-        # Detection and repair use the same expression, so a file that is reported as
-        # fixed really is fixed - a mismatch between the two would report it every run.
-        if ! sed 's/\\r\$//' ${rgTagsFile} | cmp -s - ${rgTagsFile}; then
-            # Rewrite the file's contents rather than replacing the file. 'sed -i' swaps
-            # in a new inode and does not carry the mode across - it turned a 444 file
-            # into a 644 one in testing, quietly making a deliberately read-only RGTags
-            # file writable. Redirecting into the existing path keeps mode and ownership,
-            # and fails honestly when the file really is not writable.
-            if sed 's/\\r\$//' ${rgTagsFile} > rgtags_norm.tmp && [ -s rgtags_norm.tmp ] &&
-               cat rgtags_norm.tmp > ${rgTagsFile} 2>/dev/null; then
-                log_message "RGTags file had Windows (CRLF) line endings - repaired in place"
-                log_message "RGTAGS LINE ENDING CHECK: FIXED"
-            else
-                log_message "RGTags file has Windows (CRLF) line endings and could not be rewritten"
-                log_message "Convert it yourself with:"
-                log_message "    sed -i 's/\\\\r\$//' ${rgTagsFile}"
-                log_message "RGTAGS LINE ENDING CHECK: FAIL"
-                STATUS="FAIL"
-            fi
-        else
-            log_message "RGTAGS LINE ENDING CHECK: PASS"
+        # The line-ending repair itself has been hoisted into RepairRGTagsLineEndings above,
+        # because it WRITES to a file that several runs share. What arrives here is its
+        # report, folded in at the point the messages used to be produced so that the stage
+        # reads exactly as it did before, and re-read for FAIL so that an unrepairable file
+        # still fails the stage that owns the RGTags verdict.
+        cat ${lineendings} | tee -a \$REPORTFILE
+        if grep -q "RGTAGS LINE ENDING CHECK: FAIL" ${lineendings}; then
+            STATUS="FAIL"
         fi
 
         # Get header and validate format
@@ -376,13 +464,13 @@ process CheckRGTagsFile {
             # Get sample IDs from data directory
             if [ "${hasMateGroup}" != "true" ]; then
                 sample_ids=""
-                log_message "readPattern '${params.readPattern}' has no {1,2} mate group, so sample IDs cannot be derived"
+                log_message "readPattern '${run.readPattern}' has no {1,2} mate group, so sample IDs cannot be derived"
                 log_message "Give both mates in one pattern, e.g. '*_R{1,2}.fq.gz'"
                 log_message "RGTAGS SAMPLE MATCH CHECK: FAIL"
                 STATUS="FAIL"
             elif [ "${mateSeparated}" != "true" ]; then
                 sample_ids=""
-                log_message "readPattern '${params.readPattern}' runs the mate token straight onto the sample name"
+                log_message "readPattern '${run.readPattern}' runs the mate token straight onto the sample name"
                 log_message "Sample IDs would be ambiguous: 'Sample11' and 'Sample12' read equally well as"
                 log_message "one sample's two mates or as two separate samples."
                 log_message "Separate the mate token with '_', '.' or '-', e.g. '*_R{1,2}.fq.gz' or '*_{1,2}.fq.gz'"
@@ -486,7 +574,7 @@ process CheckRGTagsFile {
             log_message "Cleaned BAMs exist but predate this check - no baseline to compare"
             log_message "Adopting the current RGTags file as the baseline"
             log_message "Verify it still matches what is in the BAMs:"
-            log_message "    ${params.software.samtools} view -H ${readyDir}/<sample>_ready.bam | grep '^@RG'"
+            log_message "    ${run.software.samtools} view -H ${readyDir}/<sample>_ready.bam | grep '^@RG'"
             log_message "RGTAGS CHANGE CHECK:   PASS"
         elif diff -q "${storedRg}" current_rgtags.csv > /dev/null 2>&1; then
             log_message "RGTags file unchanged since the existing outputs were produced"
@@ -551,12 +639,22 @@ process CheckRGTagsFile {
     """
 }
 
+// ONCE, not once per run: what is on PATH is a property of the machine, and asking N times
+// would give N identical answers at the cost of N tasks.
+//
+// It is handed the union of every run's software settings rather than reading params.software
+// itself. A multi-run table may name a different binary for one run - any parameter may be
+// varied, that is settled - and a check that only ever looked at the base config would pass
+// while that run's tool was missing, which is exactly the class of failure step 0 exists to
+// catch before any compute is spent.
 process CheckInstalledSoftware {
+    input:
+    val software_list
+
     output:
     path 'verify_environment_stage5.txt', emit: report
 
     script:
-    software_list = params.software.values().join(' ')
     dir_log = "${params.dir.logs}/0_verify_environment/s5_CheckInstalledSoftware"
     """
     REPORTFILE="verify_environment.txt"
@@ -598,14 +696,19 @@ process CheckInstalledSoftware {
 }
 
 process CheckTrimParameters {
+    tag { run.runId ?: '-' }
+
+    input:
+    val run
+
     output:
-    path 'verify_environment_stage6.txt', emit: report
+    tuple val(run), path('verify_environment_stage6.txt'), emit: report
 
     script:
-    autodetect = params.trim_galore.autodetect
-    adapter1   = params.trim_galore.adapter1
-    adapter2   = params.trim_galore.adapter2
-    dir_log = "${params.dir.logs}/0_verify_environment/s6_CheckTrimParameters"
+    autodetect = run.trim_galore.autodetect
+    adapter1   = run.trim_galore.adapter1
+    adapter2   = run.trim_galore.adapter2
+    dir_log = "${run.dir.logs}/0_verify_environment/s6_CheckTrimParameters"
     """
     REPORTFILE="verify_environment.txt"
 
@@ -680,11 +783,16 @@ process CheckTrimParameters {
 // no two computed directories in the `dir` block resolve alike, and that belongs where the
 // block is built, not here.
 process CheckDirectories {
+    tag { run.runId ?: '-' }
+
+    input:
+    val run
+
     output:
-    path 'verify_environment_stage8.txt', emit: report
+    tuple val(run), path('verify_environment_stage8.txt'), emit: report
 
     script:
-    dir_log = "${params.dir.logs}/0_verify_environment/s8_CheckDirectories"
+    dir_log = "${run.dir.logs}/0_verify_environment/s8_CheckDirectories"
     """
     REPORTFILE="verify_environment.txt"
 
@@ -697,8 +805,8 @@ process CheckDirectories {
 
     # -m resolves symlinks, '..' and trailing slashes without requiring the directory to
     # exist yet; mainDir need not be there before the first run creates work/ under it.
-    MAIN=\$(realpath -m "${params.mainDir}")
-    STORE=\$(realpath -m "${params.storageDir}")
+    MAIN=\$(realpath -m "${run.mainDir}")
+    STORE=\$(realpath -m "${run.storageDir}")
     INSTALL=\$(realpath -m "${workflow.projectDir}")
     LAUNCH=\$(realpath -m "${workflow.launchDir}")
 
@@ -780,16 +888,21 @@ process CheckDirectories {
 }
 
 process CheckRunParameters {
+    tag { run.runId ?: '-' }
+
+    input:
+    val run
+
     output:
-    path 'verify_environment_stage7.txt', emit: report
+    tuple val(run), path('verify_environment_stage7.txt'), emit: report
 
     script:
-    manifest    = analysisParams()
-    stored      = "${params.storageDir}/.poolseqflow_params"
-    readable    = "${params.dir.outputs}/run_parameters.txt"
-    versions    = "${params.storageDir}/.poolseqflow_versions"
+    manifest    = analysisParams(run)
+    stored      = "${run.storageDir}/.poolseqflow_params"
+    readable    = "${run.dir.outputs}/run_parameters.txt"
+    versions    = "${run.storageDir}/.poolseqflow_versions"
     release     = workflow.manifest.version ?: 'unknown'
-    dir_log     = "${params.dir.logs}/0_verify_environment/s7_CheckRunParameters"
+    dir_log     = "${run.dir.logs}/0_verify_environment/s7_CheckRunParameters"
     """
     REPORTFILE="verify_environment.txt"
 
@@ -810,7 +923,7 @@ CURRENT_PARAMS
         mkdir -p "\$(dirname "${stored}")"
         cp current_params.txt "${stored}"
     elif diff -q "${stored}" current_params.txt > /dev/null 2>&1; then
-        log_message "RUN PARAMETERS:        Unchanged since the outputs in ${params.dir.outputs} were produced"
+        log_message "RUN PARAMETERS:        Unchanged since the outputs in ${run.dir.outputs} were produced"
     else
         # Three things can happen to a manifest and they do not mean the same thing:
         #
@@ -954,7 +1067,7 @@ CURRENT_PARAMS
         mkdir -p "\$(dirname "${readable}")"
         rm -f "${readable}"
         {
-            echo "# PoolSeqFlow analysis parameters for the outputs in ${params.dir.outputs}"
+            echo "# PoolSeqFlow analysis parameters for the outputs in ${run.dir.outputs}"
             echo "# Generated \$(date -u '+%Y-%m-%d %H:%M:%S UTC') - read-only; edit parameters.config instead."
             echo "#"
             echo "# Pipeline version(s) that have run in this project, oldest first."
@@ -991,6 +1104,14 @@ CURRENT_PARAMS
 //
 // What this stage adds on top is the part that needs to know the parameters: which columns
 // name a value the pipeline would otherwise compute for itself.
+//
+// FROM E1u ONWARDS THIS IS NOT THE FIRST GATE. The runs have to exist before the DAG can be
+// built, so resolve_parameters.nf parses and validates the table earlier still, and an
+// unusable one stops the invocation before any task is submitted - including this one. What
+// is left here is the part that is worth having in the durable record rather than only on a
+// terminal: what the table expanded to, and what it detached from its derivation. The FAIL
+// branches below are kept as a backstop and because this stage can be run on its own; in the
+// ordinary entry point they are not reached.
 process CheckMultiRun {
     output:
     path 'verify_environment_stage9.txt', emit: report
@@ -1100,24 +1221,29 @@ PYEOF
 
 process VerifyAll {
     errorStrategy 'finish'
+    tag { run.runId ?: '-' }
 
     input:
-    val reference_log
-    val gffFile_log
-    val dataSource_log
-    val rgtags_log
+    // ONE TUPLE, JOINED ON THE RUN. These used to be nine separate `val` inputs, which
+    // Nextflow matches POSITIONALLY - item k of each channel is paired with item k of the
+    // others. That was safe while every stage emitted exactly one report, and becomes a
+    // silent mismatch the moment there are N: nothing would make run B's reference check line
+    // up with run B's trim check, and the report would describe a run that never existed.
+    //
+    // The two global stages stay separate on purpose. They ride value channels, which
+    // broadcast to every task of this process, which is the behaviour that is wanted for a
+    // check that ran once for the whole invocation.
+    tuple val(run), val(reference_log), val(gffFile_log), val(dataSource_log),
+          val(rgtags_log), val(trim_log), val(runparam_log), val(directory_log)
     val software_log
-    val trim_log
-    val runparam_log
-    val directory_log
     val multirun_log
 
     output:
-    path '0_verify_environment.txt'
+    tuple val(run), path('0_verify_environment.txt')
 
     script:
-    output_folder = "${params.dir.output.reports}"
-    dir_log = "${params.dir.logs}/0_verify_environment"
+    output_folder = "${run.dir.output.reports}"
+    dir_log = "${run.dir.logs}/0_verify_environment"
     """
     REPORTFILE="0_verify_environment.txt"
     
@@ -1176,25 +1302,56 @@ process VerifyAll {
 }
 
 workflow VerifyEnvironment {
+    take:
+    runs
+
     main:
-    CheckReference()
-    //CheckGFF()
-    if (params.annotate) {
-        CheckGFF()
-        gff_report = CheckGFF.out.report
-    } else {
-        SkipGFFCheck()
-        gff_report = SkipGFFCheck.out.report
-    }
-    //gff_report = params.annotate ? CheckGFF.out.report : SkipGFFCheck.out.report
-    CheckData()
-    CheckRGTagsFile(CheckData.out.report)
-    CheckInstalledSoftware()
-    CheckTrimParameters()
-    CheckRunParameters()
-    CheckDirectories()
+    CheckReference(runs)
+    // `annotate` is a per-run parameter, so which runs need a GFF is decided by filtering the
+    // runs rather than by an `if` over the base config. Under multiRun one run may annotate
+    // while another does not; the `if` this replaces could only answer for all of them.
+    CheckGFF(runs.filter { run -> run.annotate })
+    SkipGFFCheck(runs.filter { run -> !run.annotate })
+    gff_report = CheckGFF.out.report.mix(SkipGFFCheck.out.report)
+
+    CheckData(runs)
+
+    // Every distinct RGTags table, repaired once. `unique` on the PATH, not on the run: the
+    // usual case is N runs sharing one table, and repairing it N times concurrently is a race
+    // on the user's own file.
+    RepairRGTagsLineEndings(runs.map { run -> "${run.rgTagsPath}" }.unique())
+    CheckRGTagsFile(
+        CheckData.out.report
+            .map { run, report -> tuple("${run.rgTagsPath}", run, report) }
+            .combine(RepairRGTagsLineEndings.out.report, by: 0)
+            .map { _path, run, report, lineendings -> tuple(run, report, lineendings) })
+
+    CheckTrimParameters(runs)
+    CheckRunParameters(runs)
+    CheckDirectories(runs)
+
+    // The two stages that describe the invocation rather than a run. Both emit value
+    // channels, which is what lets one report reach every run's VerifyAll.
+    //
+    // collect(flat: false) keeps each run's list whole, so flatten() concatenates them in run
+    // order and unique() then keeps the first appearance of each - which for a single run is
+    // exactly params.software.values() in the order the config wrote them.
+    CheckInstalledSoftware(
+        runs.map { run -> run.software.values().collect { tool -> "${tool}" } }
+            .collect(flat: false)
+            .map { lists -> lists.flatten().unique().join(' ') })
     CheckMultiRun()
-    VerifyAll(CheckReference.out.report, gff_report, CheckData.out.report, CheckRGTagsFile.out.report, CheckInstalledSoftware.out.report, CheckTrimParameters.out.report, CheckRunParameters.out.report, CheckDirectories.out.report, CheckMultiRun.out.report)
+
+    VerifyAll(
+        CheckReference.out.report
+            .join(gff_report, by: 0)
+            .join(CheckData.out.report, by: 0)
+            .join(CheckRGTagsFile.out.report, by: 0)
+            .join(CheckTrimParameters.out.report, by: 0)
+            .join(CheckRunParameters.out.report, by: 0)
+            .join(CheckDirectories.out.report, by: 0),
+        CheckInstalledSoftware.out.report,
+        CheckMultiRun.out.report)
 
     emit:
     VerifyAll.out
