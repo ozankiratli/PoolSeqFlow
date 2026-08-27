@@ -164,13 +164,18 @@ run_trim_only() {
 nextflow.enable.dsl=2
 
 include { runDefinitions; resolveParameters } from './scripts/resolve_parameters.nf'
+include { variantPlan } from './scripts/variants.nf'
 include { TrimQcClip; readPairChannel } from './scripts/2_trim_reads.nf'
 
 workflow {
     def runs = runDefinitions()
     resolveParameters()
-    TrimQcClip(readPairChannel(runs),
-               channel.fromList(runs).map { run -> tuple(run, 'step0') })
+    // The divergence analysis, exactly as poolseqflow.nf builds it. Step 2 takes VARIANTS,
+    // not runs, and a variant carries the roots its skip checks search - so an entry script
+    // that handed it bare run maps would be testing a shape the pipeline never produces.
+    def variants = variantPlan(runs).variants[2]
+    TrimQcClip(readPairChannel(variants),
+               channel.fromList(variants).map { variant -> tuple(variant, 'step0') })
 }
 ENTRY
     _run_entry "$sb" trim_only.nf
@@ -254,13 +259,16 @@ run_multirun_guards() {
 nextflow.enable.dsl=2
 
 include { runDefinitions; resolveParameters; deepCopy } from './scripts/resolve_parameters.nf'
+include { variantPlan } from './scripts/variants.nf'
 include { dictionaryRuns } from './scripts/1_build_dictionaries.nf'
 include { VariantCalling } from './scripts/6_variant_call.nf'
 
 workflow {
     def runs = runDefinitions()
     resolveParameters()
-    def base = runs[0]
+    // The step-6 variant rather than the run: calling takes variants now, and the cohort guard
+    // is what this exercises. It fires while the DAG is still being built, so no task runs.
+    def base = variantPlan(runs).variants[6][0]
 
     // Two runs that agree share one build rather than racing for it.
     def c = deepCopy(base); c.runId = 'c'
@@ -279,6 +287,38 @@ ENTRY
     _run_entry "$sb" multirun_guards.nf
 }
 
+# The terminal run-completeness assertion, against a channel that is deliberately one variant
+# short - which is what a fan-back join used to leave behind when it dropped a key.
+#
+# The same operators and the same function the entry point uses, so what is exercised is the
+# real guard rather than a restatement of it. Only the source of the channel differs: here one
+# variant is removed on purpose, where the pipeline expands into all of them.
+#
+# The caller expects a non-zero status: the guard has to FAIL the run, not merely print.
+run_completeness_guard() {
+    local sb="$1"
+    cat > "$sb/install/completeness_guard.nf" <<'ENTRY'
+nextflow.enable.dsl=2
+
+include { runDefinitions; resolveParameters } from './scripts/resolve_parameters.nf'
+include { variantPlan; runToken; assertEveryRunProduced } from './scripts/variants.nf'
+
+workflow {
+    def runs = runDefinitions()
+    resolveParameters()
+    def variants = variantPlan(runs).variants[7]
+
+    channel.fromList(variants.tail())
+        .flatMap { variant -> variant.members.collect { member -> runToken(member) } }
+        .unique()
+        .collect()
+        .subscribe { produced ->
+            assertEveryRunProduced(runs.collect { run -> runToken(run.runId) }, produced) }
+}
+ENTRY
+    _run_entry "$sb" completeness_guard.nf
+}
+
 # Run step 0 by itself, for tests about the environment and parameter guards. Same
 # generate-rather-than-commit reasoning as run_dictionaries_only.
 run_verify_only() {
@@ -287,11 +327,16 @@ run_verify_only() {
 nextflow.enable.dsl=2
 
 include { runDefinitions; resolveParameters } from './scripts/resolve_parameters.nf'
+include { variantPlan; attachProbeRoots } from './scripts/variants.nf'
 include { VerifyEnvironment } from './scripts/0_verify_environment.nf'
 
 workflow {
     def runs = runDefinitions()
     resolveParameters()
+    // CheckRGTagsFile probes the working roots that hold the ready BAMs and the VCF, and which
+    // those are is a question only the divergence analysis can answer. Without this the guard
+    // sees nothing on disk and records a new baseline every time.
+    attachProbeRoots(variantPlan(runs), runs)
     VerifyEnvironment(channel.fromList(runs))
 }
 ENTRY

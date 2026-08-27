@@ -43,6 +43,12 @@
 // step 5 reports - are never "an output that becomes an input", so they are written straight
 // to storageDir and never enter Utilized. The rule reads the same backwards: something enters
 // Utilized exactly when it will be read again.
+//
+// STILL OPEN, and it becomes visible the moment sharing is switched on: those consumer-less
+// outputs are written by their own process to `run.dir.output.*`, which for a shared variant
+// is the LEAD member's storage and no one else's. They need the destination list this file
+// now carries for promoted artifacts. Nothing here can be tested while every variant has one
+// member, which is why it belongs to the stage that gives them more than one.
 
 nextflow.enable.dsl=2
 
@@ -121,14 +127,24 @@ def promotionRow(Map run, String stage, String key) {
 }
 
 // What a promotion task calls itself, in its tag and in every line of its log. One function
-// so the two cannot drift apart.
+// so the two cannot drift apart. Named for the runs the artifact belongs to rather than for
+// the variant's lead member, so a shared move says so; a single run has no id at all and
+// keeps the bare name it always had.
 def promotionLabel(Map run, String stage, String key) {
     def what = key ? "${stage} ${key}" : stage
-    return run.runId ? "${run.runId}:${what}" : "${what}"
+    def who = (run.members ?: [run.runId]).findAll { member -> member != null }.join('+')
+    return who ? "${who}:${what}" : "${what}"
 }
 
-// The move itself. One task per (run, stage, key); `key` is the sample a per-sample artifact
-// belongs to, and is empty for artifacts that belong to the run as a whole.
+// The move itself. One task per (producing variant, stage, key); `key` is the sample a
+// per-sample artifact belongs to, and is empty for artifacts that belong to the cohort.
+//
+// ONE TASK, NOT ONE PER MEMBER. The five attachment points hang off channels that carry
+// variants, so a shared artifact would otherwise get N promotion tasks over one set of files -
+// and that is where atomic_mv.sh's missing lock actually bites: two concurrent callers stage
+// through the same ${DEST}.part, and one's EXIT trap deletes the other's staged copy between
+// its two mv calls. So the destinations travel WITH the task instead: move to the first,
+// hardlink into the rest. One filesystem under one storageDir, so the bytes cost nothing.
 process PromoteArtifacts {
     tag { promotionLabel(run, stage, key) }
 
@@ -154,7 +170,15 @@ process PromoteArtifacts {
     log_file = "${dir_log}/9_Completion_s1_PromoteArtifacts_${slug}_nextflow.log"
 
     src = row ? "${run.dir.utilized}/${row.subpath}" : ''
-    dst = row ? "${run.dir.outputs}/${row.subpath}" : ''
+    // One destination per member run, in member order. The move goes to the first and the rest
+    // are linked from it, so the "source must be GONE afterwards" assertion below is unchanged:
+    // there is still exactly one move.
+    dsts = row ? run.dir.targets.collect { root -> "${root}/${row.subpath}" } : []
+    dst = dsts ? "${dsts[0]}" : ''
+    // Emitted as calls rather than as a loop over a list: `for x in ; do` is a syntax error in
+    // bash, and with one destination - every case until sharing is switched on - the list is
+    // empty. No extra destinations, no lines here at all.
+    link_calls = dsts.size() > 1 ? dsts.tail().collect { d -> "link_into \"${d}\"" }.join('\n        ') : ''
     // Quoted, so that the loops below iterate over the patterns themselves instead of
     // whatever they happen to match in the task directory.
     patterns = row ? row.patterns.collect { p -> "'${p}'" }.join(' ') : ''
@@ -229,6 +253,22 @@ process PromoteArtifacts {
             echo "PROMOTING ${label}: moved \$moved file(s)"
         fi
 
+        # The other members' copies. A hardlink because every destination is under one
+        # storageDir on one filesystem, so the bytes are shared and only the directory entry
+        # costs anything; a copy is the fallback for the layouts where that is not true.
+        link_into() {
+            mkdir -p "\$1"
+            for pattern in ${patterns}; do
+                for f in "${dst}"/\$pattern; do
+                    if [ -e "\$f" ]; then
+                        ln -f "\$f" "\$1/\$(basename "\$f")" 2>/dev/null || cp -f "\$f" "\$1/"
+                        echo "PROMOTING ${label}:   also at \$1/\$(basename "\$f")"
+                    fi
+                done
+            done
+        }
+        ${link_calls}
+
         # Only if it is genuinely empty. Anything still in there is worth keeping visible.
         rmdir "${src}" 2>/dev/null || true
 
@@ -252,7 +292,7 @@ process PromoteArtifacts {
 workflow Completion {
     take:
     stage
-    gate     // [run, key]
+    gate     // [producing variant, key]
 
     main:
     PromoteArtifacts(stage, gate)

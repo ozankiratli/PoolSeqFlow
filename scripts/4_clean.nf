@@ -1,3 +1,8 @@
+// The roots a skip check searches. Under sharing an artifact this step reads may have
+// been produced by a variant with a coarser working root than its own, so the list comes
+// from the divergence analysis rather than being spelled out here.
+include { searchRoots } from './variants.nf'
+
 process SortCleanBam {
     tag { run.runId ? "${run.runId}:${pair_id}" : pair_id }
     cpus { run.cores.samtools + 1 }
@@ -15,6 +20,7 @@ process SortCleanBam {
     // Read by BOTH step 5 and step 6, so these stay on the working volume until each of
     // those has finished with them - the first artifact here with more than one consumer.
     // Flat, like Aligned/: the sample is in the file name, not a folder.
+    search_roots = searchRoots(run)
     rel_ready = "${run.dir.subpath.ready}"
     target_folder_ready = "${run.dir.utilized}/${rel_ready}"
     target_bam_ready = "${target_folder_ready}/${target_bam}"
@@ -36,8 +42,8 @@ process SortCleanBam {
     # Either volume, because these are promoted once steps 5 and 6 have both finished with
     # them. The pair is looked up independently rather than assumed to travel together, so
     # a half-finished promotion is caught here instead of downstream.
-    bam_at=\$(find_artifact.sh "${rel_ready}/${target_bam}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
-    bai_at=\$(find_artifact.sh "${rel_ready}/${target_bai}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
+    bam_at=\$(find_artifact.sh "${rel_ready}/${target_bam}" ${search_roots} || true)
+    bai_at=\$(find_artifact.sh "${rel_ready}/${target_bai}" ${search_roots} || true)
 
     echo "SORT AND CLEAN BAM ${pair_id}: Sorting and Cleaning BAM file..."
     if [ -n "\$bam_at" ] && [ -n "\$bai_at" ]; then

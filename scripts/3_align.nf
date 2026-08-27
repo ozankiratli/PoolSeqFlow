@@ -1,3 +1,8 @@
+// The roots a skip check searches. Under sharing an artifact this step reads may have
+// been produced by a variant with a coarser working root than its own, so the list comes
+// from the divergence analysis rather than being spelled out here.
+include { searchRoots } from './variants.nf'
+
 process Align {
     tag { run.runId ? "${run.runId}:${pair_id}" : pair_id }
     cpus { run.cores.bwa }
@@ -19,6 +24,7 @@ process Align {
     // volume and promoted to Output/Aligned/ once cleaning has succeeded for this sample.
     // Unlike Trimmed/, this directory is flat - one BAM per sample, no per-sample folder -
     // so the relative path carries the file name rather than a directory.
+    search_roots = searchRoots(run)
     rel_aligned = "${run.dir.subpath.aligned}"
     target_folder = "${run.dir.utilized}/${rel_aligned}"
     target_file = "${target_folder}/${aligned_bam_file}"
@@ -31,7 +37,7 @@ process Align {
     # if it has. Permanent root first, so a residue copy cannot outrank a promoted one. An
     # absent artifact is the ordinary answer on a first run, not an error, so the exit
     # status is discarded and emptiness is what the branch tests.
-    aligned_at=\$(find_artifact.sh "${rel_aligned}/${aligned_bam_file}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
+    aligned_at=\$(find_artifact.sh "${rel_aligned}/${aligned_bam_file}" ${search_roots} || true)
 
     echo "ALIGNING ${pair_id}: Aligning the reads to the reference..."
 

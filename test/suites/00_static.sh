@@ -168,3 +168,72 @@ test_fixture_generator_is_deterministic() {
     diff -r "$REPO_ROOT/test/data/base" "$out" >/dev/null 2>&1 \
         || fail_case "regenerating the fixture with the default seed did not reproduce test/data/base"
 }
+
+# THE PARAMETER MAP AGAINST THE SOURCE IT DESCRIBES.
+#
+# stepParameterMap() in scripts/variants.nf decides which runs may share a step's work, and
+# getting it wrong is the failure class this project keeps finding: name too few parameters and
+# a run silently reuses reads trimmed to someone else's settings, with nothing downstream able
+# to tell. The map is AUTHORED, because it has to be reviewable - a regex cannot see that
+# `run.reference` stands for step 1's output rather than for a setting of its own. So it is
+# checked from the other side instead: every parameter a step actually reads must be declared,
+# excluded by an explicit family, or named below as represented some other way.
+#
+# The two lists this compares answer different questions and are allowed to disagree - the map
+# also declares `dir.subpath.*`, which no step reads directly and which analysisParams()
+# excludes - so the check is one-directional. A declaration with no read is fine; a read with
+# no declaration is not.
+test_step_parameter_map_covers_what_each_step_reads() {
+    local variants="$REPO_ROOT/scripts/variants.nf"
+    local step file declared reads name missing=""
+
+    # Families analysisParams() excludes, for the reasons recorded there: where files live, how
+    # many cores to use, where a tool is installed, and which run this is. `dir.subpath` is the
+    # deliberate exception - it is half of an artifact's identity - so it is NOT excluded here.
+    local excluded='^(dir\.(output|outputs|utilized|logs|data|references|dictionaries|snpEff|probe|search|targets)|cores\.|software\.|java\.|runId$|threads$)'
+
+    # Read by a step but represented in the map by something other than its own name. Each of
+    # these is a path into a directory step 1 writes, or a file step 0 repairs, so what decides
+    # sharing is the identity of what is found there rather than the string itself.
+    local indirect='^(reference|referenceFa|referenceFile|referencePath|gff|gffFile|gffPath|rgTagsPath|snpEff\.db)$'
+
+    for step in 2 3 4 5 6 7 8; do
+        file=$(ls "$REPO_ROOT"/scripts/${step}_*.nf 2>/dev/null | head -1)
+        [ -n "$file" ] || { fail_case "no source file for step $step"; continue; }
+
+        # The step's entry, taken by matching brackets rather than by line shape: three of the
+        # seven entries fit on one line, and a line-based reader silently ran two of them
+        # together - which made the check pass because one step's declarations covered the
+        # next one's reads.
+        declared=$(STEP="$step" python3 -c '
+import os, re, sys
+text = open(sys.argv[1]).read()
+step = os.environ["STEP"]
+start = re.search(r"^        %s: \[" % step, text, re.M)
+if not start:
+    sys.exit("no map entry for step " + step)
+i, depth = start.end() - 1, 0
+while i < len(text):
+    if text[i] == "[": depth += 1
+    elif text[i] == "]":
+        depth -= 1
+        if depth == 0: break
+    i += 1
+body = re.sub(r"//[^\n]*", "", text[start.end() - 1:i])
+print("\n".join(sorted(set(re.findall(r"'"'"'([^'"'"']*)'"'"'", body)))))
+' "$variants")
+
+        reads=$(grep -o 'run\.[A-Za-z_][A-Za-z0-9_.]*' "$file" | sed 's/^run\.//; s/\.$//' \
+                | sort -u | grep -Ev "$excluded" | grep -Ev "$indirect")
+
+        while read -r name; do
+            [ -n "$name" ] || continue
+            printf '%s\n' "$declared" | grep -qx "$name" \
+                || missing="$missing step $step: $name\n"
+        done <<< "$reads"
+    done
+
+    if [ -n "$missing" ]; then
+        fail_case "parameters read but not declared in stepParameterMap():"$'\n'"$(printf "$missing")"
+    fi
+}

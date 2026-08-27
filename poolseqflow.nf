@@ -3,6 +3,9 @@
 nextflow.enable.dsl=2
 
 include { resolveParameters; runDefinitions } from './scripts/resolve_parameters.nf'
+include { variantPlan; childVariants; parentVariant; descendantVariants } from './scripts/variants.nf'
+include { attachProbeRoots; gatherToProducer; runToken } from './scripts/variants.nf'
+include { assertEveryRunProduced } from './scripts/variants.nf'
 include { VerifyEnvironment }   from './scripts/0_verify_environment.nf'
 include { BuildDictionaries; dictionaryRuns; dictionaryKey } from './scripts/1_build_dictionaries.nf'
 include { TrimQcClip; readPairChannel } from './scripts/2_trim_reads.nf'
@@ -96,6 +99,12 @@ def assembleCombinedLog(String dir) {
     }
 }
 
+// Does anything downstream of this step-6 variant annotate? A function rather than a closure
+// assigned to a local, because the strict parser is unhappy invoking those.
+def annotatedBelow(Map plan, Map producer) {
+    return plan.children[8][producer.variantKey].any { child -> child.executes }
+}
+
 workflow {
     // THE RUNS THIS INVOCATION WILL EXECUTE, and the two calls have to be in this order.
     //
@@ -109,6 +118,28 @@ workflow {
     // every path exactly what it was before multi-run existed (settled rule 3).
     def run_defs = runDefinitions()
     resolveParameters()
+
+    // WHERE THE RUNS DIVERGE, and therefore what the DAG below is shaped like.
+    //
+    // Worked out once, here, before a single task is submitted. From this line on the unit that
+    // flows through the pipeline is a VARIANT - a parameter set one or more runs share at a
+    // given step - and a run is a path from the root of that tree to a leaf. A process still
+    // takes `tuple val(x), ...` and still reads `x.dir.*`; only what `x` means has changed.
+    //
+    // While sharing is off (scripts/variants.nf, `sharingEnabled`) every run is its own variant
+    // at every step, so each of those trees is a straight line and this whole file describes
+    // exactly the DAG it described before. That is deliberate: it makes the rewiring provable
+    // by running the old and new code over one fixture and showing that nothing moved.
+    //
+    // Deliberately declared without `def`, like log_dirs below: the operator closures further
+    // down read it, and a `def` local of the workflow body is not something a closure resolved
+    // against the script binding can see.
+    plan = variantPlan(run_defs)
+
+    // The one thing step 0 needs from the analysis: which working roots its RGTags change
+    // guard has to probe. See attachProbeRoots() for why getting this wrong costs the guard
+    // itself rather than merely some redundant work.
+    attachProbeRoots(plan, run_defs)
 
     // Registered here rather than at the top of the workflow because it needs the runs: each
     // one writes its logs under its own storageDir, and params.dir.logs names only the base.
@@ -133,15 +164,18 @@ workflow {
 
     runs = channel.fromList(run_defs)
 
-    // FROM HERE ON EVERY CHANNEL CARRIES ITS RUN as element 0, and nothing is matched
-    // positionally. That is the whole shape of this stage: with one run there was exactly one
-    // of each singleton and Nextflow's implicit value channels broadcast them for free, so
-    // "the reference index" and "the sample" could be two separate process inputs. With N
-    // runs there are N of each, positional matching pairs whichever arrived first, and the
-    // result is a run analysed against another run's reference - which no later check could
-    // detect. So per-run singletons are combined onto their run's samples by key
-    // (`combine(by: 0)`), and two per-sample channels are joined on the run AND the sample
-    // (`join(by: [0, 1])`).
+    // EVERY CHANNEL CARRIES ITS OWN WORK ITEM as element 0, and nothing is matched
+    // positionally. With one run there was exactly one of each singleton and Nextflow's
+    // implicit value channels broadcast them for free, so "the reference index" and "the
+    // sample" could be two separate process inputs. With N of each, positional matching pairs
+    // whichever arrived first, and the result is one analysis run against another's reference -
+    // which no later check could detect. So singletons are combined onto their own samples by
+    // key (`combine(by: 0)`), and two per-sample channels are joined on the work item AND the
+    // sample (`join(by: [0, 1])`).
+    //
+    // STEP 0 IS PER RUN, because it validates a run's own configuration and reports to that
+    // run's own directory. Everything from step 2 on is per variant. The two meet exactly
+    // twice: at the step-2 gate just below, and at publication.
     VerifyEnvironment(runs)
     verified = VerifyEnvironment.out
 
@@ -160,32 +194,68 @@ workflow {
     step0_done = verified.count()
     BuildDictionaries(channel.fromList(dictionaryRuns(run_defs)), step0_done)
 
-    // ...and fanned back out, so that from here on every channel is per run again. Keyed on
-    // the dictionary rather than on the run, because that is what the two sides share.
-    runs_by_dictionary = runs.map { run -> tuple(dictionaryKey(run), run) }
-    bwa_index = runs_by_dictionary
+    // ...and fanned back out to whichever step reads each index, keyed on the dictionary
+    // rather than on the work item, because that is what the two sides share. Each index goes
+    // to the variants of the step that actually consumes it - the FASTA index to step 3, the
+    // .fai to step 6, the snpEff database to step 8 - which is also why step 1 exposes three
+    // identities rather than one: two runs differing only in `gffFile` must not redo alignment.
+    bwa_index = channel.fromList(plan.variants[3].collect { v -> tuple(dictionaryKey(v), v) })
         .combine(BuildDictionaries.out.bwa_index.map { d, idx -> tuple(dictionaryKey(d), idx) }, by: 0)
-        .map { _key, run, idx -> tuple(run, idx) }
-    fai_index = runs_by_dictionary
+        .map { _key, variant, idx -> tuple(variant, idx) }
+    fai_index = channel.fromList(plan.variants[6].collect { v -> tuple(dictionaryKey(v), v) })
         .combine(BuildDictionaries.out.fai_index.map { d, fai -> tuple(dictionaryKey(d), fai) }, by: 0)
-        .map { _key, run, fai -> tuple(run, fai) }
-    snpeff_db = runs_by_dictionary
+        .map { _key, variant, fai -> tuple(variant, fai) }
+    snpeff_db = channel.fromList(plan.variants[8].findAll { v -> v.executes }
+                                     .collect { v -> tuple(dictionaryKey(v), v) })
         .combine(BuildDictionaries.out.snpeff_db_verify.map { d, m -> tuple(dictionaryKey(d), m) }, by: 0)
-        .map { _key, run, marker -> tuple(run, marker) }
-        .filter { run, _marker -> run.annotate }
+        .map { _key, variant, marker -> tuple(variant, marker) }
 
-    // The reads are globbed per run while the DAG is built, which is also where N is fixed.
-    reads = readPairChannel(run_defs)
-    // How many samples each run started with, taken from that same channel rather than
-    // counted separately - so it cannot drift from what step 2 actually ran. Step 6 checks
-    // its cohort against it; see the gather point in scripts/6_variant_call.nf.
-    expected_samples = reads.map { run, pair_id, _r1, _r2 -> tuple(run, pair_id) }
+    // The reads are globbed per step-2 variant while the DAG is built, which is also where N
+    // is fixed. Per variant and not per run because `reads` is part of step 2's identity, so
+    // every member of a variant globs the same files by construction.
+    reads = readPairChannel(plan.variants[2])
+    // How many samples the work started with, taken from that same channel rather than counted
+    // separately - so it cannot drift from what step 2 actually ran. Carried straight to the
+    // step-6 variants that will check their cohorts against it, which is an expansion like any
+    // other; it just skips the intermediate steps rather than being re-derived at each.
+    expected_samples = reads.map { variant, pair_id, _r1, _r2 -> tuple(variant, pair_id) }
         .groupTuple(by: 0)
-        .map { run, pair_ids -> tuple(run, pair_ids.size()) }
+        .flatMap { variant, pair_ids ->
+            descendantVariants(plan, variant, 6).collect { child -> tuple(child, pair_ids.size()) } }
 
-    TrimQcClip(reads, verified)
-    AlignReads(TrimQcClip.out, bwa_index)
-    SortCleanBams(AlignReads.out)
+    // THE STEP-0 GATE, AND IT IS THE ONLY ONE THE PIPELINE NEEDS.
+    //
+    // A shared step must wait for EVERY run that shares it, not just the one whose parameters
+    // it carries: VerifyAll is `errorStrategy 'finish'`, which lets already-submitted tasks
+    // complete, so a step gated on one member's report could finish and promote while another
+    // member's CheckRunParameters was still deciding to fail.
+    //
+    // Gating step 2 covers every step after it, because a variant's members are always a
+    // subset of its parent's - so a step-2 variant that waited for all of its members has
+    // already waited for all of every variant descended from it.
+    //
+    // groupKey carries the member count with the key, so each variant is released as its own
+    // members report rather than when the whole channel closes; with sharing off that is one
+    // report per variant and the wait is exactly the per-run wait it replaces.
+    verified_by_run = verified.map { run, report -> tuple(runToken(run.runId), report) }
+    step0_for_reads = channel.fromList(plan.variants[2].collectMany { v ->
+                v.members.collect { m -> tuple(runToken(m), groupKey(v.variantKey, v.members.size()), v) } })
+        .combine(verified_by_run, by: 0)
+        .map { _member, gate, variant, _report -> tuple(gate, variant) }
+        .groupTuple(by: 0)
+        .map { _gate, variants -> tuple(variants[0], variants.size()) }
+
+    TrimQcClip(reads, step0_for_reads)
+
+    // EXPANSION, NOT FAN-BACK. Each step derives its work items from the previous step's by
+    // enumerating that variant's children in the plan, so the arity is decided before anything
+    // runs. The joins these replace matched keys and dropped the ones that did not match,
+    // silently and with the run still reporting success.
+    AlignReads(TrimQcClip.out.flatMap { variant, pair_id, read1, read2 ->
+        childVariants(plan, variant, 3).collect { child -> tuple(child, pair_id, read1, read2) } },
+        bwa_index)
+    SortCleanBams(AlignReads.out.flatMap { variant, pair_id, bam ->
+        childVariants(plan, variant, 4).collect { child -> tuple(child, pair_id, bam) } })
 
     // Promotion attachment points. Each hangs off a step's output ALONGSIDE that output's
     // real consumer rather than in front of it: nothing upstream changes shape, so no value
@@ -197,47 +267,91 @@ workflow {
     // sample id carried by that signal, which is also the key the promotion table needs; see
     // scripts/9_completion.nf for why it is derived from the signal rather than zipped
     // alongside it.
-    CompleteAfterClip('fastqc zips', TrimQcClip.out.map { run, pair_id, _r1, _r2 -> tuple(run, pair_id) })
-    CompleteAfterAlign('trimmed reads', AlignReads.out.map { run, pair_id, _bam -> tuple(run, pair_id) })
-    CompleteAfterClean('alignments', SortCleanBams.out.ready_bam.map { run, pair_id, _bam -> tuple(run, pair_id) })
+    //
+    // AND THE GATE IS KEYED BY THE PRODUCING VARIANT, not by the consuming one. Once a producer
+    // is shared its consumers may not be - two runs can share step 2 and diverge at step 3, so
+    // two step-3 work items read one set of trimmed reads - and releasing on the first of them
+    // to finish would delete a file the second still needs. gatherToProducer() maps each
+    // consumer's completion back to the variant that produced what it read and waits for all
+    // of them; see scripts/variants.nf for why that count is arithmetic rather than a runtime
+    // reference count.
+    //
+    // The FastQC zips are the one artifact produced and consumed inside a single step, so
+    // producer and consumer are the same variant and there is nothing to gather.
+    CompleteAfterClip('fastqc zips',
+        TrimQcClip.out.map { variant, pair_id, _r1, _r2 -> tuple(variant, pair_id) })
+    CompleteAfterAlign('trimmed reads',
+        gatherToProducer(plan, AlignReads.out.map { variant, pair_id, _bam -> tuple(variant, pair_id) }, 3))
+    CompleteAfterClean('alignments',
+        gatherToProducer(plan, SortCleanBams.out.ready_bam.map { variant, pair_id, _bam -> tuple(variant, pair_id) }, 4))
 
-    GenerateReports(SortCleanBams.out.ready_bam, SortCleanBams.out.ready_bai)
-    VariantCalling(SortCleanBams.out.ready_bam, fai_index, expected_samples)
+    GenerateReports(
+        SortCleanBams.out.ready_bam.flatMap { variant, pair_id, bam ->
+            childVariants(plan, variant, 5).collect { child -> tuple(child, pair_id, bam) } },
+        SortCleanBams.out.ready_bai.flatMap { variant, pair_id, bai ->
+            childVariants(plan, variant, 5).collect { child -> tuple(child, pair_id, bai) } })
+    VariantCalling(
+        SortCleanBams.out.ready_bam.flatMap { variant, pair_id, bam ->
+            childVariants(plan, variant, 6).collect { child -> tuple(child, pair_id, bam) } },
+        fai_index, expected_samples)
 
     called_vcf = VariantCalling.out
-    VCF2Frequencies(called_vcf)
-    // `annotate` is a per-run parameter, so this is a filter on the runs rather than a branch
-    // in the script. Under multiRun one run may annotate while another does not, which the
-    // `if (params.annotate)` this replaces could not express - it read the base config and
+    VCF2Frequencies(called_vcf.flatMap { variant, vcf ->
+        childVariants(plan, variant, 7).collect { child -> tuple(child, vcf) } })
+    // `annotate` is part of step 8's identity, so a variant either annotates or does not -
+    // never half. Under multiRun one run may annotate while another does not, which the
+    // `if (params.annotate)` this replaces could not express: it read the base config and
     // decided for everybody.
-    AnnotateVCF(called_vcf.filter { run, _vcf -> run.annotate }, snpeff_db)
+    AnnotateVCF(called_vcf.flatMap { variant, vcf ->
+        childVariants(plan, variant, 8).findAll { child -> child.executes }
+            .collect { child -> tuple(child, vcf) } }, snpeff_db)
 
-    // The two artifacts with more than one consumer. Everything above is released by a
-    // single step finishing; these two need every reader to be done, so the gate is
-    // assembled here rather than being one step's output.
+    // The two artifacts with more than one CONSUMING STEP. Everything above is released by a
+    // single step finishing; these two need every reader to be done, so the gate is assembled
+    // here rather than being one step's output.
     //
-    // Ready BAMs: step 5 per sample, step 6 for the cohort. `combine(by: 0)` waits for THIS
-    // run's calling to finish and then re-emits each of its samples' own signals, so the
-    // result is still one task per sample - the sample identity comes from step 5's side,
-    // and calling contributes only its completion. Keyed on the run, so one run's calling
-    // cannot release another run's BAMs.
+    // Ready BAMs: step 5 per sample, step 6 for the cohort. Both are gathered onto their
+    // step-4 producer first, which collapses calling to one signal per producer however many
+    // step-6 variants read it. `combine(by: 0)` then waits for that and re-emits each of the
+    // producer's samples' own signals, so the result is still one task per sample - the sample
+    // identity comes from step 5's side and calling contributes only its completion.
+    reports_done = gatherToProducer(plan, GenerateReports.out, 5)
+    calling_done = gatherToProducer(plan, called_vcf.map { variant, _vcf -> tuple(variant, '') }, 6)
     CompleteAfterUse('ready bams',
-        GenerateReports.out.combine(called_vcf, by: 0).map { run, pair_id, _vcf -> tuple(run, pair_id) })
+        reports_done.combine(calling_done, by: 0).map { producer, pair_id, _done -> tuple(producer, pair_id) })
 
-    // The called VCF: step 7 always, step 8 only when annotation is on - so the gate is
-    // built differently depending on a parameter, which is the case settled rule 2 does not
-    // cover. And `annotate` is now a per-run parameter, so the two shapes are no longer
-    // alternatives for the whole invocation: both can be in flight at once, one run each.
+    // The called VCF: step 7 always, step 8 only where annotation is on - so the gate is built
+    // differently depending on a parameter, which is the case settled rule 2 does not cover.
+    // Both shapes can be in flight at once, since a step-6 variant may feed an annotating
+    // branch and a non-annotating one at the same time.
     //
-    // groupTuple, not collect: the wait has to be for every task OF THIS RUN, and collect()
-    // would wait for every task of every run and then release them all together - correct,
-    // but it would hold the last run's working files until the slowest run had finished.
-    freq_done = VCF2Frequencies.out.groupTuple(by: 0).map { run, _tsvs -> tuple(run, '') }
-    annotate_done = AnnotateVCF.out.map { run, _vcf -> tuple(run, '') }
+    // groupTuple, not collect: the wait has to be for the tables OF THIS VARIANT, and collect()
+    // would wait for every task of every variant and release them together - correct, but it
+    // would hold the last one's working files until the slowest had finished.
+    freq_done = gatherToProducer(plan,
+        VCF2Frequencies.out.groupTuple(by: 0).map { variant, _tsvs -> tuple(variant, '') }, 7)
+    annotate_done = gatherToProducer(plan,
+        AnnotateVCF.out.map { variant, _vcf -> tuple(variant, '') }, 8)
 
-    vcf_released = freq_done.filter { run, _key -> !run.annotate }
-        .mix(freq_done.filter { run, _key -> run.annotate }
+    // Whether an annotation signal is ever coming is a property of the producer's children,
+    // not of the producer's own `annotate`: the variant carries its lead member's parameters,
+    // and `annotate` is not part of step 6's identity, so the lead cannot answer for the rest.
+    vcf_released = freq_done.filter { producer, _key -> !annotatedBelow(plan, producer) }
+        .mix(freq_done.filter { producer, _key -> annotatedBelow(plan, producer) }
                  .join(annotate_done, by: 0)
-                 .map { run, key, _also -> tuple(run, key) })
+                 .map { producer, key, _also -> tuple(producer, key) })
     CompleteAfterVcf('called vcf', vcf_released)
+
+    // Every run in the table must reach the end. See assertEveryRunProduced() in
+    // scripts/variants.nf for why nothing else in the pipeline would notice if one did not.
+    //
+    // A binding variable, not a `def` local: the closure runs after this body has returned, and
+    // resolves its names against the script binding - the same trap that once replaced a
+    // multi-run configuration error with a message about logging.
+    expected_run_tokens = run_defs.collect { run -> runToken(run.runId) }
+    VCF2Frequencies.out
+        .flatMap { variant, _tsv -> variant.members.collect { member -> runToken(member) } }
+        .unique()
+        .collect()
+        .subscribe { produced -> assertEveryRunProduced(expected_run_tokens, produced) }
 }

@@ -363,10 +363,16 @@ process CheckRGTagsFile {
     // baseline for BAMs that carry the old tags - and no later run could detect it, because
     // the baseline now says they agree. Every other wrong existence answer in this pipeline
     // costs redundant work; this one costs the guard itself.
+    //
+    // The working roots come from the divergence analysis rather than from this run's own
+    // dir.utilized, because they are not the same thing once a step is shared: the ready BAMs
+    // are under the root of the variant that CLEANED them, which may serve several runs. A
+    // probe that looked only here would answer 0 on every invocation and record a new baseline
+    // every time - the guard would still report PASS and would have stopped guarding.
     readyDirOut = "${run.dir.output.ready}"
-    readyDirWork = "${run.dir.utilized}/${run.dir.subpath.ready}"
+    readyDirWork = "${run.dir.probe.ready}"
     vcfDirOut = "${run.dir.output.vcf}"
-    vcfDirWork = "${run.dir.utilized}/${run.dir.subpath.vcf}"
+    vcfDirWork = "${run.dir.probe.vcf}"
     // The frequency tables have no consumer, so they are never promoted and permanent
     // storage is the only place they can be.
     readyDir = "${run.dir.output.ready}"

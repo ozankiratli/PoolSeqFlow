@@ -1,3 +1,8 @@
+// The roots a skip check searches. Under sharing an artifact this step reads may have
+// been produced by a variant with a coarser working root than its own, so the list comes
+// from the divergence analysis rather than being spelled out here.
+include { searchRoots } from './variants.nf'
+
 process VariantCall {
     tag { run.runId ? "${run.runId}:calling_variants" : "calling_variants" }
 
@@ -16,6 +21,7 @@ process VariantCall {
     // Read by step 7 always, and by step 8 whenever annotation is on, so it stays on the
     // working volume until both have finished - the only VCF here that is promoted rather
     // than consumed and deleted.
+    search_roots = searchRoots(run)
     rel_vcf = "${run.dir.subpath.vcf}"
     target_vcf_folder = "${run.dir.utilized}/${rel_vcf}"
     target_vcf_file = "${target_vcf_folder}/${vcf_file}"
@@ -26,7 +32,7 @@ process VariantCall {
 
     # Either volume: still here while step 7 or step 8 may read it, in permanent storage
     # once both are done.
-    vcf_at=\$(find_artifact.sh "${rel_vcf}/${vcf_file}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
+    vcf_at=\$(find_artifact.sh "${rel_vcf}/${vcf_file}" ${search_roots} || true)
 
     echo "VARIANT CALL ${vcf_file}: Variant calling started..."
     if [ -n "\$vcf_at" ]; then

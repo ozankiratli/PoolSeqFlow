@@ -1,14 +1,22 @@
-// The (run, sample) read channel.
+// The roots a skip check searches. Under sharing an artifact this step reads may have
+// been produced by a variant with a coarser working root than its own, so the list comes
+// from the divergence analysis rather than being spelled out here.
+include { searchRoots } from './variants.nf'
+
+// The (variant, sample) read channel.
 //
-// Takes the run LIST rather than a channel because channel.fromFilePairs is a factory: it
+// Takes the variant LIST rather than a channel because channel.fromFilePairs is a factory: it
 // globs the filesystem while the DAG is being built and fixes N there, so it has to be handed
-// a concrete run. Reproducing its sample-id derivation by hand is exactly what step 0's
-// CheckRGTagsFile must agree with, and having two implementations of that rule is how they
-// come to disagree - so the factory is called once per run instead.
-def readPairChannel(List runDefs) {
-    def per = runDefs.collect { run ->
-        channel.fromFilePairs("${run.reads}", checkIfExists: true)
-            .map { id, files -> tuple(run, id, files[0], files[1]) }
+// a concrete parameter set. Reproducing its sample-id derivation by hand is exactly what step
+// 0's CheckRGTagsFile must agree with, and having two implementations of that rule is how they
+// come to disagree - so the factory is called once per variant instead.
+//
+// One glob per step-2 variant and not per run: `reads` is part of step 2's identity, so every
+// member of a variant globs the same files by construction.
+def readPairChannel(List variants) {
+    def per = variants.collect { variant ->
+        channel.fromFilePairs("${variant.reads}", checkIfExists: true)
+            .map { id, files -> tuple(variant, id, files[0], files[1]) }
     }
     return per.size() == 1 ? per[0] : per.inject { a, b -> a.mix(b) }
 }
@@ -36,6 +44,7 @@ process TrimReads {
     // are working data and stay on the working volume until alignment has finished with
     // them. Utilized/ and Output/ take the same relative path, which is what lets the skip
     // checks below ask find_artifact.sh which volume actually holds a file.
+    search_roots = searchRoots(run)
     rel_trimmed = "${run.dir.subpath.trimmed}/${pair_id}"
     target_folder_trimmed = "${run.dir.utilized}/${rel_trimmed}"
     // The FastQC zips are read again too - ClipReads unzips them to work out the clipping
@@ -83,10 +92,10 @@ process TrimReads {
     #
     # An absent artifact is find_artifact.sh's ordinary answer, not an error, so its exit
     # status is discarded here and emptiness is what the branch tests.
-    clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
-    clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
-    fastqc1_at=\$(find_artifact.sh "${rel_fastqc}/${fastqc1}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
-    fastqc2_at=\$(find_artifact.sh "${rel_fastqc}/${fastqc2}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
+    clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" ${search_roots} || true)
+    clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" ${search_roots} || true)
+    fastqc1_at=\$(find_artifact.sh "${rel_fastqc}/${fastqc1}" ${search_roots} || true)
+    fastqc2_at=\$(find_artifact.sh "${rel_fastqc}/${fastqc2}" ${search_roots} || true)
 
     echo "TRIMMING READS ${pair_id}: Trimming the reads..."
     if [ -n "\$clipped1_at" ] && [ -n "\$clipped2_at" ]; then
@@ -176,6 +185,7 @@ process ClipReads {
     script:
     // Step 3 reads these, so they stay on the working volume and are promoted once
     // alignment has succeeded for this sample. See TrimReads above.
+    search_roots = searchRoots(run)
     rel_trimmed = "${run.dir.subpath.trimmed}/${pair_id}"
     target_folder_trimmed = "${run.dir.utilized}/${rel_trimmed}"
     // The clipped FastQC zips and htmls this process produces have no consumer, so they go
@@ -203,8 +213,8 @@ process ClipReads {
     # Either volume, for the same reason as TrimReads: promotion may already have moved
     # these to permanent storage. The link goes to wherever they actually are, not to
     # where this process would have written them.
-    clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
-    clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" "${run.dir.outputs}" "${run.dir.utilized}" || true)
+    clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" ${search_roots} || true)
+    clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" ${search_roots} || true)
 
     echo "CLIPPING READS ${pair_id}: Clipping the reads..."
     if [ -n "\$clipped1_at" ] && [ -n "\$clipped2_at" ]; then

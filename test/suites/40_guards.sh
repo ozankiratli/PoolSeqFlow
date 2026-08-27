@@ -620,3 +620,31 @@ test_variant_calling_refuses_a_short_cohort() {
     # dictionary share one build rather than racing for it.
     assert_contains "$out" "GROUPS 1" "runs that agree should share a single dictionary build"
 }
+
+# THE TERMINAL RUN-COMPLETENESS ASSERTION.
+#
+# Nothing else in the pipeline counts runs. Every fan-back the variant expansions replaced was
+# a join, and a join drops an unmatched key silently: the run produces no VCF, no tables and no
+# promotion for that run, and reports SUCCESS. An expansion cannot drop a run - but the whole
+# reason this check exists is that if it ever did, nothing would say so.
+#
+# Exercised against a channel one variant short, through the same operators and the same
+# function the entry point uses. What is asserted is both halves: that the run FAILS, and that
+# it says which run went missing - an exception thrown inside an operator closure reaches
+# Nextflow wrapped in an InvocationTargetException whose own message is null, so a guard that
+# only threw would fail the run with "Unexpected error" and a line number.
+test_a_run_that_produces_nothing_fails_the_invocation() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status out
+    sb=$(multirun_sandbox "run-completeness" 'RunID,vcffilter.minDP
+r1,4
+r2,6
+')
+    status=$(run_completeness_guard "$sb")
+    out=$(cat "$sb/run.out")
+
+    assert_status 1 "$status" "a missing run should stop the invocation; see $sb/run.out"
+    assert_contains "$out" "produced no frequency tables for: r1" "and should name it"
+    assert_contains "$out" "must reach the end" "and say why that is fatal"
+}
