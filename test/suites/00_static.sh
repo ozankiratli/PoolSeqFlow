@@ -190,7 +190,7 @@ test_step_parameter_map_covers_what_each_step_reads() {
     # Families analysisParams() excludes, for the reasons recorded there: where files live, how
     # many cores to use, where a tool is installed, and which run this is. `dir.subpath` is the
     # deliberate exception - it is half of an artifact's identity - so it is NOT excluded here.
-    local excluded='^(dir\.(output|outputs|utilized|logs|data|references|dictionaries|snpEff|probe|search|targets)|cores\.|software\.|java\.|runId$|threads$)'
+    local excluded='^(dir\.(output|outputs|utilized|logs|data|references|dictionaries|snpEff|search)|cores\.|software\.|java\.|runId$|threads$)'
 
     # Read by a step but represented in the map by something other than its own name. Each of
     # these is a path into a directory step 1 writes, or a file step 0 repairs, so what decides
@@ -235,5 +235,76 @@ print("\n".join(sorted(set(re.findall(r"'"'"'([^'"'"']*)'"'"'", body)))))
 
     if [ -n "$missing" ]; then
         fail_case "parameters read but not declared in stepParameterMap():"$'\n'"$(printf "$missing")"
+    fi
+}
+
+# THE SAME CHECK FOR STEP 0, against checkParameterMap().
+#
+# A step-0 stage now runs once per distinct value of what it reads, so an undeclared parameter
+# means one run's verdict is used for a run whose value differs - and catching exactly that
+# value being wrong is what the stage is for. The failure is worse here than for a step: a run
+# whose reference is missing would be told, by a task that never looked at it, that it is there.
+#
+# Same shape as the step check above and same direction: a declaration with no read is fine, a
+# read with no declaration is not. Processes take their work item as `check`, so `check.x` is a
+# read and `run.x` - which only VerifyAll still has - is not this check's business.
+test_check_parameter_map_covers_what_each_stage_reads() {
+    local verify="$REPO_ROOT/scripts/0_verify_environment.nf"
+    local stage declared reads name missing=""
+
+    # The item's own bookkeeping rather than a parameter: which runs it answers for, the key it
+    # was grouped by, and everything the two analysis-keyed stages carry precomputed.
+    # `storageDir` is free because checkKey() prefixes every key with it, so no group can ever
+    # straddle two storage roots.
+    local excluded='^(checkKey|checkTag|members|memberTokens|manifest|dir$|storageDir$)'
+
+    for stage in CheckReference CheckGFF SkipGFFCheck CheckData CheckTrimParameters CheckDirectories; do
+        declared=$(STAGE="$stage" python3 -c '
+import os, re, sys
+text = open(sys.argv[1]).read()
+stage = os.environ["STAGE"]
+start = re.search(r"^        %s *: \[" % stage, text, re.M)
+if not start:
+    sys.exit("no map entry for " + stage)
+i, depth = start.end() - 1, 0
+while i < len(text):
+    if text[i] == "[": depth += 1
+    elif text[i] == "]":
+        depth -= 1
+        if depth == 0: break
+    i += 1
+body = re.sub(r"//[^\n]*", "", text[start.end() - 1:i])
+print("\n".join(sorted(set(re.findall(r"'"'"'([^'"'"']*)'"'"'", body)))))
+' "$verify")
+
+        # The process body, by matching braces from its declaration - the file holds eleven of
+        # them and a line-based reader would run one stage into the next, which is the mistake
+        # the step check above already made once.
+        reads=$(STAGE="$stage" python3 -c '
+import os, re, sys
+text = open(sys.argv[1]).read()
+start = re.search(r"^process %s \{" % os.environ["STAGE"], text, re.M)
+if not start:
+    sys.exit("no process " + os.environ["STAGE"])
+i, depth = start.end() - 1, 0
+while i < len(text):
+    if text[i] == "{": depth += 1
+    elif text[i] == "}":
+        depth -= 1
+        if depth == 0: break
+    i += 1
+body = re.sub(r"//[^\n]*", "", text[start.end() - 1:i])
+print("\n".join(sorted(set(re.findall(r"check\.([A-Za-z_][A-Za-z0-9_.]*)", body)))))
+' "$verify" | sed 's/\.$//' | sort -u | grep -Ev "$excluded")
+
+        while read -r name; do
+            [ -n "$name" ] || continue
+            printf '%s\n' "$declared" | grep -qx "$name" \
+                || missing="$missing $stage: $name\n"
+        done <<< "$reads"
+    done
+
+    if [ -n "$missing" ]; then
+        fail_case "parameters read but not declared in checkParameterMap():"$'\n'"$(printf "$missing")"
     fi
 }

@@ -504,31 +504,6 @@ def searchRoots(Map variant) {
     return variant.dir.search.collect { root -> "\"${root}\"" }.join(' ')
 }
 
-// THE ONE THING STEP 0 NEEDS FROM THE ANALYSIS: which working roots its RGTags change guard
-// has to probe.
-//
-// The guard treats "no BAMs and no VCF anywhere" as "nothing has consumed RGTags.csv yet" and
-// records a NEW BASELINE. Once ready BAMs live under a variant's root rather than the run's
-// own, a probe that looks only at the run's root answers 0 on every invocation - so an edit
-// made between runs would be adopted as the baseline while the BAMs on disk still carry the
-// old tags, and no later run could detect it. Every other wrong existence answer in this
-// pipeline costs redundant work; this one costs the guard itself.
-//
-// Written into the run under `dir.` because it IS directory information, which also keeps it
-// out of the change manifest: analysisParams() excludes that whole family, and a new key in
-// every manifest would fail the change check on every project that upgrades.
-def attachProbeRoots(Map plan, List runDefs) {
-    runDefs.each { run ->
-        def ready = variantForRun(plan, run, 4)
-        def vcf = variantForRun(plan, run, 6)
-        run.dir.probe = [
-            ready: "${ready.dir.utilized}/${ready.dir.subpath.ready}".toString(),
-            vcf  : "${vcf.dir.utilized}/${vcf.dir.subpath.vcf}".toString(),
-        ]
-    }
-    return runDefs
-}
-
 // Where a variant does its working-volume work.
 //
 // One task per (variant, step) means nothing ever races for a path, which is what makes the
@@ -642,15 +617,6 @@ def publishConflicts(Map plan, List runDefs) {
         }
     }
     return problems
-}
-
-// The members files to write: one per SHARED directory. A run's own directory needs none - its
-// name already says who it belongs to - and All_Runs gets one anyway, because "every run" is a
-// list worth having on disk when the table is later edited.
-def sharedMemberFiles(Map plan) {
-    return sharingGroups(plan)
-        .findAll { group -> group.members.size() > 1 }
-        .collect { group -> [dir: group.dir, members: group.members.collect { m -> runToken(m) }.sort()] }
 }
 
 // publishConflicts(), rendered for step 0's report.

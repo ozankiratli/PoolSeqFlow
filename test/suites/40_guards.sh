@@ -648,3 +648,107 @@ r2,6
     assert_contains "$out" "produced no frequency tables for: r1" "and should name it"
     assert_contains "$out" "must reach the end" "and say why that is fatal"
 }
+
+# THE SAME GUARD, AFTER THE SHARED BAMs HAVE BEEN PROMOTED - and this is the case that was
+# actually broken between E1x and E1y.
+#
+# Once several runs share step 4, the ready BAMs are promoted to the GROUP's directory:
+# Output/All_Runs/Ready, which appears in no member's own Output/ and in no member's own
+# Utilized_. So the two roots the guard probed - the run's Output and the working root the
+# analysis handed it - were both empty on every invocation after the first promotion, the
+# no-BAMs-and-no-VCF branch fired, and an edited RGTags.csv was adopted as the baseline for
+# BAMs still carrying the old tags. Exit 0, PASS, and nothing later could detect it.
+#
+# The guard is now keyed to the step-6 variant and probes that variant's directories on both
+# volumes, which is why this test asserts the pre-fix roots are empty: without that, an
+# implementation that quietly went back to looking at the run's own tree would still pass.
+test_an_rgtags_edit_is_caught_after_a_shared_bam_is_promoted() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status report before after stored
+    # Two runs that diverge at step 7, so they share the called VCF and everything under it.
+    sb=$(multirun_sandbox "rgtags-shared" 'RunID,vcffilter.minQUAL
+early,30
+late,1000
+')
+    status=$(run_verify_only "$sb")
+    assert_status 0 "$status" "the first pass should record a baseline; see $sb/run.out"
+
+    stored="$sb/store/Output/All_Runs/.poolseqflow_rgtags"
+    assert_file "$stored" "the baseline belongs in the directory holding the VCF it describes"
+    before=$(md5sum < "$stored")
+
+    # The promoted shared BAM. Existence is all the guard tests, so an empty file will do.
+    mkdir -p "$sb/store/Output/All_Runs/Ready"
+    : > "$sb/store/Output/All_Runs/Ready/TestSample1_ready.bam"
+
+    # ...and it is in neither place the guard used to look.
+    local run
+    for run in early late; do
+        [ -e "$sb/store/Output/$run/Ready" ] \
+            && fail_case "$run's own Output should hold no ready BAMs - that is the whole case"
+    done
+    [ -n "$(find "$sb/main" -path '*Utilized*/Ready/*' -print -quit 2>/dev/null)" ] \
+        && fail_case "no working root should hold a ready BAM either"
+
+    sed -i '2s/,/_EDITED,/2' "$sb/main/RGTags.csv"
+
+    status=$(run_verify_only "$sb")
+    report=$(cat "$sb/store/Output/early/Reports/0_verify_environment.txt")
+
+    assert_status 1 "$status" "an edit against promoted shared BAMs should fail the run"
+    assert_contains "$report" "RGTAGS CHANGE CHECK:   FAIL" "the change should be reported"
+    assert_contains "$report" "$sb/store/Output/All_Runs/Ready" \
+        "and should name the group's directory as where the old tags are"
+
+    after=$(md5sum < "$stored")
+    assert_eq "$before" "$after" \
+        "the stored baseline must not be overwritten - doing so hides the mismatch for good"
+}
+
+# A Shared_<N> NAME CAN COME TO MEAN A DIFFERENT GROUP, and a plain manifest diff cannot see it.
+#
+# The number is assigned in order of appearance, so editing the table can leave Shared_1
+# describing two different runs than the ones whose results are already in it. The manifest
+# would then be compared against a directory built for somebody else, and the answer - some
+# parameters added, some removed - reads as an edit to parameters.config and is not one. It also
+# wants the opposite advice: `reset` throws the whole analysis away, when what is stale is one
+# directory.
+#
+# So the members file is written by the same task that writes the manifest, and read first.
+test_a_regrouped_shared_directory_is_refused() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status report members
+    # a and b agree at step 7, c does not - so Shared_1 is {a, b}.
+    sb=$(multirun_sandbox "regrouped" 'RunID,vcffilter.minQUAL
+a,30
+b,30
+c,1000
+')
+    status=$(run_verify_only "$sb")
+    assert_status 0 "$status" "the first pass should pass; see $sb/run.out"
+    members="$sb/store/Output/Shared_1/members.txt"
+    assert_eq "a
+b" "$(cat "$members" 2>/dev/null)" "Shared_1 should record the pair that formed it"
+
+    # Move the boundary: now b agrees with c instead, so Shared_1 is {b, c} - the same
+    # directory, the same name, a different group.
+    printf 'RunID,vcffilter.minQUAL\na,30\nb,1000\nc,1000\n' > "$sb/main/runs.csv"
+    status=$(run_verify_only "$sb")
+    # b's report, because b is the run in Shared_1 both times: a run only carries the verdict
+    # of the directories it is a member of, and a has left this one.
+    report=$(cat "$sb/store/Output/b/Reports/0_verify_environment.txt")
+
+    assert_status 1 "$status" "a directory whose members changed should stop the run"
+    assert_contains "$report" "The runs sharing this directory have CHANGED" \
+        "and should say so rather than blaming parameters.config"
+    assert_contains "$report" "was  a, b" "naming who it was built for"
+    assert_contains "$report" "now  b, c" "and who it would now serve"
+    assert_not_contains "$report" "./PoolSeqFlow reset" \
+        "resetting throws away every directory; only this one is stale"
+
+    assert_eq "a
+b" "$(cat "$members" 2>/dev/null)" \
+        "the members file must survive the failure, or the next run would see no disagreement"
+}

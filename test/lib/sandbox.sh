@@ -327,22 +327,20 @@ run_verify_only() {
 nextflow.enable.dsl=2
 
 include { runDefinitions; resolveParameters } from './scripts/resolve_parameters.nf'
-include { variantPlan; attachProbeRoots } from './scripts/variants.nf'
-include { sharingReportLines; publishConflictLines; sharedMemberFiles } from './scripts/variants.nf'
+include { variantPlan } from './scripts/variants.nf'
+include { sharingReportLines; publishConflictLines } from './scripts/variants.nf'
 include { VerifyEnvironment } from './scripts/0_verify_environment.nf'
 
 workflow {
     def runs = runDefinitions()
     resolveParameters()
+    // Step 0's stages are keyed to what they validate, and two of them - the RGTags change
+    // guard and the parameter manifest - are keyed by the divergence analysis itself, so it
+    // goes in alongside the runs.
     def plan = variantPlan(runs)
-    // CheckRGTagsFile probes the working roots that hold the ready BAMs and the VCF, and which
-    // those are is a question only the divergence analysis can answer. Without this the guard
-    // sees nothing on disk and records a new baseline every time.
-    attachProbeRoots(plan, runs)
-    VerifyEnvironment(channel.fromList(runs), channel.value(tuple(
+    VerifyEnvironment(channel.value([plan: plan, runs: runs]), channel.value(tuple(
         sharingReportLines(plan, runs),
-        publishConflictLines(plan, runs),
-        sharedMemberFiles(plan))))
+        publishConflictLines(plan, runs))))
 }
 ENTRY
     _run_entry "$sb" verify_only.nf

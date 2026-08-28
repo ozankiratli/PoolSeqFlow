@@ -1,5 +1,7 @@
 include { derivedParameterNames } from './resolve_parameters.nf'
 include { knownParameterNames } from './resolve_parameters.nf'
+include { dig; deepCopyVariant; runToken } from './variants.nf'
+include { sharingGroups; parentVariant; childVariants; variantForRun } from './variants.nf'
 
 // Flatten the nested params map into dotted keys (dir.output.report.align and so on).
 def flattenParams(Map m, String prefix, Map out) {
@@ -22,6 +24,9 @@ def flattenParams(Map m, String prefix, Map out) {
 // Takes the run's own effective parameters rather than reading the global `params`. Called
 // once per run, it would otherwise write N identical manifests describing the base config -
 // so every run would record settings it did not use, and the guard would never fire.
+//
+// Returns the `key=value` lines rather than one joined string, because what is written to a
+// directory is the intersection of its members' - see directoryManifest() below.
 def analysisParams(Map p) {
     // dataSource is deliberately NOT excluded. It names the subdirectory the reads are read
     // from, so two different datasets under one storageDir are two different analyses - and
@@ -41,9 +46,60 @@ def analysisParams(Map p) {
     def skipPrefix = ['dir.', 'cores.', 'java.', 'software.']
     return flattenParams(p, '', [:])
         .findAll { k, _v -> !skipKey.contains(k) && !skipPrefix.any { prefix -> k.startsWith(prefix) } }
-        .collect { k, v -> "${k}=${v}" }
+        .collect { k, v -> "${k}=${v}".toString() }
         .sort()
-        .join('\n')
+}
+
+// A DIRECTORY'S MANIFEST IS THE INTERSECTION OF ITS MEMBERS'.
+//
+// A manifest exists to answer "would this parameter invalidate what is already here", and once
+// results are shared the thing that has parameters is a directory, not a run. The members of a
+// group agree by construction on everything that decided that directory's contents - agreeing
+// is what made them a group - so a parameter that affects the directory is necessarily in the
+// intersection and cannot be missed. Parameters they differ on are, equally by construction,
+// ones that did not affect it.
+//
+// ONE RULE, THREE CASES, TWO OF THEM UNCHANGED: for a directory with one member the
+// intersection is that run's own manifest, which is exactly the file 9f4e647 wrote; for a
+// single run, likewise. Only a shared directory is new.
+//
+// It needs no step map and does no filtering of its own. analysisParams() keeps answering "what
+// invalidates a result" while stepParameterMap() keeps answering "what makes two results the
+// same" - the two lists are allowed to disagree, and folding one into the other would lose the
+// distinction they exist to preserve. The cost is that this can over-fire: a step-7 parameter
+// every member happens to share appears in All_Runs' manifest even though nothing there was
+// produced by step 7. That is no worse than 9f4e647, where any change failed the whole run.
+def directoryManifest(List members) {
+    def common = null
+    members.each { run ->
+        def lines = analysisParams(run)
+        common = (common == null) ? lines : common.intersect(lines)
+    }
+    return (common == null ? [] : common).sort().join('\n')
+}
+
+// One manifest task per RESULTS DIRECTORY, which is what sharingGroups() enumerates.
+//
+// A run belongs to as many of these as it has divergence points - typically its own directory
+// plus whatever it shares - and gets all of their verdicts in its report, because all of them
+// describe results it depends on.
+def manifestGroups(Map plan, List runDefs) {
+    return sharingGroups(plan).collect { group ->
+        def ordered = runDefs
+            .findAll { run -> group.members.contains(run.runId) }
+            .sort { a, b -> "${a.runId}" <=> "${b.runId}" }
+        def lead = ordered[0]
+        return [checkKey    : "${group.dir}".toString(),
+                dir         : "${group.dir}".toString(),
+                runId       : lead.runId,
+                storageDir  : lead.storageDir,
+                members     : ordered.collect { m -> m.runId },
+                memberTokens: ordered.collect { m -> runToken(m.runId) },
+                // The directory's own name in the trace: All_Runs, Shared_1, a RunID. A single
+                // run has no name for anything (settled rule 3), so it keeps the bare tag.
+                checkTag    : lead.runId == null ? '-' : "${group.dir}".toString().tokenize('/').last(),
+                manifest    : directoryManifest(ordered)]
+    }
 }
 
 // Turn a readPattern into a find(1) expression matching both mates.
@@ -65,18 +121,226 @@ def findNameExpr(String pattern) {
     return '\\( ' + alts.collect { alt -> "-name '${head}${alt}${tail}'" }.join(' -o ') + ' \\)'
 }
 
+// WHAT EACH CHECK READS, and therefore how many times it needs to run.
+//
+// Step 0 used to run every stage once per run, so three runs against one reference produced
+// three CheckReference tasks and three identical reports for one file. Z, 2026-08-27: *"the
+// pipeline first needs to parse out the multi-run csv, and decide on the shape of the pipeline.
+// Then the checks should represent each step that is needed by the pipeline. Otherwise we are
+// creating redundant and confusing log files for people to review and it will be harder to
+// fix."* A check now runs once per distinct value of what it actually reads, and its verdict is
+// handed back to every run that shares that value.
+//
+// AUTHORED, and carrying the same risk as stepParameterMap(): name too few parameters and one
+// run's verdict is used for a run whose value differs - which is worse here than there, because
+// catching exactly that is what the check is for. A case in test/suites/00_static.sh
+// re-extracts each process body and fails if it reads anything its entry does not declare.
+//
+// The names are dotted paths into a RUN's own parameters, read with dig(). Never `params`,
+// which is the base configuration rather than what any particular run is using.
+def checkParameterMap() {
+    return [
+        // The user-placed files, one check per file however many runs name it. Deliberately not
+        // step 1's dictionary key, which is a (reference, GFF) PAIR: what this stage asks is
+        // whether one file is on disk, so one file is one check.
+        CheckReference     : ['referencePath'],
+        CheckGFF           : ['gffPath'],
+        // SkipGFFCheck reads nothing - its report is two fixed lines - so one task serves every
+        // run that does not annotate. An empty list is a statement, not an omission.
+        SkipGFFCheck       : [],
+        // dir.data is mainDir + dataSource; dataSource is named as well because the report
+        // prints it, and a name that reaches the report is a name that decides the report.
+        CheckData          : ['dir.data', 'dataSource', 'readPattern'],
+        CheckTrimParameters: ['trim_galore.autodetect', 'trim_galore.adapter1',
+                              'trim_galore.adapter2'],
+        // Two of the four roots. The other two - the installation and the launch directory -
+        // are properties of the invocation and cannot differ between runs.
+        CheckDirectories   : ['mainDir', 'storageDir'],
+    ]
+}
+
+// The key two runs must share to share a check.
+//
+// THE STORAGE ROOT IS PART OF EVERY KEY, for the reason variantKey() gives: a check writes a
+// log, and two runs whose storageDir columns differ have no directory in common to put it in.
+// Prefixing makes them simply never group, rather than needing a refusal or a special case.
+def checkKey(Map run, String check) {
+    def names = checkParameterMap()[check]
+    if (names == null) {
+        throw new IllegalArgumentException(
+            "no entry for '${check}' in checkParameterMap() (scripts/0_verify_environment.nf). " +
+            "Every step-0 stage that is keyed rather than per run needs one.")
+    }
+    def parts = ["store=${run.storageDir}".toString()] +
+                names.collect { name -> "${name}=${dig(run, name)}".toString() }
+    return parts.join(' | ').toString()
+}
+
+// The tasks a check will run: one per distinct key, each carrying the runs it answers for.
+//
+// The lead member is the lowest RunID rather than the first table row, exactly as variantsAt()
+// picks one, so reordering the CSV cannot change which run's map a shared check carries. It is
+// a deep copy for the same reason a variant is: the item gains its own bookkeeping and must not
+// write it into a run map that the rest of the pipeline is still reading.
+def checkGroups(List runDefs, String check) {
+    def groups = [:]
+    runDefs.each { run ->
+        def key = checkKey(run, check)
+        if (!groups.containsKey(key)) groups[key] = []
+        groups[key] << run
+    }
+    return groups.collect { key, members ->
+        def ordered = members.sort { a, b -> "${a.runId}" <=> "${b.runId}" }
+        def item = deepCopyVariant(ordered[0])
+        item.checkKey = key
+        item.members = ordered.collect { m -> m.runId }
+        item.checkTag = ordered.collect { m -> runToken(m.runId) }.join('+')
+        return item
+    }
+}
+
+// WHERE A STEP-0 STAGE WRITES ITS LOG, and why it is not a run's own Logs tree.
+//
+// A check keyed to what it validates can answer for two runs out of three, which belongs to
+// neither of their trees - and step 0 runs before any run has results for a log to sit beside.
+// So every stage here logs at invocation level, which is what the three stages that were
+// already not per run - RepairRGTagsLineEndings, CheckInstalledSoftware, CheckMultiRun - have
+// done since E1t. `All_Runs` means "the invocation" in this one place rather than "shared by
+// every run"; the file name says which runs each task actually answered for.
+//
+// VerifyAll is the exception and stays in the run's own tree, because it really is per run.
+def checkLogDir(Map check, String stage) {
+    def root = params.multiRun ? "${check.storageDir}/Logs/All_Runs" : "${check.storageDir}/Logs"
+    return "${root}/0_verify_environment/${stage}".toString()
+}
+
+// ONE WRITER PER FILE. Tasks append to their log without locking, which is safe only while no
+// two of them share a file - and a keyed check runs N times into one directory. Naming the file
+// after the runs it answered for makes collision impossible and says who it is about.
+//
+// RepairRGTagsLineEndings has had this wrong since E1t: two runs naming two different RGTags
+// tables give two tasks, and both appended to one file.
+//
+// Single run: no synthetic key anywhere (settled rule 3), so the name is exactly what it was.
+def checkLogFile(Map check, String stage) {
+    def token = check.runId == null ? '' : "_${check.members.collect { m -> runToken(m) }.join('+')}"
+    return "0_VerifyEnvironment_${stage}${token}_nextflow.log".toString()
+}
+
+// A check's verdict, handed back to every run it answers for.
+//
+// combine(by: 0) on the key rather than a join: what is matched is the same string computed by
+// one function on both sides, and every run reaches exactly one task of every check that
+// applies to it. A join would drop an unmatched key silently, which is the failure mode this
+// whole design exists to avoid.
+def reportPerRun(Object runs, Object reports, String check) {
+    return runs
+        .map { run -> tuple(checkKey(run, check), run) }
+        .combine(reports.map { item, report -> tuple(item.checkKey, report) }, by: 0)
+        .map { _key, run, report -> tuple(run, report) }
+}
+
+// The RGTags tables to repair: one task per distinct PATH, and deliberately NOT store-prefixed
+// the way checkKey() is. The file lives in mainDir, which every run shares whatever its storage
+// root, and the repair WRITES to it - so two tasks on one path would be a race on the user's
+// own data. See RepairRGTagsLineEndings below.
+//
+// The log root is the invocation's own rather than the lead member's, for the same reason: the
+// file being repaired belongs to no single run.
+def rgTagsRepairs(List runDefs) {
+    def groups = [:]
+    runDefs.each { run ->
+        def path = "${run.rgTagsPath}".toString()
+        if (!groups.containsKey(path)) groups[path] = []
+        groups[path] << run
+    }
+    return groups.collect { path, members ->
+        def ordered = members.sort { a, b -> "${a.runId}" <=> "${b.runId}" }
+        return [rgTagsPath: path,
+                runId     : ordered[0].runId,
+                storageDir: "${params.storageDir}".toString(),
+                members   : ordered.collect { m -> m.runId }]
+    }
+}
+
+// THE RGTAGS CHANGE GUARD IS KEYED TO THE STEP-6 VARIANT, and nothing coarser will do.
+//
+// What it asks is whether the table has been edited since the things that absorbed it were
+// produced - the tag values, which step 4 bakes into each BAM, and the row order, which step 6
+// turns into the VCF's sample column order. So its answer depends on the CONTENT of two
+// directories, and two runs may share the table and still have different ones.
+//
+// Step 6's key is the finest of the two and contains step 4's, so runs that share it share both
+// artifacts and therefore share one answer. Anything coarser lets a run with no BAMs decide for
+// a run that has them - and the branch below treats "no BAMs and no VCF" as "nothing has
+// consumed the table yet" and RECORDS A NEW BASELINE, so the edit would be adopted while the
+// BAMs on disk still carried the old tags. Every other wrong existence answer in this pipeline
+// costs redundant work; this one costs the guard itself.
+//
+// THE PROBE LOOKS IN FOUR PLACES, NOT TWO. Permanent storage as well as the working volume, and
+// the producing VARIANT's directories rather than the member's own: since sharing was turned on
+// the ready BAMs are promoted to (say) Output/All_Runs/Ready, which no member's own Output/
+// contains - so a guard that looked only there answered 0 on every invocation after promotion
+// and had already stopped guarding. Found while keying this stage; it is the reason it could
+// not be left per run.
+def rgTagsChecks(Map plan, List runDefs) {
+    return plan.variants[6].collect { variant ->
+        def members = runDefs
+            .findAll { run -> variant.members.contains(run.runId) }
+            .sort { a, b -> "${a.runId}" <=> "${b.runId}" }
+        // The BAMs came from step 4, which is step 6's parent; the filtered VCFs and the
+        // frequency tables are step 7's, which may be several branches below one call.
+        def ready = parentVariant(plan, variant)
+        def filtered = childVariants(plan, variant, 7)
+
+        // What has to go for an edit to become the new baseline, in the order it is listed.
+        // The row order lives only in the called VCF and everything derived from it; the tag
+        // values live in the BAMs as well, which is why the two lists differ by one entry.
+        def orderDelete = ([variant.dir.output.vcf] +
+                           filtered.collect { child -> child.dir.output.vcf } +
+                           filtered.collect { child -> child.dir.output.freq })
+                          .collect { d -> d.toString() }.unique()
+
+        return [checkKey    : variant.variantKey,
+                runId       : variant.runId,
+                storageDir  : variant.storageDir,
+                members     : variant.members,
+                checkTag    : variant.members.collect { m -> runToken(m) }.join('+'),
+                // The key of the CheckData task whose verdict this stage reads. Every member
+                // shares it: step 2's identity contains `reads`, which is dir.data plus
+                // readPattern, and step 6's identity contains step 2's.
+                dataKey     : checkKey(variant, 'CheckData'),
+                rgTagsPath  : "${variant.rgTagsPath}".toString(),
+                // Two runs may name two different files with identical contents - the identity
+                // is the normalised rows, not the path - so every distinct one is repaired, and
+                // every repair report is folded in below.
+                rgTagsPaths : members.collect { m -> "${m.rgTagsPath}".toString() }.unique(),
+                dataDir     : "${variant.dir.data}".toString(),
+                readPattern : "${variant.readPattern}".toString(),
+                samtools    : "${variant.software.samtools}".toString(),
+                storedRg    : "${variant.dir.outputs}/.poolseqflow_rgtags".toString(),
+                readyOut    : "${ready.dir.output.ready}".toString(),
+                readyWork   : "${ready.dir.utilized}/${ready.dir.subpath.ready}".toString(),
+                vcfOut      : "${variant.dir.output.vcf}".toString(),
+                vcfWork     : "${variant.dir.utilized}/${variant.dir.subpath.vcf}".toString(),
+                orderDelete : orderDelete,
+                tagDelete   : (["${ready.dir.output.ready}".toString()] + orderDelete).unique()]
+    }
+}
+
 process CheckReference {
-    tag { run.runId ?: '-' }
+    tag { check.checkTag }
 
     input:
-    val run
+    val check
 
     output:
-    tuple val(run), path('verify_environment_stage1.txt'), emit: report
+    tuple val(check), path('verify_environment_stage1.txt'), emit: report
 
     script:
-    refIn = run.referencePath
-    dir_log = "${run.dir.logs}/0_verify_environment/s1_CheckReference"
+    refIn = check.referencePath
+    dir_log = checkLogDir(check, 's1_CheckReference')
+    log_file = checkLogFile(check, 's1_CheckReference')
     """
     REFFILE=${refIn}
     REPORTFILE="verify_environment.txt"
@@ -102,22 +366,23 @@ process CheckReference {
         echo ""
         echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
         cat .command.log
-    } >> ${dir_log}/0_VerifyEnvironment_s1_CheckReference_nextflow.log
+    } >> ${dir_log}/${log_file}
     """
 }
 
 process CheckGFF {
-    tag { run.runId ?: '-' }
+    tag { check.checkTag }
 
     input:
-    val run
+    val check
 
     output:
-    tuple val(run), path('verify_environment_stage2.txt'), emit: report
+    tuple val(check), path('verify_environment_stage2.txt'), emit: report
 
     script:
-    gffIn = run.gffPath
-    dir_log = "${run.dir.logs}/0_verify_environment/s2_CheckGFF"
+    gffIn = check.gffPath
+    dir_log = checkLogDir(check, 's2_CheckGFF')
+    log_file = checkLogFile(check, 's2_CheckGFF')
 
     """
     GFFFILE=${gffIn}
@@ -144,21 +409,22 @@ process CheckGFF {
         echo ""
         echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
         cat .command.log
-    } >> ${dir_log}/0_VerifyEnvironment_s2_CheckGFF_nextflow.log
+    } >> ${dir_log}/${log_file}
     """
 }
 
 process SkipGFFCheck {
-    tag { run.runId ?: '-' }
+    tag { check.checkTag }
 
     input:
-    val run
+    val check
 
     output:
-    tuple val(run), path('verify_environment_stage2.txt'), emit: report
+    tuple val(check), path('verify_environment_stage2.txt'), emit: report
 
     script:
-    dir_log = "${run.dir.logs}/0_verify_environment/s2_CheckGFF"
+    dir_log = checkLogDir(check, 's2_CheckGFF')
+    log_file = checkLogFile(check, 's2_SkipGFFCheck')
     """
     REPORTFILE="verify_environment.txt"
     log_message() {
@@ -173,23 +439,24 @@ process SkipGFFCheck {
         echo ""
         echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
         cat .command.log
-    } >> ${dir_log}/0_VerifyEnvironment_s2_SkipGFFCheck_nextflow.log
+    } >> ${dir_log}/${log_file}
     """
 }
 
 process CheckData {
-    tag { run.runId ?: '-' }
+    tag { check.checkTag }
 
     input:
-    val run
+    val check
 
     output:
-    tuple val(run), path('verify_environment_stage3.txt'), emit: report
+    tuple val(check), path('verify_environment_stage3.txt'), emit: report
 
     script:
-    dataDir = run.dir.data
-    dir_log = "${run.dir.logs}/0_verify_environment/s3_CheckData"
-    read_pattern = findNameExpr("${run.readPattern}")
+    dataDir = check.dir.data
+    dir_log = checkLogDir(check, 's3_CheckData')
+    log_file = checkLogFile(check, 's3_CheckData')
+    read_pattern = findNameExpr("${check.readPattern}")
 
     """
     DATADIR=${dataDir}
@@ -210,13 +477,13 @@ process CheckData {
         log_message "Data directory is found at: \$DATADIR"
         log_message "DATA FOLDER CHECK:     PASS"
 
-        log_message "The data source is set to: ${run.dataSource}"
+        log_message "The data source is set to: ${check.dataSource}"
 
         # Check for FASTQ files
         FASTQ_COUNT=\$(find \$DATADIR ${read_pattern} | wc -l)
         if [ \$FASTQ_COUNT -eq 0 ]; then
             log_message "No FASTQ files found in data directory!"
-            log_message "Expected pattern: ${run.readPattern}"
+            log_message "Expected pattern: ${check.readPattern}"
             log_message "DATA FILES CHECK:      FAIL"
             STATUS="FAIL"
         else
@@ -240,7 +507,7 @@ process CheckData {
         echo ""
         echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
         cat .command.log
-    } >> ${dir_log}/0_VerifyEnvironment_s3_CheckData_nextflow.log
+    } >> ${dir_log}/${log_file}
     """
 }
 
@@ -262,16 +529,18 @@ process CheckData {
 // It reports rather than fixing silently, and its report is folded into stage 4 below so the
 // output reads exactly as it did when the repair lived there.
 process RepairRGTagsLineEndings {
-    tag { rgTagsPath }
+    tag { repair.rgTagsPath }
 
     input:
-    val rgTagsPath
+    val repair
 
     output:
-    tuple val(rgTagsPath), path('rgtags_lineendings.txt'), emit: report
+    tuple val(repair), path('rgtags_lineendings.txt'), emit: report
 
     script:
-    dir_log = "${params.dir.allLogs}/0_verify_environment/s4_RepairRGTagsLineEndings"
+    rgTagsPath = repair.rgTagsPath
+    dir_log = checkLogDir(repair, 's4_RepairRGTagsLineEndings')
+    log_file = checkLogFile(repair, 's4_RepairRGTagsLineEndings')
     """
     REPORTFILE="rgtags_lineendings.txt"
     : > \$REPORTFILE
@@ -314,35 +583,39 @@ process RepairRGTagsLineEndings {
         echo ""
         echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
         cat .command.log
-    } >> ${dir_log}/0_VerifyEnvironment_s4_RepairRGTagsLineEndings_nextflow.log
+    } >> ${dir_log}/${log_file}
     """
 }
 
 process CheckRGTagsFile {
-    tag { run.runId ?: '-' }
+    tag { check.checkTag }
 
     input:
-    // `lineendings` is RepairRGTagsLineEndings' report for THIS run's table, matched on the
-    // path rather than on arrival - one repair task may serve several runs.
-    tuple val(run), val(verify), val(lineendings)
+    // `lineendings` is every repair report for the tables this group's members named - usually
+    // one, matched on the path rather than on arrival.
+    tuple val(check), val(verify), val(lineendings)
 
     output:
-    tuple val(run), path('verify_environment_stage4.txt'), emit: report
+    tuple val(check), path('verify_environment_stage4.txt'), emit: report
 
     script:
-    rgTagsFile = run.rgTagsPath
-    dataDir = run.dir.data
-    readPattern = findNameExpr(run.readPattern)
+    rgTagsFile = check.rgTagsPath
+    dataDir = check.dataDir
+    readPattern = findNameExpr(check.readPattern)
+    // Sorted rather than taken in arrival order: with more than one table the reports are
+    // concatenated into the stage's output, and a report whose lines move between invocations
+    // reads as a change that did not happen.
+    lineendingFiles = lineendings.collect { f -> "${f}".toString() }.sort().join(' ')
     // A sample ID is the part of a FASTQ name that precedes the mate token. Take that
     // token from readPattern rather than assuming _R1/_R2: step 2 keys every sample off
     // Channel.fromFilePairs, which derives the prefix from the glob and accepts any
     // {1,2} scheme, so this check has to agree with it or it rejects valid layouts.
-    mateBrace = run.readPattern.indexOf('{')
-    mateClose = run.readPattern.indexOf('}')
+    mateBrace = check.readPattern.indexOf('{')
+    mateClose = check.readPattern.indexOf('}')
     hasMateGroup = mateBrace >= 0 && mateClose > mateBrace
-    matePrefix = hasMateGroup ? run.readPattern.substring(0, mateBrace).replaceAll(/^.*\*/, '') : ''
-    mateTail = hasMateGroup ? run.readPattern.substring(mateClose + 1) : ''
-    mateAlts = hasMateGroup ? run.readPattern.substring(mateBrace + 1, mateClose).split(',').collect { alt -> alt.trim() } : []
+    matePrefix = hasMateGroup ? check.readPattern.substring(0, mateBrace).replaceAll(/^.*\*/, '') : ''
+    mateTail = hasMateGroup ? check.readPattern.substring(mateClose + 1) : ''
+    mateAlts = hasMateGroup ? check.readPattern.substring(mateBrace + 1, mateClose).split(',').collect { alt -> alt.trim() } : []
 
     // The mate token must be separated from the sample name. Without a separator the
     // split is guesswork: Sample11/Sample12 are equally readable as one sample's two
@@ -355,34 +628,28 @@ process CheckRGTagsFile {
     // Strip the exact text the pattern says follows the sample name, one alternative at
     // a time. Literal, so it holds for non-numeric mates (_F/_R) too.
     stripMate = mateAlts.collect { alt -> 'base="${base%' + matePrefix + alt + mateTail + '}"' }.join('; ')
-    // Beside the results it describes, not at the storage root: the root is shared by every
-    // run now, so three of them would race for one baseline and the last to write would decide
-    // what the other two are compared against. Moving an existing project's manifests here is
-    // config_migrate.sh's job, not a run's.
-    storedRg = "${run.dir.outputs}/.poolseqflow_rgtags"
-    // Both roots for the two that are promoted. This is not cosmetic: the branch below
-    // treats "no BAMs and no VCF" as "nothing has consumed RGTags.csv yet" and RECORDS A
-    // NEW BASELINE. Looking only at permanent storage would therefore, for a project whose
-    // BAMs are written but not yet promoted, silently adopt an edited RGTags.csv as the
-    // baseline for BAMs that carry the old tags - and no later run could detect it, because
-    // the baseline now says they agree. Every other wrong existence answer in this pipeline
-    // costs redundant work; this one costs the guard itself.
-    //
-    // The working roots come from the divergence analysis rather than from this run's own
-    // dir.utilized, because they are not the same thing once a step is shared: the ready BAMs
-    // are under the root of the variant that CLEANED them, which may serve several runs. A
-    // probe that looked only here would answer 0 on every invocation and record a new baseline
-    // every time - the guard would still report PASS and would have stopped guarding.
-    readyDirOut = "${run.dir.output.ready}"
-    readyDirWork = "${run.dir.probe.ready}"
-    vcfDirOut = "${run.dir.output.vcf}"
-    vcfDirWork = "${run.dir.probe.vcf}"
-    // The frequency tables have no consumer, so they are never promoted and permanent
-    // storage is the only place they can be.
-    readyDir = "${run.dir.output.ready}"
-    vcfDir = "${run.dir.output.vcf}"
-    freqDir = "${run.dir.output.freq}"
-    dir_log = "${run.dir.logs}/0_verify_environment/s4_CheckRGTagsFile"
+    // Beside the results it describes: the baseline belongs in the directory holding the VCF
+    // whose column order it decided, which for a shared step is the group's rather than any one
+    // member's. Moving an existing project's baseline here is config_migrate.sh's job.
+    storedRg = check.storedRg
+    // FOUR ROOTS, NOT TWO, and all of them the producing variant's - see rgTagsChecks() for why
+    // each half of that matters. Permanent storage and the working volume both, because the
+    // branch below reads "no BAMs and no VCF" as "nothing has consumed the table yet" and
+    // records a new baseline; and the variant's directories rather than a member's, because a
+    // shared artifact is promoted to the group's directory and appears in no member's own.
+    readyDirOut = check.readyOut
+    readyDirWork = check.readyWork
+    vcfDirOut = check.vcfOut
+    vcfDirWork = check.vcfWork
+    // What has to be deleted for an edit to take effect, rendered as log_message calls because
+    // there may be several: one call per step-7 branch below this VCF.
+    readyDir = check.readyOut
+    tagDeleteBlock = check.tagDelete.collect { d -> "        log_message \"    ${d}\"" }.join('\n')
+    orderDeleteBlock = check.orderDelete.collect { d -> "                log_message \"    ${d}\"" }.join('\n')
+    dir_log = checkLogDir(check, 's4_CheckRGTagsFile')
+    // The file has always been named for the stage rather than for the process; kept, so that a
+    // single run's log tree is the same tree it was.
+    log_file = checkLogFile(check, 's4_CheckRGTags')
 
     """
     REPORTFILE="verify_environment.txt"
@@ -417,8 +684,8 @@ process CheckRGTagsFile {
         # report, folded in at the point the messages used to be produced so that the stage
         # reads exactly as it did before, and re-read for FAIL so that an unrepairable file
         # still fails the stage that owns the RGTags verdict.
-        cat ${lineendings} | tee -a \$REPORTFILE
-        if grep -q "RGTAGS LINE ENDING CHECK: FAIL" ${lineendings}; then
+        cat ${lineendingFiles} | tee -a \$REPORTFILE
+        if grep -q "RGTAGS LINE ENDING CHECK: FAIL" ${lineendingFiles}; then
             STATUS="FAIL"
         fi
 
@@ -474,13 +741,13 @@ process CheckRGTagsFile {
             # Get sample IDs from data directory
             if [ "${hasMateGroup}" != "true" ]; then
                 sample_ids=""
-                log_message "readPattern '${run.readPattern}' has no {1,2} mate group, so sample IDs cannot be derived"
+                log_message "readPattern '${check.readPattern}' has no {1,2} mate group, so sample IDs cannot be derived"
                 log_message "Give both mates in one pattern, e.g. '*_R{1,2}.fq.gz'"
                 log_message "RGTAGS SAMPLE MATCH CHECK: FAIL"
                 STATUS="FAIL"
             elif [ "${mateSeparated}" != "true" ]; then
                 sample_ids=""
-                log_message "readPattern '${run.readPattern}' runs the mate token straight onto the sample name"
+                log_message "readPattern '${check.readPattern}' runs the mate token straight onto the sample name"
                 log_message "Sample IDs would be ambiguous: 'Sample11' and 'Sample12' read equally well as"
                 log_message "one sample's two mates or as two separate samples."
                 log_message "Separate the mate token with '_', '.' or '-', e.g. '*_R{1,2}.fq.gz' or '*_{1,2}.fq.gz'"
@@ -584,7 +851,7 @@ process CheckRGTagsFile {
             log_message "Cleaned BAMs exist but predate this check - no baseline to compare"
             log_message "Adopting the current RGTags file as the baseline"
             log_message "Verify it still matches what is in the BAMs:"
-            log_message "    ${run.software.samtools} view -H ${readyDir}/<sample>_ready.bam | grep '^@RG'"
+            log_message "    ${check.samtools} view -H ${readyDir}/<sample>_ready.bam | grep '^@RG'"
             log_message "RGTAGS CHANGE CHECK:   PASS"
         elif diff -q "${storedRg}" current_rgtags.csv > /dev/null 2>&1; then
             log_message "RGTags file unchanged since the existing outputs were produced"
@@ -608,8 +875,7 @@ process CheckRGTagsFile {
                 log_message "The tags in the BAMs are matched by ID and are still correct, but"
                 log_message "the VCF sample column order is not."
                 log_message "Delete these and run again to apply it:"
-                log_message "    ${vcfDir}"
-                log_message "    ${freqDir}"
+${orderDeleteBlock}
                 log_message "Or discard the whole analysis and start over:  ./PoolSeqFlow reset"
                 log_message "RGTAGS CHANGE CHECK:   FAIL"
                 STATUS="FAIL"
@@ -628,9 +894,7 @@ process CheckRGTagsFile {
             log_message "    ${readyDir}"
             log_message "carries the old tags, and everything called from them carries them too."
             log_message "Delete these and run again to apply it:"
-            log_message "    ${readyDir}"
-            log_message "    ${vcfDir}"
-            log_message "    ${freqDir}"
+${tagDeleteBlock}
             log_message "Or discard the whole analysis and start over:  ./PoolSeqFlow reset"
             log_message "RGTAGS CHANGE CHECK:   FAIL"
             STATUS="FAIL"
@@ -645,7 +909,7 @@ process CheckRGTagsFile {
         echo ""
         echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
         cat .command.log
-    } >> ${dir_log}/0_VerifyEnvironment_s4_CheckRGTags_nextflow.log
+    } >> ${dir_log}/${log_file}
     """
 }
 
@@ -706,19 +970,20 @@ process CheckInstalledSoftware {
 }
 
 process CheckTrimParameters {
-    tag { run.runId ?: '-' }
+    tag { check.checkTag }
 
     input:
-    val run
+    val check
 
     output:
-    tuple val(run), path('verify_environment_stage6.txt'), emit: report
+    tuple val(check), path('verify_environment_stage6.txt'), emit: report
 
     script:
-    autodetect = run.trim_galore.autodetect
-    adapter1   = run.trim_galore.adapter1
-    adapter2   = run.trim_galore.adapter2
-    dir_log = "${run.dir.logs}/0_verify_environment/s6_CheckTrimParameters"
+    autodetect = check.trim_galore.autodetect
+    adapter1   = check.trim_galore.adapter1
+    adapter2   = check.trim_galore.adapter2
+    dir_log = checkLogDir(check, 's6_CheckTrimParameters')
+    log_file = checkLogFile(check, 's6_CheckTrimParameters')
     """
     REPORTFILE="verify_environment.txt"
 
@@ -762,7 +1027,7 @@ process CheckTrimParameters {
         echo ""
         echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
         cat .command.log
-    } >> ${dir_log}/0_VerifyEnvironment_s6_CheckTrimParameters_nextflow.log
+    } >> ${dir_log}/${log_file}
     """
 }
 
@@ -793,16 +1058,17 @@ process CheckTrimParameters {
 // no two computed directories in the `dir` block resolve alike, and that belongs where the
 // block is built, not here.
 process CheckDirectories {
-    tag { run.runId ?: '-' }
+    tag { check.checkTag }
 
     input:
-    val run
+    val check
 
     output:
-    tuple val(run), path('verify_environment_stage8.txt'), emit: report
+    tuple val(check), path('verify_environment_stage8.txt'), emit: report
 
     script:
-    dir_log = "${run.dir.logs}/0_verify_environment/s8_CheckDirectories"
+    dir_log = checkLogDir(check, 's8_CheckDirectories')
+    log_file = checkLogFile(check, 's8_CheckDirectories')
     """
     REPORTFILE="verify_environment.txt"
 
@@ -815,8 +1081,8 @@ process CheckDirectories {
 
     # -m resolves symlinks, '..' and trailing slashes without requiring the directory to
     # exist yet; mainDir need not be there before the first run creates work/ under it.
-    MAIN=\$(realpath -m "${run.mainDir}")
-    STORE=\$(realpath -m "${run.storageDir}")
+    MAIN=\$(realpath -m "${check.mainDir}")
+    STORE=\$(realpath -m "${check.storageDir}")
     INSTALL=\$(realpath -m "${workflow.projectDir}")
     LAUNCH=\$(realpath -m "${workflow.launchDir}")
 
@@ -893,27 +1159,43 @@ process CheckDirectories {
         echo ""
         echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
         cat .command.log
-    } >> ${dir_log}/0_VerifyEnvironment_s8_CheckDirectories_nextflow.log
+    } >> ${dir_log}/${log_file}
     """
 }
 
+// ONE TASK PER RESULTS DIRECTORY, not one per run.
+//
+// A manifest answers "would this parameter invalidate what is already here", and once results
+// are shared the thing that HAS parameters is a directory. A run belongs to several - its own,
+// plus whatever it shares - and its report carries all of their verdicts, because all of them
+// describe results it depends on. See directoryManifest() for the intersection rule and why it
+// cannot miss a parameter that matters.
+//
+// It also owns the members file. Who a directory belongs to and what parameters describe it are
+// the same fact recorded twice, so one task writes both and they cannot disagree - and the
+// previous copy is what distinguishes an edited config from a REGROUPED table, which look
+// identical to a plain diff and want opposite advice.
 process CheckRunParameters {
-    tag { run.runId ?: '-' }
+    tag { check.checkTag }
 
     input:
-    val run
+    val check
 
     output:
-    tuple val(run), path('verify_environment_stage7.txt'), emit: report
+    tuple val(check), path('verify_environment_stage7.txt'), emit: report
 
     script:
-    manifest    = analysisParams(run)
-    // Beside the results they describe, for the reason recorded in CheckRGTagsFile above.
-    stored      = "${run.dir.outputs}/.poolseqflow_params"
-    readable    = "${run.dir.outputs}/run_parameters.txt"
-    versions    = "${run.dir.outputs}/.poolseqflow_versions"
+    manifest    = check.manifest
+    stored      = "${check.dir}/.poolseqflow_params"
+    readable    = "${check.dir}/run_parameters.txt"
+    versions    = "${check.dir}/.poolseqflow_versions"
+    // A run's own directory is named after it and needs no list; a shared one does. All_Runs
+    // gets one too, because "every run" is a list worth having on disk once the table is edited.
+    members     = check.members.size() > 1 ? "${check.dir}/members.txt" : ''
+    memberLines = check.memberTokens.sort().join('\n')
     release     = workflow.manifest.version ?: 'unknown'
-    dir_log     = "${run.dir.logs}/0_verify_environment/s7_CheckRunParameters"
+    dir_log     = checkLogDir(check, 's7_CheckRunParameters')
+    log_file    = checkLogFile(check, 's7_CheckRunParameters')
     """
     REPORTFILE="verify_environment.txt"
 
@@ -926,15 +1208,49 @@ process CheckRunParameters {
 ${manifest}
 CURRENT_PARAMS
 
+    cat <<'CURRENT_MEMBERS' > current_members.txt
+${memberLines}
+CURRENT_MEMBERS
+
     STATUS="PASS"
     ADOPTED=0
-    if [ ! -f "${stored}" ]; then
-        log_message "RUN PARAMETERS:        No previous run recorded - this is a fresh project"
+    REGROUPED=0
+    log_message "RUN PARAMETERS:        ${check.dir}"
+
+    # WHO THIS DIRECTORY BELONGS TO, asked before what describes it. A directory whose member
+    # set changed holds results produced for a different set of runs, so comparing its manifest
+    # would be comparing two different things - and the answer would be "parameters were added
+    # or removed", which reads as an edit to parameters.config and is not one. The number in a
+    # Shared_<N> name is assigned in order of appearance, so it is exactly the name that can
+    # come to mean a different group between two invocations.
+    if [ -n "${members}" ] && [ -f "${members}" ] &&
+       ! diff -q "${members}" current_members.txt > /dev/null 2>&1; then
+        log_message "RUN PARAMETERS:        The runs sharing this directory have CHANGED:"
+        log_message ""
+        log_message "  was  \$(paste -sd, "${members}" | sed 's/,/, /g')"
+        log_message "  now  \$(paste -sd, current_members.txt | sed 's/,/, /g')"
+        log_message ""
+        log_message "RUN PARAMETERS:        What is already here was produced for the earlier set. The new"
+        log_message "RUN PARAMETERS:        one will not read all of it, and completed steps are skipped by"
+        log_message "RUN PARAMETERS:        looking for output files - so results from two different"
+        log_message "RUN PARAMETERS:        groupings would be mixed in one directory."
+        log_message "RUN PARAMETERS:"
+        log_message "RUN PARAMETERS:        Delete this directory and run again to rebuild it for the new"
+        log_message "RUN PARAMETERS:        set, or restore ${params.multiRunFile} to what it was:"
+        log_message "RUN PARAMETERS:            ${check.dir}"
+        STATUS="FAIL"
+        REGROUPED=1
+    fi
+
+    if [ "\$REGROUPED" = "1" ]; then
+        :
+    elif [ ! -f "${stored}" ]; then
+        log_message "RUN PARAMETERS:        No previous run recorded - this is a fresh directory"
         log_message "RUN PARAMETERS:        Recording \$(wc -l < current_params.txt) analysis parameters"
         mkdir -p "\$(dirname "${stored}")"
         cp current_params.txt "${stored}"
     elif diff -q "${stored}" current_params.txt > /dev/null 2>&1; then
-        log_message "RUN PARAMETERS:        Unchanged since the outputs in ${run.dir.outputs} were produced"
+        log_message "RUN PARAMETERS:        Unchanged since the outputs here were produced"
     else
         # Three things can happen to a manifest and they do not mean the same thing:
         #
@@ -1054,10 +1370,15 @@ CURRENT_PARAMS
     # parameter change does. But "cite the version you ran" is unanswerable if nothing
     # writes it down, and a project that several versions have touched is worth knowing
     # about - the file is append-only for exactly that reason.
-    if [ ! -f "${versions}" ]; then
+    #
+    # Skipped entirely on a regrouping: appending there would record this release against
+    # results it did not produce, and would clear the classification the next invocation needs.
+    if [ "\$REGROUPED" = "1" ]; then
+        :
+    elif [ ! -f "${versions}" ]; then
         mkdir -p "\$(dirname "${versions}")"
         printf '%s\\t%s\\n' "${release}" "\$(date -u '+%Y-%m-%d')" > "${versions}"
-        log_message "PIPELINE VERSION:      ${release} - first run in this project"
+        log_message "PIPELINE VERSION:      ${release} - first run in this directory"
     elif [ "\$(tail -n 1 "${versions}" | cut -f1)" = "${release}" ]; then
         log_message "PIPELINE VERSION:      ${release}"
     else
@@ -1078,7 +1399,7 @@ CURRENT_PARAMS
         mkdir -p "\$(dirname "${readable}")"
         rm -f "${readable}"
         {
-            echo "# PoolSeqFlow analysis parameters for the outputs in ${run.dir.outputs}"
+            echo "# PoolSeqFlow analysis parameters for the outputs in ${check.dir}"
             echo "# Generated \$(date -u '+%Y-%m-%d %H:%M:%S UTC') - read-only; edit parameters.config instead."
             echo "#"
             echo "# Pipeline version(s) that have run in this project, oldest first."
@@ -1091,6 +1412,13 @@ CURRENT_PARAMS
         log_message "RUN PARAMETERS:        Written to ${readable}"
     fi
 
+    # The members file, written last and only on a clean pass - so a directory whose grouping is
+    # in dispute keeps the record of what it was, which is what the check reads next time.
+    if [ "\$STATUS" = "PASS" ] && [ -n "${members}" ]; then
+        mkdir -p "\$(dirname "${members}")"
+        cp current_members.txt "${members}"
+    fi
+
     log_message "RUN PARAMETER CHECK:   STATUS=\$STATUS"
 
     mv \$REPORTFILE verify_environment_stage7.txt
@@ -1099,7 +1427,7 @@ CURRENT_PARAMS
         echo ""
         echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
         cat .command.log
-    } >> ${dir_log}/0_VerifyEnvironment_s7_CheckRunParameters_nextflow.log
+    } >> ${dir_log}/${log_file}
     """
 }
 
@@ -1126,8 +1454,8 @@ CURRENT_PARAMS
 process CheckMultiRun {
     input:
     // The divergence analysis, already rendered. It is computed while the DAG is built - before
-    // this task exists - so what arrives is text and a list of directories, not the plan.
-    tuple val(sharing_lines), val(conflict_lines), val(member_files)
+    // this task exists - so what arrives is text, not the plan.
+    tuple val(sharing_lines), val(conflict_lines)
 
     output:
     path 'verify_environment_stage9.txt', emit: report
@@ -1142,14 +1470,6 @@ process CheckMultiRun {
     conflict_block = conflict_lines.isEmpty()
         ? '        :'
         : (conflict_lines.collect { line -> "        log_message \"${line}\"" } + ['        STATUS="FAIL"']).join('\n')
-    // `mkdir -p` then write: the directory does not exist yet on a first run, and this is the
-    // only thing that creates it before the analysis starts filling it.
-    member_block = member_files.isEmpty()
-        ? '        :'
-        : member_files.collect { entry ->
-              "        mkdir -p '${entry.dir}'\n" +
-              "        printf '%s\\n' ${entry.members.collect { m -> "'${m}'" }.join(' ')} > '${entry.dir}/members.txt'"
-          }.join('\n')
     """
     REPORTFILE="verify_environment.txt"
 
@@ -1263,9 +1583,9 @@ PYEOF
         # visible in seconds rather than inferred months later from a result.
 ${sharing_block}
 
-        # A members file inside each shared directory, so the grouping can be recovered from
-        # the results themselves rather than only from this report.
-${member_block}
+        # The members file inside each shared directory - written by CheckRunParameters, which
+        # owns that directory's record, so that the grouping can be recovered from the results
+        # themselves rather than only from this report.
 
         # And the one disagreement a group cannot absorb.
 ${conflict_block}
@@ -1298,7 +1618,7 @@ process VerifyAll {
     // broadcast to every task of this process, which is the behaviour that is wanted for a
     // check that ran once for the whole invocation.
     tuple val(run), val(reference_log), val(gffFile_log), val(dataSource_log),
-          val(rgtags_log), val(trim_log), val(runparam_log), val(directory_log)
+          val(rgtags_log), val(trim_log), val(runparam_logs), val(directory_log)
     val software_log
     val multirun_log
 
@@ -1308,6 +1628,10 @@ process VerifyAll {
     script:
     output_folder = "${run.dir.output.reports}"
     dir_log = "${run.dir.logs}/0_verify_environment"
+    // A LIST, because a run belongs to as many results directories as it has divergence points
+    // and each of them has its own manifest. Already ordered by directory upstream, so the
+    // report reads the same way on every invocation.
+    runparam_log = runparam_logs.collect { f -> "${f}".toString() }.join(' ')
     """
     REPORTFILE="0_verify_environment.txt"
     
@@ -1367,57 +1691,111 @@ process VerifyAll {
 
 workflow VerifyEnvironment {
     take:
-    runs
+    // THE PLAN AND THE RUN LIST, in one value channel rather than a channel of runs.
+    //
+    // Which checks this invocation needs is worked out before anything runs, exactly as the
+    // divergence analysis is - and two of them are keyed by the analysis itself, so they need
+    // it here. flatMap expands the pair into one item per check task. N separate items would
+    // have to be regrouped at runtime by an operator that cannot see the shape, which is the
+    // thing this stage exists to stop doing.
+    context
     // The divergence analysis, rendered at DAG-build time: what step 0 should say about the
-    // grouping, any publish-only disagreement that makes a group impossible, and the members
-    // files to write. A value channel, because it describes the invocation rather than a run.
+    // grouping, and any publish-only disagreement that makes a group impossible. A value
+    // channel, because it describes the invocation rather than a run.
     sharing
 
     main:
-    CheckReference(runs)
+    runs = context.flatMap { ctx -> ctx.runs }
+
+    CheckReference(context.flatMap { ctx -> checkGroups(ctx.runs, 'CheckReference') })
     // `annotate` is a per-run parameter, so which runs need a GFF is decided by filtering the
     // runs rather than by an `if` over the base config. Under multiRun one run may annotate
     // while another does not; the `if` this replaces could only answer for all of them.
-    CheckGFF(runs.filter { run -> run.annotate })
-    SkipGFFCheck(runs.filter { run -> !run.annotate })
-    gff_report = CheckGFF.out.report.mix(SkipGFFCheck.out.report)
+    //
+    // Filtered BEFORE grouping, so the two stages key on the runs they actually serve: an empty
+    // side produces an empty list and therefore no task at all.
+    CheckGFF(context.flatMap { ctx -> checkGroups(ctx.runs.findAll { run -> run.annotate }, 'CheckGFF') })
+    SkipGFFCheck(context.flatMap { ctx -> checkGroups(ctx.runs.findAll { run -> !run.annotate }, 'SkipGFFCheck') })
 
-    CheckData(runs)
+    CheckData(context.flatMap { ctx -> checkGroups(ctx.runs, 'CheckData') })
+    CheckTrimParameters(context.flatMap { ctx -> checkGroups(ctx.runs, 'CheckTrimParameters') })
+    CheckDirectories(context.flatMap { ctx -> checkGroups(ctx.runs, 'CheckDirectories') })
+    CheckRunParameters(context.flatMap { ctx -> manifestGroups(ctx.plan, ctx.runs) })
 
-    // Every distinct RGTags table, repaired once. `unique` on the PATH, not on the run: the
-    // usual case is N runs sharing one table, and repairing it N times concurrently is a race
-    // on the user's own file.
-    RepairRGTagsLineEndings(runs.map { run -> "${run.rgTagsPath}" }.unique())
+    // Every distinct RGTags table, repaired once. Keyed on the PATH and on nothing else - see
+    // rgTagsRepairs() - because this stage writes to the user's own file.
+    RepairRGTagsLineEndings(context.flatMap { ctx -> rgTagsRepairs(ctx.runs) })
+
+    // The RGTags change guard, one task per step-6 variant. It needs two things matched onto it
+    // rather than computed: this group's CheckData verdict, and the repair report of every
+    // distinct table its members named.
+    //
+    // groupKey carries the number of tables with the key, so a group is released as soon as ITS
+    // repairs are in rather than when the repair channel closes.
+    rgtags_reports = RepairRGTagsLineEndings.out.report.map { repair, report -> tuple(repair.rgTagsPath, report) }
     CheckRGTagsFile(
-        CheckData.out.report
-            .map { run, report -> tuple("${run.rgTagsPath}", run, report) }
-            .combine(RepairRGTagsLineEndings.out.report, by: 0)
-            .map { _path, run, report, lineendings -> tuple(run, report, lineendings) })
-
-    CheckTrimParameters(runs)
-    CheckRunParameters(runs)
-    CheckDirectories(runs)
+        context.flatMap { ctx -> rgTagsChecks(ctx.plan, ctx.runs) }
+            .map { item -> tuple(item.dataKey, item) }
+            .combine(CheckData.out.report.map { check, report -> tuple(check.checkKey, report) }, by: 0)
+            .flatMap { _key, item, verify ->
+                item.rgTagsPaths.collect { path ->
+                    tuple(path, groupKey(item.checkKey, item.rgTagsPaths.size()), item, verify) } }
+            .combine(rgtags_reports, by: 0)
+            .map { _path, gate, item, verify, lineending -> tuple(gate, item, verify, lineending) }
+            .groupTuple(by: 0)
+            .map { _gate, items, verifies, lineendings -> tuple(items[0], verifies[0], lineendings) })
 
     // The two stages that describe the invocation rather than a run. Both emit value
     // channels, which is what lets one report reach every run's VerifyAll.
     //
-    // collect(flat: false) keeps each run's list whole, so flatten() concatenates them in run
-    // order and unique() then keeps the first appearance of each - which for a single run is
-    // exactly params.software.values() in the order the config wrote them.
-    CheckInstalledSoftware(
-        runs.map { run -> run.software.values().collect { tool -> "${tool}" } }
-            .collect(flat: false)
-            .map { lists -> lists.flatten().unique().join(' ') })
+    // The union is taken over the run list itself rather than by collecting a channel, so the
+    // order is the table's and not the order N tasks happened to finish in. For a single run it
+    // is exactly params.software.values() in the order the config wrote them.
+    CheckInstalledSoftware(context.map { ctx ->
+        ctx.runs.collectMany { run -> run.software.values().collect { tool -> "${tool}".toString() } }
+            .unique()
+            .join(' ') })
     CheckMultiRun(sharing)
 
+    // EVERY CHECK'S VERDICT, HANDED BACK TO THE RUNS IT ANSWERED FOR. CheckData's is needed
+    // twice, so it is named rather than recomputed: the key is a string built from parameter
+    // values, and two spellings of one key match nothing.
+    data_by_run = reportPerRun(runs, CheckData.out.report, 'CheckData')
+    gff_by_run = reportPerRun(runs.filter { run -> run.annotate }, CheckGFF.out.report, 'CheckGFF')
+        .mix(reportPerRun(runs.filter { run -> !run.annotate }, SkipGFFCheck.out.report, 'SkipGFFCheck'))
+    // The two keyed by the analysis rather than by a parameter list, so their keys come from it
+    // too - the step-6 variant a run belongs to, and the results directories it is a member of.
+    rgtags_by_run = context
+        .flatMap { ctx -> ctx.runs.collect { run -> tuple(variantForRun(ctx.plan, run, 6).variantKey, run) } }
+        .combine(CheckRGTagsFile.out.report.map { check, report -> tuple(check.checkKey, report) }, by: 0)
+        .map { _key, run, report -> tuple(run, report) }
+    // A LIST per run, not one report: a run has as many manifests as it has directories. Sorted
+    // by directory so the assembled report is stable between invocations.
+    runparams_by_run = context
+        .flatMap { ctx ->
+            def pairs = []
+            manifestGroups(ctx.plan, ctx.runs).each { group ->
+                ctx.runs.each { run ->
+                    if (group.members.contains(run.runId)) pairs << tuple(group.checkKey, run)
+                }
+            }
+            return pairs }
+        .combine(CheckRunParameters.out.report.map { check, report -> tuple(check.checkKey, check.dir, report) }, by: 0)
+        .map { _key, run, dir, report -> tuple(run, dir, report) }
+        .groupTuple(by: 0)
+        .map { run, dirs, reports ->
+            def pairs = []
+            dirs.eachWithIndex { dir, i -> pairs << [dir, reports[i]] }
+            tuple(run, pairs.sort { a, b -> a[0] <=> b[0] }.collect { pair -> pair[1] }) }
+
     VerifyAll(
-        CheckReference.out.report
-            .join(gff_report, by: 0)
-            .join(CheckData.out.report, by: 0)
-            .join(CheckRGTagsFile.out.report, by: 0)
-            .join(CheckTrimParameters.out.report, by: 0)
-            .join(CheckRunParameters.out.report, by: 0)
-            .join(CheckDirectories.out.report, by: 0),
+        reportPerRun(runs, CheckReference.out.report, 'CheckReference')
+            .join(gff_by_run, by: 0)
+            .join(data_by_run, by: 0)
+            .join(rgtags_by_run, by: 0)
+            .join(reportPerRun(runs, CheckTrimParameters.out.report, 'CheckTrimParameters'), by: 0)
+            .join(runparams_by_run, by: 0)
+            .join(reportPerRun(runs, CheckDirectories.out.report, 'CheckDirectories'), by: 0),
         CheckInstalledSoftware.out.report,
         CheckMultiRun.out.report)
 

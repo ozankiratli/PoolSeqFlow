@@ -4,8 +4,8 @@ nextflow.enable.dsl=2
 
 include { resolveParameters; runDefinitions } from './scripts/resolve_parameters.nf'
 include { variantPlan; childVariants; parentVariant; descendantVariants } from './scripts/variants.nf'
-include { attachProbeRoots; gatherToProducer; runToken } from './scripts/variants.nf'
-include { sharingReportLines; publishConflictLines; sharedMemberFiles } from './scripts/variants.nf'
+include { gatherToProducer; runToken } from './scripts/variants.nf'
+include { sharingReportLines; publishConflictLines } from './scripts/variants.nf'
 include { assertEveryRunProduced } from './scripts/variants.nf'
 include { VerifyEnvironment }   from './scripts/0_verify_environment.nf'
 include { BuildDictionaries; dictionaryRuns; dictionaryKey } from './scripts/1_build_dictionaries.nf'
@@ -137,11 +137,6 @@ workflow {
     // against the script binding can see.
     plan = variantPlan(run_defs)
 
-    // The one thing step 0 needs from the analysis: which working roots its RGTags change
-    // guard has to probe. See attachProbeRoots() for why getting this wrong costs the guard
-    // itself rather than merely some redundant work.
-    attachProbeRoots(plan, run_defs)
-
     // Registered here rather than at the top of the workflow because it needs the runs: each
     // one writes its logs under its own storageDir, and params.dir.logs names only the base.
     //
@@ -163,8 +158,6 @@ workflow {
         .unique()
     workflow.onComplete { assembleCombinedLogs(log_dirs) }
 
-    runs = channel.fromList(run_defs)
-
     // EVERY CHANNEL CARRIES ITS OWN WORK ITEM as element 0, and nothing is matched
     // positionally. With one run there was exactly one of each singleton and Nextflow's
     // implicit value channels broadcast them for free, so "the reference index" and "the
@@ -174,15 +167,20 @@ workflow {
     // key (`combine(by: 0)`), and two per-sample channels are joined on the work item AND the
     // sample (`join(by: [0, 1])`).
     //
-    // STEP 0 IS PER RUN, because it validates a run's own configuration and reports to that
-    // run's own directory. Everything from step 2 on is per variant. The two meet exactly
-    // twice: at the step-2 gate just below, and at publication.
-    // What step 0 says about the partition, and the one disagreement a group cannot absorb.
-    // Rendered here because the analysis exists only while the DAG is being built.
-    VerifyEnvironment(runs, channel.value(tuple(
-        sharingReportLines(plan, run_defs),
-        publishConflictLines(plan, run_defs),
-        sharedMemberFiles(plan))))
+    // STEP 0 FOLLOWS THE SAME SHAPE AS THE REST. Each of its stages is keyed to what it
+    // validates - a reference file, a data directory, a results directory, a step-6 variant -
+    // rather than run once per run, which produced N identical reports for one file. Only
+    // VerifyAll is per run: it assembles that run's own report and is the gate its work waits
+    // on. So runs still appear exactly twice, at the step-2 gate below and at publication.
+    //
+    // What step 0 says about the partition, and the one disagreement a group cannot absorb,
+    // are rendered here because the analysis exists only while the DAG is being built. The
+    // plan itself goes in too, because two of the stages are keyed by it.
+    VerifyEnvironment(
+        channel.value([plan: plan, runs: run_defs]),
+        channel.value(tuple(
+            sharingReportLines(plan, run_defs),
+            publishConflictLines(plan, run_defs))))
     verified = VerifyEnvironment.out
 
     // Step 1 runs once per DISTINCT DICTIONARY SET, not once per run. Its artifacts live on

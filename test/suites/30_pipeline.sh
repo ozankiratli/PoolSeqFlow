@@ -779,11 +779,29 @@ test_multi_run_fans_out_per_run_and_not_per_invocation() {
     assert_count $(( samples )) "$(task_count "$MULTIRUN_SB" VCF2Frequencies:CalculateFrequencies)" \
         "two tables per run, three runs"
 
-    # Step 0 stays per RUN, because it validates a run's own configuration rather than a step.
-    for p in VerifyEnvironment:VerifyAll VerifyEnvironment:CheckReference \
-             VerifyEnvironment:CheckRunParameters; do
-        assert_count 3 "$(task_count "$MULTIRUN_SB" "$p")" "$p should run once per run"
+    # STEP 0 FOLLOWS THE PIPELINE'S SHAPE, not the run list. A check runs once per distinct
+    # value of what it reads, so three runs against one reference ask about that reference once
+    # - and the answer is handed to all three. The three that would otherwise be identical N
+    # times over are the point of the stage.
+    for p in VerifyEnvironment:CheckReference VerifyEnvironment:CheckData \
+             VerifyEnvironment:CheckTrimParameters VerifyEnvironment:CheckDirectories; do
+        assert_count 1 "$(task_count "$MULTIRUN_SB" "$p")" \
+            "$p reads the same values for all three runs, so it should run once"
     done
+    # The RGTags change guard is keyed to the step-6 variant, because its answer depends on
+    # which BAMs and which VCF are on disk. All three runs share step 6 and diverge at step 7.
+    assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckRGTagsFile)" \
+        "all three share the called VCF, so one guard answers for them"
+
+    # The manifest is per RESULTS DIRECTORY: All_Runs, one per run for the step-7 tail, and
+    # Shared_1 for the two that annotate.
+    assert_count 5 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckRunParameters)" \
+        "one manifest per results directory, not one per run"
+
+    # VerifyAll is the one stage that really is per run: it assembles that run's own report and
+    # is the gate its own work waits on.
+    assert_count 3 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:VerifyAll)" \
+        "VerifyAll should run once per run"
     local run
     for run in inherit filter plain; do
         assert_count 1 "$(run_task_count "$MULTIRUN_SB" VerifyEnvironment:VerifyAll "$run")" \
@@ -878,10 +896,12 @@ test_annotate_is_decided_per_run() {
 
     assert_count 1 "$(task_count "$MULTIRUN_SB" AnnotateVCF:AnnotateVariants)" \
         "step 8 runs once for the group, not once per member"
-    assert_count 2 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckGFF)" \
-        "step 0 is per run, so it checks the GFF for each of the two"
+    # The runs are filtered by `annotate` before they are grouped, so the two that want a GFF
+    # ask about it once between them and the one that does not gets the skip.
+    assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckGFF)" \
+        "the two runs that annotate name one GFF, so it is checked once"
     assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:SkipGFFCheck)" \
-        "and skips it for the one that does not annotate"
+        "and skipped once for the one that does not annotate"
 
     assert_contains "$(cat "$o/plain/Reports/0_verify_environment.txt")" \
         "GFF FILE CHECK:        STATUS=SKIPPED" "plain's own report should say so"
