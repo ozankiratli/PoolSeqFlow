@@ -33,6 +33,13 @@ process AnnotateVariants {
         ln -s ${target_annotated_vcf} .
         echo "ANNOTATING VCF ${vcf}: COMPLETED"
     else
+        # snpEff is given an absolute path for its summary and will NOT create the directory,
+        # so it has to exist first. This only ever worked by accident: every other step wrote
+        # into the run's own Output tree earlier in the run and made it on the way past. Once a
+        # variant can be the first thing to write into its own directory - which is exactly
+        # what a Shared_<N> is - the accident stops holding and snpEff exits 255.
+        mkdir -p ${report_folder} ${target_folder}
+
         echo "ANNOTATING VCF ${vcf}: Creating symbolic links for snpEff database"
         ln -s ${run.dir.snpEff}/* .
         # Keep the temp in the task directory rather than system /tmp: it is the same
