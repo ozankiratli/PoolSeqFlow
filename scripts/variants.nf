@@ -360,9 +360,6 @@ def variantPlan(List runDefs) {
         children[step] = byParent
     }
 
-    def outputsOf = [:]
-    runDefs.each { run -> outputsOf[runToken(run.runId)] = "${run.dir.outputs}".toString() }
-
     steps.each { step ->
         at[step].each { variant ->
             // WHERE A SKIP CHECK LOOKS. Permanent storage first, so a promoted artifact
@@ -381,10 +378,6 @@ def variantPlan(List runDefs) {
             }
             variant.dir.search = (["${variant.dir.outputs}".toString()] +
                                   roots.collect { root -> root.toString() }).unique()
-
-            // WHERE ITS RESULTS GO: one destination per member run. With sharing off that is
-            // the run's own Output and nothing else, which is what promotion has always done.
-            variant.dir.targets = variant.members.collect { member -> outputsOf[runToken(member)] }
         }
     }
 

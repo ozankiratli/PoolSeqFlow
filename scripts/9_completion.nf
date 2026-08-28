@@ -143,8 +143,12 @@ def promotionLabel(Map run, String stage, String key) {
 // variants, so a shared artifact would otherwise get N promotion tasks over one set of files -
 // and that is where atomic_mv.sh's missing lock actually bites: two concurrent callers stage
 // through the same ${DEST}.part, and one's EXIT trap deletes the other's staged copy between
-// its two mv calls. So the destinations travel WITH the task instead: move to the first,
-// hardlink into the rest. One filesystem under one storageDir, so the bytes cost nothing.
+// its two mv calls.
+//
+// ONE DESTINATION TOO, which is a property of the results layout rather than of this file. A
+// variant writes to the single directory named for whoever owns it - All_Runs, Shared_<N> or
+// one run - and every member reads it there, so there is nothing to copy or link into a second
+// place. This carried a LIST of destinations briefly; the layout made it dead and it went.
 process PromoteArtifacts {
     tag { promotionLabel(run, stage, key) }
 
@@ -170,15 +174,7 @@ process PromoteArtifacts {
     log_file = "${dir_log}/9_Completion_s1_PromoteArtifacts_${slug}_nextflow.log"
 
     src = row ? "${run.dir.utilized}/${row.subpath}" : ''
-    // One destination per member run, in member order. The move goes to the first and the rest
-    // are linked from it, so the "source must be GONE afterwards" assertion below is unchanged:
-    // there is still exactly one move.
-    dsts = row ? run.dir.targets.collect { root -> "${root}/${row.subpath}" } : []
-    dst = dsts ? "${dsts[0]}" : ''
-    // Emitted as calls rather than as a loop over a list: `for x in ; do` is a syntax error in
-    // bash, and with one destination - every case until sharing is switched on - the list is
-    // empty. No extra destinations, no lines here at all.
-    link_calls = dsts.size() > 1 ? dsts.tail().collect { d -> "link_into \"${d}\"" }.join('\n        ') : ''
+    dst = row ? "${run.dir.outputs}/${row.subpath}" : ''
     // Quoted, so that the loops below iterate over the patterns themselves instead of
     // whatever they happen to match in the task directory.
     patterns = row ? row.patterns.collect { p -> "'${p}'" }.join(' ') : ''
@@ -252,22 +248,6 @@ process PromoteArtifacts {
         else
             echo "PROMOTING ${label}: moved \$moved file(s)"
         fi
-
-        # The other members' copies. A hardlink because every destination is under one
-        # storageDir on one filesystem, so the bytes are shared and only the directory entry
-        # costs anything; a copy is the fallback for the layouts where that is not true.
-        link_into() {
-            mkdir -p "\$1"
-            for pattern in ${patterns}; do
-                for f in "${dst}"/\$pattern; do
-                    if [ -e "\$f" ]; then
-                        ln -f "\$f" "\$1/\$(basename "\$f")" 2>/dev/null || cp -f "\$f" "\$1/"
-                        echo "PROMOTING ${label}:   also at \$1/\$(basename "\$f")"
-                    fi
-                done
-            done
-        }
-        ${link_calls}
 
         # Only if it is genuinely empty. Anything still in there is worth keeping visible.
         rmdir "${src}" 2>/dev/null || true
