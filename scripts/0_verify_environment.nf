@@ -271,7 +271,7 @@ process RepairRGTagsLineEndings {
     tuple val(rgTagsPath), path('rgtags_lineendings.txt'), emit: report
 
     script:
-    dir_log = "${params.dir.logs}/0_verify_environment/s4_RepairRGTagsLineEndings"
+    dir_log = "${params.dir.allLogs}/0_verify_environment/s4_RepairRGTagsLineEndings"
     """
     REPORTFILE="rgtags_lineendings.txt"
     : > \$REPORTFILE
@@ -355,7 +355,11 @@ process CheckRGTagsFile {
     // Strip the exact text the pattern says follows the sample name, one alternative at
     // a time. Literal, so it holds for non-numeric mates (_F/_R) too.
     stripMate = mateAlts.collect { alt -> 'base="${base%' + matePrefix + alt + mateTail + '}"' }.join('; ')
-    storedRg = "${run.storageDir}/.poolseqflow_rgtags"
+    // Beside the results it describes, not at the storage root: the root is shared by every
+    // run now, so three of them would race for one baseline and the last to write would decide
+    // what the other two are compared against. Moving an existing project's manifests here is
+    // config_migrate.sh's job, not a run's.
+    storedRg = "${run.dir.outputs}/.poolseqflow_rgtags"
     // Both roots for the two that are promoted. This is not cosmetic: the branch below
     // treats "no BAMs and no VCF" as "nothing has consumed RGTags.csv yet" and RECORDS A
     // NEW BASELINE. Looking only at permanent storage would therefore, for a project whose
@@ -661,7 +665,7 @@ process CheckInstalledSoftware {
     path 'verify_environment_stage5.txt', emit: report
 
     script:
-    dir_log = "${params.dir.logs}/0_verify_environment/s5_CheckInstalledSoftware"
+    dir_log = "${params.dir.allLogs}/0_verify_environment/s5_CheckInstalledSoftware"
     """
     REPORTFILE="verify_environment.txt"
 
@@ -904,9 +908,10 @@ process CheckRunParameters {
 
     script:
     manifest    = analysisParams(run)
-    stored      = "${run.storageDir}/.poolseqflow_params"
+    // Beside the results they describe, for the reason recorded in CheckRGTagsFile above.
+    stored      = "${run.dir.outputs}/.poolseqflow_params"
     readable    = "${run.dir.outputs}/run_parameters.txt"
-    versions    = "${run.storageDir}/.poolseqflow_versions"
+    versions    = "${run.dir.outputs}/.poolseqflow_versions"
     release     = workflow.manifest.version ?: 'unknown'
     dir_log     = "${run.dir.logs}/0_verify_environment/s7_CheckRunParameters"
     """
@@ -1123,7 +1128,7 @@ process CheckMultiRun {
     path 'verify_environment_stage9.txt', emit: report
 
     script:
-    dir_log = "${params.dir.logs}/0_verify_environment/s9_CheckMultiRun"
+    dir_log = "${params.dir.allLogs}/0_verify_environment/s9_CheckMultiRun"
     derived = derivedParameterNames().join(' ')
     known = knownParameterNames().join(' ')
     """
@@ -1178,7 +1183,11 @@ derived = set(sys.argv[4:])
 print(f"MULTI-RUN CHECK:       {len(runs)} runs")
 for run in runs:
     run_id = run["RunID"]
-    where = run.get("storageDir", f"{storage}/{run_id}")
+    # Where this run's OWN results go. There is one results tree per project now, and a run
+    # is a directory inside it rather than a tree of its own - so what is named here is only
+    # the part no other run shares. A storageDir column still sends a run somewhere else
+    # entirely, which is why it is read rather than assumed.
+    where = f'{run.get("storageDir", storage)}/Output/{run_id}'
     print(f"MULTI-RUN CHECK:       {run_id} -> {where}")
     varied = {k: v for k, v in run.items() if k not in ("RunID", "storageDir")}
     if varied:
@@ -1186,6 +1195,21 @@ for run in runs:
             print(f"MULTI-RUN CHECK:           {key} = {value}")
     else:
         print("MULTI-RUN CHECK:           (nothing differs from parameters.config)")
+
+# Encouraged, not enforced. Runs that share one storageDir share one results tree, and that
+# is what lets work common to several of them be done once and filed where they can all
+# reach it. A run pointed somewhere else has no tree in common with the others, so it
+# repeats every step for itself - which is a legitimate thing to want and an expensive
+# thing to do by accident, so it is said out loud rather than refused.
+detached = sorted({run["RunID"] for run in runs if "storageDir" in run})
+if detached:
+    print("MULTI-RUN CHECK:       these runs set a storageDir of their own:")
+    for run_id in detached:
+        print(f"MULTI-RUN CHECK:           {run_id}")
+    print("MULTI-RUN CHECK:       Allowed, and worth being sure you meant it. Runs that share a")
+    print("MULTI-RUN CHECK:       storageDir share one results tree, so work several of them agree")
+    print("MULTI-RUN CHECK:       on is done once and filed under All_Runs or Shared_<N>. A run with")
+    print("MULTI-RUN CHECK:       its own storageDir shares nothing and repeats every step alone.")
 
 # A column naming something the pipeline computes is allowed on purpose - benchmarking a
 # pinned thread count or an options string outright is a real use. It is reported because

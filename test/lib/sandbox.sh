@@ -374,6 +374,22 @@ _run_entry() {
     printf '%s' "$?"
 }
 
+# Where Nextflow's trace landed.
+#
+# It describes the whole INVOCATION, so under multiRun it is filed with the rest of the work
+# every run shares - Output/All_Runs/Reports - while a single run keeps it at Output/Reports,
+# having nothing to be shared with. Both are looked for rather than the layout being reasoned
+# about at each call site: a wrong guess reports "no-trace", which reads as a broken run
+# rather than as a test looking in the wrong place.
+trace_file() {
+    local sb="$1" candidate
+    for candidate in "$sb/store/Output/All_Runs/Reports/PoolSeqFlow_pipeline_trace.txt" \
+                     "$sb/store/Output/Reports/PoolSeqFlow_pipeline_trace.txt"; do
+        if [ -f "$candidate" ]; then printf '%s' "$candidate"; return 0; fi
+    done
+    return 0
+}
+
 # How many tasks a process ran, from the Nextflow trace. Takes the fully qualified name as
 # the trace records it (`AlignReads:Align`), because the short name is ambiguous.
 #
@@ -384,7 +400,7 @@ _run_entry() {
 # once instead of N times.
 task_count() {
     local sb="$1" process="$2" trace
-    trace="$sb/store/Output/Reports/PoolSeqFlow_pipeline_trace.txt"
+    trace=$(trace_file "$sb")
     [ -f "$trace" ] || { printf 'no-trace'; return; }
     awk -F'\t' -v want="$process" '
         NR > 1 {
@@ -407,7 +423,7 @@ task_count() {
 # that use it and belongs to none of them.
 run_task_count() {
     local sb="$1" process="$2" run="$3" trace
-    trace="$sb/store/Output/Reports/PoolSeqFlow_pipeline_trace.txt"
+    trace=$(trace_file "$sb")
     [ -f "$trace" ] || { printf 'no-trace'; return; }
     awk -F'\t' -v want="$process" -v run="$run" '
         NR > 1 {

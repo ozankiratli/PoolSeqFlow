@@ -627,8 +627,8 @@ test_reset_removes_results_but_keeps_what_you_provided() {
     # Gone: everything the pipeline produced or derived.
     assert_no_file "$sb/store/Output"                        "results should be removed"
     assert_no_file "$sb/store/Logs"                          "logs should be removed"
-    assert_no_file "$sb/store/.poolseqflow_params"           "the parameter manifest should be removed"
-    assert_no_file "$sb/store/.poolseqflow_rgtags"           "the rgtags baseline should be removed"
+    assert_no_file "$sb/store/Output/.poolseqflow_params"           "the parameter manifest should be removed"
+    assert_no_file "$sb/store/Output/.poolseqflow_rgtags"           "the rgtags baseline should be removed"
     assert_no_file "$sb/main/Utilized"                       "unpromoted outputs should be removed"
     assert_no_file "$sb/main/Reference/Dictionaries"         "derived dictionaries should be removed"
     assert_no_file "$sb/main/work"                           "the work directory should be removed"
@@ -718,7 +718,7 @@ test_every_run_produces_its_own_complete_results() {
     needs_multirun || return
     local run
     for run in inherit filter plain; do
-        local o="$MULTIRUN_SB/store/$run/Output"
+        local o="$MULTIRUN_SB/store/Output/$run"
         assert_file "$o/Reports/0_verify_environment.txt" "$run should publish its step 0 report"
         assert_file "$o/VCF/Test.vcf"                     "$run should produce the raw VCF"
         assert_file "$o/Frequencies/Test_snp_freq.tsv"    "$run should produce the SNP table"
@@ -795,9 +795,9 @@ test_multi_run_fans_out_per_run_and_not_per_invocation() {
 # have claimed the base configuration's settings and the change guard could never fire.
 test_each_run_records_the_parameters_it_actually_used() {
     needs_multirun || return
-    local inherit="$MULTIRUN_SB/store/inherit/.poolseqflow_params"
-    local filter="$MULTIRUN_SB/store/filter/.poolseqflow_params"
-    local plain="$MULTIRUN_SB/store/plain/.poolseqflow_params"
+    local inherit="$MULTIRUN_SB/store/Output/inherit/.poolseqflow_params"
+    local filter="$MULTIRUN_SB/store/Output/filter/.poolseqflow_params"
+    local plain="$MULTIRUN_SB/store/Output/plain/.poolseqflow_params"
     assert_file "$inherit" "each run should record its own manifest"
     assert_file "$filter"  "each run should record its own manifest"
     assert_file "$plain"   "each run should record its own manifest"
@@ -826,8 +826,8 @@ vcffilter.minQUAL=1000" \
 test_a_diverging_parameter_changes_that_runs_numbers() {
     needs_multirun || return
     local inherit_rows filter_rows
-    inherit_rows=$(awk 'END{print NR}' "$MULTIRUN_SB/store/inherit/Output/Frequencies/Test_snp_freq.tsv")
-    filter_rows=$(awk 'END{print NR}' "$MULTIRUN_SB/store/filter/Output/Frequencies/Test_snp_freq.tsv")
+    inherit_rows=$(awk 'END{print NR}' "$MULTIRUN_SB/store/Output/inherit/Frequencies/Test_snp_freq.tsv")
+    filter_rows=$(awk 'END{print NR}' "$MULTIRUN_SB/store/Output/filter/Frequencies/Test_snp_freq.tsv")
     [ "$filter_rows" -lt "$inherit_rows" ] || fail_case \
         "minQUAL=1000 should keep fewer sites than minQUAL=30 (got $filter_rows vs $inherit_rows)"
 
@@ -835,8 +835,8 @@ test_a_diverging_parameter_changes_that_runs_numbers() {
     # as the literal 1000: vcftools echoes its own parsed parameter, so the log says
     # `--minQ 1e+03` even though the command line carried 1000.
     local filter_log inherit_log
-    filter_log=$(cat "$MULTIRUN_SB/store/filter/Logs/7_vcf2freq/s3_DepthAndQualityFilter"/*.log)
-    inherit_log=$(cat "$MULTIRUN_SB/store/inherit/Logs/7_vcf2freq/s3_DepthAndQualityFilter"/*.log)
+    filter_log=$(cat "$MULTIRUN_SB/store/Logs/filter/7_vcf2freq/s3_DepthAndQualityFilter"/*.log)
+    inherit_log=$(cat "$MULTIRUN_SB/store/Logs/inherit/7_vcf2freq/s3_DepthAndQualityFilter"/*.log)
     assert_contains "$inherit_log" "--minQ 30" "the inheriting run should get the configured value"
     assert_not_contains "$filter_log" "--minQ 30" "and the diverging run must not"
     assert_contains "$filter_log" "Sites" "vcftools should have reported what it kept"
@@ -847,9 +847,9 @@ test_a_diverging_parameter_changes_that_runs_numbers() {
 # for every run.
 test_annotate_is_decided_per_run() {
     needs_multirun || return
-    assert_file    "$MULTIRUN_SB/store/inherit/Output/VCF/Test_annotated.vcf" "inherit annotates"
-    assert_file    "$MULTIRUN_SB/store/filter/Output/VCF/Test_annotated.vcf"  "filter annotates"
-    assert_no_file "$MULTIRUN_SB/store/plain/Output/VCF/Test_annotated.vcf" \
+    assert_file    "$MULTIRUN_SB/store/Output/inherit/VCF/Test_annotated.vcf" "inherit annotates"
+    assert_file    "$MULTIRUN_SB/store/Output/filter/VCF/Test_annotated.vcf"  "filter annotates"
+    assert_no_file "$MULTIRUN_SB/store/Output/plain/VCF/Test_annotated.vcf" \
         "plain sets annotate = false, so it must not produce an annotated VCF"
 
     assert_count 2 "$(task_count "$MULTIRUN_SB" AnnotateVCF:AnnotateVariants)" \
@@ -859,9 +859,9 @@ test_annotate_is_decided_per_run() {
     assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:SkipGFFCheck)" \
         "and skip it for the one that does not annotate"
 
-    assert_contains "$(cat "$MULTIRUN_SB/store/plain/Output/Reports/0_verify_environment.txt")" \
+    assert_contains "$(cat "$MULTIRUN_SB/store/Output/plain/Reports/0_verify_environment.txt")" \
         "GFF FILE CHECK:        STATUS=SKIPPED" "plain's own report should say so"
-    assert_contains "$(cat "$MULTIRUN_SB/store/inherit/Output/Reports/0_verify_environment.txt")" \
+    assert_contains "$(cat "$MULTIRUN_SB/store/Output/inherit/Reports/0_verify_environment.txt")" \
         "GFF FILE CHECK:        STATUS=PASS" "and inherit's should not"
 }
 
@@ -880,7 +880,7 @@ test_each_run_gets_its_own_combined_log() {
     needs_multirun || return
     local run
     for run in inherit filter plain; do
-        assert_file "$MULTIRUN_SB/store/$run/Logs/poolseqflow_last_run.log" \
+        assert_file "$MULTIRUN_SB/store/Logs/$run/poolseqflow_last_run.log" \
             "$run should have its own combined log"
     done
     # The shared work has no run to belong to, so it goes to the project's own Logs.
@@ -890,7 +890,7 @@ test_each_run_gets_its_own_combined_log() {
     # Not merely present - actually holding this run's blocks. An empty file would pass a
     # existence check while telling you nothing about the run.
     local blocks
-    blocks=$(awk '/^##########/' "$MULTIRUN_SB/store/inherit/Logs/poolseqflow_last_run.log" | wc -l)
+    blocks=$(awk '/^##########/' "$MULTIRUN_SB/store/Logs/inherit/poolseqflow_last_run.log" | wc -l)
     [ "$blocks" -gt 1 ] || fail_case "inherit's combined log gathered $blocks process log(s)"
 }
 
@@ -917,8 +917,8 @@ test_reset_clears_every_run_of_a_multi_run_project() {
     assert_status 0 "$WRAPPER_STATUS" "reset should succeed; got: $WRAPPER_OUTPUT"
 
     for run in inherit filter plain; do
-        assert_contains "$WRAPPER_OUTPUT" "$sb/store/$run" "reset should name $run's results before deleting them"
-        [ -d "$sb/store/$run" ] && fail_case "reset left $run's results behind"
+        assert_contains "$WRAPPER_OUTPUT" "$sb/store/Output/$run" "reset should name $run's results before deleting them"
+        [ -d "$sb/store/Output/$run" ] && fail_case "reset left $run's results behind"
     done
     [ -d "$sb/store/Output" ] && fail_case "reset left the session reports behind"
 

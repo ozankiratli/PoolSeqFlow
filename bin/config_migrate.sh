@@ -228,10 +228,31 @@ if [ -n "$OLD_STORE" ] && [ -n "$NEW_MAIN" ]; then
     fi
 fi
 
-printf 'Files to move yourself (%s)\n' "${#MOVES[@]}"
-if [ "${#MOVES[@]}" -eq 0 ]; then
+# The change guard's own baseline files. Before 3.0 they sat at the storage root, one
+# project's worth; from 3.0 they sit inside the directory whose results they describe,
+# because a run no longer has a storage root of its own - there is one results tree and a
+# run is a directory inside it.
+#
+# Reported rather than moved, like everything else here, but for a different reason: these
+# are what "has anything changed since these outputs were produced" is answered against.
+# Left behind, the next run finds no baseline, calls the project fresh and records the
+# CURRENT config as though it had produced the outputs already on disk - so the guard would
+# report PASS having stopped guarding. That is worth a line of its own below.
+NEW_STORE=$(cfg_value "$OUT" storageDir)
+GUARD_MOVES=()
+if [ -n "$OLD_STORE" ] && [ -n "$NEW_STORE" ]; then
+    for f in .poolseqflow_params .poolseqflow_rgtags .poolseqflow_versions; do
+        if [ -f "$OLD_STORE/$f" ] && [ ! -f "$NEW_STORE/Output/$f" ]; then
+            GUARD_MOVES+=("mv $OLD_STORE/$f $NEW_STORE/Output/")
+        fi
+    done
+fi
+
+printf 'Files to move yourself (%s)\n' "$(( ${#MOVES[@]} + ${#GUARD_MOVES[@]} ))"
+if [ "${#MOVES[@]}" -eq 0 ] && [ "${#GUARD_MOVES[@]}" -eq 0 ]; then
     echo "  none"
-else
+fi
+if [ "${#MOVES[@]}" -ne 0 ]; then
     echo "  Your reads, reference and read-group table are still under storageDir, where"
     echo "  releases before 3.0 kept them. From 3.0 they belong on mainDir. Nothing is moved"
     echo "  for you - run these yourself, and check them first:"
@@ -244,6 +265,19 @@ else
         echo "  database built by an earlier release. All of it is derived, and 3.0 rebuilds it"
         echo "  under $NEW_MAIN/Reference/Dictionaries, so it can be deleted once a run succeeds."
     fi
+fi
+if [ "${#GUARD_MOVES[@]}" -ne 0 ]; then
+    echo
+    echo "  These record the parameters, read-group tags and release behind the results you"
+    echo "  already have. From 3.0 they live beside those results rather than at the storage"
+    echo "  root. Move them BEFORE the next run:"
+    echo
+    echo "      mkdir -p $NEW_STORE/Output"
+    for m in "${GUARD_MOVES[@]}"; do echo "      $m"; done
+    echo
+    echo "  Skipping this does not fail: the next run finds no baseline, treats the project as"
+    echo "  fresh and adopts whatever parameters.config now says as the description of results"
+    echo "  produced under the old ones. It would report PASS and have stopped checking."
 fi
 echo
 

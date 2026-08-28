@@ -276,10 +276,12 @@ def variantsAt(List runDefs, int step) {
         // Where this variant does its working-volume work. One member is the ordinary case
         // and gives back exactly what the run itself had, which is what keeps this stage inert.
         variant.dir.utilized = variantUtilized(variant)
-        // Shared work's logs belong to the project rather than to whichever member leads it -
-        // the same rule step 1 has followed since multi-run existed. A single-member variant
-        // keeps its own run's Logs, so nothing moves until sharing is on.
-        if (variant.members.size() > 1) variant.dir.logs = "${params.dir.logs}".toString()
+        // Shared work's logs belong with the rest of the shared work rather than to whichever
+        // member leads it - the same rule step 1 has followed since multi-run existed. This
+        // names the ALL-runs root; a variant shared by only some of them gets a Shared_<N> of
+        // its own, which lands with sharing itself. A single-member variant keeps its own
+        // run's Logs, so nothing moves until then.
+        if (variant.members.size() > 1) variant.dir.logs = "${params.dir.allLogs}".toString()
         // STEP 8 IS THE ONE STEP A VARIANT CAN DECLINE TO RUN. Everything else always executes;
         // annotation is switched off by a parameter, and because `annotate` is part of step 8's
         // identity a variant is never half-annotating. The promotion gates count consumers, so

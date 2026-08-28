@@ -247,8 +247,25 @@ def deriveRunPaths(Map p) {
     p.dir.references   = "${p.mainDir}/Reference"
     p.dir.dictionaries = "${p.dir.references}/Dictionaries"
     p.dir.snpEff       = "${p.dir.dictionaries}/snpEff"
-    p.dir.outputs      = "${p.storageDir}/Output"
-    p.dir.logs         = "${p.storageDir}/Logs"
+    // ONE RESULTS TREE, AND ONLY DIVERGENCE GETS A NAME (Z, 2026-08-27).
+    //
+    // A run does not get its own storageDir. There is one Output/ and one Logs/ per project,
+    // and what a single run produced ALONE lands in a directory named for it inside them;
+    // work several runs share lands in a directory named for the group, and work all of them
+    // share lands at the ordinary subpaths. The same rule three times, so assembling "what
+    // did runA produce" is a walk down one tree rather than a comparison of parallel ones.
+    //
+    // A run's own directory is the case this function can answer. The other two depend on who
+    // shares what, which only the divergence analysis knows, so variantPlan() overrides these
+    // for a variant exactly as it already overrides dir.utilized.
+    //
+    // Single run: no name anywhere, so both are what they have always been. Settled rule 3.
+    def owned          = p.runId ? "/${p.runId}" : ''
+    p.dir.outputs      = "${p.storageDir}/Output${owned}"
+    // Per run and not merely per project, because the log files are named for the step and
+    // the sample: three runs sharing one Logs tree would put three writers on one file, and
+    // one-writer-per-file is what lets tasks append without locking.
+    p.dir.logs         = "${p.storageDir}/Logs${owned}"
 
     p.dir.subpath.each { name, value ->
         if (value instanceof Map) value.each { k, v -> p.dir.output[name][k] = "${p.dir.outputs}/${v}" }
@@ -299,10 +316,18 @@ def buildRun(Map row) {
 
     row.each { key, value -> if (key != 'RunID') setDotted(p, key, value) }
 
-    // Each run keeps its results apart. A storageDir column overrides this, which is why the
-    // default is only applied when the row did not set one.
-    if (!row.containsKey('storageDir')) p.storageDir = "${params.storageDir}/${p.runId}"
-    // And its working files apart, which matters more than it looks: dir.utilized hangs off
+    // A RUN NO LONGER GETS ITS OWN storageDir (Z, 2026-08-27). It used to default to
+    // ${storageDir}/${RunID}, which gave every run a complete parallel tree - and once work is
+    // shared there is no such thing as one run's complete tree, so the parallel trees were
+    // describing something that had stopped being true. There is one storage root now, and
+    // deriveRunPaths() names the run INSIDE Output/ and Logs/ instead.
+    //
+    // A storageDir column still works, because settled rule 7 lets any parameter be varied -
+    // it just means that run's results are somewhere else entirely rather than beside the
+    // others. Two runs that do not share a storage root cannot share a results directory, so
+    // sharing between them has to be refused rather than resolved; that lands with sharing.
+    //
+    // And the working files stay apart, which matters more than it looks: dir.utilized hangs off
     // mainDir, and runs SHARE mainDir. Without the suffix every run writes Utilized/VCF/Test.vcf
     // to one path, and the second run's skip check finds the first run's file and symlinks to
     // it - the whole VCF chain silently reused across runs that differ.

@@ -75,7 +75,7 @@ def dictionaryRuns(List runs) {
         // Shared work, so its log belongs to the project rather than to whichever run happens
         // to be listed first. For a single run this IS that run's own Logs directory, so the
         // line changes nothing outside multiRun.
-        dict.dir.logs = "${params.dir.logs}"
+        dict.dir.logs = "${params.dir.allLogs}"
         // Built when ANY member wants it: one database serves them all, and a run that does
         // not annotate is not harmed by its existence.
         dict.annotate = members.any { member -> member.annotate }

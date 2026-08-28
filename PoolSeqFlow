@@ -337,18 +337,19 @@ nf_config_value() {
     nextflow config -flat "$INSTALL" 2>/dev/null | sed -n "s|^$1 = ||p" | head -1 | tr -d "'\""
 }
 
-# The per-run storage roots a multi-run invocation created, one path per line.
+# The named directories inside the results tree, one path per line: a run's own results, and
+# from the sharing stage a group's.
 #
 # `nextflow config -flat` is this script's only path oracle, and it reports the BASE
-# configuration - so it cannot name storageDir/<RunID>, which the resolver builds per run.
+# configuration - so it cannot name Output/<RunID>, which the resolver builds per run.
 # Reading the multi-run table here instead would be a third copy of the rule that decides
 # where a run's results go, and the two that already exist are only kept in step by a test.
 #
-# So this asks the disk rather than the configuration. Every run writes .poolseqflow_params
-# into its own storage root - CheckRunParameters does it unconditionally - so an immediate
-# subdirectory of storageDir holding that file IS a run's results, whatever the table said and
-# whether or not the table still exists. That also covers a project whose table has since been
-# edited or deleted, which no rule-based answer could.
+# So this asks the disk rather than the configuration. Every one of those directories holds a
+# .poolseqflow_params describing what is in it - that invariant is the whole basis of the
+# change guard - so an immediate subdirectory of Output/ holding that file IS somebody's
+# results, whatever the table said and whether or not the table still exists. That also covers
+# a project whose table has since been edited or deleted, which no rule-based answer could.
 #
 # Both helpers end in an explicit `return 0`, and it is load-bearing rather than tidy. This
 # script runs under `set -e`, a function's exit status is its last command's, and the last
@@ -356,8 +357,8 @@ nf_config_value() {
 # `ROOTS=$(run_storage_roots ...)` aborts reset silently, before it prints anything at all.
 run_storage_roots() {
     local storage="$1" d
-    [ -n "$storage" ] && [ -d "$storage" ] || return 0
-    for d in "$storage"/*/; do
+    [ -n "$storage" ] && [ -d "$storage/Output" ] || return 0
+    for d in "$storage"/Output/*/; do
         if [ -f "${d}.poolseqflow_params" ]; then printf '%s\n' "${d%/}"; fi
     done
     return 0
@@ -562,10 +563,10 @@ EOF
             echo "ERROR: could not resolve params.storageDir - is parameters.config present?" >&2
             exit 1
         fi
-        # A multi-run invocation files each run's results under its own root, so a reset that
-        # only knew the base one would leave them behind - and leave them to be REUSED, since
-        # the pipeline resumes by looking for output files rather than by asking what produced
-        # them. Found on disk rather than read from the table; see run_storage_roots.
+        # There is one results tree, so removing it removes every run's and every group's
+        # results with it. They are still NAMED here: what a reset deletes is the thing a user
+        # is about to lose, and "Output/" alone does not say that three runs were in there.
+        # Found on disk rather than read from the table; see run_storage_roots.
         RUN_ROOTS=$(run_storage_roots "$STORAGE")
         RUN_UTILS=$(run_utilized_dirs "$MAINDIR")
         echo ""
@@ -577,7 +578,7 @@ EOF
         [ -n "$DICTDIR" ] && echo "    $DICTDIR - the indices and SnpEff database built from your reference"
         [ -n "$UTILDIR" ] && echo "    $UTILDIR - outputs not yet moved to permanent storage"
         while IFS= read -r d; do
-            if [ -n "$d" ]; then echo "    $d - one run's complete results"; fi
+            if [ -n "$d" ]; then echo "    $d - and what is in there"; fi
         done <<EOF
 $RUN_ROOTS
 EOF
@@ -586,9 +587,7 @@ EOF
         done <<EOF
 $RUN_UTILS
 EOF
-        echo "    $STORAGE/.poolseqflow_params"
-        echo "    $STORAGE/.poolseqflow_rgtags"
-        echo "    $STORAGE/.poolseqflow_versions"
+        echo "    the .poolseqflow_params, _rgtags and _versions describing all of it"
         echo "    $(pwd)/.nextflow*    - Nextflow's own history and cache"
         [ -n "$WORKDIR" ] && echo "    $WORKDIR"
         echo ""
@@ -639,9 +638,11 @@ EOF
         # line above is the one that applies.
         if [ -n "$DICTDIR" ]; then rm -rf "$DICTDIR"; fi
         if [ -n "$UTILDIR" ]; then rm -rf "$UTILDIR"; fi
-        # Each run's own two roots. Removed from the lists computed BEFORE the confirmation
-        # prompt, so what is deleted is exactly what was disclosed - re-scanning here could
-        # pick up something that appeared in between.
+        # Each run's own working root. Its RESULTS root needs no line of its own any more -
+        # it is inside $STORAGE/Output, which has just gone - but the working roots hang off
+        # mainDir and are still separate. Removed from the list computed BEFORE the
+        # confirmation prompt, so what is deleted is exactly what was disclosed; re-scanning
+        # here could pick up something that appeared in between.
         # `if`, not `[ -n "$d" ] && ...`: a while loop's exit status is its last body
         # command's, so an empty list would leave the loop returning 1 and `set -e` would
         # abort reset PARTWAY THROUGH deleting. Same reason as the `return 0` on the two
@@ -649,16 +650,13 @@ EOF
         while IFS= read -r d; do
             if [ -n "$d" ]; then rm -rf "$d"; fi
         done <<EOF
-$RUN_ROOTS
-EOF
-        while IFS= read -r d; do
-            if [ -n "$d" ]; then rm -rf "$d"; fi
-        done <<EOF
 $RUN_UTILS
 EOF
-        # These record the parameters, RG tags and pipeline versions behind outputs that
-        # no longer exist; leaving them would make the next run fail its checks for no
-        # reason, and would attribute fresh results to an earlier release.
+        # From 3.0 these sit inside the directory whose results they describe, so Output/
+        # took them. At the storage root they only exist for a project created before 3.0 -
+        # the same category as $STORAGE/Reports and $STORAGE/Reference above - and leaving
+        # one would make the next run fail its checks for no reason, or attribute fresh
+        # results to an earlier release. Harmless when absent.
         rm -f "$STORAGE"/.poolseqflow_params "$STORAGE"/.poolseqflow_rgtags \
               "$STORAGE"/.poolseqflow_versions
         echo "Reset complete."

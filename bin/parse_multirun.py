@@ -130,6 +130,16 @@ def check(path):
                 f"line {lineno}: {RUN_ID} '{run_id}' is used as a directory name; use "
                 f"letters, digits, dot, dash or underscore"
             )
+        elif re.match(r"^(All_Runs|Shared_[0-9]+)$", run_id):
+            # A run's directory sits beside the ones named for shared work, so those names
+            # are taken. Refused rather than renamed: the run would otherwise write into a
+            # directory whose contents claim to belong to a different set of runs.
+            errors.append(
+                f"line {lineno}: {RUN_ID} '{run_id}' is a name the pipeline uses itself. "
+                f"Results shared by every run are filed under All_Runs, and results shared "
+                f"by some of them under Shared_1, Shared_2 and so on, beside the directory "
+                f"this run would get. Pick another name."
+            )
         else:
             ids.setdefault(run_id, []).append(lineno)
 

@@ -350,6 +350,29 @@ test_multirun_rejects_a_run_id_that_is_not_a_directory_name() {
     assert_contains "$MR_ERR" "directory name" "and should say why"
 }
 
+# A run's directory sits beside the ones named for shared work, so those names are taken.
+# Refused rather than quietly renamed: a run called All_Runs would write into a directory
+# whose whole purpose is to say "everything in here belongs to every run".
+test_multirun_rejects_a_reserved_run_id() {
+    mr 'RunID,poolSize
+All_Runs,10
+Shared_3,20
+'
+    assert_status 1 "$MR_STATUS" "a reserved directory name should be refused"
+    assert_contains "$MR_ERR" "All_Runs" "and should name the offending id"
+    assert_contains "$MR_ERR" "Shared_3" "including the numbered form"
+    assert_contains "$MR_ERR" "a name the pipeline uses itself" "and say why it is taken"
+}
+
+# ...but only the exact spellings. A run whose name merely resembles one is fine.
+test_multirun_accepts_a_run_id_that_only_looks_reserved() {
+    mr 'RunID,poolSize
+All_Runs_2,10
+Shared_x,20
+'
+    assert_status 0 "$MR_STATUS" "these are not the reserved names"
+}
+
 # One fix-and-rerun cycle, not four. Each message carries the line it is about.
 test_multirun_reports_every_problem_at_once() {
     mr 'RunID,poolSize,poolSize

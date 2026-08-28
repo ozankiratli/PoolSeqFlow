@@ -50,8 +50,14 @@ params {
     // they are spelt here, without the `params.` prefix, and one column must be RunID. Each
     // row carries only the parameters that differ from the values above; anything left blank
     // comes from this file as usual, so a table stays as short as the difference between the
-    // runs. Runs share mainDir and each gets its own storageDir, ${storageDir}/${RunID} by
-    // default - add a storageDir column to send one somewhere else.
+    // runs.
+    //
+    // Runs share mainDir AND storageDir. There is one results tree, and only what actually
+    // differs between runs gets a name inside it: work all of them share sits at the ordinary
+    // paths below, work a run does alone is filed under Output/${RunID}, and its logs under
+    // Logs/${RunID}. So a table whose rows differ only in a late filter costs one run plus the
+    // diverging tail, and you can see which is which by looking. Add a storageDir column to
+    // send one run somewhere else entirely.
     multiRun        = false
     multiRunFile    = 'runs.csv'
 
@@ -214,6 +220,25 @@ params {
         utilized        = "${params.mainDir}/Utilized"
 
         outputs         = "${params.storageDir}/Output"
+
+        // ONE RESULTS TREE, AND ONLY DIVERGENCE GETS A NAME. Under multiRun there are three
+        // kinds of owner inside Output/ and Logs/, and each is named for what it is:
+        //
+        //     Output/All_Runs/     what every run shares - the dictionaries' logs, the
+        //                          session reports, and from the sharing stage the steps
+        //                          they all agree on
+        //     Output/Shared_<N>/   what SOME of them share, with a members file saying which
+        //     Output/<RunID>/      what one run did alone
+        //
+        // A single run has nothing to distinguish itself from, so it is none of these: its
+        // tree sits at Output/ directly and is exactly what it has always been. Settled rule 3
+        // and the reason for the conditional here.
+        //
+        // `multiRun` is top-level, so overriding it really does re-derive these - unlike an
+        // override aimed at something inside a scope, which arrives after its derivations
+        // have already run.
+        allOutputs      = params.multiRun ? "${params.storageDir}/Output/All_Runs" : "${params.storageDir}/Output"
+        allLogs         = params.multiRun ? "${params.storageDir}/Logs/All_Runs"   : "${params.storageDir}/Logs"
         // The installed pipeline's own directories, which are not under either of your two
         // storage roots: one installation serves any number of projects.
         //
@@ -279,6 +304,16 @@ params {
                 trim            = "${params.dir.outputs}/${params.dir.subpath.report.trim}"
             }
         }
+
+        // Nextflow's own dag, trace, timeline and report describe the INVOCATION - every run
+        // in it - so they belong with the rest of the work every run shares. Referenced by
+        // nextflow.config, which is read before any run exists and so cannot ask a run where
+        // its reports go.
+        //
+        // Last in this block, and it has to be: interpolation here is eager and top to bottom,
+        // so a reference to `subpath` from above it reads null and the config fails to parse
+        // with nothing but a NullPointerException to say so.
+        sessionReports  = "${params.dir.allOutputs}/${params.dir.subpath.reports}"
     }
 
     // Full paths to the files you place, and to what step 1 derives from them.

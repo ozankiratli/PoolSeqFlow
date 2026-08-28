@@ -61,13 +61,13 @@ guard_report() {
 # reads the last line of .poolseqflow_versions to decide whether a change in the parameter
 # SET came from a release or from the user editing their own config.
 pretend_earlier_release() {
-    printf '2.1.0\t2026-01-01\n' > "$GUARD_SB/store/.poolseqflow_versions"
+    printf '2.1.0\t2026-01-01\n' > "$GUARD_SB/store/Output/.poolseqflow_versions"
 }
 
 # Drop a key from the stored manifest, standing in for a release that did not have it.
 forget_stored_parameter() {
-    grep -v "^$1=" "$GUARD_SB/store/.poolseqflow_params" > "$GUARD_SB/store/.tmp_params"
-    mv "$GUARD_SB/store/.tmp_params" "$GUARD_SB/store/.poolseqflow_params"
+    grep -v "^$1=" "$GUARD_SB/store/Output/.poolseqflow_params" > "$GUARD_SB/store/Output/.tmp_params"
+    mv "$GUARD_SB/store/Output/.tmp_params" "$GUARD_SB/store/Output/.poolseqflow_params"
 }
 
 test_an_unchanged_project_passes() {
@@ -320,9 +320,9 @@ test_two_projects_share_one_installation() {
     assert_status 0 "$status1" "the first project should verify; see $sb/run.out"
     assert_status 0 "$status2" "the second should verify against the same installation; see $sb/run2.out"
 
-    assert_contains "$(cat "$sb/store/.poolseqflow_params" 2>/dev/null)" "poolSize=100" \
+    assert_contains "$(cat "$sb/store/Output/.poolseqflow_params" 2>/dev/null)" "poolSize=100" \
         "the first project should record its own parameters"
-    assert_contains "$(cat "$sb/store2/.poolseqflow_params" 2>/dev/null)" "poolSize=250" \
+    assert_contains "$(cat "$sb/store2/Output/.poolseqflow_params" 2>/dev/null)" "poolSize=250" \
         "the second project should record its own, not the first's"
 
     # Neither run may write into the installation. Nextflow's cache follows the launch
@@ -364,7 +364,7 @@ test_an_rgtags_edit_is_caught_when_the_bams_are_not_yet_promoted() {
     guards_ready || return
     local before after status report
 
-    before=$(md5sum < "$GUARD_SB/store/.poolseqflow_rgtags")
+    before=$(md5sum < "$GUARD_SB/store/Output/.poolseqflow_rgtags")
 
     # Cleaned but not yet promoted: on the working volume, absent from permanent storage.
     # Existence is all the guard tests, so an empty file stands in for the BAM.
@@ -381,7 +381,7 @@ test_an_rgtags_edit_is_caught_when_the_bams_are_not_yet_promoted() {
     assert_status 1 "$status" "an edit against unpromoted BAMs should fail the run"
     assert_contains "$report" "RGTAGS CHANGE CHECK:   FAIL" "the change should be reported"
 
-    after=$(md5sum < "$GUARD_SB/store/.poolseqflow_rgtags")
+    after=$(md5sum < "$GUARD_SB/store/Output/.poolseqflow_rgtags")
     assert_eq "$before" "$after" \
         "the stored baseline must not be overwritten - doing so hides the mismatch for good"
 }
@@ -417,11 +417,11 @@ refB,reference.fasta.gz,reference.gff.gz,30,"-B -C 50 -q 30 -Q 30 -d 4000 -a AD,
     # longer one at the base. The multi-run stage describes the whole invocation, so its
     # section is the same in every run's copy; refA's is read here because one of them has to
     # be.
-    report=$(cat "$sb/store/refA/Output/Reports/0_verify_environment.txt")
+    report=$(cat "$sb/store/Output/refA/Reports/0_verify_environment.txt")
 
     assert_contains "$report" "2 runs"      "the run count should be reported"
-    assert_contains "$report" "refA -> $sb/store/refA" "each run's storageDir should be named"
-    assert_contains "$report" "refB -> $sb/store/refB" "and defaulted from RunID"
+    assert_contains "$report" "refA -> $sb/store/Output/refA" "each run's own results directory should be named"
+    assert_contains "$report" "refB -> $sb/store/Output/refB" "and named from RunID"
     assert_contains "$report" "trim_galore.quality = 30" "what differs should be listed"
 
     # A blank cell means inherit, so it must not be reported as something refA sets.
@@ -538,9 +538,9 @@ TABLE
     # Per-run roots. Utilized_<RunID> is load-bearing: dir.utilized hangs off mainDir and runs
     # share mainDir, so without the suffix every run would write Test.vcf to one path and the
     # second run's skip check would symlink the first run's file.
-    assert_contains "$out" "RUN pool storageDir=$sb/store/pool"        "each run gets its own storage"
+    assert_contains "$out" "RUN pool storageDir=$sb/store"             "runs share one storage root"
     assert_contains "$out" "RUN pool dir.utilized=$sb/main/Utilized_pool" "and its own working tree"
-    assert_contains "$out" "RUN pool dir.output.vcf=$sb/store/pool/Output/VCF" "with the tree hung off it"
+    assert_contains "$out" "RUN pool dir.output.vcf=$sb/store/Output/pool/VCF" "and are named inside its one tree"
 }
 
 # The drift guard for the one piece of duplicated logic in the resolver.
