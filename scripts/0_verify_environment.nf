@@ -1124,6 +1124,11 @@ CURRENT_PARAMS
 // branches below are kept as a backstop and because this stage can be run on its own; in the
 // ordinary entry point they are not reached.
 process CheckMultiRun {
+    input:
+    // The divergence analysis, already rendered. It is computed while the DAG is built - before
+    // this task exists - so what arrives is text and a list of directories, not the plan.
+    tuple val(sharing_lines), val(conflict_lines), val(member_files)
+
     output:
     path 'verify_environment_stage9.txt', emit: report
 
@@ -1131,6 +1136,20 @@ process CheckMultiRun {
     dir_log = "${params.dir.allLogs}/0_verify_environment/s9_CheckMultiRun"
     derived = derivedParameterNames().join(' ')
     known = knownParameterNames().join(' ')
+    // Rendered as log_message calls rather than a heredoc so each line lands in the report and
+    // on the console the same way every other line here does.
+    sharing_block = sharing_lines.collect { line -> "        log_message \"${line}\"" }.join('\n')
+    conflict_block = conflict_lines.isEmpty()
+        ? '        :'
+        : (conflict_lines.collect { line -> "        log_message \"${line}\"" } + ['        STATUS="FAIL"']).join('\n')
+    // `mkdir -p` then write: the directory does not exist yet on a first run, and this is the
+    // only thing that creates it before the analysis starts filling it.
+    member_block = member_files.isEmpty()
+        ? '        :'
+        : member_files.collect { entry ->
+              "        mkdir -p '${entry.dir}'\n" +
+              "        printf '%s\\n' ${entry.members.collect { m -> "'${m}'" }.join(' ')} > '${entry.dir}/members.txt'"
+          }.join('\n')
     """
     REPORTFILE="verify_environment.txt"
 
@@ -1235,6 +1254,21 @@ if overrides:
         print(f"MULTI-RUN CHECK:           {key}")
     print("MULTI-RUN CHECK:       used exactly as written; nothing is re-derived from them.")
 PYEOF
+
+        # WHERE THE RUNS DIVERGE, said out loud before any compute is spent.
+        #
+        # A wrong entry in stepParameterMap() is the failure this design risks and it is
+        # silent: two runs would share an artifact one of them did not ask for. Stating the
+        # partition here is what makes it reviewable - a grouping you did not expect is
+        # visible in seconds rather than inferred months later from a result.
+${sharing_block}
+
+        # A members file inside each shared directory, so the grouping can be recovered from
+        # the results themselves rather than only from this report.
+${member_block}
+
+        # And the one disagreement a group cannot absorb.
+${conflict_block}
     fi
 
     log_message "MULTI-RUN CHECK:       STATUS=\$STATUS"
@@ -1334,6 +1368,10 @@ process VerifyAll {
 workflow VerifyEnvironment {
     take:
     runs
+    // The divergence analysis, rendered at DAG-build time: what step 0 should say about the
+    // grouping, any publish-only disagreement that makes a group impossible, and the members
+    // files to write. A value channel, because it describes the invocation rather than a run.
+    sharing
 
     main:
     CheckReference(runs)
@@ -1370,7 +1408,7 @@ workflow VerifyEnvironment {
         runs.map { run -> run.software.values().collect { tool -> "${tool}" } }
             .collect(flat: false)
             .map { lists -> lists.flatten().unique().join(' ') })
-    CheckMultiRun()
+    CheckMultiRun(sharing)
 
     VerifyAll(
         CheckReference.out.report

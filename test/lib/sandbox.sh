@@ -328,16 +328,21 @@ nextflow.enable.dsl=2
 
 include { runDefinitions; resolveParameters } from './scripts/resolve_parameters.nf'
 include { variantPlan; attachProbeRoots } from './scripts/variants.nf'
+include { sharingReportLines; publishConflictLines; sharedMemberFiles } from './scripts/variants.nf'
 include { VerifyEnvironment } from './scripts/0_verify_environment.nf'
 
 workflow {
     def runs = runDefinitions()
     resolveParameters()
+    def plan = variantPlan(runs)
     // CheckRGTagsFile probes the working roots that hold the ready BAMs and the VCF, and which
     // those are is a question only the divergence analysis can answer. Without this the guard
     // sees nothing on disk and records a new baseline every time.
-    attachProbeRoots(variantPlan(runs), runs)
-    VerifyEnvironment(channel.fromList(runs))
+    attachProbeRoots(plan, runs)
+    VerifyEnvironment(channel.fromList(runs), channel.value(tuple(
+        sharingReportLines(plan, runs),
+        publishConflictLines(plan, runs),
+        sharedMemberFiles(plan))))
 }
 ENTRY
     _run_entry "$sb" verify_only.nf

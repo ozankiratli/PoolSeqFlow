@@ -5,6 +5,7 @@ nextflow.enable.dsl=2
 include { resolveParameters; runDefinitions } from './scripts/resolve_parameters.nf'
 include { variantPlan; childVariants; parentVariant; descendantVariants } from './scripts/variants.nf'
 include { attachProbeRoots; gatherToProducer; runToken } from './scripts/variants.nf'
+include { sharingReportLines; publishConflictLines; sharedMemberFiles } from './scripts/variants.nf'
 include { assertEveryRunProduced } from './scripts/variants.nf'
 include { VerifyEnvironment }   from './scripts/0_verify_environment.nf'
 include { BuildDictionaries; dictionaryRuns; dictionaryKey } from './scripts/1_build_dictionaries.nf'
@@ -176,7 +177,12 @@ workflow {
     // STEP 0 IS PER RUN, because it validates a run's own configuration and reports to that
     // run's own directory. Everything from step 2 on is per variant. The two meet exactly
     // twice: at the step-2 gate just below, and at publication.
-    VerifyEnvironment(runs)
+    // What step 0 says about the partition, and the one disagreement a group cannot absorb.
+    // Rendered here because the analysis exists only while the DAG is being built.
+    VerifyEnvironment(runs, channel.value(tuple(
+        sharingReportLines(plan, run_defs),
+        publishConflictLines(plan, run_defs),
+        sharedMemberFiles(plan))))
     verified = VerifyEnvironment.out
 
     // Step 1 runs once per DISTINCT DICTIONARY SET, not once per run. Its artifacts live on

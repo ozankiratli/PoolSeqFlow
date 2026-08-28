@@ -20,16 +20,15 @@
 // mismatches, and a "leader" that moves when the CSV is reordered. Comparing parameter values
 // for EQUALITY needs none of that. There is no hash anywhere in this file.
 //
-// SHARING IS OFF IN THIS STAGE. `sharingEnabled()` returns false, so the partition is forced
-// to singletons: every run is its own variant and the pipeline does exactly what it did
-// before. That is deliberate - it makes the whole rewiring provable by running the old and new
-// code over one fixture and showing that nothing moved, rather than by argument. The next
-// stage flips the switch, and any task count that changes then is unambiguously that change.
+// SHARING IS ON. `sharingEnabled()` decides it, and it was false for two stages on purpose:
+// the whole rewiring was built and proven inert first - old and new code over one fixture,
+// nothing moved - so that when task counts finally DID change, that change was unambiguously
+// this one line and not the refactor underneath it.
 
 nextflow.enable.dsl=2
 
 def sharingEnabled() {
-    return false
+    return true
 }
 
 // WHAT EACH STEP READS, and whether it affects the artifact the step passes on.
@@ -248,7 +247,12 @@ def ancestorSteps(int step) {
 // forces the partition to singletons. That single line is the difference between this stage
 // and the next.
 def variantKey(Map run, int step) {
-    def parts = identityThrough(run, step)
+    // THE STORAGE ROOT IS PART OF EVERY KEY, and it is what removes the last case that would
+    // have needed a list of destinations. Two runs whose storageDir columns differ have no
+    // directory in common to put a shared result in, so they must not group - and prefixing the
+    // key makes that automatic rather than a refusal or a warning. Verified: a table where one
+    // run points elsewhere leaves it alone in its own tree at every step while the others share.
+    def parts = ["store=${run.storageDir}".toString()] + identityThrough(run, step)
     if (!sharingEnabled()) parts = ["run=${run.runId}".toString()] + parts
     return parts.join(' | ').toString()
 }
@@ -276,12 +280,6 @@ def variantsAt(List runDefs, int step) {
         // Where this variant does its working-volume work. One member is the ordinary case
         // and gives back exactly what the run itself had, which is what keeps this stage inert.
         variant.dir.utilized = variantUtilized(variant)
-        // Shared work's logs belong with the rest of the shared work rather than to whichever
-        // member leads it - the same rule step 1 has followed since multi-run existed. This
-        // names the ALL-runs root; a variant shared by only some of them gets a Shared_<N> of
-        // its own, which lands with sharing itself. A single-member variant keeps its own
-        // run's Logs, so nothing moves until then.
-        if (variant.members.size() > 1) variant.dir.logs = "${params.dir.allLogs}".toString()
         // STEP 8 IS THE ONE STEP A VARIANT CAN DECLINE TO RUN. Everything else always executes;
         // annotation is switched off by a parameter, and because `annotate` is part of step 8's
         // identity a variant is never half-annotating. The promotion gates count consumers, so
@@ -358,6 +356,40 @@ def variantPlan(List runDefs) {
         }
         parents[step] = byChild
         children[step] = byParent
+    }
+
+    // WHERE A VARIANT'S RESULTS GO. One results tree, and only divergence gets a name: work
+    // every run shares at the top, work some of them share under Shared_<N>, work one run does
+    // alone under its own RunID. A single run is none of these - nothing to be distinguished
+    // from - so its tree stays exactly where it always was (settled rule 3).
+    //
+    // The group number is per distinct MEMBER SET, not per step. Groups nest or are disjoint -
+    // a child's members are always a subset of one parent's - so one member set is one group
+    // however many steps it owns, and Shared_1 holds everything that group produced rather than
+    // one directory per artifact.
+    //
+    // Every member shares this directory, because they share a storage root: that is what the
+    // `store=` prefix in variantKey guarantees. So a variant has ONE destination, always.
+    def groupNumbers = [:]
+    steps.each { step ->
+        at[step].each { variant ->
+            def owner = ''
+            if (variant.runId != null) {
+                if (variant.members.size() == runDefs.size())  owner = '/All_Runs'
+                else if (variant.members.size() == 1)          owner = "/${runToken(variant.members[0])}"
+                else {
+                    def set = variant.members.collect { m -> runToken(m) }.join(',')
+                    if (!groupNumbers.containsKey(set)) groupNumbers[set] = groupNumbers.size() + 1
+                    owner = "/Shared_${groupNumbers[set]}"
+                }
+            }
+            variant.dir.outputs = "${variant.storageDir}/Output${owner}".toString()
+            variant.dir.logs    = "${variant.storageDir}/Logs${owner}".toString()
+            variant.dir.subpath.each { name, value ->
+                if (value instanceof Map) value.each { k, v -> variant.dir.output[name][k] = "${variant.dir.outputs}/${v}".toString() }
+                else variant.dir.output[name] = "${variant.dir.outputs}/${value}".toString()
+            }
+        }
     }
 
     steps.each { step ->
@@ -534,4 +566,108 @@ def assertEveryRunProduced(List expected, List produced) {
     System.err.println "PoolSeqFlow: behind and would otherwise report success, so the run is failed here."
     System.err.println ""
     throw new IllegalStateException("incomplete run set: ${missing.join(', ')}")
+}
+
+// THE GROUPS THIS INVOCATION WILL FORM, one entry per results directory.
+//
+// A member set is one group however many steps it owns, so this is keyed by directory rather
+// than by step, and each entry carries the steps that land there. Used by step 0 to report the
+// partition before any compute is spent, and to write the members file that says who a
+// Shared_<N> directory belongs to.
+def sharingGroups(Map plan) {
+    def byDir = [:]
+    plan.steps.each { step ->
+        plan.variants[step].each { variant ->
+            // A variant that never runs owns no directory. Only step 8 can be in that
+            // position - `annotate` decides it - and listing it would tell you a run has
+            // results from a step it deliberately skipped.
+            if (!variant.executes) return
+            def entry = byDir[variant.dir.outputs]
+            if (entry == null) {
+                byDir[variant.dir.outputs] = [dir: variant.dir.outputs, members: variant.members, steps: [step]]
+            }
+            else entry.steps << step
+        }
+    }
+    return byDir.values().toList()
+}
+
+// What step 0 prints about it. A wrong parameter map is the failure this whole design risks, and
+// it is silent - so the partition is stated before anything runs, where it can be disagreed
+// with, rather than inferred afterwards from which directories happen to exist.
+def sharingReportLines(Map plan, List runDefs) {
+    def lines = []
+    if (runDefs.size() < 2) return lines
+    def groups = sharingGroups(plan).sort { a, b -> b.members.size() <=> a.members.size() ?: a.dir <=> b.dir }
+    lines << "SHARING CHECK:         ${groups.size()} results ${groups.size() == 1 ? 'directory' : 'directories'} for ${runDefs.size()} runs"
+    groups.each { group ->
+        def who = group.members.collect { m -> runToken(m) }.join(', ')
+        lines << "SHARING CHECK:             ${group.dir.tokenize('/').last()} - steps ${group.steps.sort().join(', ')} - ${who}"
+    }
+
+    // Two runs identical to the end share every step, which is a table mistake worth naming:
+    // the second row costs a directory and buys nothing.
+    def full = groups.findAll { group -> group.steps.size() == plan.steps.size() && group.members.size() > 1 }
+    full.each { group ->
+        lines << "SHARING CHECK:         these runs are identical at every step, so the table asks for"
+        lines << "SHARING CHECK:         the same analysis more than once: ${group.members.collect { m -> runToken(m) }.join(', ')}"
+    }
+    return lines
+}
+
+// A PUBLISH-ONLY DISAGREEMENT INSIDE A GROUP IS REFUSED (Z, 2026-08-27).
+//
+// `publish` parameters affect only what a step writes for you to look at, not what it passes on
+// - so they must not split the artifact partition. But they cannot split the step's own outputs
+// either: two step-2 variants feeding one step-3 variant is a MERGE, and the expansion model
+// exists precisely so that cannot happen. So a group whose members disagree about one is
+// refused, with both values named - the same shape as dictionarySettings() throwing when two
+// runs on one dictionary key disagree about how it is built.
+def publishConflicts(Map plan, List runDefs) {
+    def problems = []
+    plan.steps.each { step ->
+        def names = stepParameterMap()[step].publish
+        if (names.isEmpty()) return
+        plan.variants[step].each { variant ->
+            if (variant.members.size() < 2) return
+            def mine = runDefs.findAll { run -> variant.members.contains(run.runId) }
+            names.each { name ->
+                def values = mine.collectEntries { run -> [runToken(run.runId), "${dig(run, name)}".toString()] }
+                // toList() first: a Map's values() is an unmodifiable VIEW and unique() sorts
+                // in place, so calling it directly throws UnsupportedOperationException.
+                if (values.values().toList().unique().size() > 1) {
+                    problems << [step: step, name: name, values: values]
+                }
+            }
+        }
+    }
+    return problems
+}
+
+// The members files to write: one per SHARED directory. A run's own directory needs none - its
+// name already says who it belongs to - and All_Runs gets one anyway, because "every run" is a
+// list worth having on disk when the table is later edited.
+def sharedMemberFiles(Map plan) {
+    return sharingGroups(plan)
+        .findAll { group -> group.members.size() > 1 }
+        .collect { group -> [dir: group.dir, members: group.members.collect { m -> runToken(m) }.sort()] }
+}
+
+// publishConflicts(), rendered for step 0's report.
+def publishConflictLines(Map plan, List runDefs) {
+    def problems = publishConflicts(plan, runDefs)
+    if (problems.isEmpty()) return []
+    def lines = ["SHARING CHECK:         these runs share a step but disagree about what it PUBLISHES:"]
+    problems.each { problem ->
+        lines << "SHARING CHECK:             step ${problem.step}, ${problem.name}"
+        problem.values.sort { a, b -> a.key <=> b.key }.each { who, value ->
+            lines << "SHARING CHECK:                 ${who} = ${value}"
+        }
+    }
+    lines << "SHARING CHECK:         A parameter like this changes only what the step writes for you"
+    lines << "SHARING CHECK:         to look at, not what it passes on - so the runs still share the"
+    lines << "SHARING CHECK:         artifact, and only one of these values can have produced the"
+    lines << "SHARING CHECK:         report beside it. Make them agree, or vary something that makes"
+    lines << "SHARING CHECK:         the runs diverge at this step."
+    return lines
 }

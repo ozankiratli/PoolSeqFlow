@@ -716,15 +716,30 @@ needs_multirun() {
 
 test_every_run_produces_its_own_complete_results() {
     needs_multirun || return
+    local o="$MULTIRUN_SB/store/Output"
+
+    # A RUN'S RESULTS ARE NO LONGER ALL IN ONE DIRECTORY, and that is the feature. The three
+    # runs here differ only from step 7 on, so everything before it was done once and lives
+    # under All_Runs; each run's own directory holds only the part nothing else shares. What
+    # must still be true is that every run's complete set EXISTS somewhere reachable.
+    assert_file "$o/All_Runs/VCF/Test.vcf"  "the VCF all three share should be filed under All_Runs"
+    [ -d "$o/All_Runs/Ready" ] || fail_case "the ready BAMs are shared, so they belong to All_Runs"
+    [ -d "$o/All_Runs/Trimmed" ] || fail_case "and so do the trimmed reads"
+
     local run
     for run in inherit filter plain; do
-        local o="$MULTIRUN_SB/store/Output/$run"
-        assert_file "$o/Reports/0_verify_environment.txt" "$run should publish its step 0 report"
-        assert_file "$o/VCF/Test.vcf"                     "$run should produce the raw VCF"
-        assert_file "$o/Frequencies/Test_snp_freq.tsv"    "$run should produce the SNP table"
-        assert_file "$o/Frequencies/Test_indel_freq.tsv"  "$run should produce the INDEL table"
-        [ -d "$o/Ready" ] || fail_case "$run should leave ready BAMs"
+        assert_file "$o/$run/Reports/0_verify_environment.txt" "$run should publish its own step 0 report"
+        assert_file "$o/$run/Frequencies/Test_snp_freq.tsv"    "$run should produce its own SNP table"
+        assert_file "$o/$run/Frequencies/Test_indel_freq.tsv"  "$run should produce its own INDEL table"
+        # ...and NOT a private copy of the work it shares.
+        assert_no_file "$o/$run/VCF/Test.vcf" \
+            "$run shares the raw VCF, so it must not have called one of its own"
     done
+
+    # Every shared directory says who it belongs to, so the grouping can be recovered from the
+    # results rather than only from the report that announced it.
+    assert_contains "$(cat "$o/All_Runs/members.txt")" "inherit" "All_Runs should list its members"
+    assert_file "$o/Shared_1/members.txt" "and a partial group should carry one too"
 }
 
 # The cardinality assertion, which is what a status check cannot see. A run that quietly did
@@ -735,49 +750,51 @@ test_every_run_produces_its_own_complete_results() {
 # that describe the machine rather than a run happen once.
 test_multi_run_fans_out_per_run_and_not_per_invocation() {
     needs_multirun || return
-    local samples runs expected p
+    local samples p
     samples=$(find "$MULTIRUN_SB/main/Data" -name '*_R1.fq.gz' | wc -l)
-    runs=3
-    expected=$(( samples * runs ))
 
+    # SHARED WORK IS DONE ONCE. These three runs agree up to step 6, so every per-sample step
+    # before the divergence runs `samples` times for the invocation - not `samples * runs`.
+    # This is the whole point of the feature and the assertion that would catch losing it.
     for p in TrimQcClip:TrimReads TrimQcClip:ClipReads AlignReads:Align \
              SortCleanBams:SortCleanBam GenerateReports:AlignmentReport \
              GenerateReports:CoverageReport CompleteAfterClip:PromoteArtifacts \
              CompleteAfterAlign:PromoteArtifacts CompleteAfterClean:PromoteArtifacts \
              CompleteAfterUse:PromoteArtifacts; do
-        assert_count "$expected" "$(task_count "$MULTIRUN_SB" "$p")" \
-            "$p should run once per (run, sample)"
+        assert_count "$samples" "$(task_count "$MULTIRUN_SB" "$p")" \
+            "$p is shared up to step 6, so it should run once per sample for the invocation"
     done
+    assert_count 1 "$(task_count "$MULTIRUN_SB" VariantCalling:VariantCall)" \
+        "one cohort is called, not three"
+    assert_count 1 "$(task_count "$MULTIRUN_SB" CompleteAfterVcf:PromoteArtifacts)" \
+        "and the VCF they share is promoted once"
 
-    for p in VariantCalling:VariantCall VCF2Frequencies:SplitSNPsAndINDELs \
-             CompleteAfterVcf:PromoteArtifacts VerifyEnvironment:VerifyAll \
-             VerifyEnvironment:CheckReference VerifyEnvironment:CheckRunParameters; do
-        assert_count "$runs" "$(task_count "$MULTIRUN_SB" "$p")" "$p should run once per run"
+    # ...and the diverging tail is NOT. minQUAL and poolSize both bite at step 7, so all three
+    # runs part company there and each filters for itself.
+    for p in VCF2Frequencies:SortRefAltByFrequency VCF2Frequencies:FilterPotentialFalsePositives \
+             VCF2Frequencies:DepthAndQualityFilter VCF2Frequencies:SplitSNPsAndINDELs; do
+        assert_count 3 "$(task_count "$MULTIRUN_SB" "$p")" \
+            "$p is step 7, where all three runs diverge"
     done
+    assert_count $(( samples )) "$(task_count "$MULTIRUN_SB" VCF2Frequencies:CalculateFrequencies)" \
+        "two tables per run, three runs"
 
-    # The totals above are necessary and not sufficient: eighteen Align tasks could be six
-    # samples across three runs, which is right, or one run's six attempted three times, which
-    # is not - and both report SUCCESS. Read back per run from the tags.
+    # Step 0 stays per RUN, because it validates a run's own configuration rather than a step.
+    for p in VerifyEnvironment:VerifyAll VerifyEnvironment:CheckReference \
+             VerifyEnvironment:CheckRunParameters; do
+        assert_count 3 "$(task_count "$MULTIRUN_SB" "$p")" "$p should run once per run"
+    done
     local run
     for run in inherit filter plain; do
-        assert_count "$samples" "$(run_task_count "$MULTIRUN_SB" AlignReads:Align "$run")" \
-            "$run should have aligned every sample"
-        assert_count "$samples" "$(run_task_count "$MULTIRUN_SB" SortCleanBams:SortCleanBam "$run")" \
-            "$run should have cleaned every sample"
-        assert_count 1 "$(run_task_count "$MULTIRUN_SB" VariantCalling:VariantCall "$run")" \
-            "$run should have called its cohort exactly once"
         assert_count 1 "$(run_task_count "$MULTIRUN_SB" VerifyEnvironment:VerifyAll "$run")" \
             "$run should have verified its own environment"
     done
 
-    # Shared by construction, so deduplicated rather than repeated.
+    # Shared by construction since before multi-run existed, and still shared.
     for p in BuildDictionaries:UngzipReference BuildDictionaries:CreateBwaIndex \
              BuildDictionaries:CreateSamtoolsFaiIndex BuildDictionaries:BuildSnpEffDb; do
         assert_count 1 "$(task_count "$MULTIRUN_SB" "$p")" \
             "$p should be built once for the reference all three runs share"
-        # ...and belongs to no run, which is why it carries no run tag.
-        assert_count 0 "$(run_task_count "$MULTIRUN_SB" "$p" inherit)" \
-            "$p is shared, so it should not be filed under a run"
     done
 
     # About the invocation, not about a run.
@@ -847,21 +864,28 @@ test_a_diverging_parameter_changes_that_runs_numbers() {
 # for every run.
 test_annotate_is_decided_per_run() {
     needs_multirun || return
-    assert_file    "$MULTIRUN_SB/store/Output/inherit/VCF/Test_annotated.vcf" "inherit annotates"
-    assert_file    "$MULTIRUN_SB/store/Output/filter/VCF/Test_annotated.vcf"  "filter annotates"
-    assert_no_file "$MULTIRUN_SB/store/Output/plain/VCF/Test_annotated.vcf" \
+    local o="$MULTIRUN_SB/store/Output"
+
+    # `annotate` is part of step 8's identity, so the two runs that want annotation form a group
+    # and the one that does not is simply absent from step 8. The annotated VCF is therefore
+    # produced ONCE, in the group's directory, and both runs read it there.
+    assert_file "$o/Shared_1/VCF/Test_annotated.vcf" \
+        "the two runs that annotate share the work, so it lands in their group's directory"
+    assert_contains "$(cat "$o/Shared_1/members.txt")" "filter" "and the group names them"
+    assert_contains "$(cat "$o/Shared_1/members.txt")" "inherit" "both of them"
+    assert_no_file "$o/plain/VCF/Test_annotated.vcf" \
         "plain sets annotate = false, so it must not produce an annotated VCF"
 
-    assert_count 2 "$(task_count "$MULTIRUN_SB" AnnotateVCF:AnnotateVariants)" \
-        "step 8 should run for the two runs that asked for it"
+    assert_count 1 "$(task_count "$MULTIRUN_SB" AnnotateVCF:AnnotateVariants)" \
+        "step 8 runs once for the group, not once per member"
     assert_count 2 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckGFF)" \
-        "step 0 should check the GFF for those two"
+        "step 0 is per run, so it checks the GFF for each of the two"
     assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:SkipGFFCheck)" \
-        "and skip it for the one that does not annotate"
+        "and skips it for the one that does not annotate"
 
-    assert_contains "$(cat "$MULTIRUN_SB/store/Output/plain/Reports/0_verify_environment.txt")" \
+    assert_contains "$(cat "$o/plain/Reports/0_verify_environment.txt")" \
         "GFF FILE CHECK:        STATUS=SKIPPED" "plain's own report should say so"
-    assert_contains "$(cat "$MULTIRUN_SB/store/Output/inherit/Reports/0_verify_environment.txt")" \
+    assert_contains "$(cat "$o/inherit/Reports/0_verify_environment.txt")" \
         "GFF FILE CHECK:        STATUS=PASS" "and inherit's should not"
 }
 
