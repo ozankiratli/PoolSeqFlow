@@ -25,8 +25,8 @@ def flattenParams(Map m, String prefix, Map out) {
 // once per run, it would otherwise write N identical manifests describing the base config -
 // so every run would record settings it did not use, and the guard would never fire.
 //
-// Returns the `key=value` lines rather than one joined string, because what is written to a
-// directory is the intersection of its members' - see directoryManifest() below.
+// Returns the `key=value` lines rather than one joined string, because sharedParameters() below
+// needs to compare them key by key.
 def analysisParams(Map p) {
     // dataSource is deliberately NOT excluded. It names the subdirectory the reads are read
     // from, so two different datasets under one storageDir are two different analyses - and
@@ -48,58 +48,6 @@ def analysisParams(Map p) {
         .findAll { k, _v -> !skipKey.contains(k) && !skipPrefix.any { prefix -> k.startsWith(prefix) } }
         .collect { k, v -> "${k}=${v}".toString() }
         .sort()
-}
-
-// A DIRECTORY'S MANIFEST IS THE INTERSECTION OF ITS MEMBERS'.
-//
-// A manifest exists to answer "would this parameter invalidate what is already here", and once
-// results are shared the thing that has parameters is a directory, not a run. The members of a
-// group agree by construction on everything that decided that directory's contents - agreeing
-// is what made them a group - so a parameter that affects the directory is necessarily in the
-// intersection and cannot be missed. Parameters they differ on are, equally by construction,
-// ones that did not affect it.
-//
-// ONE RULE, THREE CASES, TWO OF THEM UNCHANGED: for a directory with one member the
-// intersection is that run's own manifest, which is exactly the file 9f4e647 wrote; for a
-// single run, likewise. Only a shared directory is new.
-//
-// It needs no step map and does no filtering of its own. analysisParams() keeps answering "what
-// invalidates a result" while stepParameterMap() keeps answering "what makes two results the
-// same" - the two lists are allowed to disagree, and folding one into the other would lose the
-// distinction they exist to preserve. The cost is that this can over-fire: a step-7 parameter
-// every member happens to share appears in All_Runs' manifest even though nothing there was
-// produced by step 7. That is no worse than 9f4e647, where any change failed the whole run.
-def directoryManifest(List members) {
-    def common = null
-    members.each { run ->
-        def lines = analysisParams(run)
-        common = (common == null) ? lines : common.intersect(lines)
-    }
-    return (common == null ? [] : common).sort().join('\n')
-}
-
-// One manifest task per RESULTS DIRECTORY, which is what sharingGroups() enumerates.
-//
-// A run belongs to as many of these as it has divergence points - typically its own directory
-// plus whatever it shares - and gets all of their verdicts in its report, because all of them
-// describe results it depends on.
-def manifestGroups(Map plan, List runDefs) {
-    return sharingGroups(plan).collect { group ->
-        def ordered = runDefs
-            .findAll { run -> group.members.contains(run.runId) }
-            .sort { a, b -> "${a.runId}" <=> "${b.runId}" }
-        def lead = ordered[0]
-        return [checkKey    : "${group.dir}".toString(),
-                dir         : "${group.dir}".toString(),
-                runId       : lead.runId,
-                storageDir  : lead.storageDir,
-                members     : ordered.collect { m -> m.runId },
-                memberTokens: ordered.collect { m -> runToken(m.runId) },
-                // The directory's own name in the trace: All_Runs, Shared_1, a RunID. A single
-                // run has no name for anything (settled rule 3), so it keeps the bare tag.
-                checkTag    : lead.runId == null ? '-' : "${group.dir}".toString().tokenize('/').last(),
-                manifest    : directoryManifest(ordered)]
-    }
 }
 
 // Turn a readPattern into a find(1) expression matching both mates.
@@ -1163,39 +1111,64 @@ process CheckDirectories {
     """
 }
 
-// ONE TASK PER RESULTS DIRECTORY, not one per run.
+// THE REPRODUCIBILITY GUARD, and it is ONE task for the whole project.
 //
-// A manifest answers "would this parameter invalidate what is already here", and once results
-// are shared the thing that HAS parameters is a directory. A run belongs to several - its own,
-// plus whatever it shares - and its report carries all of their verdicts, because all of them
-// describe results it depends on. See directoryManifest() for the intersection rule and why it
-// cannot miss a parameter that matters.
+// Z, 2026-08-28: *"Copy the parameters.config and multirun.csv to .parameters.config and
+// .multirun.csv, if they don't exist it is the first run, if they exist they can be compared in
+// terms of what they contain."* And the rule those copies enforce: *"the parameter file being
+// the same with what it was in the beginning and the parameters that are set for each run being
+// kept as they are."*
 //
-// It also owns the members file. Who a directory belongs to and what parameters describe it are
-// the same fact recorded twice, so one task writes both and they cannot disagree - and the
-// previous copy is what distinguishes an edited config from a REGROUPED table, which look
-// identical to a plain diff and want opposite advice.
+// TWO INPUTS, COMPARED THE WAY EACH ONE HAS TO BE.
+//
+//   .multirun.csv     compared AS WRITTEN. It is the user's own file, nothing in a release
+//                     touches it, and by settled rule 7 every column is a deliberate
+//                     divergence - so any edit to it is a change to the run set, full stop.
+//                     This is also what makes a REGROUPING visible: `Shared_<N>` numbers are
+//                     assigned in order of appearance, so an edited table can leave `Shared_1`
+//                     naming a different pair than the one whose results are in it, and the
+//                     table copy sees that directly instead of inferring it from a member list.
+//
+//   .parameters.config  compared BY RESOLVED VALUE, because it also carries settings that
+//                     cannot change a number - mainDir, storageDir, threads, memory, cores.*,
+//                     software.*, java.* (Z, 2026-08-28: "Ignore resources and paths"). Moving
+//                     a project to another disk or running it on a bigger node must not
+//                     invalidate finished results. That is exactly what analysisParams()
+//                     excludes, so the comparison runs on its output; the raw file is stored
+//                     beside it as the record of what was actually written.
+//
+// The two together freeze every run's effective configuration: the base from the config, the
+// per-run overrides from the table. That is why this needs no per-run task and no per-directory
+// manifest - both of which it replaces.
+//
+// THE VERSION IS A BLOCK OF ITS OWN, checked first and short-circuiting everything else. Z,
+// 2026-08-28: *"Nobody should ever resume to a pipeline using a different version. That needs a
+// block on its own. Reset and re-run."* This REVERSES the old rule, under which a version was
+// recorded and never enforced - so a project can no longer span two releases, and the whole
+// added-by-a-release classification that existed to let it is gone with it.
 process CheckRunParameters {
-    tag { check.checkTag }
-
     input:
-    val check
+    // The base configuration's analysis parameters, already flattened. Rendered while the DAG
+    // is built, like the sharing report - `params` is fully resolved by then, and doing it here
+    // would mean a process reading the global configuration instead of being handed it.
+    val manifest
 
     output:
-    tuple val(check), path('verify_environment_stage7.txt'), emit: report
+    path 'verify_environment_stage7.txt', emit: report
 
     script:
-    manifest    = check.manifest
-    stored      = "${check.dir}/.poolseqflow_params"
-    readable    = "${check.dir}/run_parameters.txt"
-    versions    = "${check.dir}/.poolseqflow_versions"
-    // A run's own directory is named after it and needs no list; a shared one does. All_Runs
-    // gets one too, because "every run" is a list worth having on disk once the table is edited.
-    members     = check.members.size() > 1 ? "${check.dir}/members.txt" : ''
-    memberLines = check.memberTokens.sort().join('\n')
+    root        = "${params.storageDir}/Output"
+    version     = "${root}/.poolseqflow_version"
+    stored      = "${root}/.poolseqflow_params"
+    storedCfg   = "${root}/.parameters.config"
+    storedTable = "${root}/.multirun.csv"
+    readable    = "${root}/run_parameters.txt"
+    // Where the two files actually are. parameters.config is read from the directory the run
+    // was launched in (nextflow.config: includeConfig "${launchDir}/parameters.config"), which
+    // is not necessarily mainDir; the table is a parameter like any other.
+    liveCfg     = "${workflow.launchDir}/parameters.config"
+    liveTable   = params.multiRun ? "${params.multiRunPath}" : ''
     release     = workflow.manifest.version ?: 'unknown'
-    dir_log     = checkLogDir(check, 's7_CheckRunParameters')
-    log_file    = checkLogFile(check, 's7_CheckRunParameters')
     """
     REPORTFILE="verify_environment.txt"
 
@@ -1208,203 +1181,147 @@ process CheckRunParameters {
 ${manifest}
 CURRENT_PARAMS
 
-    cat <<'CURRENT_MEMBERS' > current_members.txt
-${memberLines}
-CURRENT_MEMBERS
-
     STATUS="PASS"
-    ADOPTED=0
-    REGROUPED=0
-    log_message "RUN PARAMETERS:        ${check.dir}"
 
-    # WHO THIS DIRECTORY BELONGS TO, asked before what describes it. A directory whose member
-    # set changed holds results produced for a different set of runs, so comparing its manifest
-    # would be comparing two different things - and the answer would be "parameters were added
-    # or removed", which reads as an edit to parameters.config and is not one. The number in a
-    # Shared_<N> name is assigned in order of appearance, so it is exactly the name that can
-    # come to mean a different group between two invocations.
-    if [ -n "${members}" ] && [ -f "${members}" ] &&
-       ! diff -q "${members}" current_members.txt > /dev/null 2>&1; then
-        log_message "RUN PARAMETERS:        The runs sharing this directory have CHANGED:"
-        log_message ""
-        log_message "  was  \$(paste -sd, "${members}" | sed 's/,/, /g')"
-        log_message "  now  \$(paste -sd, current_members.txt | sed 's/,/, /g')"
-        log_message ""
-        log_message "RUN PARAMETERS:        What is already here was produced for the earlier set. The new"
-        log_message "RUN PARAMETERS:        one will not read all of it, and completed steps are skipped by"
-        log_message "RUN PARAMETERS:        looking for output files - so results from two different"
-        log_message "RUN PARAMETERS:        groupings would be mixed in one directory."
-        log_message "RUN PARAMETERS:"
-        log_message "RUN PARAMETERS:        Delete this directory and run again to rebuild it for the new"
-        log_message "RUN PARAMETERS:        set, or restore ${params.multiRunFile} to what it was:"
-        log_message "RUN PARAMETERS:            ${check.dir}"
-        STATUS="FAIL"
-        REGROUPED=1
+    # THE VERSION, FIRST AND ON ITS OWN. Completed steps are skipped by looking for output
+    # files, so continuing into a different release would mix results produced by two versions
+    # of the code with nothing on disk to say which is which. Nothing else is compared when
+    # this fires: the parameter set moves between releases, and reporting that as an edit to
+    # your own config on top of this would be two wrong messages instead of one right one.
+    if [ ! -f "${version}" ]; then
+        mkdir -p "${root}"
+        printf '%s\\t%s\\n' "${release}" "\$(date -u '+%Y-%m-%d')" > "${version}"
+        log_message "PIPELINE VERSION:      ${release} - first run in this project"
+    elif [ "\$(cut -f1 < "${version}")" != "${release}" ]; then
+        log_message "PIPELINE VERSION:      These results were produced by \$(cut -f1 < "${version}"),"
+        log_message "PIPELINE VERSION:      and this is ${release}."
+        log_message "PIPELINE VERSION:"
+        log_message "PIPELINE VERSION:      Completed steps are skipped by looking for output files, not by"
+        log_message "PIPELINE VERSION:      checking what produced them, so continuing would leave one set of"
+        log_message "PIPELINE VERSION:      results built by two versions of the pipeline with nothing on disk"
+        log_message "PIPELINE VERSION:      to say which is which. A project belongs to one release."
+        log_message "PIPELINE VERSION:"
+        log_message "PIPELINE VERSION:      Start it again under this one:  ./PoolSeqFlow reset"
+        log_message "PIPELINE VERSION:      Or run the release that made them; ./PoolSeqFlow version tells"
+        log_message "PIPELINE VERSION:      you what is installed now."
+        log_message "PIPELINE VERSION:      STATUS=FAIL"
+        log_message "RUN PARAMETER CHECK:   STATUS=FAIL"
+        mv \$REPORTFILE verify_environment_stage7.txt
+        mkdir -p ${params.dir.allLogs}/0_verify_environment/s7_CheckRunParameters
+        {
+            echo ""
+            echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+            cat .command.log
+        } >> ${params.dir.allLogs}/0_verify_environment/s7_CheckRunParameters/0_VerifyEnvironment_s7_CheckRunParameters_nextflow.log
+        exit 0
+    else
+        log_message "PIPELINE VERSION:      ${release}"
     fi
 
-    if [ "\$REGROUPED" = "1" ]; then
-        :
-    elif [ ! -f "${stored}" ]; then
-        log_message "RUN PARAMETERS:        No previous run recorded - this is a fresh directory"
-        log_message "RUN PARAMETERS:        Recording \$(wc -l < current_params.txt) analysis parameters"
-        mkdir -p "\$(dirname "${stored}")"
+    # THE MULTI-RUN TABLE, AS WRITTEN. Line endings and trailing blanks are normalised, and
+    # nothing else: row order decides which group gets which Shared_<N> name, and a comment is
+    # a thing a user writes on purpose.
+    if [ -n "${liveTable}" ]; then
+        sed -e 's/\\r\$//' -e 's/[[:space:]]*\$//' -e '/^\$/d' "${liveTable}" > current_table.csv
+        if [ ! -f "${storedTable}" ]; then
+            mkdir -p "${root}"
+            cp current_table.csv "${storedTable}"
+            log_message "RUN PARAMETERS:        No previous run recorded - this is a fresh project"
+            log_message "RUN PARAMETERS:        Recording ${params.multiRunFile} as \$(wc -l < current_table.csv) row(s)"
+        elif diff -q "${storedTable}" current_table.csv > /dev/null 2>&1; then
+            log_message "RUN PARAMETERS:        ${params.multiRunFile} unchanged since the outputs were produced"
+        else
+            log_message "RUN PARAMETERS:        ${params.multiRunFile} has CHANGED since the outputs were produced:"
+            log_message ""
+            while IFS= read -r line; do
+                case "\$line" in
+                    '<'*) printf '  was  %s\\n' "\${line#< }" | tee -a \$REPORTFILE ;;
+                    '>'*) printf '  now  %s\\n' "\${line#> }" | tee -a \$REPORTFILE ;;
+                esac
+            done < <(diff "${storedTable}" current_table.csv | grep -E '^[<>]')
+            log_message ""
+            log_message "RUN PARAMETERS:        Every cell of that table is a setting some run was analysed"
+            log_message "RUN PARAMETERS:        under, and which runs share a results directory is decided by"
+            log_message "RUN PARAMETERS:        it - so an edit can also move work between directories that"
+            log_message "RUN PARAMETERS:        already hold results. Adding a run counts: it can regroup the"
+            log_message "RUN PARAMETERS:        ones already there."
+            log_message "RUN PARAMETERS:"
+            log_message "RUN PARAMETERS:        Restore the table, or start a fresh run:"
+            log_message "RUN PARAMETERS:            ./PoolSeqFlow reset"
+            STATUS="FAIL"
+        fi
+    fi
+
+    # parameters.config, by resolved value rather than as written - see the note above this
+    # process for which families are excluded and why.
+    if [ ! -f "${stored}" ]; then
+        mkdir -p "${root}"
         cp current_params.txt "${stored}"
+        log_message "RUN PARAMETERS:        Recording \$(wc -l < current_params.txt) analysis parameters"
     elif diff -q "${stored}" current_params.txt > /dev/null 2>&1; then
-        log_message "RUN PARAMETERS:        Unchanged since the outputs here were produced"
+        log_message "RUN PARAMETERS:        parameters.config unchanged since the outputs were produced"
     else
-        # Three things can happen to a manifest and they do not mean the same thing:
-        #
-        #   CHANGED           a parameter that existed before now holds a different value.
-        #                     The user changed a setting, and continuing would mix results.
-        #   ADDED / REMOVED   the set of parameters itself differs. That is what a release
-        #                     does when it introduces or retires one - the outputs on disk
-        #                     were produced before the parameter existed, so there is no
-        #                     earlier value for it to conflict with.
-        #
-        # A plain `diff` cannot tell these apart, so every release that added a parameter
-        # failed every existing project and told it to run `reset` - which deletes the
-        # results. Whether an add or remove is a release event or the user editing their own
-        # config is settled by ${versions}: it records every release that has run here, and
-        # this block runs before the version line below is appended, so its last entry is
-        # still the release that produced the outputs on disk.
-        # The classification itself lives in bin/classify_manifest.sh so it can be called and
-        # tested directly. Every case it has to get right - a value containing '=', an empty
-        # value, a key present twice, a manifest with no trailing newline - is a one-second
-        # unit test there, where checking the same thing through a pipeline run costs a JVM
-        # start each time. What stays here is the part that is genuinely about this pipeline:
-        # deciding which kind of difference invalidates existing outputs.
-        #
-        # Emitted once and read several times, so the classification cannot disagree with
-        # itself between the counts and the listings.
+        # The classification is only about how the difference READS now. Every kind of it fails:
+        # the one case that used to be forgiven - a parameter a release introduced - cannot
+        # happen any more, because a release change is blocked above before this runs.
         classify_manifest.sh "${stored}" current_params.txt > param_diff.txt
 
-        N_ADDED=\$(awk -F'\\t' '\$1 == "COUNTS" { print \$2 }' param_diff.txt)
-        N_CHANGED=\$(awk -F'\\t' '\$1 == "COUNTS" { print \$3 }' param_diff.txt)
-        N_REMOVED=\$(awk -F'\\t' '\$1 == "COUNTS" { print \$4 }' param_diff.txt)
         N_MALFORMED=\$(awk -F'\\t' '\$1 == "COUNTS" { print \$5 }' param_diff.txt)
-
-        # A manifest is machine-written, so a line that does not parse means something is
-        # wrong upstream - and a dropped line hides a key from the comparison, which can make
-        # a real change look like no change at all. Never silent.
         if [ "\${N_MALFORMED:-0}" -gt 0 ]; then
-            log_message "RUN PARAMETERS:        \$N_MALFORMED unparseable line(s) in a parameter manifest:"
+            log_message "RUN PARAMETERS:        \$N_MALFORMED unparseable line(s) in the stored manifest:"
             while IFS=\$'\\t' read -r kind line which _rest; do
                 [ "\$kind" = "MALFORMED" ] || continue
                 printf '  %-8s %s\\n' "\$which" "\$line" | tee -a \$REPORTFILE
             done < param_diff.txt
             log_message "RUN PARAMETERS:        ${stored} is written by the pipeline and should not be"
             log_message "RUN PARAMETERS:        edited by hand. Restore it, or start a fresh run."
-            STATUS="FAIL"
         fi
 
-        PREVIOUS_RELEASE=""
-        if [ -f "${versions}" ]; then
-            PREVIOUS_RELEASE=\$(tail -n 1 "${versions}" | cut -f1)
-        fi
-
-        list_set_changes() {
-            while IFS=\$'\\t' read -r kind key was now; do
-                case "\$kind" in
-                    ADDED)   printf '  added    %s = %s\\n' "\$key" "\$now" | tee -a \$REPORTFILE ;;
-                    REMOVED) printf '  removed  %s (was %s)\\n' "\$key" "\$was" | tee -a \$REPORTFILE ;;
-                esac
-            done < param_diff.txt
-        }
-
-        if [ "\${N_CHANGED:-0}" -gt 0 ]; then
-            log_message "RUN PARAMETERS:        CHANGED since the existing outputs were produced:"
-            log_message ""
-            while IFS=\$'\\t' read -r kind key was now; do
-                [ "\$kind" = "CHANGED" ] || continue
-                printf '  %s\\n      was  %s\\n      now  %s\\n' "\$key" "\$was" "\$now" | tee -a \$REPORTFILE
-            done < param_diff.txt
-            log_message ""
-            log_message "RUN PARAMETERS:        The pipeline skips completed steps by checking for output"
-            log_message "RUN PARAMETERS:        files, not by checking which parameters produced them, so"
-            log_message "RUN PARAMETERS:        continuing would mix old and new results."
-            log_message "RUN PARAMETERS:"
-            log_message "RUN PARAMETERS:        Either restore the previous values, or start a fresh run:"
-            log_message "RUN PARAMETERS:            ./PoolSeqFlow reset"
-            STATUS="FAIL"
-        fi
-
-        if [ "\${N_ADDED:-0}" -gt 0 ] || [ "\${N_REMOVED:-0}" -gt 0 ]; then
-            log_message ""
-            if [ -n "\$PREVIOUS_RELEASE" ] && [ "\$PREVIOUS_RELEASE" != "${release}" ]; then
-                log_message "RUN PARAMETERS:        The set of parameters changed between \$PREVIOUS_RELEASE,"
-                log_message "RUN PARAMETERS:        which produced the outputs here, and ${release}:"
-                log_message ""
-                list_set_changes
-                log_message ""
-                log_message "RUN PARAMETERS:        Recorded rather than treated as a change: a parameter that did"
-                log_message "RUN PARAMETERS:        not exist cannot have produced the outputs already on disk. This"
-                log_message "RUN PARAMETERS:        is the reasoning the pipeline version check below already uses."
-                log_message "RUN PARAMETERS:        Read the new values before relying on results that span two"
-                log_message "RUN PARAMETERS:        releases; they are listed in ${readable}."
-                ADOPTED=1
-            else
-                log_message "RUN PARAMETERS:        Parameters were added to or removed from parameters.config"
-                log_message "RUN PARAMETERS:        without a release change:"
-                log_message ""
-                list_set_changes
-                log_message ""
-                log_message "RUN PARAMETERS:        ${release} has run in this project before, so this is an edit to"
-                log_message "RUN PARAMETERS:        your own config rather than something a release introduced, and"
-                log_message "RUN PARAMETERS:        what it does to the existing outputs cannot be known. Restore"
-                log_message "RUN PARAMETERS:        the file, or start a fresh run:"
-                log_message "RUN PARAMETERS:            ./PoolSeqFlow reset"
-                STATUS="FAIL"
-            fi
-        fi
-
-        # Adopted only when nothing conflicted, so the notice appears on the upgrade run and
-        # not on every run after it. A failed check leaves ${stored} untouched, which is what
-        # keeps the failure reproducible instead of self-clearing.
-        if [ "\$STATUS" = "PASS" ] && [ "\$ADOPTED" = "1" ]; then
-            cp current_params.txt "${stored}"
-        fi
+        log_message "RUN PARAMETERS:        parameters.config has CHANGED since the outputs were produced:"
+        log_message ""
+        while IFS=\$'\\t' read -r kind key was now; do
+            case "\$kind" in
+                CHANGED) printf '  %s\\n      was  %s\\n      now  %s\\n' "\$key" "\$was" "\$now" | tee -a \$REPORTFILE ;;
+                ADDED)   printf '  added    %s = %s\\n' "\$key" "\$now" | tee -a \$REPORTFILE ;;
+                REMOVED) printf '  removed  %s (was %s)\\n' "\$key" "\$was" | tee -a \$REPORTFILE ;;
+            esac
+        done < param_diff.txt
+        log_message ""
+        log_message "RUN PARAMETERS:        The pipeline skips completed steps by checking for output files,"
+        log_message "RUN PARAMETERS:        not by checking which parameters produced them, so continuing"
+        log_message "RUN PARAMETERS:        would mix old and new results."
+        log_message "RUN PARAMETERS:"
+        log_message "RUN PARAMETERS:        Where files live and how much of the machine to use are NOT"
+        log_message "RUN PARAMETERS:        compared - mainDir, storageDir, threads, memory and the cores,"
+        log_message "RUN PARAMETERS:        software and java blocks can all change freely. What is listed"
+        log_message "RUN PARAMETERS:        above changes the numbers."
+        log_message "RUN PARAMETERS:"
+        log_message "RUN PARAMETERS:        Either restore the previous values, or start a fresh run:"
+        log_message "RUN PARAMETERS:            ./PoolSeqFlow reset"
+        STATUS="FAIL"
     fi
 
-    # Which release produced these outputs. Recorded, never enforced: most releases do
-    # not change results, so a version change must not invalidate outputs the way a
-    # parameter change does. But "cite the version you ran" is unanswerable if nothing
-    # writes it down, and a project that several versions have touched is worth knowing
-    # about - the file is append-only for exactly that reason.
-    #
-    # Skipped entirely on a regrouping: appending there would record this release against
-    # results it did not produce, and would clear the classification the next invocation needs.
-    if [ "\$REGROUPED" = "1" ]; then
-        :
-    elif [ ! -f "${versions}" ]; then
-        mkdir -p "\$(dirname "${versions}")"
-        printf '%s\\t%s\\n' "${release}" "\$(date -u '+%Y-%m-%d')" > "${versions}"
-        log_message "PIPELINE VERSION:      ${release} - first run in this directory"
-    elif [ "\$(tail -n 1 "${versions}" | cut -f1)" = "${release}" ]; then
-        log_message "PIPELINE VERSION:      ${release}"
-    else
-        PREVIOUS=\$(tail -n 1 "${versions}" | cut -f1)
-        printf '%s\\t%s\\n' "${release}" "\$(date -u '+%Y-%m-%d')" >> "${versions}"
-        log_message "PIPELINE VERSION:      ${release} - earlier runs here used \$PREVIOUS"
-        log_message "PIPELINE VERSION:      Outputs already present were produced by the earlier"
-        log_message "PIPELINE VERSION:      release, and completed steps are not redone. Cite the"
-        log_message "PIPELINE VERSION:      version that produced the results you report."
-        log_message "PIPELINE VERSION:      Full history: ${versions}"
-    fi
-
-    # Publish a readable copy next to the results. ${stored} stays the file the check
-    # compares against; this one exists so the settings behind a set of outputs can be
-    # read without picking through parameters.config. Read-only, because editing it
-    # changes nothing - the pipeline reads ${stored}.
+    # THE COPIES THEMSELVES, kept whether or not they are what is compared. They are the record
+    # of what was actually written - comments, layout and all - which is what you would cite,
+    # and what tells you months later why a value was what it was. Refreshed only on a clean
+    # pass, so a failure leaves the originals for the diff above to keep reporting against.
     if [ "\$STATUS" = "PASS" ]; then
-        mkdir -p "\$(dirname "${readable}")"
+        mkdir -p "${root}"
+        cp current_params.txt "${stored}"
+        cp "${liveCfg}" "${storedCfg}"
+        if [ -n "${liveTable}" ]; then cp current_table.csv "${storedTable}"; fi
+
         rm -f "${readable}"
         {
-            echo "# PoolSeqFlow analysis parameters for the outputs in ${check.dir}"
+            echo "# PoolSeqFlow ${release} - the configuration behind the results in ${root}"
             echo "# Generated \$(date -u '+%Y-%m-%d %H:%M:%S UTC') - read-only; edit parameters.config instead."
             echo "#"
-            echo "# Pipeline version(s) that have run in this project, oldest first."
-            echo "# More than one means these outputs were not all produced by the same release."
-            sed 's/^/#   /' "${versions}"
+            echo "# The files themselves are kept beside this one, exactly as written:"
+            echo "#   .parameters.config"
+            if [ -n "${liveTable}" ]; then echo "#   .multirun.csv"; fi
+            echo "#"
+            echo "# Below: the analysis-affecting parameters as the pipeline resolved them. Paths"
+            echo "# and resources are absent on purpose - they cannot change a result."
             echo "#"
             cat current_params.txt
         } > "${readable}"
@@ -1412,22 +1329,15 @@ CURRENT_MEMBERS
         log_message "RUN PARAMETERS:        Written to ${readable}"
     fi
 
-    # The members file, written last and only on a clean pass - so a directory whose grouping is
-    # in dispute keeps the record of what it was, which is what the check reads next time.
-    if [ "\$STATUS" = "PASS" ] && [ -n "${members}" ]; then
-        mkdir -p "\$(dirname "${members}")"
-        cp current_members.txt "${members}"
-    fi
-
     log_message "RUN PARAMETER CHECK:   STATUS=\$STATUS"
 
     mv \$REPORTFILE verify_environment_stage7.txt
-    mkdir -p ${dir_log}
+    mkdir -p ${params.dir.allLogs}/0_verify_environment/s7_CheckRunParameters
     {
         echo ""
         echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
         cat .command.log
-    } >> ${dir_log}/${log_file}
+    } >> ${params.dir.allLogs}/0_verify_environment/s7_CheckRunParameters/0_VerifyEnvironment_s7_CheckRunParameters_nextflow.log
     """
 }
 
@@ -1454,8 +1364,8 @@ CURRENT_MEMBERS
 process CheckMultiRun {
     input:
     // The divergence analysis, already rendered. It is computed while the DAG is built - before
-    // this task exists - so what arrives is text, not the plan.
-    tuple val(sharing_lines), val(conflict_lines)
+    // this task exists - so what arrives is text and a list of directories, not the plan.
+    tuple val(sharing_lines), val(conflict_lines), val(member_files)
 
     output:
     path 'verify_environment_stage9.txt', emit: report
@@ -1470,6 +1380,14 @@ process CheckMultiRun {
     conflict_block = conflict_lines.isEmpty()
         ? '        :'
         : (conflict_lines.collect { line -> "        log_message \"${line}\"" } + ['        STATUS="FAIL"']).join('\n')
+    // `mkdir -p` then write: the directory does not exist yet on a first run, and this is the
+    // only thing that creates it before the analysis starts filling it.
+    member_block = member_files.isEmpty()
+        ? '        :'
+        : member_files.collect { entry ->
+              "        mkdir -p '${entry.dir}'\n" +
+              "        printf '%s\\n' ${entry.members.collect { m -> "'${m}'" }.join(' ')} > '${entry.dir}/members.txt'"
+          }.join('\n')
     """
     REPORTFILE="verify_environment.txt"
 
@@ -1583,9 +1501,11 @@ PYEOF
         # visible in seconds rather than inferred months later from a result.
 ${sharing_block}
 
-        # The members file inside each shared directory - written by CheckRunParameters, which
-        # owns that directory's record, so that the grouping can be recovered from the results
-        # themselves rather than only from this report.
+        # A members file inside each shared directory, so the grouping can be recovered from
+        # the results themselves rather than only from this report. A RECORD, not a guard: what
+        # stops an edited table from mixing two groupings in one directory is the stored copy of
+        # the table itself, in stage 7 above.
+${member_block}
 
         # And the one disagreement a group cannot absorb.
 ${conflict_block}
@@ -1618,8 +1538,9 @@ process VerifyAll {
     // broadcast to every task of this process, which is the behaviour that is wanted for a
     // check that ran once for the whole invocation.
     tuple val(run), val(reference_log), val(gffFile_log), val(dataSource_log),
-          val(rgtags_log), val(trim_log), val(runparam_logs), val(directory_log)
+          val(rgtags_log), val(trim_log), val(directory_log)
     val software_log
+    val runparam_log
     val multirun_log
 
     output:
@@ -1628,10 +1549,6 @@ process VerifyAll {
     script:
     output_folder = "${run.dir.output.reports}"
     dir_log = "${run.dir.logs}/0_verify_environment"
-    // A LIST, because a run belongs to as many results directories as it has divergence points
-    // and each of them has its own manifest. Already ordered by directory upstream, so the
-    // report reads the same way on every invocation.
-    runparam_log = runparam_logs.collect { f -> "${f}".toString() }.join(' ')
     """
     REPORTFILE="0_verify_environment.txt"
     
@@ -1720,7 +1637,9 @@ workflow VerifyEnvironment {
     CheckData(context.flatMap { ctx -> checkGroups(ctx.runs, 'CheckData') })
     CheckTrimParameters(context.flatMap { ctx -> checkGroups(ctx.runs, 'CheckTrimParameters') })
     CheckDirectories(context.flatMap { ctx -> checkGroups(ctx.runs, 'CheckDirectories') })
-    CheckRunParameters(context.flatMap { ctx -> manifestGroups(ctx.plan, ctx.runs) })
+    // ONE task for the whole project, like the software and multi-run stages: it compares the
+    // two files the user wrote, not anything a run resolved for itself.
+    CheckRunParameters(channel.value(analysisParams(params).join('\n')))
 
     // Every distinct RGTags table, repaired once. Keyed on the PATH and on nothing else - see
     // rgTagsRepairs() - because this stage writes to the user's own file.
@@ -1769,34 +1688,15 @@ workflow VerifyEnvironment {
         .flatMap { ctx -> ctx.runs.collect { run -> tuple(variantForRun(ctx.plan, run, 6).variantKey, run) } }
         .combine(CheckRGTagsFile.out.report.map { check, report -> tuple(check.checkKey, report) }, by: 0)
         .map { _key, run, report -> tuple(run, report) }
-    // A LIST per run, not one report: a run has as many manifests as it has directories. Sorted
-    // by directory so the assembled report is stable between invocations.
-    runparams_by_run = context
-        .flatMap { ctx ->
-            def pairs = []
-            manifestGroups(ctx.plan, ctx.runs).each { group ->
-                ctx.runs.each { run ->
-                    if (group.members.contains(run.runId)) pairs << tuple(group.checkKey, run)
-                }
-            }
-            return pairs }
-        .combine(CheckRunParameters.out.report.map { check, report -> tuple(check.checkKey, check.dir, report) }, by: 0)
-        .map { _key, run, dir, report -> tuple(run, dir, report) }
-        .groupTuple(by: 0)
-        .map { run, dirs, reports ->
-            def pairs = []
-            dirs.eachWithIndex { dir, i -> pairs << [dir, reports[i]] }
-            tuple(run, pairs.sort { a, b -> a[0] <=> b[0] }.collect { pair -> pair[1] }) }
-
     VerifyAll(
         reportPerRun(runs, CheckReference.out.report, 'CheckReference')
             .join(gff_by_run, by: 0)
             .join(data_by_run, by: 0)
             .join(rgtags_by_run, by: 0)
             .join(reportPerRun(runs, CheckTrimParameters.out.report, 'CheckTrimParameters'), by: 0)
-            .join(runparams_by_run, by: 0)
             .join(reportPerRun(runs, CheckDirectories.out.report, 'CheckDirectories'), by: 0),
         CheckInstalledSoftware.out.report,
+        CheckRunParameters.out.report,
         CheckMultiRun.out.report)
 
     emit:

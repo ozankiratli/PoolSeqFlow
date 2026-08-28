@@ -241,7 +241,7 @@ fi
 NEW_STORE=$(cfg_value "$OUT" storageDir)
 GUARD_MOVES=()
 if [ -n "$OLD_STORE" ] && [ -n "$NEW_STORE" ]; then
-    for f in .poolseqflow_params .poolseqflow_rgtags .poolseqflow_versions; do
+    for f in .poolseqflow_params .poolseqflow_rgtags .poolseqflow_versions .poolseqflow_version; do
         if [ -f "$OLD_STORE/$f" ] && [ ! -f "$NEW_STORE/Output/$f" ]; then
             GUARD_MOVES+=("mv $OLD_STORE/$f $NEW_STORE/Output/")
         fi

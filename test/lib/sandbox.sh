@@ -328,7 +328,7 @@ nextflow.enable.dsl=2
 
 include { runDefinitions; resolveParameters } from './scripts/resolve_parameters.nf'
 include { variantPlan } from './scripts/variants.nf'
-include { sharingReportLines; publishConflictLines } from './scripts/variants.nf'
+include { sharingReportLines; publishConflictLines; sharedMemberFiles } from './scripts/variants.nf'
 include { VerifyEnvironment } from './scripts/0_verify_environment.nf'
 
 workflow {
@@ -340,7 +340,8 @@ workflow {
     def plan = variantPlan(runs)
     VerifyEnvironment(channel.value([plan: plan, runs: runs]), channel.value(tuple(
         sharingReportLines(plan, runs),
-        publishConflictLines(plan, runs))))
+        publishConflictLines(plan, runs),
+        sharedMemberFiles(plan))))
 }
 ENTRY
     _run_entry "$sb" verify_only.nf

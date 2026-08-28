@@ -345,21 +345,36 @@ nf_config_value() {
 # Reading the multi-run table here instead would be a third copy of the rule that decides
 # where a run's results go, and the two that already exist are only kept in step by a test.
 #
-# So this asks the disk rather than the configuration. Every one of those directories holds a
-# .poolseqflow_params describing what is in it - that invariant is the whole basis of the
-# change guard - so an immediate subdirectory of Output/ holding that file IS somebody's
-# results, whatever the table said and whether or not the table still exists. That also covers
-# a project whose table has since been edited or deleted, which no rule-based answer could.
+# So this asks the disk rather than the configuration - and specifically it asks the COPY of the
+# multi-run table that step 0 keeps beside the results. That copy is written by the pipeline, at
+# a path this script already knows, and it describes the runs that actually produced what is
+# there. Reading the user's own table instead would be a third copy of the rule that decides
+# where a run's results go, and it would answer wrongly for a project whose table has since been
+# edited or deleted.
+#
+# Shared directories are found by the members file rather than the table, because their names -
+# All_Runs, Shared_<N> - are assigned by the divergence analysis and are not in it.
 #
 # Both helpers end in an explicit `return 0`, and it is load-bearing rather than tidy. This
 # script runs under `set -e`, a function's exit status is its last command's, and the last
 # command here is a test that is FALSE in the ordinary single-run case - so without it
 # `ROOTS=$(run_storage_roots ...)` aborts reset silently, before it prints anything at all.
 run_storage_roots() {
-    local storage="$1" d
+    local storage="$1" d id
     [ -n "$storage" ] && [ -d "$storage/Output" ] || return 0
+    if [ -f "$storage/Output/.multirun.csv" ]; then
+        # First column, skipping the header and any comment or blank line. A RunID has to be a
+        # usable directory name (bin/parse_multirun.py refuses anything else), so it can hold no
+        # comma and needs no CSV parsing here.
+        while IFS= read -r id; do
+            [ -n "$id" ] && [ -d "$storage/Output/$id" ] && printf '%s\n' "$storage/Output/$id"
+        done <<EOF
+$(awk -F, 'NR > 1 && $0 !~ /^[[:space:]]*(#|$)/ { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1 }' \
+     "$storage/Output/.multirun.csv")
+EOF
+    fi
     for d in "$storage"/Output/*/; do
-        if [ -f "${d}.poolseqflow_params" ]; then printf '%s\n' "${d%/}"; fi
+        if [ -f "${d}members.txt" ]; then printf '%s\n' "${d%/}"; fi
     done
     return 0
 }
@@ -587,7 +602,7 @@ EOF
         done <<EOF
 $RUN_UTILS
 EOF
-        echo "    the .poolseqflow_params, _rgtags and _versions describing all of it"
+        echo "    the .parameters.config, .multirun.csv and .poolseqflow_* files describing all of it"
         echo "    $(pwd)/.nextflow*    - Nextflow's own history and cache"
         [ -n "$WORKDIR" ] && echo "    $WORKDIR"
         echo ""
@@ -658,7 +673,7 @@ EOF
         # one would make the next run fail its checks for no reason, or attribute fresh
         # results to an earlier release. Harmless when absent.
         rm -f "$STORAGE"/.poolseqflow_params "$STORAGE"/.poolseqflow_rgtags \
-              "$STORAGE"/.poolseqflow_versions
+              "$STORAGE"/.poolseqflow_versions "$STORAGE"/.poolseqflow_version
         echo "Reset complete."
         ;;
     list)

@@ -308,3 +308,59 @@ print("\n".join(sorted(set(re.findall(r"check\.([A-Za-z_][A-Za-z0-9_.]*)", body)
         fail_case "parameters read but not declared in checkParameterMap():"$'\n'"$(printf "$missing")"
     fi
 }
+
+# stepFolders() against stepParameterMap(), for the report that tells a user what is in a
+# shared directory.
+#
+# The two lists are allowed to differ - stepFolders names side outputs that no step reads, and
+# stepParameterMap names parameters that are not folders - but only in ONE direction. A folder
+# that already appears in a step's identity must appear here too, or the report would tell
+# someone that Shared_1 holds nothing while the step that owns it writes there.
+test_step_folders_covers_every_subpath_in_the_parameter_map() {
+    local variants="$REPO_ROOT/scripts/variants.nf"
+    local missing
+    missing=$(python3 -c '
+import re, sys
+
+text = open(sys.argv[1]).read()
+
+def block(header):
+    start = re.search(r"^def %s\(\) \{" % header, text, re.M)
+    if not start:
+        sys.exit("no function " + header)
+    i, depth = start.end() - 1, 0
+    while i < len(text):
+        if text[i] == "{": depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0: break
+        i += 1
+    return text[start.end() - 1:i]
+
+def entries(body):
+    # One map entry per "<step>: [ ... ]", by matching brackets so an entry spanning lines
+    # cannot run into the next one.
+    out = {}
+    for m in re.finditer(r"^ +(\d+): \[", body, re.M):
+        i, depth = m.end() - 1, 0
+        while i < len(body):
+            if body[i] == "[": depth += 1
+            elif body[i] == "]":
+                depth -= 1
+                if depth == 0: break
+            i += 1
+        chunk = re.sub(r"//[^\n]*", "", body[m.end() - 1:i])
+        out[m.group(1)] = set(re.findall(r"(dir\.subpath\.[A-Za-z0-9_.]+)", chunk))
+    return out
+
+declared = entries(block("stepParameterMap"))
+folders = entries(block("stepFolders"))
+for step, names in sorted(declared.items()):
+    for name in sorted(names - folders.get(step, set())):
+        print("step %s: %s" % (step, name))
+' "$variants")
+
+    if [ -n "$missing" ]; then
+        fail_case "folders in stepParameterMap() but not in stepFolders():"$'\n'"$missing"
+    fi
+}

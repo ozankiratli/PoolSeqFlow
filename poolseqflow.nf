@@ -5,7 +5,7 @@ nextflow.enable.dsl=2
 include { resolveParameters; runDefinitions } from './scripts/resolve_parameters.nf'
 include { variantPlan; childVariants; parentVariant; descendantVariants } from './scripts/variants.nf'
 include { gatherToProducer; runToken } from './scripts/variants.nf'
-include { sharingReportLines; publishConflictLines } from './scripts/variants.nf'
+include { sharingReportLines; publishConflictLines; sharedMemberFiles } from './scripts/variants.nf'
 include { assertEveryRunProduced } from './scripts/variants.nf'
 include { VerifyEnvironment }   from './scripts/0_verify_environment.nf'
 include { BuildDictionaries; dictionaryRuns; dictionaryKey } from './scripts/1_build_dictionaries.nf'
@@ -180,7 +180,8 @@ workflow {
         channel.value([plan: plan, runs: run_defs]),
         channel.value(tuple(
             sharingReportLines(plan, run_defs),
-            publishConflictLines(plan, run_defs))))
+            publishConflictLines(plan, run_defs),
+            sharedMemberFiles(plan))))
     verified = VerifyEnvironment.out
 
     // Step 1 runs once per DISTINCT DICTIONARY SET, not once per run. Its artifacts live on

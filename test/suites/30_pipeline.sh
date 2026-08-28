@@ -793,10 +793,10 @@ test_multi_run_fans_out_per_run_and_not_per_invocation() {
     assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckRGTagsFile)" \
         "all three share the called VCF, so one guard answers for them"
 
-    # The manifest is per RESULTS DIRECTORY: All_Runs, one per run for the step-7 tail, and
-    # Shared_1 for the two that annotate.
-    assert_count 5 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckRunParameters)" \
-        "one manifest per results directory, not one per run"
+    # The reproducibility guard is ONE task for the whole project: it compares the two files the
+    # user wrote - parameters.config and the table - not anything a run resolved for itself.
+    assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckRunParameters)" \
+        "the configuration is one thing, so it is checked once"
 
     # VerifyAll is the one stage that really is per run: it assembles that run's own report and
     # is the gate its own work waits on.
@@ -825,35 +825,32 @@ test_multi_run_fans_out_per_run_and_not_per_invocation() {
         "one RGTags table means one line-ending repair"
 }
 
-# Each run records the parameters it actually used. Before analysisParams() took the run,
-# it flattened the global params and wrote three identical manifests - so every run would
-# have claimed the base configuration's settings and the change guard could never fire.
-test_each_run_records_the_parameters_it_actually_used() {
+# WHAT THE PROJECT RECORDS ABOUT ITS OWN CONFIGURATION: the two files the user wrote, kept
+# beside the results, plus the base parameters as the pipeline resolved them.
+#
+# Between them they pin every run's effective settings - the base from the config, each run's
+# overrides from the table - which is what lets the guard be one task instead of one per run.
+test_the_project_records_the_configuration_it_ran_under() {
     needs_multirun || return
-    local inherit="$MULTIRUN_SB/store/Output/inherit/.poolseqflow_params"
-    local filter="$MULTIRUN_SB/store/Output/filter/.poolseqflow_params"
-    local plain="$MULTIRUN_SB/store/Output/plain/.poolseqflow_params"
-    assert_file "$inherit" "each run should record its own manifest"
-    assert_file "$filter"  "each run should record its own manifest"
-    assert_file "$plain"   "each run should record its own manifest"
+    local o="$MULTIRUN_SB/store/Output"
 
-    # A run that sets nothing gets parameters.config, exactly.
-    assert_contains "$(cat "$inherit")" "vcffilter.minQUAL=30" "a blank cell should inherit"
-    assert_contains "$(cat "$inherit")" "poolSize=100"         "a blank cell should inherit"
-    assert_contains "$(cat "$inherit")" "annotate=true"        "a blank cell should inherit"
+    # The files as written, verbatim.
+    assert_eq "$(cat "$MULTIRUN_SB/main/parameters.config")" "$(cat "$o/.parameters.config")" \
+        "parameters.config should be kept beside the results, unaltered"
+    assert_contains "$(cat "$o/.multirun.csv")" "filter,1000,," "and the table with every row it had"
+    assert_contains "$(cat "$o/.multirun.csv")" "plain,,25,false" "including the last one"
 
-    # ...and exactly the column it set differs from it.
-    assert_eq "vcffilter.minQUAL=30
-vcffilter.minQUAL=1000" \
-        "$(diff "$inherit" "$filter" | sed -n 's/^[<>] //p')" \
-        "filter should differ from inherit in minQUAL and nothing else"
+    # And the base configuration as resolved, which is what the comparison is made against.
+    local base="$o/.poolseqflow_params"
+    assert_contains "$(cat "$base")" "vcffilter.minQUAL=30" "the base value, not a run's override"
+    assert_contains "$(cat "$base")" "poolSize=100"         "likewise"
+    assert_contains "$(cat "$base")" "filterFalsePositives.sensitivity=0.0025" \
+        "with the values computed from it"
 
-    # A re-derivation moves with its input: sensitivity is 1 / (2 * diploidy * poolSize).
-    assert_contains "$(cat "$plain")" "poolSize=25" "plain should use its own pool size"
-    assert_contains "$(cat "$plain")" "filterFalsePositives.sensitivity=0.01" \
-        "sensitivity should be re-derived from the run's poolSize, not inherited"
-    assert_contains "$(cat "$inherit")" "filterFalsePositives.sensitivity=0.0025" \
-        "and the other runs should keep theirs"
+    # Where files live and how much of the machine to use are absent on purpose: they cannot
+    # change a number, so changing them must not invalidate finished results.
+    assert_not_contains "$(cat "$base")" "threads="    "resources are excluded"
+    assert_not_contains "$(cat "$base")" "storageDir=" "and so are paths"
 }
 
 # The whole point: a per-run parameter has to reach the task that reads it. A manifest saying

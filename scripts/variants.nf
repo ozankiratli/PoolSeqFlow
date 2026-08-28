@@ -95,6 +95,32 @@ def stepParameterMap() {
     ]
 }
 
+// THE SUBDIRECTORIES EACH STEP FILLS, for the line that says what is in a shared directory.
+//
+// Authored, and deliberately WIDER than stepParameterMap(): that map names the folders holding
+// the artifact a step passes on, because those are half of its identity, while this also names
+// the side outputs nothing consumes - the unpaired reads, the trim reports, step 5's coverage.
+// Someone opening Shared_1 sees all of them, so the report has to say all of them.
+//
+// A case in test/suites/00_static.sh checks it against stepParameterMap(), so it can never
+// declare fewer folders than the step's own identity already names.
+def stepFolders() {
+    return [
+        2: ['dir.subpath.trimmed', 'dir.subpath.unpaired',
+            'dir.subpath.report.fastqc', 'dir.subpath.report.trim'],
+        3: ['dir.subpath.aligned'],
+        4: ['dir.subpath.ready'],
+        // Step 5 declares no output at all - both reports are written by absolute path - so it
+        // is invisible to stepParameterMap() and would be invisible here too if this were
+        // derived from it.
+        5: ['dir.subpath.report.align', 'dir.subpath.report.coverage'],
+        6: ['dir.subpath.vcf'],
+        7: ['dir.subpath.vcf', 'dir.subpath.freq'],
+        // snpEff writes its summary straight into Reports/.
+        8: ['dir.subpath.vcf', 'dir.subpath.reports'],
+    ]
+}
+
 // A run id as a channel key. Single run has no id at all (settled rule 3), and a null used as
 // a key matches nothing - silently - so it travels as a literal instead.
 def runToken(Object runId) {
@@ -557,11 +583,23 @@ def sharingGroups(Map plan) {
             // position - `annotate` decides it - and listing it would tell you a run has
             // results from a step it deliberately skipped.
             if (!variant.executes) return
+            def declared = stepFolders()[step]
+            if (declared == null) {
+                throw new IllegalStateException(
+                    "no entry for step ${step} in stepFolders() (scripts/variants.nf). Every step " +
+                    "has to say which subdirectories it fills, or step 0's report would tell a " +
+                    "user that a shared directory holds nothing while that step writes into it.")
+            }
+            def folders = declared.collect { name -> "${dig(variant, name)}".toString() }
             def entry = byDir[variant.dir.outputs]
             if (entry == null) {
-                byDir[variant.dir.outputs] = [dir: variant.dir.outputs, members: variant.members, steps: [step]]
+                byDir[variant.dir.outputs] = [dir: variant.dir.outputs, members: variant.members,
+                                              steps: [step], folders: folders]
             }
-            else entry.steps << step
+            else {
+                entry.steps << step
+                folders.each { folder -> if (!entry.folders.contains(folder)) entry.folders << folder }
+            }
         }
     }
     return byDir.values().toList()
@@ -576,8 +614,12 @@ def sharingReportLines(Map plan, List runDefs) {
     def groups = sharingGroups(plan).sort { a, b -> b.members.size() <=> a.members.size() ?: a.dir <=> b.dir }
     lines << "SHARING CHECK:         ${groups.size()} results ${groups.size() == 1 ? 'directory' : 'directories'} for ${runDefs.size()} runs"
     groups.each { group ->
+        def name = group.dir.tokenize('/').last()
         def who = group.members.collect { m -> runToken(m) }.join(', ')
-        lines << "SHARING CHECK:             ${group.dir.tokenize('/').last()} - steps ${group.steps.sort().join(', ')} - ${who}"
+        lines << (group.members.size() > 1
+            ? "SHARING CHECK:             ${name} is a shared directory for ${who}"
+            : "SHARING CHECK:             ${name} belongs to ${who} alone")
+        lines << "SHARING CHECK:                 steps ${group.steps.sort().join(', ')}, holding ${group.folders.join(', ')}"
     }
 
     // Two runs identical to the end share every step, which is a table mistake worth naming:
@@ -617,6 +659,20 @@ def publishConflicts(Map plan, List runDefs) {
         }
     }
     return problems
+}
+
+// The members files to write: one per SHARED directory. A run's own directory needs none - its
+// name already says who it belongs to - and All_Runs gets one anyway, because "every run" is a
+// list worth having on disk when the table is later edited.
+//
+// A RECORD, not a guard. What stops a table edit from mixing two groupings in one directory is
+// the stored copy of the table itself (step 0's parameter check), which sees the edit directly
+// rather than inferring it from a member list. This exists because Z asked for the grouping to
+// be recoverable from the results themselves, and because the analysis layer will want it.
+def sharedMemberFiles(Map plan) {
+    return sharingGroups(plan)
+        .findAll { group -> group.members.size() > 1 }
+        .collect { group -> [dir: group.dir, members: group.members.collect { m -> runToken(m) }.sort()] }
 }
 
 // publishConflicts(), rendered for step 0's report.

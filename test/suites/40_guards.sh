@@ -57,11 +57,9 @@ guard_report() {
     cat "$store/Output/Reports/0_verify_environment.txt" 2>/dev/null
 }
 
-# Rewrite the recorded release so the next run looks like an upgrade. The parameter check
-# reads the last line of .poolseqflow_versions to decide whether a change in the parameter
-# SET came from a release or from the user editing their own config.
+# Rewrite the recorded release so the next run looks like an upgrade.
 pretend_earlier_release() {
-    printf '2.1.0\t2026-01-01\n' > "$GUARD_SB/store/Output/.poolseqflow_versions"
+    printf '2.1.0\t2026-01-01\n' > "$GUARD_SB/store/Output/.poolseqflow_version"
 }
 
 # Drop a key from the stored manifest, standing in for a release that did not have it.
@@ -74,7 +72,8 @@ test_an_unchanged_project_passes() {
     guards_ready || return
     local status; status=$(run_verify_only "$GUARD_SB")
     assert_status 0 "$status" "a second verification with the same config should pass"
-    assert_contains "$(guard_report)" "Unchanged since the outputs" "should say nothing changed"
+    assert_contains "$(guard_report)" "parameters.config unchanged since the outputs" \
+        "should say nothing changed"
 }
 
 # The case the guard exists for: a parameter that existed before now holds a different
@@ -86,63 +85,105 @@ test_a_changed_parameter_value_fails_the_run() {
     status=$(run_verify_only "$GUARD_SB")
     report=$(guard_report)
     assert_status 1 "$status" "a changed value should fail the run"
-    assert_contains "$report" "CHANGED since the existing outputs" "should name the class of problem"
+    assert_contains "$report" "parameters.config has CHANGED" "should name the file that moved"
     assert_contains "$report" "poolSize" "should name the parameter"
     assert_contains "$report" "was  100" "should show the recorded value"
     assert_contains "$report" "now  40" "should show the new value"
     assert_contains "$report" "STATUS=FAIL" "the stage should record a failure"
 }
 
-# A release that introduces a parameter must not invalidate outputs that were produced
-# before it existed. This used to fail every project on every upgrade, with a remedy that
-# said to delete the results.
-test_a_parameter_added_by_a_release_is_recorded_and_the_run_continues() {
+# A PROJECT BELONGS TO ONE RELEASE, and this is checked before anything else and on its own.
+#
+# Z, 2026-08-28: *"Nobody should ever resume to a pipeline using a different version. That needs
+# a block on its own. Reset and re-run."* This REVERSES the earlier rule, under which a version
+# was recorded and never enforced so that an upgrade would not invalidate finished results. The
+# reasoning that overturned it: completed steps are skipped by looking for output files, so
+# continuing into another release leaves one set of results built by two versions of the code
+# with nothing on disk saying which is which.
+test_a_different_release_blocks_the_run() {
     guards_ready || return
     pretend_earlier_release
-    forget_stored_parameter "poolSize"
     local status report
     status=$(run_verify_only "$GUARD_SB")
     report=$(guard_report)
-    assert_status 0 "$status" "a parameter added by a release should not fail the run"
-    assert_contains "$report" "The set of parameters changed between 2.1.0" "should name the earlier release"
-    assert_contains "$report" "added    poolSize" "should list the parameter as added"
-    assert_not_contains "$report" "STATUS=FAIL" "the stage should not record a failure"
+    assert_status 1 "$status" "resuming a project under another release must stop the run"
+    assert_contains "$report" "produced by 2.1.0" "naming the release that made the results"
+    assert_contains "$report" "A project belongs to one release" "and why that is the end of it"
+    assert_contains "$report" "./PoolSeqFlow reset" "with the one remedy there is"
+
+    # ON ITS OWN, and that is the point of the wording. Everything else is skipped: the
+    # parameter SET moves between releases, so comparing it here would add a second, wrong
+    # explanation - "you edited your own config" - on top of the right one.
+    assert_not_contains "$report" "RUN PARAMETERS:        parameters.config" \
+        "the parameter comparison must not run once the release check has fired"
+
+    # And it does not clear itself: the recorded release is left alone, so the next run says
+    # the same thing rather than quietly adopting.
+    status=$(run_verify_only "$GUARD_SB")
+    assert_status 1 "$status" "and it should still block on the next run"
 }
 
-# The same difference, without a release change, is the user editing their own config -
-# and what that does to existing outputs is not knowable.
+# The parameter set changing WITHIN one release is the user editing their own config, and what
+# that does to existing outputs is not knowable. This is now the only way a set change can
+# reach the comparison at all, since a release change blocks above it.
 test_a_parameter_added_without_a_release_change_fails_the_run() {
     guards_ready || return
     forget_stored_parameter "poolSize"
     local status report
     status=$(run_verify_only "$GUARD_SB")
     report=$(guard_report)
-    assert_status 1 "$status" "an added parameter with no release change should fail"
-    assert_contains "$report" "without a release change" "should say why this one is different"
-    assert_contains "$report" "added    poolSize" "should still list the parameter"
+    assert_status 1 "$status" "an added parameter should fail"
+    assert_contains "$report" "parameters.config has CHANGED" "should say which file moved"
+    assert_contains "$report" "added    poolSize" "should list the parameter"
+
+    # A rejected change must still be there on the next run - adopting it would make the
+    # failure clear itself and the second run silently succeed.
+    status=$(run_verify_only "$GUARD_SB")
+    assert_status 1 "$status" "and should still fail on the next run, not clear itself"
 }
 
-# The notice belongs on the upgrade run only. Adopting the new manifest is what stops it
-# repeating, and a failed check must NOT adopt - otherwise the failure clears itself and the
-# second run silently succeeds.
-test_the_release_notice_appears_once_but_a_failure_does_not_clear_itself() {
+# What the guard does NOT compare, and it is deliberate: where files live and how much of the
+# machine to use cannot change a single number in the results, so a project that moves to
+# another disk or runs on a bigger node must not be told to delete itself. Z, 2026-08-28:
+# "Ignore resources and paths". This is the reason the comparison is on resolved values rather
+# than a diff of the file - analysisParams() is where that exclusion list lives.
+test_resources_and_paths_may_change_freely() {
     guards_ready || return
-    pretend_earlier_release
-    forget_stored_parameter "poolSize"
-    run_verify_only "$GUARD_SB" > /dev/null
+    write_sandbox_config "$GUARD_SB" 's|^    threads .*|    threads         = 2|' 
     local status report
     status=$(run_verify_only "$GUARD_SB")
     report=$(guard_report)
-    assert_status 0 "$status" "the run after an adoption should pass"
-    assert_contains "$report" "Unchanged since the outputs" "the manifest should have been adopted"
-    assert_not_contains "$report" "The set of parameters changed" "the notice should not repeat"
+    assert_status 0 "$status" "a thread count is not an analysis parameter"
+    assert_contains "$report" "parameters.config unchanged since the outputs" \
+        "and should not even be reported as a difference"
+    # Put it back, so the shared sandbox is left as the other cases expect it.
+    write_sandbox_config "$GUARD_SB"
+}
 
-    # Now the failing side: a rejected change must still be there on the next run.
-    write_sandbox_config "$GUARD_SB" 's|^    diploidy .*|    diploidy        = 4|'
-    status=$(run_verify_only "$GUARD_SB")
-    assert_status 1 "$status" "the changed value should fail"
-    status=$(run_verify_only "$GUARD_SB")
-    assert_status 1 "$status" "and should still fail on the next run, not clear itself"
+# `threads` stands for the whole excluded set here - it is the one users really do change, it
+# cascades into the whole cores ladder, and it is a top-level line so the substitution is
+# verifiable. The families themselves are listed in analysisParams().
+
+# THE COPIES THEMSELVES. The comparison is on resolved values, but what is kept beside the
+# results is the file the user actually wrote - comments, layout and all - because that is what
+# you would cite and what tells you months later why a value was what it was.
+# Its own sandbox rather than the shared one: the copy records the configuration of the last
+# clean pass, and the shared sandbox is deliberately edited by the cases around this one.
+test_the_configuration_is_kept_beside_the_results() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status
+    sb=$(make_pipeline_sandbox "kept-config")
+    write_sandbox_config "$sb"
+    status=$(run_verify_only "$sb")
+    assert_status 0 "$status" "a fresh project should pass; see $sb/run.out"
+
+    local stored="$sb/store/Output/.parameters.config"
+    assert_file "$stored" "parameters.config should be kept beside the results"
+    assert_eq "$(cat "$sb/main/parameters.config")" "$(cat "$stored")" \
+        "and kept verbatim - comments, layout and all"
+    assert_no_file "$sb/store/Output/.multirun.csv" \
+        "a single run has no table, so nothing should be recorded for one"
 }
 
 # Computed parameters are a convenience, not a policy: a value written in parameters.config
@@ -715,7 +756,10 @@ late,1000
 # wants the opposite advice: `reset` throws the whole analysis away, when what is stale is one
 # directory.
 #
-# So the members file is written by the same task that writes the manifest, and read first.
+# The stored copy of the table sees it directly: the edit that moved the boundary IS the change,
+# so there is nothing to infer from a member list and no separate check to build. That is what
+# Z\'s "copy the files and compare them" buys over anything derived - this case cost a whole
+# extra process under the per-directory manifest, and costs nothing here.
 test_a_regrouped_shared_directory_is_refused() {
     if ! have_tools; then skip_case "no conda environment"; return; fi
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
@@ -736,19 +780,77 @@ b" "$(cat "$members" 2>/dev/null)" "Shared_1 should record the pair that formed 
     # directory, the same name, a different group.
     printf 'RunID,vcffilter.minQUAL\na,30\nb,1000\nc,1000\n' > "$sb/main/runs.csv"
     status=$(run_verify_only "$sb")
-    # b's report, because b is the run in Shared_1 both times: a run only carries the verdict
-    # of the directories it is a member of, and a has left this one.
-    report=$(cat "$sb/store/Output/b/Reports/0_verify_environment.txt")
+    report=$(cat "$sb/store/Output/a/Reports/0_verify_environment.txt")
 
-    assert_status 1 "$status" "a directory whose members changed should stop the run"
-    assert_contains "$report" "The runs sharing this directory have CHANGED" \
-        "and should say so rather than blaming parameters.config"
-    assert_contains "$report" "was  a, b" "naming who it was built for"
-    assert_contains "$report" "now  b, c" "and who it would now serve"
-    assert_not_contains "$report" "./PoolSeqFlow reset" \
-        "resetting throws away every directory; only this one is stale"
+    assert_status 1 "$status" "a table edit that regroups a shared directory should stop the run"
+    assert_contains "$report" "runs.csv has CHANGED" "naming the file that moved"
+    assert_contains "$report" "now  b,1000" "and the row that moved the boundary"
+    assert_contains "$report" "can also move work between directories" \
+        "and saying that a regrouping is what makes this one matter"
 
-    assert_eq "a
-b" "$(cat "$members" 2>/dev/null)" \
-        "the members file must survive the failure, or the next run would see no disagreement"
+    # members.txt is a RECORD and is rewritten every run, so it now names the new grouping.
+    # What must not move is the stored table: adopting it would clear the failure.
+    assert_eq "b
+c" "$(cat "$members" 2>/dev/null)" "the members file follows the grouping the plan describes"
+    assert_contains "$(cat "$sb/store/Output/.multirun.csv")" "b,30" \
+        "while the stored table still holds what produced the results, so the failure repeats"
+}
+
+# THE REPRODUCIBILITY RULE. Z, 2026-08-28: *"the parameter file being the same with what it was
+# in the beginning and the parameters that are set for each run being kept as they are."*
+#
+# The two files the user wrote are copied beside the results and compared, so a run cannot change
+# its own settings whatever it shares. E1y briefly recorded what each RESULTS DIRECTORY's members
+# AGREE about instead, and under that rule this test passes at step 2 and the run continues: the
+# three runs share one directory, so changing one of them left every recorded value untouched.
+test_a_run_may_not_change_its_own_parameters_even_when_it_shares_everything() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status report
+    sb=$(multirun_sandbox "reproducibility" 'RunID,poolSize
+a,
+b,
+c,
+')
+    status=$(run_verify_only "$sb")
+    assert_status 0 "$status" "three identical runs should pass; see $sb/run.out"
+    assert_file "$sb/store/Output/.multirun.csv" "the table should be kept beside the results"
+
+    # One cell, for one run, and nothing in parameters.config.
+    printf 'RunID,poolSize\na,\nb,\nc,25\n' > "$sb/main/runs.csv"
+    status=$(run_verify_only "$sb")
+    report=$(cat "$sb/store/Output/a/Reports/0_verify_environment.txt")
+
+    assert_status 1 "$status" "a run changing its own parameters must stop the run"
+    assert_contains "$report" "runs.csv has CHANGED" "naming the file that moved"
+    assert_contains "$report" "was  c," "and the row it was"
+    assert_contains "$report" "now  c,25" "and the row it is now"
+    assert_contains "$report" "parameters.config unchanged" "while the other file is untouched"
+
+    assert_eq "$(printf 'RunID,poolSize\na,\nb,\nc,')" "$(cat "$sb/store/Output/.multirun.csv")" \
+        "the stored table must not be adopted, or the failure would clear itself"
+}
+
+# The same rule against Z's own example: the references are permuted between runs. Every value
+# that appears in the table still appears in it, and every run still has a different one from its
+# neighbours - so nothing about the SET of parameters changed, only which run holds which.
+test_permuting_a_column_between_runs_stops_the_run() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status report
+    sb=$(multirun_sandbox "permuted" 'RunID,poolSize
+a,50
+b,100
+c,200
+')
+    status=$(run_verify_only "$sb")
+    assert_status 0 "$status" "three differing runs should pass the first time; see $sb/run.out"
+
+    printf 'RunID,poolSize\na,200\nb,50\nc,100\n' > "$sb/main/runs.csv"
+    status=$(run_verify_only "$sb")
+    report=$(cat "$sb/store/Output/a/Reports/0_verify_environment.txt")
+
+    assert_status 1 "$status" "the same values in a different order are still a change"
+    assert_contains "$report" "was  a,50"  "for the run that held the old value"
+    assert_contains "$report" "now  a,200" "and now holds another run\'s"
 }
