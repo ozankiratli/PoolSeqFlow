@@ -50,7 +50,7 @@ make_pipeline_sandbox() {
     rm -rf "$sb"
     mkdir -p "$sb/install" "$sb/main" "$sb/store"
     cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$sb/install"/
-    cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/nextflow.config "$sb/install"/
+    cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/dryrun.nf "$REPO_ROOT"/nextflow.config "$sb/install"/
     # The wrapper too, so cases can exercise clean/reset against a real project instead of
     # reimplementing what they do.
     cp "$REPO_ROOT/PoolSeqFlow" "$sb/install"/

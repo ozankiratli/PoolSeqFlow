@@ -5,7 +5,7 @@
 # email  : ozankiratli@protonmail.com
 #
 # Wrapper script for PoolSeqFlow
-# Usage: ./PoolSeqFlow {install|check|run|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}
+# Usage: ./PoolSeqFlow {install|check|run|dryrun|dryclean|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}
 #  install        - installs this release: creates its conda environment, copies the
 #                   pipeline to <prefix>/opt/PoolSeqFlow-<version>, puts wrappers in
 #                   <prefix>/bin, then verifies the result
@@ -13,6 +13,11 @@
 #                   executable, and parameters.config parses
 #  run            - runs the pipeline; completed steps are detected and skipped
 #                   automatically, so this both starts and resumes a run
+#  dryrun         - verifies the project, works out where every run's results would go, and
+#                   creates that directory tree empty, so the layout can be looked at and
+#                   approved before any compute is spent. Records nothing and computes
+#                   nothing; your own files are not changed.
+#  dryclean       - removes the preview `dryrun` made
 #  migrate_config - carries an older parameters.config onto the current template
 #  clean          - cleans the Nextflow work directory
 #  reset          - cleans the Nextflow work directory and deletes all output files. (Use with caution!)
@@ -47,7 +52,7 @@ VERSION="2.2.0"
 CONCEPT_DOI="10.5281/zenodo.19245611"
 
 usage() {
-    echo "Usage: $0 {install|check|run|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}"
+    echo "Usage: $0 {install|check|run|dryrun|dryclean|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}"
     exit 1
 }
 
@@ -113,7 +118,7 @@ require_project_config() {
 # download therefore deploy identical trees. test/suites/00_static.sh checks the two agree, so
 # a file added to the release without being added here fails a test rather than going missing
 # from every install.
-PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf nextflow.config scripts bin install \
+PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf dryrun.nf nextflow.config scripts bin install \
 parameters.config.template RGTags.csv.template multi-run.csv.example \
 README.md CHANGELOG.md LICENSE"
 
@@ -390,6 +395,35 @@ run_utilized_dirs() {
     return 0
 }
 
+# Whether a preview directory is one this command may replace or remove.
+#
+# `dryrun` rebuilds the preview from scratch and `dryclean` removes it, and both do it with
+# `rm -rf` on a path taken from the configuration - so both ask this first. A preview is empty
+# directories, one README.txt, and a members.txt inside each shared directory. Anything else in
+# there is the user's, and the answer to finding it is to say so and stop: this is the one
+# directory of the three that sits in the project rather than in a storage root, which is
+# exactly where someone is most likely to have put something of their own.
+#
+# Returns 0 when the directory is ours to remove, including when it is not there at all.
+dryrun_is_ours() {
+    local dir="$1" foreign f
+    [ -d "$dir" ] || return 0
+    foreign=$(find "$dir" -mindepth 1 ! -type d ! -name README.txt ! -name members.txt -print)
+    [ -n "$foreign" ] || return 0
+    echo "ERROR: $dir is not a dry run preview." >&2
+    echo "  A preview holds empty directories, a README.txt, and a members.txt in each shared" >&2
+    echo "  directory. This one also holds:" >&2
+    while IFS= read -r f; do
+        if [ -n "$f" ]; then echo "      $f" >&2; fi
+    done <<EOF
+$foreign
+EOF
+    echo "" >&2
+    echo "  Nothing was removed. Move those somewhere else, or point params.dryRunDir at a" >&2
+    echo "  directory the preview can have to itself." >&2
+    return 1
+}
+
 if [ "$#" -ne 1 ]; then
     usage
 fi
@@ -476,6 +510,69 @@ case $COMMAND in
         nextflow run "$INSTALL/poolseqflow.nf"
         wait
         conda deactivate
+        ;;
+    dryrun)
+        # WHAT A RUN WOULD DO, WITHOUT DOING ANY OF IT.
+        #
+        # A different entry point, not a flag on the same one: dryrun.nf runs step 0 and then
+        # builds the directory tree, and never reaches the pipeline. --dryRun is passed as well
+        # because the two do different halves of the job - the entry point stops the compute,
+        # the flag stops step 0 recording a baseline for results that are not going to exist.
+        require_install
+        require_project_config
+        require_env
+        DRYDIR=$(nf_config_value params.dryRunDir)
+        if [ -z "$DRYDIR" ]; then
+            echo "ERROR: could not resolve params.dryRunDir - is parameters.config present?" >&2
+            exit 1
+        fi
+        dryrun_is_ours "$DRYDIR" || exit 1
+        # Replaced rather than added to. The tree describes ONE configuration, so a directory
+        # left over from an earlier preview would read as somewhere this run is going to write.
+        if [ -d "$DRYDIR" ]; then
+            echo "Replacing the previous preview in $DRYDIR"
+            rm -rf "$DRYDIR"
+        fi
+        echo "Dry run in $(pwd)..."
+        echo ""
+        echo "Nothing is computed and nothing is recorded. The environment is verified, the"
+        echo "layout every run's results would take is worked out, and that tree is created"
+        echo "empty in"
+        echo "    $DRYDIR"
+        echo "for you to look at. Your results, your configuration and your own files are left"
+        echo "exactly as they are."
+        echo ""
+        nextflow run "$INSTALL/dryrun.nf" --dryRun true
+        wait
+        conda deactivate
+        # Shown rather than pointed at: the preview explains itself, and the whole point is
+        # that it is read before anything is committed to.
+        if [ -f "$DRYDIR/README.txt" ]; then
+            echo ""
+            cat "$DRYDIR/README.txt"
+        fi
+        ;;
+    dryclean)
+        require_install
+        require_project_config
+        require_env
+        DRYDIR=$(nf_config_value params.dryRunDir)
+        conda deactivate
+        if [ -z "$DRYDIR" ]; then
+            echo "ERROR: could not resolve params.dryRunDir - is parameters.config present?" >&2
+            exit 1
+        fi
+        if [ ! -d "$DRYDIR" ]; then
+            echo "No dry run preview in $DRYDIR - nothing to remove."
+            exit 0
+        fi
+        dryrun_is_ours "$DRYDIR" || exit 1
+        # No confirmation prompt, unlike reset. Everything in here is empty by construction -
+        # a preview has never held a result - so there is nothing to lose and nothing to weigh.
+        echo "Removing the dry run preview:"
+        echo "    $DRYDIR"
+        rm -rf "$DRYDIR"
+        echo "Removed. Your results and your configuration are untouched."
         ;;
     migrate_config)
         require_install

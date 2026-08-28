@@ -38,8 +38,12 @@ def analysisParams(Map p) {
     // results go, not what they are. It is also the one key here that does not exist in
     // parameters.config at all, so leaving it in would add a line to every manifest and fail
     // the change check on every project that upgrades into 3.0.
+    // dryRun and dryRunDir describe the INVOCATION, not the project: one says this is a
+    // preview rather than a run, the other says where to put the preview. Leaving them in
+    // would make every dry run report the parameters as changed - `dryRun=true` against a
+    // stored `dryRun=false` - which is the one thing a preview must not do.
     def skipKey = [
-        'mainDir', 'storageDir', 'runId',
+        'mainDir', 'storageDir', 'runId', 'dryRun', 'dryRunDir',
         'referencePath', 'gffPath', 'rgTagsPath', 'multiRunPath', 'referenceFa', 'reference', 'gff', 'reads',
         'threads', 'memory'
     ] as Set
@@ -507,13 +511,20 @@ process RepairRGTagsLineEndings {
     # Detection and repair use the same expression, so a file that is reported as fixed really
     # is fixed - a mismatch between the two would report it on every run.
     if ! sed 's/\\r\$//' ${rgTagsPath} | cmp -s - ${rgTagsPath}; then
+        # A DRY RUN LEAVES THE USER'S OWN FILES ALONE. This is the only place step 0 writes to
+        # something the user wrote, so it is also the only place where "a preview changed my
+        # file" could be true. It is safe to skip because the stage that reads this table
+        # normalises its own copy before reading it, so the answers are the same either way.
+        if [ "${params.dryRun}" = "true" ]; then
+            log_message "RGTags file has Windows (CRLF) line endings - a real run repairs this in place"
+            log_message "RGTAGS LINE ENDING CHECK: PASS"
         # Rewrite the file's contents rather than replacing the file. 'sed -i' swaps in a new
         # inode and does not carry the mode across - it turned a 444 file into a 644 one in
         # testing, quietly making a deliberately read-only RGTags file writable. Redirecting
         # into the existing path keeps mode and ownership, and fails honestly when the file
         # really is not writable.
-        if sed 's/\\r\$//' ${rgTagsPath} > rgtags_norm.tmp && [ -s rgtags_norm.tmp ] &&
-           cat rgtags_norm.tmp > ${rgTagsPath} 2>/dev/null; then
+        elif sed 's/\\r\$//' ${rgTagsPath} > rgtags_norm.tmp && [ -s rgtags_norm.tmp ] &&
+             cat rgtags_norm.tmp > ${rgTagsPath} 2>/dev/null; then
             log_message "RGTags file had Windows (CRLF) line endings - repaired in place"
             log_message "RGTAGS LINE ENDING CHECK: FIXED"
         else
@@ -602,6 +613,7 @@ process CheckRGTagsFile {
     """
     REPORTFILE="verify_environment.txt"
     STATUS="PASS"
+    DRY_RUN="${params.dryRun}"
     
     # Function to write to both file and console
     log_message() {
@@ -627,6 +639,16 @@ process CheckRGTagsFile {
         log_message "RGTags file exists: ${rgTagsFile}"
         log_message "RGTAGS FILE CHECK:     PASS"
 
+        # EVERY READ BELOW GOES THROUGH THIS COPY, not through the user's file.
+        #
+        # The repair above rewrites their file for a real run and deliberately does not for a
+        # dry one, so this stage cannot assume it has happened - and without normalising here
+        # the first thing it does is read a header whose last field ends in a carriage return
+        # and report that tag as invalid, followed by a cascade of matching failures that are
+        # all the same stray byte. It should never have depended on another process having
+        # written to a shared file first; this makes the two independent.
+        sed 's/\\r\$//' ${rgTagsFile} > rgtags_read.csv
+
         # The line-ending repair itself has been hoisted into RepairRGTagsLineEndings above,
         # because it WRITES to a file that several runs share. What arrives here is its
         # report, folded in at the point the messages used to be produced so that the stage
@@ -638,7 +660,7 @@ process CheckRGTagsFile {
         fi
 
         # Get header and validate format
-        header=\$(head -n 1 ${rgTagsFile})
+        header=\$(head -n 1 rgtags_read.csv)
         IFS=',' read -ra HEADER <<< "\$header"
 
         # Check for invalid tags
@@ -674,7 +696,7 @@ process CheckRGTagsFile {
             dup_ids=\$(awk -F',' -v col=\$id_col '
                 NR > 1 && \$col != "" { seen[\$col]++ }
                 END { for (id in seen) if (seen[id] > 1) printf "  %s (%d rows)\\n", id, seen[id] }
-            ' ${rgTagsFile} | sort)
+            ' rgtags_read.csv | sort)
             if [ -n "\$dup_ids" ]; then
                 log_message "Duplicate ID values in ${rgTagsFile}:"
                 echo "\$dup_ids" | tee -a \$REPORTFILE
@@ -720,7 +742,7 @@ process CheckRGTagsFile {
             NF != ncol {
                 printf "Row %d has %d column(s), the header has %d\\n", NR, NF, ncol
                 exit 1
-            }' ${rgTagsFile}) || {
+            }' rgtags_read.csv) || {
                 log_message "\$column_report"
                 log_message "Every row needs one value per header column, in the same order."
                 log_message "RGTAGS COLUMN COUNT CHECK: FAIL"
@@ -737,7 +759,7 @@ process CheckRGTagsFile {
                         exit 1
                     }
                 }
-            }' ${rgTagsFile}) || {
+            }' rgtags_read.csv) || {
                 log_message "\$empty_report"
                 log_message "RGTAGS EMPTY VALUES CHECK: FAIL"
                 STATUS="FAIL"
@@ -745,7 +767,7 @@ process CheckRGTagsFile {
 
             # Check if all samples have RG tags
             for sample in \$sample_ids; do
-                sample_in_rg=\$(awk -F',' -v col=\$id_col -v sample=\$sample '\$col == sample {print "1"}' ${rgTagsFile})
+                sample_in_rg=\$(awk -F',' -v col=\$id_col -v sample=\$sample '\$col == sample {print "1"}' rgtags_read.csv)
                 if [ -z "\$sample_in_rg" ]; then
                     log_message "Sample '\$sample' not found in RG tags file"
                     log_message "RGTAGS SAMPLE MATCH CHECK: FAIL"
@@ -763,7 +785,7 @@ process CheckRGTagsFile {
         #
         # Normalise line endings and trailing blanks before comparing, but never the row
         # order: that is significant now, and sorting it away would hide a real change.
-        sed -e 's/\\r\$//' -e 's/[[:space:]]*\$//' -e '/^\$/d' ${rgTagsFile} > current_rgtags.csv
+        sed -e 's/[[:space:]]*\$//' -e '/^\$/d' rgtags_read.csv > current_rgtags.csv
 
         # The two things that consume this file have different lifetimes, so ask about
         # each separately. The tag values live in the cleaned BAMs; the row order lives in
@@ -782,7 +804,18 @@ process CheckRGTagsFile {
         HAVE_VCF=0;  any_exists ${vcfDirOut}/*.vcf ${vcfDirOut}/*.vcf.gz \\
                                 ${vcfDirWork}/*.vcf ${vcfDirWork}/*.vcf.gz && HAVE_VCF=1
 
+        # A dry run never records a baseline. This is the only writer, so guarding it here
+        # covers both branches that call it - and it is a guard rather than a caller-side
+        # check because the two callers are the two branches where a preview is most tempting
+        # to treat as a real run: nothing has consumed the file yet, so recording "costs
+        # nothing". It costs the next real run its baseline.
+        # Every message about the baseline is written in this verb, so a dry run cannot
+        # report having recorded something it did not write.
+        RGVERB="Recording"
+        if [ "\$DRY_RUN" = "true" ]; then RGVERB="Would record"; fi
+
         record_baseline() {
+            if [ "\$DRY_RUN" = "true" ]; then return 0; fi
             mkdir -p "\$(dirname "${storedRg}")"
             cp current_rgtags.csv "${storedRg}"
         }
@@ -790,14 +823,14 @@ process CheckRGTagsFile {
         if [ "\$HAVE_BAMS" -eq 0 ] && [ "\$HAVE_VCF" -eq 0 ]; then
             # Nothing has consumed the file yet, so an edit costs nothing. Record it.
             record_baseline
-            log_message "RGTags baseline recorded - nothing has consumed the file yet"
+            log_message "\$RGVERB the RGTags baseline - nothing has consumed the file yet"
             log_message "RGTAGS CHANGE CHECK:   PASS"
         elif [ ! -f "${storedRg}" ]; then
             # Outputs from before this check existed. There is no baseline to compare
             # against and no way to reconstruct one, so adopt the current file and say so.
-            cp current_rgtags.csv "${storedRg}"
+            record_baseline
             log_message "Cleaned BAMs exist but predate this check - no baseline to compare"
-            log_message "Adopting the current RGTags file as the baseline"
+            log_message "\$RGVERB the current RGTags file as the baseline"
             log_message "Verify it still matches what is in the BAMs:"
             log_message "    ${check.samtools} view -H ${readyDir}/<sample>_ready.bam | grep '^@RG'"
             log_message "RGTAGS CHANGE CHECK:   PASS"
@@ -810,6 +843,7 @@ process CheckRGTagsFile {
             if [ "\$HAVE_VCF" -eq 0 ]; then
                 record_baseline
                 log_message "RGTags row order changed, but no VCF exists to have used it"
+                log_message "\$RGVERB the new order as the baseline"
                 log_message "RGTAGS CHANGE CHECK:   PASS"
             else
                 # Report this as two orderings - a line diff of a permutation shows the
@@ -1183,14 +1217,28 @@ CURRENT_PARAMS
 
     STATUS="PASS"
 
+    # A DRY RUN RECORDS NOTHING. Every comparison below is made exactly as it would be in a
+    # real run and gives exactly the same answer; what does not happen is the writing of the
+    # files that answer it next time. A preview that left a baseline behind would have the
+    # next real run comparing against parameters no result was ever produced under - which is
+    # the one thing a preview must not be able to do.
+    DRY_RUN="${params.dryRun}"
+    RECORD="Recording"
+    if [ "\$DRY_RUN" = "true" ]; then
+        RECORD="Would record"
+        log_message "RUN PARAMETERS:        DRY RUN - everything is checked, nothing is recorded"
+    fi
+
     # THE VERSION, FIRST AND ON ITS OWN. Completed steps are skipped by looking for output
     # files, so continuing into a different release would mix results produced by two versions
     # of the code with nothing on disk to say which is which. Nothing else is compared when
     # this fires: the parameter set moves between releases, and reporting that as an edit to
     # your own config on top of this would be two wrong messages instead of one right one.
     if [ ! -f "${version}" ]; then
-        mkdir -p "${root}"
-        printf '%s\\t%s\\n' "${release}" "\$(date -u '+%Y-%m-%d')" > "${version}"
+        if [ "\$DRY_RUN" != "true" ]; then
+            mkdir -p "${root}"
+            printf '%s\\t%s\\n' "${release}" "\$(date -u '+%Y-%m-%d')" > "${version}"
+        fi
         log_message "PIPELINE VERSION:      ${release} - first run in this project"
     elif [ "\$(cut -f1 < "${version}")" != "${release}" ]; then
         log_message "PIPELINE VERSION:      These results were produced by \$(cut -f1 < "${version}"),"
@@ -1224,10 +1272,12 @@ CURRENT_PARAMS
     if [ -n "${liveTable}" ]; then
         sed -e 's/\\r\$//' -e 's/[[:space:]]*\$//' -e '/^\$/d' "${liveTable}" > current_table.csv
         if [ ! -f "${storedTable}" ]; then
-            mkdir -p "${root}"
-            cp current_table.csv "${storedTable}"
+            if [ "\$DRY_RUN" != "true" ]; then
+                mkdir -p "${root}"
+                cp current_table.csv "${storedTable}"
+            fi
             log_message "RUN PARAMETERS:        No previous run recorded - this is a fresh project"
-            log_message "RUN PARAMETERS:        Recording ${params.multiRunFile} as \$(wc -l < current_table.csv) row(s)"
+            log_message "RUN PARAMETERS:        \$RECORD ${params.multiRunFile} as \$(wc -l < current_table.csv) row(s)"
         elif diff -q "${storedTable}" current_table.csv > /dev/null 2>&1; then
             log_message "RUN PARAMETERS:        ${params.multiRunFile} unchanged since the outputs were produced"
         else
@@ -1255,9 +1305,11 @@ CURRENT_PARAMS
     # parameters.config, by resolved value rather than as written - see the note above this
     # process for which families are excluded and why.
     if [ ! -f "${stored}" ]; then
-        mkdir -p "${root}"
-        cp current_params.txt "${stored}"
-        log_message "RUN PARAMETERS:        Recording \$(wc -l < current_params.txt) analysis parameters"
+        if [ "\$DRY_RUN" != "true" ]; then
+            mkdir -p "${root}"
+            cp current_params.txt "${stored}"
+        fi
+        log_message "RUN PARAMETERS:        \$RECORD \$(wc -l < current_params.txt) analysis parameters"
     elif diff -q "${stored}" current_params.txt > /dev/null 2>&1; then
         log_message "RUN PARAMETERS:        parameters.config unchanged since the outputs were produced"
     else
@@ -1305,7 +1357,9 @@ CURRENT_PARAMS
     # of what was actually written - comments, layout and all - which is what you would cite,
     # and what tells you months later why a value was what it was. Refreshed only on a clean
     # pass, so a failure leaves the originals for the diff above to keep reporting against.
-    if [ "\$STATUS" = "PASS" ]; then
+    if [ "\$STATUS" = "PASS" ] && [ "\$DRY_RUN" = "true" ]; then
+        log_message "RUN PARAMETERS:        Nothing was written - re-run without dryrun to record it"
+    elif [ "\$STATUS" = "PASS" ]; then
         mkdir -p "${root}"
         cp current_params.txt "${stored}"
         cp "${liveCfg}" "${storedCfg}"

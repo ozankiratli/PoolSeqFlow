@@ -60,6 +60,14 @@ assert_file() {        # path [label]
     fail_case "${2:-expected a file}: $1"
 }
 
+# A directory, not a file. The dry run suite asserts almost entirely on directories - an
+# empty tree is the thing it produces - and assert_file's `-f` reports every one of them as
+# missing, which reads as a broken preview rather than as the wrong test.
+assert_dir() {         # path [label]
+    [ -d "$1" ] && return 0
+    fail_case "${2:-expected a directory}: $1"
+}
+
 assert_no_file() {     # path [label]
     [ ! -e "$1" ] && return 0
     fail_case "${2:-expected nothing at}: $1"
