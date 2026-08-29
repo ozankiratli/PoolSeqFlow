@@ -4,7 +4,8 @@ include { dig; deepCopyVariant; runToken } from './variants.nf'
 include { sharingGroups; parentVariant; childVariants; variantForRun } from './variants.nf'
 // The metadata file's projections. Step 0 compares one of them against the copy beside the
 // results, and reports the pooling another of them implies.
-include { metadataGuardLines; samplesWithAdapterOverrides; trimOptionsArePinned } from './metadata.nf'
+include { metadataGuardLines; samplesWithAdapterOverrides; trimOptionsArePinned;
+          poolSizes; poolSizeColumn } from './metadata.nf'
 
 // Flatten the nested params map into dotted keys (dir.output.report.align and so on).
 def flattenParams(Map m, String prefix, Map out) {
@@ -267,6 +268,19 @@ def metadataChecks(Map plan) {
                 pooled      : pools.findAll { _pool, ids -> ids.size() > 1 }
                                    .collect { pool, ids -> [pool: pool, ids: ids.sort()] }
                                    .sort { a, b -> a.pool <=> b.pool },
+                // HOW MANY INDIVIDUALS EACH COLUMN STANDS FOR. It sets that column's detection
+                // limit, so like the pooling above it changes what a result MEANS rather than
+                // whether one is produced - and like the pooling, it is stated before any
+                // compute is spent. Only the pools that override are listed: a project using
+                // the global poolSize throughout would otherwise get a line per sample saying
+                // the same number.
+                poolOverrides: variant.metadata
+                                   .findAll { row -> row[poolSizeColumn()] }
+                                   .collect { row -> "${row.RG_Sample}".toString() }
+                                   .unique()
+                                   .sort()
+                                   .collect { pool -> [pool: pool, size: poolSizes(variant)[pool]] },
+                globalPoolSize: "${variant.poolSize}".toString(),
                 // The projection the guard compares - read groups and the columns that change a
                 // number, never the design columns. See scripts/metadata.nf.
                 guardLines  : metadataGuardLines(variant),
@@ -287,6 +301,17 @@ def metadataChecks(Map plan) {
                 vcfOut      : "${variant.dir.output.vcf}".toString(),
                 vcfWork     : "${variant.dir.utilized}/${variant.dir.subpath.vcf}".toString(),
                 orderDelete : orderDelete,
+                // A POOL SIZE CHANGE INVALIDATES THE FILTER AND NOTHING ELSE. It is a step 7
+                // parameter: the BAMs carry read groups, which it does not touch, and the
+                // called VCF is the filter's INPUT rather than its output. So this deletes what
+                // step 7 derived - the frequency tables, and the working intermediates whose
+                // existence is what the skip checks read - and leaves the expensive half of the
+                // analysis alone. Lumping it in with a read group edit would have told people
+                // to realign everything to change one number.
+                sizeDelete  : (filtered.collect { child -> child.dir.output.freq } +
+                               filtered.collect { child ->
+                                   "${child.dir.utilized}/${child.dir.subpath.vcf}" })
+                              .collect { d -> d.toString() }.unique(),
                 tagDelete   : (["${ready.dir.output.ready}".toString()] + orderDelete).unique()]
     }
 }
@@ -536,6 +561,8 @@ process CheckMetadataFile {
     readyDir = check.readyOut
     tagDeleteBlock = check.tagDelete.collect { d -> "        log_message \"    ${d}\"" }.join('\n')
     orderDeleteBlock = check.orderDelete.collect { d -> "                log_message \"    ${d}\"" }.join('\n')
+    sizeDeleteBlock = check.sizeDelete.collect { d -> "            log_message \"    ${d}\"" }.join('\n')
+    sizeColumn = poolSizeColumn()
     // The rows as the guard sees them, and the sample ids as the reads check compares them.
     // Rendered here, from the parsed file, so the task never touches a CSV.
     guardBlock = check.guardLines.join('\n')
@@ -544,9 +571,14 @@ process CheckMetadataFile {
         ? '    log_message "METADATA CHECK:        every sample is its own pool"'
         : check.pooled.collect { entry ->
               "    log_message \"METADATA CHECK:        ${entry.pool} is one column, pooling ${entry.ids.join(', ')}\"" }.join('\n')
+    sizeBlock = check.poolOverrides.isEmpty()
+        ? "    log_message \"METADATA CHECK:        every pool is ${check.globalPoolSize} individuals, from parameters.config\""
+        : (["    log_message \"METADATA CHECK:        pools sized in the metadata file, the rest ${check.globalPoolSize}:\""] +
+           check.poolOverrides.collect { entry ->
+               "    log_message \"METADATA CHECK:            ${entry.pool} is ${entry.size} individuals\"" }).join('\n')
     // The one combination a per-sample adapter cannot be honoured in.
     adapterBlock = (check.optionsPinned && !check.adapterOverrides.isEmpty())
-        ? (['    log_message "METADATA CHECK:        these samples set adapter1/adapter2, but this run pins"',
+        ? (['    log_message "METADATA CHECK:        these samples set param_adapter1/param_adapter2, but this run pins"',
             '    log_message "METADATA CHECK:        trim_galore.options outright, so the pinned string is used"',
             '    log_message "METADATA CHECK:        verbatim and the per-sample adapters could not be applied:"'] +
            check.adapterOverrides.collect { id -> "    log_message \"METADATA CHECK:            ${id}\"" } +
@@ -658,6 +690,11 @@ SAMPLEIDS
         # downstream can tell you it was not what you wanted.
 ${poolBlock}
 
+        # AND HOW MANY INDIVIDUALS EACH OF THOSE COLUMNS STANDS FOR, which sets its detection
+        # limit: sensitivity = 1 / (2 * diploidy * poolSize) is the smallest allele fraction a
+        # pool that size can produce, and the false-positive filter drops everything below it.
+${sizeBlock}
+
 ${adapterBlock}
 
         # Detect edits made after the file was already consumed. Step 4 bakes the read group
@@ -693,6 +730,22 @@ ${adapterBlock}
             if [ "\$DRY_RUN" = "true" ]; then return 0; fi
             mkdir -p "\$(dirname "${storedMeta}")"
             cp current_metadata.txt "${storedMeta}"
+        }
+
+        # A guard line with the pool size field removed, so two of them compare equal exactly
+        # when the sizes are the only thing that moved.
+        #
+        # awk rather than `sed 's/\\t${sizeColumn}=[^\\t]*//'`, which is what this was: \\t in a
+        # sed PATTERN is a GNU extension, and BSD sed reads it as a literal 't' without
+        # complaining. The comparison would then never hold, the pool size branch below would
+        # never be reached, and a size edit would be reported as a read group change - telling
+        # the user on that machine to delete every BAM. Silent, and only on their machine.
+        drop_size() {
+            awk -F'\\t' -v OFS='\\t' '{
+                out = \$1
+                for (i = 2; i <= NF; i++) if (\$i !~ /^${sizeColumn}=/) out = out OFS \$i
+                print out
+            }' "\$1"
         }
 
         if [ "\$HAVE_BAMS" -eq 0 ] && [ "\$HAVE_VCF" -eq 0 ]; then
@@ -737,6 +790,40 @@ ${orderDeleteBlock}
                 log_message "METADATA CHANGE CHECK: FAIL"
                 STATUS="FAIL"
             fi
+        elif [ "\$(drop_size "${storedMeta}")" = "\$(drop_size current_metadata.txt)" ]; then
+            # Only the pool sizes moved. That is a step 7 parameter: it changes which variants
+            # survive the false-positive filter, and nothing about how the reads were trimmed,
+            # aligned, grouped or called. Reported separately so the fix is proportionate.
+            log_message "Pool sizes have CHANGED since the existing outputs were produced:"
+            log_message ""
+            # Only the field that moved, per sample. A line diff here would print the whole
+            # read group twice for every row and leave the reader to spot the one number that
+            # differs - and this branch only fires when everything else is identical, so the
+            # rows are in the same order on both sides and can be compared by id.
+            while IFS= read -r line; do
+                printf '%s\\n' "\$line" | tee -a \$REPORTFILE
+            done < <(awk -F'\\t' '
+                function size(line,   n, f, i, v) {
+                    n = split(line, f, "\\t"); v = ""
+                    for (i = 2; i <= n; i++)
+                        if (f[i] ~ /^${sizeColumn}=/) v = substr(f[i], index(f[i], "=") + 1)
+                    return v == "" ? "the global poolSize" : v
+                }
+                NR == FNR { was[\$1] = size(\$0); next }
+                {
+                    now = size(\$0)
+                    if (now != was[\$1])
+                        printf "  %s  was %s, now %s\\n", \$1, was[\$1], now
+                }' "${storedMeta}" current_metadata.txt)
+            log_message ""
+            log_message "A pool's size sets its detection limit, so this changes which variants"
+            log_message "survive the filter. The BAMs and the called VCF are unaffected - they"
+            log_message "are what the filter reads, not what it writes - so only step 7's own"
+            log_message "output has to go."
+            log_message "Delete these and run again to apply it:"
+${sizeDeleteBlock}
+            log_message "METADATA CHANGE CHECK: FAIL"
+            STATUS="FAIL"
         else
             log_message "Sample metadata has CHANGED since the existing outputs were produced:"
             log_message ""

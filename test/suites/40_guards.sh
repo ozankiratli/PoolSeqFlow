@@ -427,6 +427,44 @@ test_a_metadata_edit_is_caught_when_the_bams_are_not_yet_promoted() {
         "the stored baseline must not be overwritten - doing so hides the mismatch for good"
 }
 
+# A POOL SIZE IS NOT A READ GROUP, and the guard has to say so.
+#
+# param_poolSize is compared by the same guard as the RG_ columns, because both change a result.
+# But they invalidate different things: a read group is baked into every BAM, while a pool size
+# only sets the false-positive filter's threshold - step 7, downstream of everything expensive.
+# Reported through the tag branch it would tell someone to delete every BAM and realign the
+# whole project to change one number.
+#
+# The second assertion is the one that matters. Failing the run is right either way; naming the
+# right files is what makes the failure actionable.
+test_a_pool_size_edit_does_not_ask_for_the_bams_back() {
+    guards_ready || return
+    local status report
+
+    # Something must have consumed the file already, or the guard adopts the edit as a new
+    # baseline and passes - which is correct, and is why the existing edit case plants one too.
+    # Existence is all it tests, so an empty file stands in for the BAM.
+    mkdir -p "$GUARD_SB/main/Utilized/Ready"
+    : > "$GUARD_SB/main/Utilized/Ready/TestSample1_ready.bam"
+
+    # Add the column with a value, against a baseline recorded without it. The guard renders a
+    # param_poolSize field for every row whether the column exists or not, so this is a value
+    # change on that field alone and nothing else moves.
+    awk -F, -v OFS=, 'NR==1 { print $0, "param_poolSize"; next } { print $0, "40" }' \
+        "$GUARD_SB/main/metadata.csv" > "$GUARD_SB/main/metadata.new" \
+        && mv "$GUARD_SB/main/metadata.new" "$GUARD_SB/main/metadata.csv"
+
+    status=$(run_verify_only "$GUARD_SB")
+    report=$(guard_report)
+
+    assert_status 1 "$status" "a pool size edit should still stop the run"
+    assert_contains "$report" "Pool sizes have CHANGED" "and be named for what it is"
+    assert_contains "$report" "METADATA CHANGE CHECK: FAIL" "the change should be reported"
+    assert_contains "$report" "Frequencies" "step 7's own output is what has to go"
+    assert_not_contains "$report" "Output/Ready" \
+        "a pool size does not reach the BAMs and must not ask for them"
+}
+
 # The multi-run table, checked before any compute is spent on it.
 #
 # These build their own sandbox rather than copying the shared baseline. Flipping multiRun on

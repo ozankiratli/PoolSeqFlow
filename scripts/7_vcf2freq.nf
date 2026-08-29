@@ -14,6 +14,11 @@
 // any of four later artifacts. Those later artifacts are all either transient or terminal,
 // which is what keeps every one of these checks single-rooted.
 
+// The pool sizes behind the false-positive filter's per-column sensitivity. A pool is a set of
+// rows sharing an RG_Sample, which is what bcftools makes one VCF column - so this is the only
+// place in step 7 that the metadata file reaches.
+include { poolSizeArgument } from './metadata.nf'
+
 process SortRefAltByFrequency {
     tag { run.runId ? "${run.runId}:${vcf.baseName}" : vcf.baseName }
 
@@ -164,6 +169,13 @@ process FilterPotentialFalsePositives {
     sensitivity = run.filterFalsePositives.sensitivity
     threshold = run.filterFalsePositives.sampleThreshold
 
+    // EVERY pool, named, including those taking the global poolSize - so the filter can refuse
+    // a VCF column it has no size for instead of falling back to `sensitivity` and filtering
+    // that pool at a resolution nobody chose. `sensitivity` stays the flat default for anyone
+    // running the script by hand.
+    pool_sizes = poolSizeArgument(run)
+    diploidy = run.diploidy
+
     dir_log = "${run.dir.logs}/7_vcf2freq"
 
     """
@@ -209,7 +221,8 @@ process FilterPotentialFalsePositives {
         # 7. Reorders alleles to match the reference.
 
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Filtering possible false positives..."
-        filterFalsePositives.sh -v ${vcf} -t ${threshold} -s ${sensitivity} -b ${run.software.bcftools} > "\$TMP_FILE"
+        filterFalsePositives.sh -v ${vcf} -t ${threshold} -s ${sensitivity} \\
+            -p "${pool_sizes}" -d ${diploidy} -b ${run.software.bcftools} > "\$TMP_FILE"
 
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Order might change after filtering, reordering alleles again..."
         MajorAlleleToRef.py "\$TMP_FILE" "${filterfp_vcf}"

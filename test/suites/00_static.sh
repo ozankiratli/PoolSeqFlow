@@ -196,6 +196,35 @@ test_the_read_group_tag_table_is_the_same_on_both_sides() {
         "the parser and the pipeline should accept the same read group tags"
 }
 
+# The per-sample parameter table exists twice for the same reason as the tag table, and the
+# failure it guards against is worse. A param_ column the parser accepts and the pipeline does
+# not act on is a setting the user has written down, can see in their own file, and believes is
+# in effect - and nothing anywhere reports that it was ignored.
+test_the_per_sample_parameter_table_is_the_same_on_both_sides() {
+    local python_side groovy_side
+    python_side=$(sed -n '/^PARAM_COLUMNS = {/,/^}/p' "$REPO_ROOT/bin/parse_metadata.py" \
+                  | sed -n 's/.*"\(param_[A-Za-z0-9]*\)": "\([A-Za-z0-9._]*\)".*/\1=\2/p' | sort)
+    groovy_side=$(sed -n "/^def paramColumns()/,/^}/p" "$REPO_ROOT/scripts/metadata.nf" \
+                  | sed -n "s/.*'\(param_[A-Za-z0-9]*\)' *: *'\([A-Za-z0-9._]*\)'.*/\1=\2/p" | sort)
+    [ -n "$python_side" ] || { fail_case "could not read PARAM_COLUMNS out of bin/parse_metadata.py"; return; }
+    assert_eq "$python_side" "$groovy_side" \
+        "the parser and the pipeline should agree on which parameters a row may override"
+}
+
+# Each param_ column names a real parameter, or the table is documenting something that does
+# not exist. Checked against the template rather than against a list here, so adding a column
+# for a parameter that was never added to parameters.config fails.
+test_every_per_sample_parameter_names_a_real_parameter() {
+    local leaf
+    sed -n '/^PARAM_COLUMNS = {/,/^}/p' "$REPO_ROOT/bin/parse_metadata.py" \
+        | sed -n 's/.*"param_[A-Za-z0-9]*": "\([A-Za-z0-9._]*\)".*/\1/p' \
+        | while read -r parameter; do
+            leaf="${parameter##*.}"
+            grep -qE "^[[:space:]]*${leaf}[[:space:]]*=" "$REPO_ROOT/parameters.config.template" \
+                || fail_case "param_ column overrides '$parameter', which parameters.config.template does not define"
+        done
+}
+
 test_fixture_generator_is_deterministic() {
     local out
     out="$TEST_TMPDIR/fixture-determinism"

@@ -82,9 +82,13 @@ def stepParameterMap() {
                         'dir.subpath.vcf'],
              publish : [] ],
 
+        // `diploidy` is read directly here, not only through the derived sensitivity: with
+        // per-pool sizes the filter computes each pool's own threshold from it, so a run that
+        // changed ploidy alone would otherwise be told it could reuse the filtered VCF.
         7: [ artifact: ['vcffilter.minDP', 'vcffilter.minQUAL',
                         'filterFalsePositives.sensitivity',
                         'filterFalsePositives.sampleThreshold',
+                        'diploidy',
                         'vcf.fileName', 'dir.subpath.vcf', 'dir.subpath.freq'],
              publish : [] ],
 
@@ -185,6 +189,9 @@ def stepIdentity(Map run, int step) {
     // values only, so a permutation of the file does not split either. Step 6 takes the row
     // ORDER and nothing else, because that is what decides the VCF's sample columns. Two runs
     // whose files are permutations of each other therefore share step 4 and diverge at step 6.
+    // Step 7 takes the pool sizes, which set the false-positive filter's per-column threshold:
+    // without this, two runs pointing at metadata files that differ only in param_poolSize
+    // would share one filtered VCF, and whichever ran first would decide both their results.
     if (step == 2) parts += metadataProjection(run, metadataColumnsPerStep()[2]).collect { r -> "metadata=${r}" }
     if (step == 3) parts += referenceIdentity(run).collect { p -> "reference=${p}" }
     if (step == 4) parts += metadataProjection(run, metadataColumnsPerStep()[4]).collect { r -> "metadata=${r}" }
@@ -192,6 +199,7 @@ def stepIdentity(Map run, int step) {
         parts += referenceIdentity(run).collect { p -> "reference=${p}" }
         parts += metadataOrder(run).collect { r -> "sampleorder=${r}" }
     }
+    if (step == 7) parts += metadataProjection(run, metadataColumnsPerStep()[7]).collect { r -> "metadata=${r}" }
     if (step == 8) parts += snpEffIdentity(run).collect { p -> "snpeffdb=${p}" }
 
     return parts.collect { p -> p.toString() }

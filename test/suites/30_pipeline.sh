@@ -63,6 +63,26 @@ test_frequency_table_columns_follow_the_metadata_order() {
     assert_eq "$expected" "$header" "sample columns should match the metadata row order"
 }
 
+# THE ONE THING THE UNIT TESTS CANNOT SEE: that the pool sizes are read off the real metadata
+# file in a real run.
+#
+# bin/filterFalsePositives.sh is covered case by case in 50_helpers, but every one of those
+# calls it directly with a -p string written by the test. This reads the step 0 report from the
+# run that already happened, so it costs nothing, and it fails if poolSizes() stops resolving
+# the fallback to the global poolSize or stops being reported at all.
+#
+# It cannot be checked in a published VCF: every VCF the filter touches is transient - see
+# test_only_real_vcfs_reach_storage - so the ##PoolSeqFlowPool lines exist only while the run
+# is in flight. What survives beside the results is .poolseqflow_metadata, which carries
+# param_poolSize because it is one of the columns the change guard compares.
+test_step_0_states_how_many_individuals_each_pool_holds() {
+    needs_run || return
+    local report
+    report=$(cat "$PIPELINE_SB/store/Output/Reports/0_verify_environment.txt")
+    assert_contains "$report" "every pool is 100 individuals" \
+        "the fixture sets no param_poolSize, so every pool takes the global one"
+}
+
 # Every frequency must be a proportion. A value outside [0,1] means the allele counts and
 # the depth disagree somewhere upstream.
 test_all_frequencies_are_proportions() {

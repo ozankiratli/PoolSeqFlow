@@ -14,16 +14,26 @@ nowhere to live, so it ended up encoded in the DS field or in the sample name. H
 writes what they need: SampleID, the RG_* columns that become read-group tags, and any number
 of columns of their own that the pipeline records and never interprets.
 
-THREE KINDS OF COLUMN, and the prefix is what separates them:
+FOUR KINDS OF COLUMN, and the prefix is what separates them:
 
     SampleID        required. Joins to the sample id derived from the FASTQ file names, and
                     becomes the read group's ID.
     RG_*            a read group tag, by the table below. Nothing else may start with RG_ -
                     an unknown one is a typo, and accepting it would put a tag in the BAM
                     header that no reader expects, or silently drop the value.
-    adapter1/2      per-sample overrides of the global trim settings.
+    param_*         a per-sample override of a pipeline parameter, by the table below. Same
+                    rule as RG_: the list is closed and an unknown one is refused, because a
+                    column called param_anything that the pipeline ignores is a setting the
+                    user believes is in effect and is not.
     anything else   design metadata. Recorded, never read by steps 0-8, and there for the
                     analysis layer and for whoever reads the results in two years.
+
+PARAM_POOLSIZE IS KEYED BY RG_Sample, NOT BY SampleID, and that is not a detail. Rows sharing
+an RG_Sample are one pool: bcftools names VCF sample columns by SM, so their reads are merged
+into a single column and their depths added. The false-positive filter's sensitivity is
+1 / (2 * diploidy * poolSize), one number per COLUMN - so two lanes of one pool cannot carry
+two different pool sizes, and being asked to pick one silently is how a filter ends up applied
+at a threshold nobody chose. Rows of one pool must agree, or the file is refused.
 
 WHY THIS IS PYTHON AND NOT AWK OR SHELL, and it is the same reason as parse_multirun.py: the
 values are free text. A description field reading `Pop1, replicate 2` is ordinary, and
@@ -65,9 +75,24 @@ RG_TAGS = {
     "RG_FlowOrder": "FO",
 }
 
-# Names that mean something to the pipeline and so cannot be design columns.
-ADAPTER_COLUMNS = ("adapter1", "adapter2")
-RESERVED = (SAMPLE_ID,) + tuple(RG_TAGS) + ADAPTER_COLUMNS
+# The parameters a row may override, by the name the user writes, mapped to the parameter in
+# parameters.config each one displaces. A CLOSED LIST, for the same reason RG_TAGS is one: the
+# prefix is a promise that the pipeline acts on the column, and a param_ column it silently
+# ignored would be worse than no column at all - the user would believe the setting was live.
+PARAM_COLUMNS = {
+    "param_poolSize": "poolSize",
+    "param_adapter1": "trim_galore.adapter1",
+    "param_adapter2": "trim_galore.adapter2",
+}
+
+# The two param_ columns with rules of their own, beyond being recognised.
+#
+# There is no RESERVED tuple any more: it listed the names a design column may not take, and
+# nothing read it. The two prefixes are what reserve those names now, and they do it by shape
+# rather than by enumeration - so a design column cannot collide with a future param_ or RG_
+# one at all, which is the reason for having prefixes in the first place.
+POOL_SIZE = "param_poolSize"
+ADAPTER_COLUMNS = ("param_adapter1", "param_adapter2")
 
 # A tab ends a field in the SAM header, and a control character has no business in one.
 BAD_IN_TAG = re.compile(r"[\t\r\n\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -121,6 +146,25 @@ def check(path):
                 f"reserved for them, so this is almost certainly a typo. Known: "
                 f"{', '.join(sorted(RG_TAGS))}. For anything else, drop the RG_ prefix and it "
                 f"becomes a column the pipeline records and never interprets."
+            )
+        elif column.startswith("param_") and column not in PARAM_COLUMNS:
+            errors.append(
+                f"line {header_line}: '{column}' is not a per-sample parameter. The param_ "
+                f"prefix is reserved for the ones the pipeline can act on, so this is almost "
+                f"certainly a typo. Known: {', '.join(sorted(PARAM_COLUMNS))}. For anything "
+                f"else, drop the param_ prefix and it becomes a column the pipeline records "
+                f"and never interprets."
+            )
+        elif f"param_{column}" in PARAM_COLUMNS:
+            # The prefix missing rather than misspelled. Without this the column would be
+            # accepted as design metadata and silently ignored, which is the one outcome the
+            # prefix rule exists to prevent: the user reads their own header back and believes
+            # the override is in effect.
+            errors.append(
+                f"line {header_line}: '{column}' is missing its prefix - write "
+                f"'param_{column}' if you mean to override {PARAM_COLUMNS['param_' + column]} "
+                f"for these samples. As written it would be recorded as design metadata and "
+                f"never acted on."
             )
         if column:
             seen[column] = seen.get(column, 0) + 1
@@ -195,6 +239,43 @@ def check(path):
                 f"{[c for c in ADAPTER_COLUMNS if c not in present][0]} is not. Give both "
                 f"adapter sequences for a sample, or neither and let the global setting apply."
             )
+
+        # A pool is a whole number of individuals, and sensitivity divides by it. A blank cell
+        # means "use the global poolSize"; anything else has to be a count.
+        size = row.get(POOL_SIZE, "")
+        if size and not (size.isdigit() and int(size) > 0):
+            errors.append(
+                f"line {lineno}: {POOL_SIZE} '{size}' is not a whole number of individuals. "
+                f"It is how many individuals went into the pool, and sensitivity is "
+                f"1 / (2 * diploidy * {POOL_SIZE}). Leave it blank to use the global poolSize."
+            )
+
+    # ONE POOL, ONE SIZE. Rows sharing an RG_Sample become a single VCF column, which gets a
+    # single sensitivity - so the pipeline cannot honour two sizes for one pool, and picking
+    # one silently would filter that column at a threshold the user never chose. A blank cell
+    # is a disagreement too: it says "use the global", which is a different number again.
+    if POOL_SIZE in header:
+        sizes = {}
+        for lineno, fields in body:
+            if len(fields) != width:
+                continue
+            row = dict(zip(header, fields))
+            pool = row.get("RG_Sample") or row.get(SAMPLE_ID, "")
+            sizes.setdefault(pool, {}).setdefault(row.get(POOL_SIZE, ""), []).append(lineno)
+
+        for pool, by_size in sizes.items():
+            if len(by_size) > 1:
+                stated = ", ".join(
+                    f"'{size or '(blank)'}' on line{'s' if len(lines) > 1 else ''} "
+                    f"{', '.join(str(n) for n in lines)}"
+                    for size, lines in sorted(by_size.items())
+                )
+                errors.append(
+                    f"RG_Sample '{pool}' is given more than one {POOL_SIZE}: {stated}. Rows "
+                    f"sharing an RG_Sample are one pool and become one VCF column, so they "
+                    f"need one size. A blank cell means the global poolSize, which is a third "
+                    f"answer rather than agreement with either."
+                )
 
     if errors:
         return None, errors
