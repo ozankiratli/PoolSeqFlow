@@ -29,13 +29,17 @@ params {
     // The names of the files you place, and where they go, all relative to mainDir:
     //   mainDir/Data/            the reads              (dataSource names it)
     //   mainDir/Reference/       reference + annotation (referenceFile, gffFile)
-    //   mainDir/RGTags.csv       your read-group table  (rgTagsFile)
+    //   mainDir/metadata.csv     what your samples ARE  (metadataFile)
     dataSource      = 'Data'
     readPattern     = "*_R{1,2}.fq.gz"
     referenceFile   = 'reference.fasta.gz'
     poolSize        = 100
     diploidy        = 2
-    rgTagsFile      = 'RGTags.csv'
+    // One row per pair of FASTQ files: SampleID, the RG_* columns that become read-group
+    // tags, and any columns of your own describing the experiment. metadata.csv.template in
+    // the installation explains the three kinds of column and what merges two rows into one
+    // pool. It replaces RGTags.csv, which could only hold SAM tags.
+    metadataFile    = 'metadata.csv'
     annotate        = true
     gffFile         = 'reference.gff.gz'
 
@@ -321,7 +325,7 @@ params {
     // leaves the real cause - a NullPointerException - only in .nextflow.log.
     referencePath   = "${params.dir.references}/${params.referenceFile}"
     gffPath         = "${params.dir.references}/${params.gffFile}"
-    rgTagsPath      = "${params.mainDir}/${params.rgTagsFile}"
+    metadataPath    = "${params.mainDir}/${params.metadataFile}"
     multiRunPath    = "${params.mainDir}/${params.multiRunFile}"
 
     // The reference is decompressed into Dictionaries by step 1 and read from there by

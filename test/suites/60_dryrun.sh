@@ -17,8 +17,8 @@ DRYRUN_WRAPPER_SB=""
 #   a and b share steps 2-6 and 8 and diverge at step 7  - so there is a Shared_<N>
 #   c has a storageDir of its own                        - so there are TWO storage roots,
 #                                                          which is the case dryrun exists for
-#   RGTags.csv has Windows line endings                  - so a real run would rewrite a file
-#                                                          the user wrote, and this must not
+#   metadata.csv has Windows line endings                - so nothing anywhere may rewrite a
+#                                                          file the user wrote
 #
 # No group contains all three runs, so `All_Runs` is nobody's variant - which is exactly the
 # table that catches a preview leaving out the invocation's own directories.
@@ -30,7 +30,7 @@ dryrun_baseline() {
     printf 'RunID,storageDir,vcffilter.minQUAL\na,,30\nb,,1000\nc,%s,30\n' "$sb/store2" \
         > "$sb/main/runs.csv"
     write_sandbox_config "$sb" 's|^    multiRun .*|    multiRun        = true|'
-    sed -i 's/$/\r/' "$sb/main/RGTags.csv"
+    sed -i 's/$/\r/' "$sb/main/metadata.csv"
     run_project_wrapper "$sb" dryrun
     [ "$WRAPPER_STATUS" = "0" ] || return 1
     DRYRUN_SB="$sb"
@@ -86,10 +86,10 @@ test_a_dry_run_records_nothing() {
     assert_no_file "$store/run_parameters.txt"   "nor the readable record beside them"
     assert_no_file "$sb/store2/Output/.poolseqflow_version" "and not under a second storage root"
 
-    # The RGTags baseline is written beside the VCF of the variant it describes, so it is
+    # The metadata baseline is written beside the VCF of the variant it describes, so it is
     # looked for anywhere under either root rather than at one path.
-    assert_eq "" "$(find "$sb/store" "$sb/store2" -name '.poolseqflow_rgtags' 2>/dev/null)" \
-        "no RGTags baseline may be recorded either"
+    assert_eq "" "$(find "$sb/store" "$sb/store2" -name '.poolseqflow_metadata' 2>/dev/null)" \
+        "no metadata baseline may be recorded either"
     # A members file is a record of what a directory holds. The preview holds it instead.
     assert_eq "" "$(find "$sb/store" "$sb/store2" -name 'members.txt' 2>/dev/null)" \
         "and no members file in the real results tree"
@@ -101,25 +101,27 @@ test_a_dry_run_records_nothing() {
         "the parameter check should say that this was a dry run"
 }
 
-# The other half: the files the user wrote themselves. Step 0 rewrites RGTags.csv in place when
-# it has Windows line endings, and that is the only place it writes to something of theirs.
+# The other half: the files the user wrote themselves.
+#
+# Step 0 used to rewrite metadata.csv in place when it had Windows line endings, which made
+# "a dry run changes nothing of yours" a thing that had to be arranged. It is now structural -
+# bin/parse_metadata.py tolerates CRLF and nothing else reads the file at all - so what this
+# asserts is that the structural version holds, for a dry run and by extension for any run.
 test_a_dry_run_leaves_the_users_own_files_alone() {
     dryrun_ready || return
     local sb="$DRYRUN_SB"
     assert_eq "still there" \
-        "$(grep -q $'\r' "$sb/main/RGTags.csv" && echo 'still there' || echo 'repaired')" \
-        "the CRLF repair must not happen during a preview"
+        "$(grep -q $'\r' "$sb/main/metadata.csv" && echo 'still there' || echo 'rewritten')" \
+        "nothing may rewrite the user's metadata file"
 
+    # And the carriage returns must not cascade either: a file that is tolerated has to be
+    # tolerated all the way through, not merely left alone and then misread.
     local report
     report=$(cat "$sb/store/Output/a/Reports/0_verify_environment.txt")
-    assert_contains "$report" "a real run repairs this in place" \
-        "and the report should say what a real run would do instead"
-    # The repair not having run must not cascade. Every read of the table goes through a copy
-    # this stage normalises itself, so the carriage return cannot reach the tag check.
-    assert_not_contains "$report" "Invalid tag" \
-        "an unrepaired file must not be reported as having invalid tags"
-    assert_contains "$report" "RGTAGS VERIFICATION:    STATUS=PASS" \
-        "and the stage should still pass"
+    assert_contains "$report" "METADATA VERIFICATION:  STATUS=PASS" \
+        "a CRLF metadata file should verify cleanly"
+    assert_not_contains "$report" "has reads but no row" \
+        "and its sample names must not pick up a stray carriage return"
 }
 
 # WHY THIS EXISTS AT ALL (Z, 2026-08-27): a run that points its own storageDir somewhere else

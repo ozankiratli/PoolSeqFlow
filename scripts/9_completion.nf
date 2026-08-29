@@ -58,7 +58,7 @@ nextflow.enable.dsl=2
 // cannot answer this - all three of its limits here were found by probing, not assumed:
 //
 //   * it asserts dependencies that are not reads (the six ordering-barrier inputs above),
-//   * it misses reads that are never declared (VerifyAll and CheckRGTagsFile take `val` for
+//   * it misses reads that are never declared (VerifyAll and CheckMetadataFile take `val` for
 //     files and then read them by absolute path into other tasks' work directories), and
 //   * it describes one session, while an artifact's lifetime here spans runs - this
 //     pipeline resumes by looking at the filesystem, `-resume` is unused, and

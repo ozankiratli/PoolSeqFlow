@@ -1,0 +1,64 @@
+# Sample metadata — one row per pair of FASTQ files.
+#
+# This is the file that says what your samples ARE. It replaces RGTags.csv, which could only
+# hold SAM read-group tags, so anything about the experiment itself had to be smuggled into a
+# description field or into the sample name. Here it gets columns of its own.
+#
+# Blank lines and lines starting with # are ignored, so these notes can stay.
+#
+# ---------------------------------------------------------------------------------------
+# THREE KINDS OF COLUMN, and the name is what tells them apart.
+#
+#   SampleID     Required, and unique. It is matched against the sample name taken from your
+#                FASTQ file names — with readPattern '*_R{1,2}.fq.gz', the file
+#                Sample1T1Rep1_R1.fq.gz gives the sample Sample1T1Rep1 — and it becomes the
+#                read group's ID in the BAM.
+#
+#   RG_*         A read group tag. The known ones are RG_Sample, RG_Library, RG_Platform,
+#                RG_PlatformUnit, RG_Description, RG_Center, RG_Date and RG_FlowOrder. A
+#                blank cell simply omits that tag. Nothing else may start with RG_: an
+#                unrecognised one is refused rather than ignored, because it would otherwise
+#                be a typo that silently loses a value.
+#
+#   anything     Your own. Population, timepoint, replicate, phenotype, collection site,
+#   else         whatever the experiment needs. The pipeline records these and never
+#                interprets them — they are here for you, and for the analysis layer. Add,
+#                remove and edit them freely: step 0's change guard does not look at them, so
+#                none of this invalidates results you have already produced.
+#
+# ---------------------------------------------------------------------------------------
+# RG_Sample IS THE ONE THAT CHANGES THE RESULT, so it is worth a paragraph.
+#
+# It is the pool a row belongs to, and it becomes one column in the VCF and one column in
+# every frequency table. Rows that share an RG_Sample are MERGED: their reads are pooled and
+# their depths added. That is how you tell the pipeline that two sequencing runs, two lanes or
+# two libraries are the same pool of individuals.
+#
+# Rows that should stay separate need different RG_Sample values. If you leave the column out
+# entirely, or leave a cell blank, RG_Sample takes the SampleID — so every row is its own
+# pool, which is what you want when each sample was sequenced once.
+#
+# Step 0 prints the pooling it worked out before any compute is spent, so a mistake here is
+# visible in seconds rather than in a result months later.
+#
+# ---------------------------------------------------------------------------------------
+# PER-SAMPLE TRIMMING, optional. adapter1 and adapter2 override the global
+# trim_galore.adapter1 / adapter2 for that row only. Give both or neither; one of the two is
+# a setting that cannot be acted on, so it is refused. Leave them out unless you need them.
+#
+# A value containing a comma must be quoted: "Pop1, coastal".
+#
+# ---------------------------------------------------------------------------------------
+# The table below is an example. Eight FASTQ pairs, four pools: each pool was sequenced twice,
+# so its two rows share an RG_Sample and merge into one column. `population`, `timepoint`,
+# `replicate` and `phenotype` are columns of the user's own - the pipeline carries them and
+# does nothing with them. Replace the whole table with yours.
+SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,population,timepoint,replicate,phenotype
+Sample1T1Rep1,Sample1T1,Lib1,ILLUMINA,Unit1,Pop1,T1,1,susceptible
+Sample1T1Rep2,Sample1T1,Lib1,ILLUMINA,Unit1,Pop1,T1,2,susceptible
+Sample1T2Rep1,Sample1T2,Lib1,ILLUMINA,Unit1,Pop1,T2,1,resistant
+Sample1T2Rep2,Sample1T2,Lib1,ILLUMINA,Unit1,Pop1,T2,2,resistant
+Sample2T1Rep1,Sample2T1,Lib1,ILLUMINA,Unit1,Pop2,T1,1,susceptible
+Sample2T1Rep2,Sample2T1,Lib1,ILLUMINA,Unit1,Pop2,T1,2,susceptible
+Sample2T2Rep1,Sample2T2,Lib1,ILLUMINA,Unit1,Pop2,T2,1,resistant
+Sample2T2Rep2,Sample2T2,Lib1,ILLUMINA,Unit1,Pop2,T2,2,resistant

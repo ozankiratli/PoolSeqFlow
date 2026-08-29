@@ -34,7 +34,7 @@ root="${tmp}/${name}"
 
 # Everything a run needs.
 for f in PoolSeqFlow poolseqflow.nf nextflow.config \
-         parameters.config.template RGTags.csv.template \
+         parameters.config.template metadata.csv.template \
          install/environment.yml install/check_install.sh \
          LICENSE README.md CHANGELOG.md; do
     [ -f "$root/$f" ] || fail "missing from archive: $f"

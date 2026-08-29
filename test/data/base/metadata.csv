@@ -1,0 +1,7 @@
+SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,population,timepoint
+TestSample1,TestSample1,Lib1,ILLUMINA,Unit1,Pop1,T1
+TestSample2,TestSample2,Lib1,ILLUMINA,Unit1,Pop1,T2
+TestSample3,TestSample3,Lib1,ILLUMINA,Unit1,Pop2,T1
+TestSample4,TestSample4,Lib1,ILLUMINA,Unit1,Pop2,T2
+TestSample5,TestSample5,Lib1,ILLUMINA,Unit1,Pop3,T1
+TestSample6,TestSample6,Lib1,ILLUMINA,Unit1,Pop3,T2

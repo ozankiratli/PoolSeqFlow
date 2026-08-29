@@ -257,12 +257,21 @@ def main():
                 rev = frag[-rlen:].translate(COMP)[::-1]
                 r2.write(f"@{name}f{idx}\n{rev}\n+\n{qual}\n".encode())
 
-    with open(os.path.join(out, "RGTags.csv"), "w") as fh:
-        fh.write("ID,SM,LB,DS,FO,PL,PU\n")
+    # One row per read pair, every sample its own pool: RG_Sample equals SampleID, so the
+    # VCF gets one column per sample. Pooling - two rows sharing an RG_Sample - is a real
+    # feature and has its own case; making it the fixture's default would change every
+    # column count in the suite to exercise something one test can exercise directly.
+    #
+    # population/timepoint are design columns. They carry what used to be crammed into the
+    # DS field as Pop1_T1_Rep1, and the pipeline never reads them - which is the point of
+    # having them here: the suite runs with design columns present.
+    with open(os.path.join(out, "metadata.csv"), "w") as fh:
+        fh.write("SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,"
+                 "population,timepoint\n")
         for s in range(n_s):
             name = f"{args.prefix}{s + 1}"
             pop, tp = s // 2 + 1, s % 2 + 1
-            fh.write(f"{name},{name},Lib1,Pop{pop}_T{tp}_Rep1,FASTQ,ILLUMINA,Unit1\n")
+            fh.write(f"{name},{name},Lib1,ILLUMINA,Unit1,Pop{pop},T{tp}\n")
 
     # planted.tsv is provenance: what this script put in. It is deliberately NOT an
     # expectation of what the pipeline should emit - trimming, clipping, the proper-pair

@@ -2,6 +2,9 @@
 // been produced by a variant with a coarser working root than its own, so the list comes
 // from the divergence analysis rather than being spelled out here.
 include { searchRoots } from './variants.nf'
+// The sample order, from the rows resolveParameters() parsed once - not from the file. It
+// decides the VCF's sample columns and therefore the frequency tables' columns.
+include { metadataOrder } from './metadata.nf'
 
 process VariantCall {
     tag { run.runId ? "${run.runId}:calling_variants" : "calling_variants" }
@@ -69,48 +72,6 @@ process VariantCall {
     """
 }
 
-// Read the sample order out of the RGTags file: ID column values in the order their rows
-// appear. Returns an empty map if the file is missing or malformed - this runs while the
-// workflow is being built, which is before step 0 has had a chance to report on it, so it
-// must not throw. Step 0 fails the run on a missing file, a missing ID column or a sample
-// that has no RGTags row, and its message is far more useful than a Groovy stack trace.
-//
-// Takes the path rather than reading params.rgTagsPath, because rgTagsFile is a parameter
-// like any other and a multi-run table may give two runs two different tables.
-def rgTagsOrder(String rgTagsPath) {
-    def order = [:]
-    def rgFile = file(rgTagsPath)
-
-    if (!rgFile.exists()) {
-        return order
-    }
-
-    def lines = rgFile.readLines().findAll { line -> line.trim() }
-
-    if (lines.size() < 2) {
-        return order
-    }
-
-    def header = lines[0].split(',', -1).collect { field -> field.trim() }
-    def idCol = header.indexOf('ID')
-
-    if (idCol < 0) {
-        return order
-    }
-
-    lines.tail().each { line ->
-        def fields = line.split(',', -1)
-        if (fields.size() > idCol) {
-            def id = fields[idCol].trim()
-            if (id && !order.containsKey(id)) {
-                order[id] = order.size()
-            }
-        }
-    }
-
-    return order
-}
-
 workflow VariantCalling {
     take:
     out_ready_bams   // [run, pair_id, ready_bam]
@@ -149,19 +110,23 @@ workflow VariantCalling {
             // two runs on the same input would give frequency tables with differently
             // ordered columns.
             //
-            // The order to use is the RGTags row order, so the columns come out the way the
+            // The order to use is the metadata row order, so the columns come out the way the
             // user laid their samples out rather than however they happen to sort as
             // strings. Sorting has to key on the sample id, not the file path: the paths
             // begin with Nextflow's random work-directory hash, so sorting those is no
             // better than chance.
             //
-            // Anything the RGTags file does not list sorts after everything it does,
+            // Anything the metadata file does not list sorts after everything it does,
             // alphabetically among itself. Step 0 already refuses to run with an unlisted
             // sample, so this only keeps the comparator well defined.
-            def rgOrder = rgTagsOrder("${run.rgTagsPath}")
+            //
+            // ROWS, NOT COLUMNS. Two rows that share an RG_Sample are two sequencing runs of
+            // one pool: bcftools merges them into a single VCF column, so the file has more
+            // rows than the VCF has columns and that is correct. What this orders is the BAMs.
+            def order = metadataOrder(run)
             def ordered = [pair_ids as List, bams as List].transpose().sort { a, b ->
-                def rowA = rgOrder.getOrDefault(a[0], rgOrder.size())
-                def rowB = rgOrder.getOrDefault(b[0], rgOrder.size())
+                def rowA = order.indexOf(a[0]) < 0 ? order.size() : order.indexOf(a[0])
+                def rowB = order.indexOf(b[0]) < 0 ? order.size() : order.indexOf(b[0])
                 rowA != rowB ? rowA <=> rowB : a[0] <=> b[0]
             }
             return tuple(run, ordered.collect { row -> row[1] })

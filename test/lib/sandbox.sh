@@ -41,7 +41,7 @@ guard_path() {
 # because the two were the same place. Kept apart here so that a path assuming otherwise
 # fails a test instead of passing by coincidence.
 #
-# The fixture is a mainDir - Data/, Reference/ and RGTags.csv, exactly what a user prepares
+# The fixture is a mainDir - Data/, Reference/ and metadata.csv, exactly what a user prepares
 # by hand - so it is copied there whole. Nothing is seeded into storageDir: if a test finds
 # something there, the run put it there.
 make_pipeline_sandbox() {
@@ -277,7 +277,7 @@ workflow {
 
     // Three BAMs where the run started with four. Any file will do - the guard fires before
     // anything is handed to bcftools.
-    def stand_in = file("${base.rgTagsPath}")
+    def stand_in = file("${base.metadataPath}")
     VariantCalling(
         channel.fromList(['s1', 's2', 's3']).map { s -> tuple(base, s, stand_in) },
         channel.of(tuple(base, stand_in)),
@@ -334,7 +334,7 @@ include { VerifyEnvironment } from './scripts/0_verify_environment.nf'
 workflow {
     def runs = runDefinitions()
     resolveParameters()
-    // Step 0's stages are keyed to what they validate, and two of them - the RGTags change
+    // Step 0's stages are keyed to what they validate, and two of them - the metadata change
     // guard and the parameter manifest - are keyed by the divergence analysis itself, so it
     // goes in alongside the runs.
     def plan = variantPlan(runs)

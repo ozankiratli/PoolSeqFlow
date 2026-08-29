@@ -2,6 +2,9 @@ include { derivedParameterNames } from './resolve_parameters.nf'
 include { knownParameterNames } from './resolve_parameters.nf'
 include { dig; deepCopyVariant; runToken } from './variants.nf'
 include { sharingGroups; parentVariant; childVariants; variantForRun } from './variants.nf'
+// The metadata file's projections. Step 0 compares one of them against the copy beside the
+// results, and reports the pooling another of them implies.
+include { metadataGuardLines; samplesWithAdapterOverrides; trimOptionsArePinned } from './metadata.nf'
 
 // Flatten the nested params map into dotted keys (dir.output.report.align and so on).
 def flattenParams(Map m, String prefix, Map out) {
@@ -44,7 +47,13 @@ def analysisParams(Map p) {
     // stored `dryRun=false` - which is the one thing a preview must not do.
     def skipKey = [
         'mainDir', 'storageDir', 'runId', 'dryRun', 'dryRunDir',
-        'referencePath', 'gffPath', 'rgTagsPath', 'multiRunPath', 'referenceFa', 'reference', 'gff', 'reads',
+        // `metadata` is the parsed contents of the metadata file, carried in every run map. It
+        // is excluded because the metadata change guard already compares its own projection of
+        // it - read groups and the columns that change a number, never the design columns - and
+        // flattening it in here would put the whole file in the parameter manifest, so adding a
+        // column of your own would fail the parameter check as a changed parameter.
+        'metadata',
+        'referencePath', 'gffPath', 'metadataPath', 'multiRunPath', 'referenceFa', 'reference', 'gff', 'reads',
         'threads', 'memory'
     ] as Set
     def skipPrefix = ['dir.', 'cores.', 'java.', 'software.']
@@ -156,7 +165,7 @@ def checkGroups(List runDefs, String check) {
 // A check keyed to what it validates can answer for two runs out of three, which belongs to
 // neither of their trees - and step 0 runs before any run has results for a log to sit beside.
 // So every stage here logs at invocation level, which is what the three stages that were
-// already not per run - RepairRGTagsLineEndings, CheckInstalledSoftware, CheckMultiRun - have
+// already not per run - CheckInstalledSoftware and CheckMultiRun - have
 // done since E1t. `All_Runs` means "the invocation" in this one place rather than "shared by
 // every run"; the file name says which runs each task actually answered for.
 //
@@ -176,8 +185,9 @@ def checkLogDir(Map check) {
 // two of them share a file - and a keyed check runs N times into one directory. Naming the file
 // after the runs it answered for makes collision impossible and says who it is about.
 //
-// RepairRGTagsLineEndings has had this wrong since E1t: two runs naming two different RGTags
-// tables give two tasks, and both appended to one file.
+// The repair stage this once described had it wrong since E1t, and is gone with the rest of
+// the RGTags handling: two runs naming two different tables gave two tasks appending to one
+// file.
 //
 // Single run: no synthetic key anywhere (settled rule 3), so the name is exactly what it was.
 def checkLogFile(Map check, String stage) {
@@ -198,66 +208,50 @@ def reportPerRun(Object runs, Object reports, String check) {
         .map { _key, run, report -> tuple(run, report) }
 }
 
-// The RGTags tables to repair: one task per distinct PATH, and deliberately NOT store-prefixed
-// the way checkKey() is. The file lives in mainDir, which every run shares whatever its storage
-// root, and the repair WRITES to it - so two tasks on one path would be a race on the user's
-// own data. See RepairRGTagsLineEndings below.
+// THE METADATA CHANGE GUARD IS KEYED TO THE STEP-6 VARIANT, and nothing coarser will do.
 //
-// The log root is the invocation's own rather than the lead member's, for the same reason: the
-// file being repaired belongs to no single run.
-def rgTagsRepairs(List runDefs) {
-    def groups = [:]
-    runDefs.each { run ->
-        def path = "${run.rgTagsPath}".toString()
-        if (!groups.containsKey(path)) groups[path] = []
-        groups[path] << run
-    }
-    return groups.collect { path, members ->
-        def ordered = members.sort { a, b -> "${a.runId}" <=> "${b.runId}" }
-        return [rgTagsPath: path,
-                runId     : ordered[0].runId,
-                storageDir: "${params.storageDir}".toString(),
-                members   : ordered.collect { m -> m.runId }]
-    }
-}
-
-// THE RGTAGS CHANGE GUARD IS KEYED TO THE STEP-6 VARIANT, and nothing coarser will do.
-//
-// What it asks is whether the table has been edited since the things that absorbed it were
-// produced - the tag values, which step 4 bakes into each BAM, and the row order, which step 6
-// turns into the VCF's sample column order. So its answer depends on the CONTENT of two
-// directories, and two runs may share the table and still have different ones.
+// What it asks is whether the file has been edited since the things that absorbed it were
+// produced - the read group values, which step 4 bakes into each BAM, and the row order, which
+// step 6 turns into the VCF's sample column order. So its answer depends on the CONTENT of two
+// directories, and two runs may share the file and still have different ones.
 //
 // Step 6's key is the finest of the two and contains step 4's, so runs that share it share both
 // artifacts and therefore share one answer. Anything coarser lets a run with no BAMs decide for
 // a run that has them - and the branch below treats "no BAMs and no VCF" as "nothing has
-// consumed the table yet" and RECORDS A NEW BASELINE, so the edit would be adopted while the
-// BAMs on disk still carried the old tags. Every other wrong existence answer in this pipeline
-// costs redundant work; this one costs the guard itself.
+// consumed the file yet" and RECORDS A NEW BASELINE, so the edit would be adopted while the
+// BAMs on disk still carried the old read groups. Every other wrong existence answer in this
+// pipeline costs redundant work; this one costs the guard itself.
 //
 // THE PROBE LOOKS IN FOUR PLACES, NOT TWO. Permanent storage as well as the working volume, and
 // the producing VARIANT's directories rather than the member's own: since sharing was turned on
 // the ready BAMs are promoted to (say) Output/All_Runs/Ready, which no member's own Output/
 // contains - so a guard that looked only there answered 0 on every invocation after promotion
-// and had already stopped guarding. Found while keying this stage; it is the reason it could
-// not be left per run.
-def rgTagsChecks(Map plan, List runDefs) {
+// and had already stopped guarding.
+def metadataChecks(Map plan) {
     return plan.variants[6].collect { variant ->
-        def members = runDefs
-            .findAll { run -> variant.members.contains(run.runId) }
-            .sort { a, b -> "${a.runId}" <=> "${b.runId}" }
         // The BAMs came from step 4, which is step 6's parent; the filtered VCFs and the
         // frequency tables are step 7's, which may be several branches below one call.
         def ready = parentVariant(plan, variant)
         def filtered = childVariants(plan, variant, 7)
 
         // What has to go for an edit to become the new baseline, in the order it is listed.
-        // The row order lives only in the called VCF and everything derived from it; the tag
-        // values live in the BAMs as well, which is why the two lists differ by one entry.
+        // The row order lives only in the called VCF and everything derived from it; the read
+        // group values live in the BAMs as well, which is why the lists differ by one entry.
         def orderDelete = ([variant.dir.output.vcf] +
                            filtered.collect { child -> child.dir.output.vcf } +
                            filtered.collect { child -> child.dir.output.freq })
                           .collect { d -> d.toString() }.unique()
+
+        // WHICH ROWS MERGE INTO ONE COLUMN. Rows sharing an RG_Sample are one pool: bcftools
+        // names VCF sample columns by SM, so their reads are pooled and their depths added.
+        // That is the one thing in this file that silently changes what a result MEANS rather
+        // than whether it is produced, so step 0 states it before any compute is spent.
+        def pools = [:]
+        variant.metadata.each { row ->
+            def pool = "${row.RG_Sample}".toString()
+            if (!pools.containsKey(pool)) pools[pool] = []
+            pools[pool] << "${row.SampleID}".toString()
+        }
 
         return [checkKey    : variant.variantKey,
                 runId       : variant.runId,
@@ -268,15 +262,26 @@ def rgTagsChecks(Map plan, List runDefs) {
                 // shares it: step 2's identity contains `reads`, which is dir.data plus
                 // readPattern, and step 6's identity contains step 2's.
                 dataKey     : checkKey(variant, 'CheckData'),
-                rgTagsPath  : "${variant.rgTagsPath}".toString(),
-                // Two runs may name two different files with identical contents - the identity
-                // is the normalised rows, not the path - so every distinct one is repaired, and
-                // every repair report is folded in below.
-                rgTagsPaths : members.collect { m -> "${m.rgTagsPath}".toString() }.unique(),
+                metadataPath: "${variant.metadataPath}".toString(),
+                sampleIds   : variant.metadata.collect { row -> "${row.SampleID}".toString() },
+                pooled      : pools.findAll { _pool, ids -> ids.size() > 1 }
+                                   .collect { pool, ids -> [pool: pool, ids: ids.sort()] }
+                                   .sort { a, b -> a.pool <=> b.pool },
+                // The projection the guard compares - read groups and the columns that change a
+                // number, never the design columns. See scripts/metadata.nf.
+                guardLines  : metadataGuardLines(variant),
+                // A row that overrides the adapters cannot be honoured when the run pins
+                // trim_galore.options outright, so the combination is refused rather than
+                // silently resolved in one direction.
+                adapterOverrides: samplesWithAdapterOverrides(variant),
+                optionsPinned: trimOptionsArePinned(variant),
                 dataDir     : "${variant.dir.data}".toString(),
                 readPattern : "${variant.readPattern}".toString(),
                 samtools    : "${variant.software.samtools}".toString(),
-                storedRg    : "${variant.dir.outputs}/.poolseqflow_rgtags".toString(),
+                // Beside the results it describes: the baseline belongs in the directory holding
+                // the VCF whose column order it decided, which for a shared step is the group's
+                // rather than any one member's.
+                storedMeta  : "${variant.dir.outputs}/.poolseqflow_metadata".toString(),
                 readyOut    : "${ready.dir.output.ready}".toString(),
                 readyWork   : "${ready.dir.utilized}/${ready.dir.subpath.ready}".toString(),
                 vcfOut      : "${variant.dir.output.vcf}".toString(),
@@ -469,108 +474,31 @@ process CheckData {
     """
 }
 
-// Repair Windows line endings in the RGTags file - the one thing step 0 CHANGES rather than
-// checks, and therefore the one thing that cannot be done once per run.
+// THE SAMPLE METADATA, AND WHAT IT HAS ALREADY DECIDED.
 //
-// A file saved from Excel on Windows ends every line with CR, which rides along into the last
-// field of each row: the header check in CheckRGTagsFile rejects 'PU\r' as an invalid tag,
-// and were it to get past that, the CR would end up inside the RG tag written into the BAM.
-// Neither failure names the real cause, so it is fixed here and said out loud.
+// Much smaller than the stage it replaces, because bin/parse_metadata.py now owns everything
+// that is a property of the FILE - unknown RG_ columns, duplicate SampleIDs, ragged rows,
+// half-set adapter pairs - and runs while the DAG is being built, before this exists. What is
+// left here is everything that needs the project rather than the file: whether the reads and
+// the rows describe the same samples, which rows merge into one pool, and whether the file has
+// been edited since the results that absorbed it were produced.
 //
-// KEYED ON THE PATH, NOT THE RUN. rgTagsFile is a parameter like any other, so a multi-run
-// table may point two runs at two different tables - or, far more usually, at the same one.
-// N runs repairing one file at the same time is a race on a user's own data, and the write is
-// `cat tmp > file` rather than an atomic rename, so a loser leaves it truncated. One task per
-// distinct path is both correct cases at once: shared file, one repair; separate files, one
-// each.
-//
-// It reports rather than fixing silently, and its report is folded into stage 4 below so the
-// output reads exactly as it did when the repair lived there.
-process RepairRGTagsLineEndings {
-    tag { repair.rgTagsPath }
-
-    input:
-    val repair
-
-    output:
-    tuple val(repair), path('rgtags_lineendings.txt'), emit: report
-
-    script:
-    rgTagsPath = repair.rgTagsPath
-    dir_log = checkLogDir(repair)
-    log_file = checkLogFile(repair, 's4_RepairRGTagsLineEndings')
-    """
-    REPORTFILE="rgtags_lineendings.txt"
-    : > \$REPORTFILE
-
-    log_message() {
-        echo "\$1" >> \$REPORTFILE
-        echo "\$1"
-    }
-
-    # A missing or unreadable file is stage 4's business, not this one's: it has the message
-    # for it, and reporting the same thing twice would put it in the report twice.
-    if [ ! -f "${rgTagsPath}" ]; then
-        exit 0
-    fi
-
-    # Detection and repair use the same expression, so a file that is reported as fixed really
-    # is fixed - a mismatch between the two would report it on every run.
-    if ! sed 's/\\r\$//' ${rgTagsPath} | cmp -s - ${rgTagsPath}; then
-        # A DRY RUN LEAVES THE USER'S OWN FILES ALONE. This is the only place step 0 writes to
-        # something the user wrote, so it is also the only place where "a preview changed my
-        # file" could be true. It is safe to skip because the stage that reads this table
-        # normalises its own copy before reading it, so the answers are the same either way.
-        if [ "${params.dryRun}" = "true" ]; then
-            log_message "RGTags file has Windows (CRLF) line endings - a real run repairs this in place"
-            log_message "RGTAGS LINE ENDING CHECK: PASS"
-        # Rewrite the file's contents rather than replacing the file. 'sed -i' swaps in a new
-        # inode and does not carry the mode across - it turned a 444 file into a 644 one in
-        # testing, quietly making a deliberately read-only RGTags file writable. Redirecting
-        # into the existing path keeps mode and ownership, and fails honestly when the file
-        # really is not writable.
-        elif sed 's/\\r\$//' ${rgTagsPath} > rgtags_norm.tmp && [ -s rgtags_norm.tmp ] &&
-             cat rgtags_norm.tmp > ${rgTagsPath} 2>/dev/null; then
-            log_message "RGTags file had Windows (CRLF) line endings - repaired in place"
-            log_message "RGTAGS LINE ENDING CHECK: FIXED"
-        else
-            log_message "RGTags file has Windows (CRLF) line endings and could not be rewritten"
-            log_message "Convert it yourself with:"
-            log_message "    sed -i 's/\\\\r\$//' ${rgTagsPath}"
-            log_message "RGTAGS LINE ENDING CHECK: FAIL"
-        fi
-    else
-        log_message "RGTAGS LINE ENDING CHECK: PASS"
-    fi
-
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/${log_file}
-    """
-}
-
-process CheckRGTagsFile {
+// The empty-value check went with the rest. It refused any blank cell, which was right when
+// every column was a read group tag and is wrong now: a blank RG_ cell omits that tag on
+// purpose, and a blank design column is just a blank.
+process CheckMetadataFile {
     tag { check.checkTag }
 
     input:
-    // `lineendings` is every repair report for the tables this group's members named - usually
-    // one, matched on the path rather than on arrival.
-    tuple val(check), val(verify), val(lineendings)
+    tuple val(check), val(verify)
 
     output:
     tuple val(check), path('verify_environment_stage4.txt'), emit: report
 
     script:
-    rgTagsFile = check.rgTagsPath
+    metadataFile = check.metadataPath
     dataDir = check.dataDir
     readPattern = findNameExpr(check.readPattern)
-    // Sorted rather than taken in arrival order: with more than one table the reports are
-    // concatenated into the stage's output, and a report whose lines move between invocations
-    // reads as a change that did not happen.
-    lineendingFiles = lineendings.collect { f -> "${f}".toString() }.sort().join(' ')
     // A sample ID is the part of a FASTQ name that precedes the mate token. Take that
     // token from readPattern rather than assuming _R1/_R2: step 2 keys every sample off
     // Channel.fromFilePairs, which derives the prefix from the glob and accepts any
@@ -593,13 +521,10 @@ process CheckRGTagsFile {
     // Strip the exact text the pattern says follows the sample name, one alternative at
     // a time. Literal, so it holds for non-numeric mates (_F/_R) too.
     stripMate = mateAlts.collect { alt -> 'base="${base%' + matePrefix + alt + mateTail + '}"' }.join('; ')
-    // Beside the results it describes: the baseline belongs in the directory holding the VCF
-    // whose column order it decided, which for a shared step is the group's rather than any one
-    // member's. Moving an existing project's baseline here is config_migrate.sh's job.
-    storedRg = check.storedRg
-    // FOUR ROOTS, NOT TWO, and all of them the producing variant's - see rgTagsChecks() for why
-    // each half of that matters. Permanent storage and the working volume both, because the
-    // branch below reads "no BAMs and no VCF" as "nothing has consumed the table yet" and
+    storedMeta = check.storedMeta
+    // FOUR ROOTS, NOT TWO, and all of them the producing variant's - see metadataChecks() for
+    // why each half of that matters. Permanent storage and the working volume both, because the
+    // branch below reads "no BAMs and no VCF" as "nothing has consumed the file yet" and
     // records a new baseline; and the variant's directories rather than a member's, because a
     // shared artifact is promoted to the group's directory and appears in no member's own.
     readyDirOut = check.readyOut
@@ -611,24 +536,49 @@ process CheckRGTagsFile {
     readyDir = check.readyOut
     tagDeleteBlock = check.tagDelete.collect { d -> "        log_message \"    ${d}\"" }.join('\n')
     orderDeleteBlock = check.orderDelete.collect { d -> "                log_message \"    ${d}\"" }.join('\n')
+    // The rows as the guard sees them, and the sample ids as the reads check compares them.
+    // Rendered here, from the parsed file, so the task never touches a CSV.
+    guardBlock = check.guardLines.join('\n')
+    idsBlock = check.sampleIds.join('\n')
+    poolBlock = check.pooled.isEmpty()
+        ? '    log_message "METADATA CHECK:        every sample is its own pool"'
+        : check.pooled.collect { entry ->
+              "    log_message \"METADATA CHECK:        ${entry.pool} is one column, pooling ${entry.ids.join(', ')}\"" }.join('\n')
+    // The one combination a per-sample adapter cannot be honoured in.
+    adapterBlock = (check.optionsPinned && !check.adapterOverrides.isEmpty())
+        ? (['    log_message "METADATA CHECK:        these samples set adapter1/adapter2, but this run pins"',
+            '    log_message "METADATA CHECK:        trim_galore.options outright, so the pinned string is used"',
+            '    log_message "METADATA CHECK:        verbatim and the per-sample adapters could not be applied:"'] +
+           check.adapterOverrides.collect { id -> "    log_message \"METADATA CHECK:            ${id}\"" } +
+           ['    log_message "METADATA CHECK:        Remove the pin, or remove the adapter columns."',
+            '    STATUS="FAIL"']).join('\n')
+        : '    :'
     dir_log = checkLogDir(check)
     // The file has always been named for the stage rather than for the process; kept, so that a
     // single run's log tree is the same tree it was.
-    log_file = checkLogFile(check, 's4_CheckRGTags')
+    log_file = checkLogFile(check, 's4_CheckMetadata')
 
     """
     REPORTFILE="verify_environment.txt"
     STATUS="PASS"
     DRY_RUN="${params.dryRun}"
-    
+
     # Function to write to both file and console
     log_message() {
         echo "\$1" >> \$REPORTFILE
         echo "\$1"
     }
 
-    # Define allowed tags array
-    allowed_tags=("ID" "PL" "PU" "LB" "SM" "CN" "DS" "DT" "FO")
+    # THE ROWS, AS THE PIPELINE READ THEM. Not the file: bin/parse_metadata.py parsed it once
+    # while the DAG was being built, and what arrives here is the projection the guard compares
+    # - read groups and the columns that change a number, never the design columns.
+    cat > current_metadata.txt <<'METADATA'
+${guardBlock}
+METADATA
+
+    cat > metadata_ids.txt <<'SAMPLEIDS'
+${idsBlock}
+SAMPLEIDS
 
     # Check previous verification
     if [ ! -f ${verify} ]; then
@@ -637,167 +587,86 @@ process CheckRGTagsFile {
     elif grep -q "FAIL" ${verify}; then
         log_message "Previous step failed"
         STATUS="FAIL"
-    elif [ ! -f "${rgTagsFile}" ]; then
-        log_message "RG tags file ${rgTagsFile} not found"
-        log_message "RGTAGS FILE CHECK:     FAIL"
+    elif [ ! -f "${metadataFile}" ]; then
+        log_message "Sample metadata file ${metadataFile} not found"
+        log_message "It says what your samples are: one row per pair of FASTQ files, with a"
+        log_message "SampleID column matching the sample names your reads give. Copy the"
+        log_message "template from the installation and edit it:"
+        log_message "    cp \\\$POOLSEQFLOW_HOME/metadata.csv.template ${metadataFile}"
+        log_message "METADATA FILE CHECK:   FAIL"
         STATUS="FAIL"
     else
-        log_message "RGTags file exists: ${rgTagsFile}"
-        log_message "RGTAGS FILE CHECK:     PASS"
+        log_message "Sample metadata file exists: ${metadataFile}"
+        log_message "METADATA FILE CHECK:   PASS"
 
-        # EVERY READ BELOW GOES THROUGH THIS COPY, not through the user's file.
+        # THE READS AND THE ROWS MUST DESCRIBE THE SAME SAMPLES.
         #
-        # The repair above rewrites their file for a real run and deliberately does not for a
-        # dry one, so this stage cannot assume it has happened - and without normalising here
-        # the first thing it does is read a header whose last field ends in a carriage return
-        # and report that tag as invalid, followed by a cascade of matching failures that are
-        # all the same stray byte. It should never have depended on another process having
-        # written to a shared file first; this makes the two independent.
-        sed 's/\\r\$//' ${rgTagsFile} > rgtags_read.csv
-
-        # The line-ending repair itself has been hoisted into RepairRGTagsLineEndings above,
-        # because it WRITES to a file that several runs share. What arrives here is its
-        # report, folded in at the point the messages used to be produced so that the stage
-        # reads exactly as it did before, and re-read for FAIL so that an unrepairable file
-        # still fails the stage that owns the RGTags verdict.
-        cat ${lineendingFiles} | tee -a \$REPORTFILE
-        if grep -q "RGTAGS LINE ENDING CHECK: FAIL" ${lineendingFiles}; then
+        # Derived from readPattern rather than assumed, because step 2 derives it that way and
+        # two implementations of one rule is how they come to disagree.
+        if [ "${hasMateGroup}" != "true" ]; then
+            sample_ids=""
+            log_message "readPattern '${check.readPattern}' has no {1,2} mate group, so sample IDs cannot be derived"
+            log_message "Give both mates in one pattern, e.g. '*_R{1,2}.fq.gz'"
+            log_message "METADATA SAMPLE MATCH: FAIL"
             STATUS="FAIL"
-        fi
-
-        # Get header and validate format
-        header=\$(head -n 1 rgtags_read.csv)
-        IFS=',' read -ra HEADER <<< "\$header"
-
-        # Check for invalid tags
-        for tag in "\${HEADER[@]}"; do
-            valid=0
-            for allowed in "\${allowed_tags[@]}"; do
-                if [ "\$tag" = "\$allowed" ]; then
-                    valid=1
-                    break
-                fi
-            done
-            if [ \$valid -eq 0 ]; then
-                log_message "Invalid tag '\$tag' found in header"
-                log_message "RGTAGS VALID TAGS CHECK: FAIL" 
-                STATUS="FAIL"
-            fi
-        done
-
-        # Find ID column position
-        id_col=\$(echo "\$header" | tr ',' '\\n' | grep -n "^ID\$" | cut -d: -f1)
-        if [ -z "\$id_col" ]; then
-            log_message "No ID column found in ${rgTagsFile}"
-            log_message "RGTAGS ID COLUMN CHECK: FAIL"
+        elif [ "${mateSeparated}" != "true" ]; then
+            sample_ids=""
+            log_message "readPattern '${check.readPattern}' runs the mate token straight onto the sample name"
+            log_message "Sample IDs would be ambiguous: 'Sample11' and 'Sample12' read equally well as"
+            log_message "one sample's two mates or as two separate samples."
+            log_message "Separate the mate token with '_', '.' or '-', e.g. '*_R{1,2}.fq.gz' or '*_{1,2}.fq.gz'"
+            log_message "METADATA SAMPLE MATCH: FAIL"
             STATUS="FAIL"
         else
-            log_message "ID column found at position \$id_col"
-            log_message "RGTAGS ID COLUMN CHECK: PASS"
+            sample_ids=\$(find ${dataDir} ${readPattern} | while read -r fq; do
+                base=\$(basename "\$fq")
+                ${stripMate}
+                echo "\$base"
+            done | sort -u)
 
-            # Every ID must be unique. Step 4 looks its row up by ID and reads only the
-            # first line of the result, so a repeated ID means the later rows are dropped
-            # without a word and the sample silently takes the first row's tags. Nothing
-            # downstream can detect that, because the resulting BAM is perfectly valid.
-            dup_ids=\$(awk -F',' -v col=\$id_col '
-                NR > 1 && \$col != "" { seen[\$col]++ }
-                END { for (id in seen) if (seen[id] > 1) printf "  %s (%d rows)\\n", id, seen[id] }
-            ' rgtags_read.csv | sort)
-            if [ -n "\$dup_ids" ]; then
-                log_message "Duplicate ID values in ${rgTagsFile}:"
-                echo "\$dup_ids" | tee -a \$REPORTFILE
-                log_message "Each ID must appear once. Only the first row of a repeated ID is"
-                log_message "used, so the rest would be discarded without any error."
-                log_message "RGTAGS UNIQUE ID CHECK: FAIL"
-                STATUS="FAIL"
-            else
-                log_message "RGTAGS UNIQUE ID CHECK: PASS"
-            fi
-
-            # Get sample IDs from data directory
-            if [ "${hasMateGroup}" != "true" ]; then
-                sample_ids=""
-                log_message "readPattern '${check.readPattern}' has no {1,2} mate group, so sample IDs cannot be derived"
-                log_message "Give both mates in one pattern, e.g. '*_R{1,2}.fq.gz'"
-                log_message "RGTAGS SAMPLE MATCH CHECK: FAIL"
-                STATUS="FAIL"
-            elif [ "${mateSeparated}" != "true" ]; then
-                sample_ids=""
-                log_message "readPattern '${check.readPattern}' runs the mate token straight onto the sample name"
-                log_message "Sample IDs would be ambiguous: 'Sample11' and 'Sample12' read equally well as"
-                log_message "one sample's two mates or as two separate samples."
-                log_message "Separate the mate token with '_', '.' or '-', e.g. '*_R{1,2}.fq.gz' or '*_{1,2}.fq.gz'"
-                log_message "RGTAGS SAMPLE MATCH CHECK: FAIL"
-                STATUS="FAIL"
-            else
-                sample_ids=\$(find ${dataDir} ${readPattern} | while read -r fq; do
-                    base=\$(basename "\$fq")
-                    ${stripMate}
-                    echo "\$base"
-                done | sort -u)
-            fi
-
-            # Every row must carry as many columns as the header. The empty-value loop
-            # below bounds on NF, which is the row's own field count, so a short row
-            # passes it and then loses that tag silently in step 4. A missing middle
-            # column is worse: every later value shifts one tag left, so the wrong tags
-            # are written rather than merely absent ones.
-            column_report=\$(awk -F',' '
-            NR == 1 { ncol = NF; next }
-            NF == 0 { next }
-            NF != ncol {
-                printf "Row %d has %d column(s), the header has %d\\n", NR, NF, ncol
-                exit 1
-            }' rgtags_read.csv) || {
-                log_message "\$column_report"
-                log_message "Every row needs one value per header column, in the same order."
-                log_message "RGTAGS COLUMN COUNT CHECK: FAIL"
-                STATUS="FAIL"
-            }
-
-            # Check all rows for empty values
-            empty_report=\$(awk -F',' '
-            NR == 1 { for (i=1; i<=NF; i++) header[i] = \$i; next }
-            {
-                for (i=1; i<=NF; i++) {
-                    if (length(\$i) == 0 || \$i ~ /^[[:space:]]*\$/) {
-                        printf "Empty value found in row %d, column %d (%s)\\n", NR, i, header[i]
-                        exit 1
-                    }
-                }
-            }' rgtags_read.csv) || {
-                log_message "\$empty_report"
-                log_message "RGTAGS EMPTY VALUES CHECK: FAIL"
-                STATUS="FAIL"
-            }
-
-            # Check if all samples have RG tags
+            MATCHED="yes"
+            # Reads with no row: a hard failure. Step 4 would have no read group to write.
             for sample in \$sample_ids; do
-                sample_in_rg=\$(awk -F',' -v col=\$id_col -v sample=\$sample '\$col == sample {print "1"}' rgtags_read.csv)
-                if [ -z "\$sample_in_rg" ]; then
-                    log_message "Sample '\$sample' not found in RG tags file"
-                    log_message "RGTAGS SAMPLE MATCH CHECK: FAIL"
-                    STATUS="FAIL"
+                if ! grep -qxF "\$sample" metadata_ids.txt; then
+                    log_message "Sample '\$sample' has reads but no row in ${metadataFile}"
+                    MATCHED="no"
                 fi
             done
+            if [ "\$MATCHED" = "no" ]; then
+                log_message "METADATA SAMPLE MATCH: FAIL"
+                STATUS="FAIL"
+            else
+                log_message "METADATA SAMPLE MATCH: PASS"
+            fi
+
+            # A row with no reads is the other direction, and it is NOT a failure: a table
+            # kept ahead of the data is a reasonable thing to have. It is said out loud
+            # because the row still counts - it is part of what decides whether two runs
+            # share step 6 - and because it is usually a typo in a sample name.
+            printf '%s\\n' \$sample_ids > read_ids.txt
+            while IFS= read -r row_id; do
+                [ -n "\$row_id" ] || continue
+                if ! grep -qxF "\$row_id" read_ids.txt; then
+                    log_message "NOTE: ${metadataFile} has a row for '\$row_id', which has no reads in ${dataDir}"
+                fi
+            done < metadata_ids.txt
         fi
 
-        # Detect edits made after the file was already consumed. Step 4 bakes the tags
-        # into each BAM with 'samtools addreplacerg', and the row order sets the sample
-        # column order of the VCF in step 6. Neither is re-derived once its output
-        # exists, so an edit after that point leaves the results describing a version of
-        # this file that is no longer on disk - silently, because completed steps are
-        # skipped by looking for output files rather than by checking what produced them.
-        #
-        # Normalise line endings and trailing blanks before comparing, but never the row
-        # order: that is significant now, and sorting it away would hide a real change.
-        sed -e 's/[[:space:]]*\$//' -e '/^\$/d' rgtags_read.csv > current_rgtags.csv
+        # WHICH ROWS BECOME ONE COLUMN. bcftools names VCF sample columns by SM, so rows that
+        # share an RG_Sample are pooled - their reads merged and their depths added. Stated
+        # before any compute is spent, because it changes what the numbers MEAN and nothing
+        # downstream can tell you it was not what you wanted.
+${poolBlock}
 
-        # The two things that consume this file have different lifetimes, so ask about
-        # each separately. The tag values live in the cleaned BAMs; the row order lives in
-        # the VCF and nowhere else. A change only matters while the thing that absorbed it
-        # is still on disk - which is what makes the recovery below terminate: delete that
-        # output and the same edit stops being a change and becomes the new baseline.
+${adapterBlock}
+
+        # Detect edits made after the file was already consumed. Step 4 bakes the read group
+        # into each BAM, and the row order sets the sample column order of the VCF in step 6.
+        # Neither is re-derived once its output exists, so an edit after that point leaves the
+        # results describing a version of this file that is no longer on disk - silently,
+        # because completed steps are skipped by looking for output files rather than by
+        # checking what produced them.
+        #
         # Test each candidate separately: 'ls a b' reports failure when either operand is
         # missing, so a single ls over two globs would call an existing VCF absent.
         any_exists() {
@@ -810,86 +679,88 @@ process CheckRGTagsFile {
         HAVE_VCF=0;  any_exists ${vcfDirOut}/*.vcf ${vcfDirOut}/*.vcf.gz \\
                                 ${vcfDirWork}/*.vcf ${vcfDirWork}/*.vcf.gz && HAVE_VCF=1
 
-        # A dry run never records a baseline. This is the only writer, so guarding it here
-        # covers both branches that call it - and it is a guard rather than a caller-side
-        # check because the two callers are the two branches where a preview is most tempting
-        # to treat as a real run: nothing has consumed the file yet, so recording "costs
-        # nothing". It costs the next real run its baseline.
         # Every message about the baseline is written in this verb, so a dry run cannot
         # report having recorded something it did not write.
         RGVERB="Recording"
         if [ "\$DRY_RUN" = "true" ]; then RGVERB="Would record"; fi
 
+        # A dry run never records a baseline. This is the only writer, so guarding it here
+        # covers both branches that call it - and it is a guard rather than a caller-side
+        # check because the two callers are the two branches where a preview is most tempting
+        # to treat as a real run: nothing has consumed the file yet, so recording "costs
+        # nothing". It costs the next real run its baseline.
         record_baseline() {
             if [ "\$DRY_RUN" = "true" ]; then return 0; fi
-            mkdir -p "\$(dirname "${storedRg}")"
-            cp current_rgtags.csv "${storedRg}"
+            mkdir -p "\$(dirname "${storedMeta}")"
+            cp current_metadata.txt "${storedMeta}"
         }
 
         if [ "\$HAVE_BAMS" -eq 0 ] && [ "\$HAVE_VCF" -eq 0 ]; then
             # Nothing has consumed the file yet, so an edit costs nothing. Record it.
             record_baseline
-            log_message "\$RGVERB the RGTags baseline - nothing has consumed the file yet"
-            log_message "RGTAGS CHANGE CHECK:   PASS"
-        elif [ ! -f "${storedRg}" ]; then
+            log_message "\$RGVERB the metadata baseline - nothing has consumed the file yet"
+            log_message "METADATA CHANGE CHECK: PASS"
+        elif [ ! -f "${storedMeta}" ]; then
             # Outputs from before this check existed. There is no baseline to compare
             # against and no way to reconstruct one, so adopt the current file and say so.
             record_baseline
             log_message "Cleaned BAMs exist but predate this check - no baseline to compare"
-            log_message "\$RGVERB the current RGTags file as the baseline"
+            log_message "\$RGVERB the current metadata as the baseline"
             log_message "Verify it still matches what is in the BAMs:"
             log_message "    ${check.samtools} view -H ${readyDir}/<sample>_ready.bam | grep '^@RG'"
-            log_message "RGTAGS CHANGE CHECK:   PASS"
-        elif diff -q "${storedRg}" current_rgtags.csv > /dev/null 2>&1; then
-            log_message "RGTags file unchanged since the existing outputs were produced"
-            log_message "RGTAGS CHANGE CHECK:   PASS"
-        elif [ "\$(sort "${storedRg}")" = "\$(sort current_rgtags.csv)" ]; then
-            # Same rows, different order. The tags in the BAMs are matched by ID rather
+            log_message "METADATA CHANGE CHECK: PASS"
+        elif diff -q "${storedMeta}" current_metadata.txt > /dev/null 2>&1; then
+            log_message "Sample metadata unchanged since the existing outputs were produced"
+            log_message "METADATA CHANGE CHECK: PASS"
+        elif [ "\$(sort "${storedMeta}")" = "\$(sort current_metadata.txt)" ]; then
+            # Same rows, different order. The read groups in the BAMs are matched by ID rather
             # than by position, so they are untouched; only the VCF column order is wrong.
             if [ "\$HAVE_VCF" -eq 0 ]; then
                 record_baseline
-                log_message "RGTags row order changed, but no VCF exists to have used it"
+                log_message "Row order changed, but no VCF exists to have used it"
                 log_message "\$RGVERB the new order as the baseline"
-                log_message "RGTAGS CHANGE CHECK:   PASS"
+                log_message "METADATA CHANGE CHECK: PASS"
             else
                 # Report this as two orderings - a line diff of a permutation shows the
                 # same text as both removed and added, which reads as nonsense.
-                id_list() { awk -F',' -v c="\$id_col" 'NR>1 { printf "%s%s", sep, \$c; sep=", " }' "\$1"; }
-                log_message "RGTags row order has CHANGED since the existing outputs were produced:"
+                id_list() { awk -F'\\t' '{ printf "%s%s", sep, \$1; sep=", " }' "\$1"; }
+                log_message "Row order has CHANGED since the existing outputs were produced:"
                 log_message ""
-                log_message "  was  \$(id_list "${storedRg}")"
-                log_message "  now  \$(id_list current_rgtags.csv)"
+                log_message "  was  \$(id_list "${storedMeta}")"
+                log_message "  now  \$(id_list current_metadata.txt)"
                 log_message ""
-                log_message "The tags in the BAMs are matched by ID and are still correct, but"
-                log_message "the VCF sample column order is not."
+                log_message "The read groups in the BAMs are matched by ID and are still correct,"
+                log_message "but the VCF sample column order is not."
                 log_message "Delete these and run again to apply it:"
 ${orderDeleteBlock}
                 log_message "Or discard the whole analysis and start over:  ./PoolSeqFlow reset"
-                log_message "RGTAGS CHANGE CHECK:   FAIL"
+                log_message "METADATA CHANGE CHECK: FAIL"
                 STATUS="FAIL"
             fi
         else
-            log_message "RGTags file has CHANGED since the existing outputs were produced:"
+            log_message "Sample metadata has CHANGED since the existing outputs were produced:"
             log_message ""
             while IFS= read -r line; do
                 case "\$line" in
                     '<'*) printf '  was  %s\\n' "\${line#< }" | tee -a \$REPORTFILE ;;
                     '>'*) printf '  now  %s\\n' "\${line#> }" | tee -a \$REPORTFILE ;;
                 esac
-            done < <(diff "${storedRg}" current_rgtags.csv | grep -E '^[<>]')
+            done < <(diff "${storedMeta}" current_metadata.txt | grep -E '^[<>]')
             log_message ""
-            log_message "Tag values changed. Every BAM in"
+            log_message "Read group or adapter values changed. Every BAM in"
             log_message "    ${readyDir}"
-            log_message "carries the old tags, and everything called from them carries them too."
+            log_message "carries the old ones, and everything called from them carries them too."
+            log_message "Columns you added of your own are not compared, so this is a change to"
+            log_message "something the pipeline acted on."
             log_message "Delete these and run again to apply it:"
 ${tagDeleteBlock}
             log_message "Or discard the whole analysis and start over:  ./PoolSeqFlow reset"
-            log_message "RGTAGS CHANGE CHECK:   FAIL"
+            log_message "METADATA CHANGE CHECK: FAIL"
             STATUS="FAIL"
         fi
     fi
 
-    log_message "RGTAGS VERIFICATION:    STATUS=\$STATUS"
+    log_message "METADATA VERIFICATION:  STATUS=\$STATUS"
     mv \$REPORTFILE verify_environment_stage4.txt
 
     mkdir -p ${dir_log}
@@ -1598,7 +1469,7 @@ process VerifyAll {
     // broadcast to every task of this process, which is the behaviour that is wanted for a
     // check that ran once for the whole invocation.
     tuple val(run), val(reference_log), val(gffFile_log), val(dataSource_log),
-          val(rgtags_log), val(trim_log), val(directory_log)
+          val(metadata_log), val(trim_log), val(directory_log)
     val software_log
     val runparam_log
     val multirun_log
@@ -1641,7 +1512,7 @@ process VerifyAll {
     log_message "========================================================================="
     log_message ""
 
-    cat ${reference_log} ${gffFile_log} ${dataSource_log} ${rgtags_log} ${software_log} ${trim_log} ${runparam_log} ${directory_log} ${multirun_log} | tee -a \$REPORTFILE
+    cat ${reference_log} ${gffFile_log} ${dataSource_log} ${metadata_log} ${software_log} ${trim_log} ${runparam_log} ${directory_log} ${multirun_log} | tee -a \$REPORTFILE
     log_message ""
     log_message "========================================================================="
 
@@ -1701,28 +1572,18 @@ workflow VerifyEnvironment {
     // two files the user wrote, not anything a run resolved for itself.
     CheckRunParameters(channel.value(analysisParams(params).join('\n')))
 
-    // Every distinct RGTags table, repaired once. Keyed on the PATH and on nothing else - see
-    // rgTagsRepairs() - because this stage writes to the user's own file.
-    RepairRGTagsLineEndings(context.flatMap { ctx -> rgTagsRepairs(ctx.runs) })
-
-    // The RGTags change guard, one task per step-6 variant. It needs two things matched onto it
-    // rather than computed: this group's CheckData verdict, and the repair report of every
-    // distinct table its members named.
+    // The metadata check, one task per step-6 variant. It needs one thing matched onto it
+    // rather than computed - this group's CheckData verdict - and nothing else: the file has
+    // already been parsed, and the rows travel in the run map.
     //
-    // groupKey carries the number of tables with the key, so a group is released as soon as ITS
-    // repairs are in rather than when the repair channel closes.
-    rgtags_reports = RepairRGTagsLineEndings.out.report.map { repair, report -> tuple(repair.rgTagsPath, report) }
-    CheckRGTagsFile(
-        context.flatMap { ctx -> rgTagsChecks(ctx.plan, ctx.runs) }
+    // The repair stage that used to sit here is gone. It existed because three consumers read
+    // the raw bytes, and none of them does now; a dedicated stage that rewrote a file the user
+    // wrote was the price of that, and there is nothing left to pay it for.
+    CheckMetadataFile(
+        context.flatMap { ctx -> metadataChecks(ctx.plan) }
             .map { item -> tuple(item.dataKey, item) }
             .combine(CheckData.out.report.map { check, report -> tuple(check.checkKey, report) }, by: 0)
-            .flatMap { _key, item, verify ->
-                item.rgTagsPaths.collect { path ->
-                    tuple(path, groupKey(item.checkKey, item.rgTagsPaths.size()), item, verify) } }
-            .combine(rgtags_reports, by: 0)
-            .map { _path, gate, item, verify, lineending -> tuple(gate, item, verify, lineending) }
-            .groupTuple(by: 0)
-            .map { _gate, items, verifies, lineendings -> tuple(items[0], verifies[0], lineendings) })
+            .map { _key, item, verify -> tuple(item, verify) })
 
     // The two stages that describe the invocation rather than a run. Both emit value
     // channels, which is what lets one report reach every run's VerifyAll.
@@ -1744,15 +1605,15 @@ workflow VerifyEnvironment {
         .mix(reportPerRun(runs.filter { run -> !run.annotate }, SkipGFFCheck.out.report, 'SkipGFFCheck'))
     // The two keyed by the analysis rather than by a parameter list, so their keys come from it
     // too - the step-6 variant a run belongs to, and the results directories it is a member of.
-    rgtags_by_run = context
+    metadata_by_run = context
         .flatMap { ctx -> ctx.runs.collect { run -> tuple(variantForRun(ctx.plan, run, 6).variantKey, run) } }
-        .combine(CheckRGTagsFile.out.report.map { check, report -> tuple(check.checkKey, report) }, by: 0)
+        .combine(CheckMetadataFile.out.report.map { check, report -> tuple(check.checkKey, report) }, by: 0)
         .map { _key, run, report -> tuple(run, report) }
     VerifyAll(
         reportPerRun(runs, CheckReference.out.report, 'CheckReference')
             .join(gff_by_run, by: 0)
             .join(data_by_run, by: 0)
-            .join(rgtags_by_run, by: 0)
+            .join(metadata_by_run, by: 0)
             .join(reportPerRun(runs, CheckTrimParameters.out.report, 'CheckTrimParameters'), by: 0)
             .join(reportPerRun(runs, CheckDirectories.out.report, 'CheckDirectories'), by: 0),
         CheckInstalledSoftware.out.report,

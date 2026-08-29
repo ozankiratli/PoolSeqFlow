@@ -62,7 +62,7 @@ test_release_archive_carries_the_runtime() {
     [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
     local needed
     for needed in "poolseqflow.nf" "nextflow.config" "parameters.config.template" \
-                  "PoolSeqFlow" "RGTags.csv.template" "scripts/" "bin/" "install/"; do
+                  "PoolSeqFlow" "metadata.csv.template" "scripts/" "bin/" "install/"; do
         assert_contains "$listing" "$needed" "release tarball must carry $needed"
     done
 }
@@ -178,6 +178,24 @@ test_every_process_logs_into_its_workflows_own_directory() {
         "a log directory should be the workflow's own, with nothing nested below it"
 }
 
+# The read group tag table exists twice, and has to: bin/parse_metadata.py refuses an unknown
+# RG_ column before anything runs, and scripts/metadata.nf renders the tag into the BAM header.
+# Neither side can do the other's job from where it sits.
+#
+# So they are checked instead. A tag added to one and not the other would be a column that
+# validates and then silently vanishes from every read group - or one that is refused despite
+# being rendered - and both failures are invisible until someone reads a BAM header.
+test_the_read_group_tag_table_is_the_same_on_both_sides() {
+    local python_side groovy_side
+    python_side=$(sed -n '/^RG_TAGS = {/,/^}/p' "$REPO_ROOT/bin/parse_metadata.py" \
+                  | sed -n 's/.*"\(RG_[A-Za-z]*\)": "\([A-Z][A-Z]\)".*/\1=\2/p' | sort)
+    groovy_side=$(sed -n "/^def rgTagMap()/,/^}/p" "$REPO_ROOT/scripts/metadata.nf" \
+                  | sed -n "s/.*'\(RG_[A-Za-z]*\)' *: *'\([A-Z][A-Z]\)'.*/\1=\2/p" | sort)
+    [ -n "$python_side" ] || { fail_case "could not read RG_TAGS out of bin/parse_metadata.py"; return; }
+    assert_eq "$python_side" "$groovy_side" \
+        "the parser and the pipeline should accept the same read group tags"
+}
+
 test_fixture_generator_is_deterministic() {
     local out
     out="$TEST_TMPDIR/fixture-determinism"
@@ -213,7 +231,7 @@ test_step_parameter_map_covers_what_each_step_reads() {
     # Read by a step but represented in the map by something other than its own name. Each of
     # these is a path into a directory step 1 writes, or a file step 0 repairs, so what decides
     # sharing is the identity of what is found there rather than the string itself.
-    local indirect='^(reference|referenceFa|referenceFile|referencePath|gff|gffFile|gffPath|rgTagsPath|snpEff\.db)$'
+    local indirect='^(reference|referenceFa|referenceFile|referencePath|gff|gffFile|gffPath|metadataPath|snpEff\.db)$'
 
     for step in 2 3 4 5 6 7 8; do
         file=$(ls "$REPO_ROOT"/scripts/${step}_*.nf 2>/dev/null | head -1)

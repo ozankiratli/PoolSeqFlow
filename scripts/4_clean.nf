@@ -2,6 +2,9 @@
 // been produced by a variant with a coarser working root than its own, so the list comes
 // from the divergence analysis rather than being spelled out here.
 include { searchRoots } from './variants.nf'
+// The read group line, assembled from the parsed metadata rather than from the file. See
+// scripts/metadata.nf for why this stage no longer reads a CSV at all.
+include { rgTagString } from './metadata.nf'
 
 process SortCleanBam {
     tag { run.runId ? "${run.runId}:${pair_id}" : pair_id }
@@ -25,7 +28,14 @@ process SortCleanBam {
     target_folder_ready = "${run.dir.utilized}/${rel_ready}"
     target_bam_ready = "${target_folder_ready}/${target_bam}"
     target_bai_ready = "${target_folder_ready}/${target_bai}"
-    rgTagsFile = run.rgTagsPath
+    // Rendered while the DAG is built, from the rows resolveParameters() parsed once.
+    //
+    // This used to be assembled in the shell below: read the header, find the ID column, awk
+    // out the row, and project EVERY non-empty field as a tag. That worked only while every
+    // column WAS a tag - the metadata file's design columns would have gone into the BAM
+    // header as invented tags. It also split on commas, so a description containing one was
+    // already being cut in half.
+    rg_string = rgTagString(run, "${pair_id}".toString())
 
     dir_log = "${run.dir.logs}/4_clean"
 
@@ -58,21 +68,7 @@ process SortCleanBam {
     else
         echo "SORT AND CLEAN BAM ${pair_id}: Processing BAM file..."
 
-        echo "SORT AND CLEAN BAM ${pair_id}: Preparing RG Tags string..."
-        echo "SORT AND CLEAN BAM ${pair_id}: Getting RG Tags from CSV..."
-        header=\$(head -n 1 ${rgTagsFile})
-        id_col=\$(echo "\$header" | tr ',' '\\n' | grep -n "^ID\$" | cut -d: -f1)
-        tags=\$(awk -F ',' '\$'"\$id_col"'=="'${pair_id}'" {print \$0}' ${rgTagsFile})
-
-        echo "SORT AND CLEAN BAM ${pair_id}: Getting RG Tags from CSV..."
-        IFS=',' read -ra HEADER <<< "\$header"
-        IFS=',' read -ra VALUES <<< "\$tags"
-        rg_string="@RG"
-        for i in "\${!HEADER[@]}"; do
-            if [ -n "\${VALUES[i]}" ]; then
-                rg_string="\$rg_string\\t\${HEADER[i]}:\${VALUES[i]}"
-            fi
-        done
+        rg_string="${rg_string}"
         echo "SORT AND CLEAN BAM ${pair_id}: RG Tags string is: \$rg_string"
 
         echo "SORT AND CLEAN BAM ${pair_id}: Pipeline to clean BAM:"

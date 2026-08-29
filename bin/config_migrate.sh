@@ -189,7 +189,7 @@ show DROPPED  "No longer used - dropped"                      "  %-30s was %s%s\
 # --- inputs that have to move ---------------------------------------------------------
 #
 # 3.0 puts the project's own files on mainDir. Before it, every dir.* entry resolved to
-# storageDir, so that is where an existing project keeps its reads, reference and RGTags.csv.
+# storageDir, so that is where an existing project keeps its reads, reference and metadata.
 # The config migrates automatically; the files cannot. They are large, they are the user's,
 # and moving them is not a decision a config tool should take on its own - so this detects
 # and reports, and never performs.
@@ -210,7 +210,10 @@ NEW_MAIN=$(cfg_value "$OUT" mainDir)
 DATASRC=$(cfg_value "$OUT" dataSource)
 REFFILE=$(cfg_value "$OUT" referenceFile)
 GFFFILE=$(cfg_value "$OUT" gffFile)
-RGFILE=$(cfg_value "$OUT" rgTagsFile)
+# Read from the OLD config, not the migrated one: a project this branch applies to predates
+# metadata.csv entirely, so its sample file is whatever rgTagsFile named. The file still has to
+# be moved - and then rewritten by hand into the new schema, which the report below says.
+RGFILE=$(cfg_value "$BAK" rgTagsFile)
 
 MOVES=()
 if [ -n "$OLD_STORE" ] && [ -n "$NEW_MAIN" ]; then
@@ -241,7 +244,8 @@ fi
 NEW_STORE=$(cfg_value "$OUT" storageDir)
 GUARD_MOVES=()
 if [ -n "$OLD_STORE" ] && [ -n "$NEW_STORE" ]; then
-    for f in .poolseqflow_params .poolseqflow_rgtags .poolseqflow_versions .poolseqflow_version; do
+    for f in .poolseqflow_params .poolseqflow_rgtags .poolseqflow_metadata \
+             .poolseqflow_versions .poolseqflow_version; do
         if [ -f "$OLD_STORE/$f" ] && [ ! -f "$NEW_STORE/Output/$f" ]; then
             GUARD_MOVES+=("mv $OLD_STORE/$f $NEW_STORE/Output/")
         fi

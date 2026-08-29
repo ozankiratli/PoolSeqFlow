@@ -47,8 +47,8 @@ def rows_of(path):
     out = []
     with open(path, newline="", encoding="utf-8") as handle:
         for lineno, raw in enumerate(handle, start=1):
-            # Tolerate CRLF without rewriting the file. CheckRGTagsFile repairs line endings
-            # in the user's RGTags.csv in place; that is a wart worth not repeating.
+            # Tolerate CRLF without rewriting the file. Step 0 used to repair line endings
+            # in the user's RGTags.csv in place; that wart is gone, and this is why.
             stripped = raw.strip("\r\n").strip()
             if not stripped or stripped.startswith("#"):
                 continue

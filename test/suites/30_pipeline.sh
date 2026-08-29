@@ -50,14 +50,17 @@ test_every_step_produces_its_outputs() {
     [ -d "$o/Reports/Coverage" ] || fail_case "step 5 should leave coverage reports"
 }
 
-# One column per sample, in the order RGTags.csv lists them. `.collect()` alone emits in
+# One column per sample, in the order metadata.csv lists them. `.collect()` alone emits in
 # task-completion order, which would vary between runs.
-test_frequency_table_columns_follow_the_rgtags_order() {
+test_frequency_table_columns_follow_the_metadata_order() {
     needs_run || return
     local header expected
     header=$(head -1 "$PIPELINE_SB/store/Output/Frequencies/Test_snp_freq.tsv" | cut -f6-)
-    expected=$(tail -n +2 "$PIPELINE_SB/main/RGTags.csv" | cut -d, -f1 | tr '\n' '\t' | sed 's/\t$//')
-    assert_eq "$expected" "$header" "sample columns should match RGTags row order"
+    # The VCF names its columns by RG_Sample, not by SampleID: rows sharing a pool become one
+    # column. The fixture gives every sample its own pool, so the two lists coincide here -
+    # and the pooled case has a test of its own.
+    expected=$(tail -n +2 "$PIPELINE_SB/main/metadata.csv" | cut -d, -f2 | tr '\n' '\t' | sed 's/\t$//')
+    assert_eq "$expected" "$header" "sample columns should match the metadata row order"
 }
 
 # Every frequency must be a proportion. A value outside [0,1] means the allele counts and
@@ -96,7 +99,7 @@ test_sites_planted_absent_stay_absent() {
     # common - so looking only at column 6 found nothing to test.
     #
     # Both files carry the samples in the same column order (5 fixed columns, then one per
-    # sample); the rgtags-order case above is what holds the frequency table to it.
+    # sample); the metadata-order case above is what holds the frequency table to it.
     report=$(awk -F'\t' '
         FNR == NR {
             if (FNR > 1 && $3 == "snp") {
@@ -338,7 +341,7 @@ test_min_length_above_the_computed_limit_fails_loudly() {
     sb=$(make_pipeline_sandbox "minlen")
     # Two samples are enough, and the run stops at step 2 anyway.
     rm -f "$sb"/main/Data/TestSample[3-9]_R*.fq.gz
-    grep -v -E '^TestSample[3-9],' "$sb/main/RGTags.csv" > "$sb/main/rg" && mv "$sb/main/rg" "$sb/main/RGTags.csv"
+    grep -v -E '^TestSample[3-9],' "$sb/main/metadata.csv" > "$sb/main/rg" && mv "$sb/main/rg" "$sb/main/metadata.csv"
     write_sandbox_config "$sb" 's|^        options        = ""|        options        = "-m 200"|'
     status=$(run_pipeline "$sb")
     out=$(cat "$sb/run.out")
@@ -355,7 +358,7 @@ test_a_legitimate_min_length_still_runs() {
     local sb status
     sb=$(make_pipeline_sandbox "minlen-ok")
     rm -f "$sb"/main/Data/TestSample[3-9]_R*.fq.gz
-    grep -v -E '^TestSample[3-9],' "$sb/main/RGTags.csv" > "$sb/main/rg" && mv "$sb/main/rg" "$sb/main/RGTags.csv"
+    grep -v -E '^TestSample[3-9],' "$sb/main/metadata.csv" > "$sb/main/rg" && mv "$sb/main/rg" "$sb/main/metadata.csv"
     write_sandbox_config "$sb" 's|^        options        = ""|        options        = "-m 50"|'
     status=$(run_pipeline "$sb")
     assert_status 0 "$status" "a minimum below the computed limit should run normally"
@@ -375,7 +378,7 @@ test_a_legitimate_min_length_still_runs() {
 test_trimmed_reads_are_promoted_after_alignment() {
     needs_run || return
     local s stored left
-    for s in $(cut -d, -f1 "$PIPELINE_SB/main/RGTags.csv" | tail -n +2); do
+    for s in $(cut -d, -f1 "$PIPELINE_SB/main/metadata.csv" | tail -n +2); do
         stored="$PIPELINE_SB/store/Output/Trimmed/$s"
         assert_file "$stored/${s}_R1_clipped.fq.gz" "$s R1 should reach permanent storage"
         assert_file "$stored/${s}_R2_clipped.fq.gz" "$s R2 should reach permanent storage"
@@ -460,7 +463,7 @@ test_step_2_finds_its_clipped_reads_in_either_root() {
 test_aligned_bams_are_promoted_after_cleaning() {
     needs_run || return
     local s left
-    for s in $(cut -d, -f1 "$PIPELINE_SB/main/RGTags.csv" | tail -n +2); do
+    for s in $(cut -d, -f1 "$PIPELINE_SB/main/metadata.csv" | tail -n +2); do
         assert_file "$PIPELINE_SB/store/Output/Aligned/${s}_aligned.bam" \
             "$s should reach permanent storage"
     done
@@ -478,7 +481,7 @@ test_aligned_bams_are_promoted_after_cleaning() {
 test_fastqc_zips_are_promoted_but_htmls_go_straight_to_storage() {
     needs_run || return
     local s d left
-    for s in $(cut -d, -f1 "$PIPELINE_SB/main/RGTags.csv" | tail -n +2); do
+    for s in $(cut -d, -f1 "$PIPELINE_SB/main/metadata.csv" | tail -n +2); do
         d="$PIPELINE_SB/store/Output/Reports/Fastqc/$s"
         assert_file "$d/${s}_val_1_fastqc.zip"  "$s R1 zip should reach permanent storage"
         assert_file "$d/${s}_val_2_fastqc.zip"  "$s R2 zip should reach permanent storage"
@@ -512,7 +515,7 @@ test_a_missing_index_is_not_treated_as_a_finished_bam() {
     rm -f "$sb/run.out"
     write_sandbox_config "$sb"
 
-    sample=$(cut -d, -f1 "$sb/main/RGTags.csv" | tail -n +2 | head -1)
+    sample=$(cut -d, -f1 "$sb/main/metadata.csv" | tail -n +2 | head -1)
     rm -f "$sb/store/Output/Ready/${sample}_ready.bam.bai"
     assert_file "$sb/store/Output/Ready/${sample}_ready.bam" "the BAM itself should still be there"
 
@@ -531,7 +534,7 @@ test_a_missing_index_is_not_treated_as_a_finished_bam() {
 
     # Every other sample was complete, so nothing else may have been redone.
     local others
-    others=$(cut -d, -f1 "$sb/main/RGTags.csv" | tail -n +2 | grep -vx "$sample" | head -1)
+    others=$(cut -d, -f1 "$sb/main/metadata.csv" | tail -n +2 | grep -vx "$sample" | head -1)
     log="$sb/store/Logs/4_clean/4_SortCleanBam_${others}_nextflow.log"
     assert_contains "$(tail -30 "$log")" "Found existing BAM file and index" \
         "$others was complete and should have been skipped"
@@ -548,7 +551,7 @@ test_a_missing_index_is_not_treated_as_a_finished_bam() {
 test_ready_bams_are_promoted_after_both_consumers() {
     needs_run || return
     local s left
-    for s in $(cut -d, -f1 "$PIPELINE_SB/main/RGTags.csv" | tail -n +2); do
+    for s in $(cut -d, -f1 "$PIPELINE_SB/main/metadata.csv" | tail -n +2); do
         assert_file "$PIPELINE_SB/store/Output/Ready/${s}_ready.bam" \
             "$s BAM should reach permanent storage"
         assert_file "$PIPELINE_SB/store/Output/Ready/${s}_ready.bam.bai" \
@@ -664,7 +667,7 @@ test_reset_removes_results_but_keeps_what_you_provided() {
     assert_no_file "$sb/store/Output"                        "results should be removed"
     assert_no_file "$sb/store/Logs"                          "logs should be removed"
     assert_no_file "$sb/store/Output/.poolseqflow_params"           "the parameter manifest should be removed"
-    assert_no_file "$sb/store/Output/.poolseqflow_rgtags"           "the rgtags baseline should be removed"
+    assert_no_file "$sb/store/Output/.poolseqflow_metadata"           "the metadata baseline should be removed"
     assert_no_file "$sb/main/Utilized"                       "unpromoted outputs should be removed"
     assert_no_file "$sb/main/Reference/Dictionaries"         "derived dictionaries should be removed"
     assert_no_file "$sb/main/work"                           "the work directory should be removed"
@@ -674,7 +677,7 @@ test_reset_removes_results_but_keeps_what_you_provided() {
     assert_file "$sb/main/Reference/reference.fasta.gz" "your reference must survive reset"
     assert_file "$sb/main/Reference/reference.gff.gz"   "your annotation must survive reset"
     assert_file "$sb/main/parameters.config"            "your config must survive reset"
-    assert_file "$sb/main/RGTags.csv"                   "your RGTags file must survive reset"
+    assert_file "$sb/main/metadata.csv"                   "your metadata file must survive reset"
 }
 
 # The branch that fires when the wrapper cannot read the config at all - a real state, since a
@@ -824,9 +827,9 @@ test_multi_run_fans_out_per_run_and_not_per_invocation() {
         assert_count 1 "$(task_count "$MULTIRUN_SB" "$p")" \
             "$p reads the same values for all three runs, so it should run once"
     done
-    # The RGTags change guard is keyed to the step-6 variant, because its answer depends on
+    # The metadata change guard is keyed to the step-6 variant, because its answer depends on
     # which BAMs and which VCF are on disk. All three runs share step 6 and diverge at step 7.
-    assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckRGTagsFile)" \
+    assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckMetadataFile)" \
         "all three share the called VCF, so one guard answers for them"
 
     # The reproducibility guard is ONE task for the whole project: it compares the two files the
@@ -856,9 +859,12 @@ test_multi_run_fans_out_per_run_and_not_per_invocation() {
         "the software check describes the machine, so it runs once"
     assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:CheckMultiRun)" \
         "the multi-run check describes the fan-out, so it runs once"
-    # It WRITES to a file every run shares; N concurrent repairs would be a race.
-    assert_count 1 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:RepairRGTagsLineEndings)" \
-        "one RGTags table means one line-ending repair"
+    # There is no line-ending repair stage any more, and nothing should reintroduce one. It
+    # existed only because three consumers read the raw bytes of the sample file, and the
+    # parser now reads it once for all of them - so a stage that WRITES to a file every run
+    # shares, which was a race waiting to happen, has nothing left to do.
+    assert_count 0 "$(task_count "$MULTIRUN_SB" VerifyEnvironment:RepairRGTagsLineEndings)" \
+        "nothing may rewrite the user's own metadata file"
 }
 
 # WHAT THE PROJECT RECORDS ABOUT ITS OWN CONFIGURATION: the two files the user wrote, kept
@@ -1000,7 +1006,7 @@ test_reset_clears_every_run_of_a_multi_run_project() {
     [ -d "$sb/store/Output" ] && fail_case "reset left the session reports behind"
 
     # And still keeps everything the user provided.
-    assert_file "$sb/main/RGTags.csv"          "reset must keep the RGTags table"
+    assert_file "$sb/main/metadata.csv"          "reset must keep the metadata table"
     assert_file "$sb/main/runs.csv"            "reset must keep the multi-run table"
     assert_file "$sb/main/parameters.config"   "reset must keep the configuration"
     [ -d "$sb/main/Data" ] || fail_case "reset must keep the reads"

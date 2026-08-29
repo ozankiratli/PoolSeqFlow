@@ -85,11 +85,20 @@ def derivedParameterNames() {
         'bcftools.mpileupOptions',
         // Computed in parameters.config rather than here, because their inputs are all
         // top-level and an override of a top-level parameter does re-derive correctly.
-        'referenceFa', 'referencePath', 'gffPath', 'rgTagsPath', 'multiRunPath',
+        'referenceFa', 'referencePath', 'gffPath', 'metadataPath', 'multiRunPath',
         'reference', 'gff', 'reads',
         'filterFalsePositives.sensitivity',
         'snpEff.db',
     ]
+}
+
+// Trim Galore's option string, in ONE place.
+//
+// A metadata row may override the adapters for a single sample, which means building this
+// string a second time - and a second copy of the format is how the two come to disagree. The
+// per-sample builder in scripts/metadata.nf calls this, so a flag added here reaches both.
+def trimOptions(Object quality, Object adapterOptions) {
+    return "--fastqc --paired --retain_unpaired -q ${quality} ${adapterOptions}".toString()
 }
 
 // The derivations, over any parameter map rather than over the global `params`.
@@ -124,8 +133,7 @@ def deriveInto(Map p) {
         ? ''
         : "-a ${p.trim_galore.adapter1} -a2 ${p.trim_galore.adapter2}")
     // --cores and --fastqc_args are supplied by TrimReads from task.cpus.
-    fill(p.trim_galore, 'options',
-        "--fastqc --paired --retain_unpaired -q ${p.trim_galore.quality} ${p.trim_galore.adapterOptions}")
+    fill(p.trim_galore, 'options', trimOptions(p.trim_galore.quality, p.trim_galore.adapterOptions))
 
     // -t is supplied by Align from task.cpus.
     fill(p.bwa, 'options',
@@ -274,7 +282,7 @@ def deriveRunPaths(Map p) {
 
     p.referencePath = "${p.dir.references}/${p.referenceFile}"
     p.gffPath       = "${p.dir.references}/${p.gffFile}"
-    p.rgTagsPath    = "${p.mainDir}/${p.rgTagsFile}"
+    p.metadataPath  = "${p.mainDir}/${p.metadataFile}"
     p.multiRunPath  = "${p.mainDir}/${p.multiRunFile}"
     p.reference     = "${p.dir.dictionaries}/${p.referenceFile.replace('.gz', '')}"
     p.gff           = "${p.dir.dictionaries}/${p.gffFile.replace('.gz', '')}"
@@ -282,6 +290,13 @@ def deriveRunPaths(Map p) {
 
     p.filterFalsePositives.sensitivity = 1.0 / (2 * p.diploidy * p.poolSize)
     p.snpEff.db = p.gffFile.replace('.gz', '')
+
+    // THE SAMPLE METADATA, READ ONCE AND CARRIED. Every consumer - the @RG string in step 4,
+    // the VCF column order in step 6, the divergence analysis, the change guard - reads this
+    // list instead of re-reading the CSV, which is what lets the file be parsed properly in
+    // one place rather than approximately in three. Per run rather than per project because
+    // metadataFile is a parameter like any other and a multi-run table may vary it.
+    p.metadata = metadataRows("${p.metadataPath}".toString())
 }
 
 // The rows of the multi-run table, via the script that already validates them.
@@ -299,6 +314,31 @@ def multiRunRows() {
     if (proc.exitValue() != 0) {
         throw new IllegalStateException(
             "multiRun is on, but ${params.multiRunPath} cannot be used:\n${err}")
+    }
+    return new groovy.json.JsonSlurper().parseText(out.toString())
+}
+
+// The rows of the sample metadata file, via the script that validates them.
+//
+// SPLIT DELIBERATELY: a MISSING file is not an error here, a MALFORMED one is.
+//
+// Absent is the ordinary state of a project someone has not finished setting up, and step 0
+// exists to say so in context, in a report that is kept beside the results - so this returns
+// an empty list and lets the run reach the stage with the good message. Nothing computes in
+// between: every step is gated on step 0.
+//
+// Malformed is a definite mistake, and parse_metadata.py's message is already the best one
+// available - every problem at once, with line numbers. Throwing here puts that in front of
+// the user seconds after they start the run, which is the same treatment the multi-run table
+// gets above and for the same reason.
+def metadataRows(String path) {
+    if (!file(path).exists()) return []
+    def proc = ['python3', "${params.dir.bin}/parse_metadata.py", path].execute()
+    def out = new StringBuilder()
+    def err = new StringBuilder()
+    proc.waitForProcessOutput(out, err)
+    if (proc.exitValue() != 0) {
+        throw new IllegalStateException("${path} cannot be used:\n${err}")
     }
     return new groovy.json.JsonSlurper().parseText(out.toString())
 }

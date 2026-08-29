@@ -2,13 +2,15 @@
 // been produced by a variant with a coarser working root than its own, so the list comes
 // from the divergence analysis rather than being spelled out here.
 include { searchRoots } from './variants.nf'
+// Trim Galore's options for one sample: the run's, or the row's when it overrides the adapters.
+include { sampleTrimOptions } from './metadata.nf'
 
 // The (variant, sample) read channel.
 //
 // Takes the variant LIST rather than a channel because channel.fromFilePairs is a factory: it
 // globs the filesystem while the DAG is being built and fixes N there, so it has to be handed
 // a concrete parameter set. Reproducing its sample-id derivation by hand is exactly what step
-// 0's CheckRGTagsFile must agree with, and having two implementations of that rule is how they
+// 0's CheckMetadataFile must agree with, and having two implementations of that rule is how they
 // come to disagree - so the factory is called once per variant instead.
 //
 // One glob per step-2 variant and not per run: `reads` is part of step 2's identity, so every
@@ -76,6 +78,15 @@ process TrimReads {
 
     dir_log = "${run.dir.logs}/2_trim_reads"
 
+    // THIS SAMPLE'S OPTIONS, WHICH ARE THE RUN'S UNLESS ITS METADATA ROW SAYS OTHERWISE.
+    //
+    // A row that gives both adapter1 and adapter2 replaces the adapter fragment for that
+    // sample alone; anything else gets `run.trim_galore.options` unchanged, so a project with
+    // no overrides produces byte-identical commands to one from before the column existed.
+    // Step 0 refuses the one combination this cannot honour - a row with adapters against a
+    // pinned trim_galore.options - rather than quietly dropping one of the two.
+    trim_options = sampleTrimOptions(run, "${pair_id}".toString())
+
     // `cpus` reserves Trim Galore's full footprint, because --cores N actually runs N+4
     // threads (N workers + 2 decompressors + 1 batcher + 1 writer). Map back to the
     // worker count here. --cores 1 is the exception: it bypasses the pool entirely and
@@ -122,7 +133,7 @@ process TrimReads {
         echo "TRIMMING READS ${pair_id}: COMPLETED"
     else
         echo "TRIMMING READS ${pair_id}: Trimming paired reads..."
-        ${run.software.trim_galore} ${run.trim_galore.options} \\
+        ${run.software.trim_galore} ${trim_options} \\
             --cores ${trim_cores} --fastqc_args "-t ${task.cpus}" \\
             --basename ${pair_id} ${read1} ${read2}
 

@@ -27,6 +27,10 @@
 
 nextflow.enable.dsl=2
 
+// The sample metadata file's schema and its projections. Nothing in here parses that file:
+// resolveParameters() has already put the parsed rows in every run map.
+include { metadataProjection; metadataOrder; metadataColumnsPerStep } from './metadata.nf'
+
 def sharingEnabled() {
     return true
 }
@@ -160,51 +164,6 @@ def snpEffIdentity(Map run) {
     return ["${run.dir.snpEff}", "${run.snpEff.db}"]
 }
 
-// The RGTags table, normalised exactly as step 0 normalises it before comparing.
-//
-// Normalised rather than raw because `RepairRGTagsLineEndings` rewrites the file in place at
-// TASK time, after this analysis has already run: on raw bytes, two identical tables would
-// differ on the first invocation and agree on the second. The expression is the same one the
-// repair and the change guard use - CR endings, trailing blanks, empty lines.
-//
-// Missing or unreadable is not an error here. Step 0 fails the run on it with a far better
-// message than this file could give, and this runs first.
-def rgTagsRows(String path) {
-    def f = file(path)
-    if (!f.exists()) return []
-    return f.readLines()
-        .collect { line -> line.replaceAll(/\r$/, '').replaceAll(/[ \t]+$/, '') }
-        .findAll { line -> line.trim() }
-}
-
-// THE TABLE CONTRIBUTES TWO DIFFERENT THINGS, and one token cannot express both.
-//
-// Step 4 bakes the tag VALUES into each BAM, matched by ID, so row order is irrelevant to it.
-// Step 6 derives the VCF's sample column order from the ROW ORDER, and nothing else about the
-// file. `CheckRGTagsFile` already draws exactly this distinction: it reports a permutation
-// separately, because the BAMs stay correct and only the column order is wrong.
-//
-// Two runs whose tables are permutations of each other therefore share step 4 and diverge at
-// step 6 - which is right, and which a single "the rgTags file" token would get wrong in one
-// direction or the other.
-def rgTagsValueIdentity(String path) {
-    def rows = rgTagsRows(path)
-    if (rows.size() < 2) return rows
-    return [rows[0]] + rows.tail().sort()
-}
-
-def rgTagsOrderIdentity(String path) {
-    def rows = rgTagsRows(path)
-    if (rows.size() < 2) return []
-    def header = rows[0].split(',', -1).collect { field -> field.trim() }
-    def idCol = header.indexOf('ID')
-    if (idCol < 0) return []
-    return rows.tail().collect { line ->
-        def fields = line.split(',', -1)
-        fields.size() > idCol ? fields[idCol].trim() : ''
-    }
-}
-
 // What decides the artifact step k passes on: its own parameters, plus the reads or artifacts
 // it consumes. Everything a process reads by an absolute path into a shared directory has to
 // appear here, because Nextflow's own graph cannot see those reads.
@@ -218,12 +177,20 @@ def stepIdentity(Map run, int step) {
 
     def parts = entry.artifact.collect { name -> "${name}=${dig(run, name)}" }
 
-    // The reads and dictionaries are reached by absolute path, not through a staged input.
+    // The reads, the dictionaries and the sample metadata are reached by absolute path or
+    // carried in the run map, not through a staged input, so Nextflow's own graph cannot see
+    // any of them and they have to be named here.
+    //
+    // Step 2 takes the per-sample adapter overrides and step 4 the read group projection -
+    // values only, so a permutation of the file does not split either. Step 6 takes the row
+    // ORDER and nothing else, because that is what decides the VCF's sample columns. Two runs
+    // whose files are permutations of each other therefore share step 4 and diverge at step 6.
+    if (step == 2) parts += metadataProjection(run, metadataColumnsPerStep()[2]).collect { r -> "metadata=${r}" }
     if (step == 3) parts += referenceIdentity(run).collect { p -> "reference=${p}" }
-    if (step == 4) parts += rgTagsValueIdentity("${run.rgTagsPath}").collect { r -> "rgtags=${r}" }
+    if (step == 4) parts += metadataProjection(run, metadataColumnsPerStep()[4]).collect { r -> "metadata=${r}" }
     if (step == 6) {
         parts += referenceIdentity(run).collect { p -> "reference=${p}" }
-        parts += rgTagsOrderIdentity("${run.rgTagsPath}").collect { r -> "rgorder=${r}" }
+        parts += metadataOrder(run).collect { r -> "sampleorder=${r}" }
     }
     if (step == 8) parts += snpEffIdentity(run).collect { p -> "snpeffdb=${p}" }
 
@@ -341,7 +308,7 @@ def deepCopyValue(Object value) {
 // flight, which is the difference between arranging the workflow and racing it.
 //
 // It is also what makes the expansion cheap. Working the partition out per channel item would
-// re-read the RGTags table once per (sample, step); here it is read a handful of times in
+// re-read the metadata table once per (sample, step); here it is read once, before the
 // total and every later question is a map lookup.
 def variantPlan(List runDefs) {
     def steps = stepParameterMap().keySet().sort()

@@ -127,7 +127,7 @@ jobs:
             ./PoolSeqFlow install
             ```
 
-            Then edit `parameters.config` and `RGTags.csv` for your data and run
+            Then edit `parameters.config` and `metadata.csv` for your data and run
             `./PoolSeqFlow run`.
 
             Verify the download with `sha256sum -c SHA256SUMS`.

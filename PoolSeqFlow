@@ -119,7 +119,7 @@ require_project_config() {
 # a file added to the release without being added here fails a test rather than going missing
 # from every install.
 PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf dryrun.nf nextflow.config scripts bin install \
-parameters.config.template RGTags.csv.template multi-run.csv.example \
+parameters.config.template metadata.csv.template multi-run.csv.example \
 README.md CHANGELOG.md LICENSE"
 
 # Where installations live. POOLSEQFLOW_PREFIX chooses; ~/.local by default, because it needs
@@ -669,7 +669,7 @@ EOF
         DICTDIR=$(nf_config_value params.dir.dictionaries)
         UTILDIR=$(nf_config_value params.dir.utilized)
         MAINDIR=$(nf_config_value params.mainDir)
-        RGTAGS=$(nf_config_value params.rgTagsPath)
+        METADATA=$(nf_config_value params.metadataPath)
         conda deactivate
         if [ -z "$STORAGE" ]; then
             echo "ERROR: could not resolve params.storageDir - is parameters.config present?" >&2
@@ -708,11 +708,11 @@ EOF
         # Named explicitly because they now live in this directory rather than beside the
         # results, and because a reset that took the configuration with it would leave a
         # project that could not be re-run at all. Written as two whole sentences rather
-        # than one sentence with a conditional tail: an unresolvable rgTagsPath would
+        # than one sentence with a conditional tail: an unresolvable metadataPath would
         # otherwise leave the line ending in "and".
-        if [ -n "$RGTAGS" ]; then
+        if [ -n "$METADATA" ]; then
             echo "Nothing you wrote in $(pwd) is removed either - not parameters.config,"
-            echo "and not $RGTAGS."
+            echo "and not $METADATA."
         else
             echo "Nothing you wrote in $(pwd) is removed either, parameters.config included."
         fi
@@ -770,6 +770,7 @@ EOF
         # one would make the next run fail its checks for no reason, or attribute fresh
         # results to an earlier release. Harmless when absent.
         rm -f "$STORAGE"/.poolseqflow_params "$STORAGE"/.poolseqflow_rgtags \
+              "$STORAGE"/.poolseqflow_metadata \
               "$STORAGE"/.poolseqflow_versions "$STORAGE"/.poolseqflow_version
         echo "Reset complete."
         ;;

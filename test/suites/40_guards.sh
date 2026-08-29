@@ -387,25 +387,25 @@ test_pointing_at_a_different_dataset_is_caught() {
     assert_contains "$report" "dataSource" "should name dataSource as the difference"
 }
 
-# The RGTags guard has to look on BOTH volumes, and this is the case that shows why it is not
+# The metadata guard has to look on BOTH volumes, and this is the case that shows why it is not
 # a cosmetic point.
 #
 # Everywhere else in this pipeline a wrong answer to "does this artifact exist" costs redundant
 # work. Here it costs the guard itself: the branch that fires when there are no BAMs and no VCF
-# reads the situation as "nothing has consumed RGTags.csv yet, so an edit is free" and RECORDS A
+# reads the situation as "nothing has consumed metadata.csv yet, so an edit is free" and RECORDS A
 # NEW BASELINE. From 3.0 the cleaned BAMs live on the working volume until both of their
 # consumers are done, so a run interrupted between cleaning and calling leaves exactly that
-# state - and a guard that only looked in permanent storage would adopt an edited RGTags.csv as
+# state - and a guard that only looked in permanent storage would adopt an edited metadata.csv as
 # the baseline for BAMs that carry the old tags. Nothing later could detect it, because the
 # baseline would now say they agree.
 #
 # The assertion that matters is the second one. Failing the run is the visible half; leaving the
 # stored baseline alone is the half that keeps the next run honest.
-test_an_rgtags_edit_is_caught_when_the_bams_are_not_yet_promoted() {
+test_a_metadata_edit_is_caught_when_the_bams_are_not_yet_promoted() {
     guards_ready || return
     local before after status report
 
-    before=$(md5sum < "$GUARD_SB/store/Output/.poolseqflow_rgtags")
+    before=$(md5sum < "$GUARD_SB/store/Output/.poolseqflow_metadata")
 
     # Cleaned but not yet promoted: on the working volume, absent from permanent storage.
     # Existence is all the guard tests, so an empty file stands in for the BAM.
@@ -414,15 +414,15 @@ test_an_rgtags_edit_is_caught_when_the_bams_are_not_yet_promoted() {
     [ -e "$GUARD_SB/store/Output/Ready" ] && fail_case "storage should hold no ready BAMs for this case"
 
     # Change a tag value, which is the kind of edit that invalidates the BAMs.
-    sed -i '2s/,/_EDITED,/2' "$GUARD_SB/main/RGTags.csv"
+    sed -i '2s/,/_EDITED,/2' "$GUARD_SB/main/metadata.csv"
 
     status=$(run_verify_only "$GUARD_SB")
     report=$(guard_report)
 
     assert_status 1 "$status" "an edit against unpromoted BAMs should fail the run"
-    assert_contains "$report" "RGTAGS CHANGE CHECK:   FAIL" "the change should be reported"
+    assert_contains "$report" "METADATA CHANGE CHECK: FAIL" "the change should be reported"
 
-    after=$(md5sum < "$GUARD_SB/store/Output/.poolseqflow_rgtags")
+    after=$(md5sum < "$GUARD_SB/store/Output/.poolseqflow_metadata")
     assert_eq "$before" "$after" \
         "the stored baseline must not be overwritten - doing so hides the mismatch for good"
 }
@@ -697,25 +697,25 @@ r2,6
 # Output/All_Runs/Ready, which appears in no member's own Output/ and in no member's own
 # Utilized_. So the two roots the guard probed - the run's Output and the working root the
 # analysis handed it - were both empty on every invocation after the first promotion, the
-# no-BAMs-and-no-VCF branch fired, and an edited RGTags.csv was adopted as the baseline for
+# no-BAMs-and-no-VCF branch fired, and an edited metadata.csv was adopted as the baseline for
 # BAMs still carrying the old tags. Exit 0, PASS, and nothing later could detect it.
 #
 # The guard is now keyed to the step-6 variant and probes that variant's directories on both
 # volumes, which is why this test asserts the pre-fix roots are empty: without that, an
 # implementation that quietly went back to looking at the run's own tree would still pass.
-test_an_rgtags_edit_is_caught_after_a_shared_bam_is_promoted() {
+test_a_metadata_edit_is_caught_after_a_shared_bam_is_promoted() {
     if ! have_tools; then skip_case "no conda environment"; return; fi
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
     local sb status report before after stored
     # Two runs that diverge at step 7, so they share the called VCF and everything under it.
-    sb=$(multirun_sandbox "rgtags-shared" 'RunID,vcffilter.minQUAL
+    sb=$(multirun_sandbox "metadata-shared" 'RunID,vcffilter.minQUAL
 early,30
 late,1000
 ')
     status=$(run_verify_only "$sb")
     assert_status 0 "$status" "the first pass should record a baseline; see $sb/run.out"
 
-    stored="$sb/store/Output/All_Runs/.poolseqflow_rgtags"
+    stored="$sb/store/Output/All_Runs/.poolseqflow_metadata"
     assert_file "$stored" "the baseline belongs in the directory holding the VCF it describes"
     before=$(md5sum < "$stored")
 
@@ -732,13 +732,13 @@ late,1000
     [ -n "$(find "$sb/main" -path '*Utilized*/Ready/*' -print -quit 2>/dev/null)" ] \
         && fail_case "no working root should hold a ready BAM either"
 
-    sed -i '2s/,/_EDITED,/2' "$sb/main/RGTags.csv"
+    sed -i '2s/,/_EDITED,/2' "$sb/main/metadata.csv"
 
     status=$(run_verify_only "$sb")
     report=$(cat "$sb/store/Output/early/Reports/0_verify_environment.txt")
 
     assert_status 1 "$status" "an edit against promoted shared BAMs should fail the run"
-    assert_contains "$report" "RGTAGS CHANGE CHECK:   FAIL" "the change should be reported"
+    assert_contains "$report" "METADATA CHANGE CHECK: FAIL" "the change should be reported"
     assert_contains "$report" "$sb/store/Output/All_Runs/Ready" \
         "and should name the group's directory as where the old tags are"
 
