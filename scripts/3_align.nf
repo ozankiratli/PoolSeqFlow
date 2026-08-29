@@ -28,7 +28,7 @@ process Align {
     rel_aligned = "${run.dir.subpath.aligned}"
     target_folder = "${run.dir.utilized}/${rel_aligned}"
     target_file = "${target_folder}/${aligned_bam_file}"
-    dir_log = "${run.dir.logs}/3_align/${pair_id}"
+    dir_log = "${run.dir.logs}/3_align"
 
     """
     set -eo pipefail

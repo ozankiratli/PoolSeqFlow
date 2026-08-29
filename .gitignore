@@ -86,3 +86,5 @@ dev/logs/
 # control - the thing untracking bin/__pycache__ was meant to end.
 test/**/__pycache__/
 test/**/*.pyc
+
+.claude/

@@ -254,7 +254,6 @@ params {
         // itself, so every helper resolved through that instead. The hazard was that
         // env.PATH below PREPENDS this path: a mainDir that happened to contain a bin/
         // directory would have shadowed the conda environment's tools for every task.
-        scripts         = "${projectDir}/scripts"
         bin             = "${projectDir}/bin"
         logs            = "${params.storageDir}/Logs"
         snpEff          = "${params.dir.dictionaries}/snpEff"
@@ -273,7 +272,6 @@ params {
             vcf             = "VCF"
             freq            = "Frequencies"
             reports         = "Reports"
-            temp            = "Temp"
 
             report {
                 align           = "${params.dir.subpath.reports}/Alignment"
@@ -295,7 +293,6 @@ params {
             vcf             = "${params.dir.outputs}/${params.dir.subpath.vcf}"
             freq            = "${params.dir.outputs}/${params.dir.subpath.freq}"
             reports         = "${params.dir.outputs}/${params.dir.subpath.reports}"
-            temp            = "${params.dir.outputs}/${params.dir.subpath.temp}"
 
             report {
                 align           = "${params.dir.outputs}/${params.dir.subpath.report.align}"
@@ -327,8 +324,11 @@ params {
     rgTagsPath      = "${params.mainDir}/${params.rgTagsFile}"
     multiRunPath    = "${params.mainDir}/${params.multiRunFile}"
 
+    // The reference is decompressed into Dictionaries by step 1 and read from there by
+    // alignment and calling. There is deliberately no `gff` beside it: nothing decompresses
+    // the annotation, because snpEff reads the file you placed - gzipped or not - and builds
+    // its database from that. A `gff` parameter here named a path no process ever created.
     reference       = "${params.dir.dictionaries}/${params.referenceFile.replace('.gz', '')}"
-    gff             = "${params.dir.dictionaries}/${params.gffFile.replace('.gz', '')}"
     reads           = "${params.dir.data}/${params.readPattern}"
 
 

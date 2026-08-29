@@ -170,7 +170,7 @@ process PromoteArtifacts {
     // slug because dir.logs is already per run.
     slug = key ? "${stage}_${key}" : stage
     slug = slug.replaceAll(/[^A-Za-z0-9]+/, '_')
-    dir_log = "${run.dir.logs}/9_completion/s1_PromoteArtifacts"
+    dir_log = "${run.dir.logs}/9_completion"
     log_file = "${dir_log}/9_Completion_s1_PromoteArtifacts_${slug}_nextflow.log"
 
     src = row ? "${run.dir.utilized}/${row.subpath}" : ''

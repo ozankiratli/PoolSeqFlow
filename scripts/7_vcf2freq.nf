@@ -65,7 +65,7 @@ process SortRefAltByFrequency {
     indel_freq_tsv = "${indel_freq_base}.tsv"
     target_indel_freq_tsv = "${target_folder_freq}/${indel_freq_tsv}"
 
-    dir_log = "${run.dir.logs}/7_vcf2freq/s1_SortRefAltByFrequency"
+    dir_log = "${run.dir.logs}/7_vcf2freq"
 
     """
     set -eo pipefail
@@ -164,7 +164,7 @@ process FilterPotentialFalsePositives {
     sensitivity = run.filterFalsePositives.sensitivity
     threshold = run.filterFalsePositives.sampleThreshold
 
-    dir_log = "${run.dir.logs}/7_vcf2freq/s2_FilterPotentialFalsePositives"
+    dir_log = "${run.dir.logs}/7_vcf2freq"
 
     """
     set -eo pipefail
@@ -279,7 +279,7 @@ process DepthAndQualityFilter {
     indel_freq_tsv = "${indel_freq_base}.tsv"
     target_indel_freq_tsv = "${target_folder_freq}/${indel_freq_tsv}"
 
-    dir_log = "${run.dir.logs}/7_vcf2freq/s3_DepthAndQualityFilter"
+    dir_log = "${run.dir.logs}/7_vcf2freq"
 
     """
     set -eo pipefail
@@ -369,12 +369,23 @@ process SplitSNPsAndINDELs {
     indel_freq_tsv = "${indel_freq_base}.tsv"
     target_indel_freq_tsv = "${target_folder_freq}/${indel_freq_tsv}"
 
-    dir_log = "${run.dir.logs}/7_vcf2freq/s4_SplitSNPsAndINDELs"
+    dir_log = "${run.dir.logs}/7_vcf2freq"
 
     """
     set -eo pipefail
     echo "SPLIT SNPS AND INDELS ${vcf}: Splitting ${vcf.baseName} to SNP and INDEL VCFs..."
-    if [ -f ${target_snp_freq_tsv} ] || [ -f ${target_indel_freq_tsv} ]; then
+    # AND, WHERE THE THREE PROCESSES ABOVE USE OR, AND THE DIFFERENCE IS NOT A SLIP.
+    #
+    # For them the question is "was my output already produced and consumed?", and ONE
+    # downstream artifact answers it: nothing downstream could exist without it. Their output
+    # is a single transient that its consumer deleted, so a dummy is right and rebuilding it
+    # would re-run the chain to make something nobody needs.
+    #
+    # This process has TWO outputs and one of them can be missing while the other is done. If
+    # only one frequency table exists, the other still has to be calculated - and calculating
+    # it needs a real split VCF, not the dummy this branch would emit. So both have to be
+    # there before the work can be called finished, which is also what the message says.
+    if [ -f ${target_snp_freq_tsv} ] && [ -f ${target_indel_freq_tsv} ]; then
         echo "SPLIT SNPS AND INDELS ${vcf}: Found both of the freq files"
         echo "SPLIT SNPS AND INDELS ${vcf}: Found: ${target_snp_freq_tsv} ${target_indel_freq_tsv}"
         echo "SPLIT SNPS AND INDELS ${vcf}: Creating dummy files..."
@@ -459,7 +470,7 @@ process CalculateFrequencies {
     freq_base = "${vcf.baseName.replace('_sort_fp_dq', '')}"
     freq_file = "${freq_base}_freq.tsv"
     target_freq_file = "${run.dir.output.freq}/${freq_file}"
-    dir_log = "${run.dir.logs}/7_vcf2freq/s5_CalculateFrequencies"
+    dir_log = "${run.dir.logs}/7_vcf2freq"
 
     """
     set -eo pipefail

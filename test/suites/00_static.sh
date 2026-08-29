@@ -160,6 +160,24 @@ test_install_payload_matches_the_release_archive() {
         "PAYLOAD_ITEMS and the release archive should list the same top-level entries"
 }
 
+# ONE DIRECTORY PER WORKFLOW (Z, 2026-08-28). Every log file name already carries the step, the
+# process and the sample it belongs to, so a per-process directory repeated what the name said
+# and cost a level of nesting in the one tree users are asked to read.
+#
+# Authored, so it is checked here: a new process that gives itself a subdirectory - by copying
+# an older one, which is how step 2 ended up with its two halves at different depths - fails
+# this rather than turning up in someone's log tree months later. The one-writer-per-file rule
+# is carried by the file NAME, which is what makes the flattening safe.
+test_every_process_logs_into_its_workflows_own_directory() {
+    local offenders
+    offenders=$(grep -rh 'dir_log = "' "$REPO_ROOT"/scripts/*.nf "$REPO_ROOT"/dryrun.nf \
+                | sed 's|.*dir_log = "||; s|".*||' \
+                | grep -vE '^[$]\{(run\.dir\.logs|params\.dir\.allLogs)\}/[0-9A-Za-z_]+$' \
+                | sort -u)
+    assert_eq "" "$offenders" \
+        "a log directory should be the workflow's own, with nothing nested below it"
+}
+
 test_fixture_generator_is_deterministic() {
     local out
     out="$TEST_TMPDIR/fixture-determinism"

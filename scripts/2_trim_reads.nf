@@ -74,7 +74,7 @@ process TrimReads {
     target_file_fastqc1 = "${target_folder_fastqc_work}/${fastqc1}"
     target_file_fastqc2 = "${target_folder_fastqc_work}/${fastqc2}"
 
-    dir_log = "${run.dir.logs}/2_trim_reads/s1_TrimReads/${pair_id}"
+    dir_log = "${run.dir.logs}/2_trim_reads"
 
     // `cpus` reserves Trim Galore's full footprint, because --cores N actually runs N+4
     // threads (N workers + 2 decompressors + 1 batcher + 1 writer). Map back to the
@@ -202,7 +202,7 @@ process ClipReads {
     at_gc_upper_limit = 1 + run.cutadapt.at_gc_error
     at_gc_lower_limit = 1 - run.cutadapt.at_gc_error
 
-    dir_log = "${run.dir.logs}/2_trim_reads/${pair_id}"
+    dir_log = "${run.dir.logs}/2_trim_reads"
 
     """
     set -eo pipefail

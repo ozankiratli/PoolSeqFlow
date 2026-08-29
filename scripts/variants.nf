@@ -619,7 +619,7 @@ def sharingReportLines(Map plan, List runDefs) {
         lines << (group.members.size() > 1
             ? "SHARING CHECK:             ${name} is a shared directory for ${who}"
             : "SHARING CHECK:             ${name} belongs to ${who} alone")
-        lines << "SHARING CHECK:                 steps ${group.steps.sort().join(', ')}, holding ${group.folders.join(', ')}"
+        lines << "SHARING CHECK:                 ${group.steps.size() > 1 ? 'steps' : 'step'} ${group.steps.sort().join(', ')}, holding ${group.folders.join(', ')}"
     }
 
     // Two runs identical to the end share every step, which is a table mistake worth naming:

@@ -27,7 +27,7 @@ process SortCleanBam {
     target_bai_ready = "${target_folder_ready}/${target_bai}"
     rgTagsFile = run.rgTagsPath
 
-    dir_log = "${run.dir.logs}/4_clean/${pair_id}"
+    dir_log = "${run.dir.logs}/4_clean"
 
     """
     set -eo pipefail

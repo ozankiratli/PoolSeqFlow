@@ -93,7 +93,7 @@ process UngzipReference {
     script:
     refIn = run.referencePath
     refOut = run.reference
-    dir_log = "${run.dir.logs}/1_build_dictionaries/s1_UngzipReference"
+    dir_log = "${run.dir.logs}/1_build_dictionaries"
 
     """
     set -eo pipefail
@@ -108,8 +108,25 @@ process UngzipReference {
         ln -s ${refOut} .
         echo "UNGZIP ${run.referenceFile}:             COMPLETED"
     else
-        echo "UNGZIP ${run.referenceFile}:             Unzipping reference file..."
-        gunzip -c ${refIn} > ${run.referenceFa}
+        # GZIPPED OR NOT, the same way BuildSnpEffDb already takes the annotation either way.
+        #
+        # `gunzip -c` was unconditional, so a plain reference.fasta died with "not in gzip
+        # format" - and nothing anywhere required the .gz: not step 0, and not the template,
+        # whose own `referenceFa = referenceFile.replace('.gz', '')` reads as though a plain
+        # name is expected to work. The GFF has always accepted both, which is exactly what
+        # made the asymmetry invisible.
+        #
+        # Copied rather than symlinked, so that what lands under Dictionaries is a real file in
+        # both cases and atomic_mv.sh's guarantee still holds. It costs one copy of the genome
+        # - which is what the gzipped path has always cost too, since it writes a decompressed
+        # copy beside the compressed original.
+        if [[ "${refIn}" == *.gz ]]; then
+            echo "UNGZIP ${run.referenceFile}:             Decompressing reference file..."
+            gunzip -c ${refIn} > ${run.referenceFa}
+        else
+            echo "UNGZIP ${run.referenceFile}:             Reference is not compressed - copying it..."
+            cp ${refIn} ${run.referenceFa}
+        fi
         echo "UNGZIP ${run.referenceFile}:             Moving ${run.referenceFa} to ${run.dir.dictionaries}"
         atomic_mv.sh ${run.referenceFa} ${refOut}
         echo "UNGZIP ${run.referenceFile}:             Creating symbolic link..."
@@ -135,7 +152,7 @@ process CreateBwaIndex {
 
     script:
     referenceDir = run.dir.dictionaries
-    dir_log = "${run.dir.logs}/1_build_dictionaries/s2_1_CreateBwaIndex"
+    dir_log = "${run.dir.logs}/1_build_dictionaries"
 
     """
     set -eo pipefail
@@ -191,7 +208,7 @@ process CreateSamtoolsFaiIndex {
 
     script:
     referenceDir = run.dir.dictionaries
-    dir_log = "${run.dir.logs}/1_build_dictionaries/s2_2_CreateSamtoolsFaiIndex"
+    dir_log = "${run.dir.logs}/1_build_dictionaries"
 
     """
     set -eo pipefail
@@ -246,7 +263,7 @@ process BuildSnpEffDb {
     // config names a database it cannot find). Every index file in this step was already
     // keyed by reference name; this was the one artifact that was not.
     build_verify_path = "${run.dir.snpEff}/data/${run.snpEff.db}/.build_complete"
-    dir_log = "${run.dir.logs}/1_build_dictionaries/s2_3_BuildSnpEffDb"
+    dir_log = "${run.dir.logs}/1_build_dictionaries"
 
     """
     set -eo pipefail
@@ -295,12 +312,30 @@ process BuildSnpEffDb {
         else
             echo "SNPEFF DB BUILD:    Found \$BIN_COUNT .bin files."
             echo "SNPEFF DB BUILD:    Database creation successful!"
-            echo "SNPEFF DB BUILD:    Copying database to ${run.dir.snpEff}"
-            mkdir -p ${run.dir.snpEff} || return 1
-            # cp -r merges rather than nests when the destination already has a data/
-            # directory, so a second genome lands alongside the first instead of at
-            # data/data/ (verified).
-            cp -r data ${run.dir.snpEff}/ || return 1
+            echo "SNPEFF DB BUILD:    Publishing database to ${run.dir.snpEff}"
+
+            # THE DATABASE AND ITS MARKER ARE PUBLISHED TOGETHER, AS ONE DIRECTORY.
+            #
+            # The marker is what every later run reads to decide this database is usable, so
+            # it must not be able to appear beside a half-written one. Writing it INSIDE the
+            # staged directory and then moving that directory atomically makes "marker
+            # present" mean "database complete". It was a second atomic move after a
+            # non-atomic `cp -r`, so a kill in between left a partial database and no marker.
+            #
+            # THE UNIT IS THE GENOME'S DIRECTORY, NOT data/, and that is what makes it
+            # possible at all: several genomes share data/, and `mv` of a directory onto an
+            # existing directory nests it rather than replacing it - so publishing data/
+            # wholesale could only ever be the merge that `cp -r` was doing.
+            touch data/${run.snpEff.db}/\$BUILD_COMPLETE || return 1
+            mkdir -p ${run.dir.snpEff}/data || return 1
+            # A database with no marker is incomplete by definition - it is exactly what a
+            # kill during an earlier publish leaves - so it is discarded rather than merged
+            # into. atomic_mv.sh refuses an existing directory as a destination, which is the
+            # same rule seen from the other side. Nothing else can be here: the caller has
+            # already established that the marker is absent.
+            rm -rf ${run.dir.snpEff}/data/${run.snpEff.db} || return 1
+            atomic_mv.sh data/${run.snpEff.db} ${run.dir.snpEff}/data/${run.snpEff.db} || return 1
+
             # Merge this genome's line into the shared config instead of replacing the
             # file. The config sits next to the shared data/ directory and snpEff reads
             # every entry in it, so it has to name every genome built here - a plain cp
@@ -335,8 +370,9 @@ process BuildSnpEffDb {
             echo "SNPEFF DB BUILD: the whole snpEff folder. It does not say which genome it"
             echo "SNPEFF DB BUILD: was built for, so ${run.snpEff.db} is being rebuilt once."
         fi
-        ( buildSnpEffDb && touch "\$BUILD_COMPLETE" ) || exit 1
-        atomic_mv.sh \$BUILD_COMPLETE ${build_verify_path}
+        # The marker is written and published by buildSnpEffDb itself, inside the database
+        # directory it moves into place, so there is no window here to fail in.
+        buildSnpEffDb || exit 1
         ln -s ${build_verify_path} .
     fi
     
@@ -374,7 +410,11 @@ workflow BuildDictionaries {
     BuildSnpEffDb(ready.filter { run, _verify -> run.annotate })
 
     emit:
-    reference         = UngzipReference.out.reference
+    // No `reference` here. UngzipReference's output is consumed inside this workflow by the
+    // two index builders, but re-exporting it published a channel poolseqflow.nf has never
+    // read - not in any release. snpEff is the only other thing that could have wanted it,
+    // and BuildSnpEffDb does not: it runs alongside UngzipReference rather than after it, and
+    // copies the reference the user placed.
     bwa_index         = CreateBwaIndex.out.bwa_index
     fai_index         = CreateSamtoolsFaiIndex.out.fai_index
     snpeff_db_verify  = BuildSnpEffDb.out.snpeff_db_verify

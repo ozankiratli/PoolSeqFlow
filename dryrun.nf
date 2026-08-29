@@ -333,12 +333,12 @@ SHARING
 
     cp dryrun_preview.txt '${dryDir}/README.txt'
 
-    mkdir -p ${params.dir.allLogs}/0_verify_environment/s10_DryRunTree
+    mkdir -p ${params.dir.allLogs}/dryrun
     {
         echo ""
         echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
         cat .command.log
-    } >> ${params.dir.allLogs}/0_verify_environment/s10_DryRunTree/0_DryRunTree_nextflow.log
+    } >> ${params.dir.allLogs}/dryrun/0_DryRunTree_nextflow.log
     """
 }
 

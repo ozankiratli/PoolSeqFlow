@@ -16,7 +16,7 @@ process AlignmentReport {
     report_file = "${pair_id}_alignment_report.txt"
     target_folder = "${run.dir.output.report.align}"
     target_report = "${target_folder}/${report_file}"
-    dir_log = "${run.dir.logs}/5_reports/s1_AlignmentReport/${pair_id}"
+    dir_log = "${run.dir.logs}/5_reports"
 
     """
     set -eo pipefail
@@ -67,7 +67,7 @@ process CoverageReport {
     report_file = "${pair_id}_coverage_report.txt"
     target_folder = "${run.dir.output.report.coverage}"
     target_report = "${target_folder}/${report_file}"
-    dir_log = "${run.dir.logs}/5_reports/s2_CoverageReport/${pair_id}"
+    dir_log = "${run.dir.logs}/5_reports"
 
     """
     set -eo pipefail

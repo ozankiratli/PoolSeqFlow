@@ -161,9 +161,15 @@ def checkGroups(List runDefs, String check) {
 // every run"; the file name says which runs each task actually answered for.
 //
 // VerifyAll is the exception and stays in the run's own tree, because it really is per run.
-def checkLogDir(Map check, String stage) {
+//
+// ONE DIRECTORY PER WORKFLOW (Z, 2026-08-28), not one per process. Every log file already
+// carries the step, the stage and the runs it answered for, so the directory was repeating
+// what the name already said - at the cost of a level of nesting per process, in a tree the
+// user is expected to read. The one-writer-per-file rule is carried by the FILE NAME, which is
+// why collapsing the directories cannot break it.
+def checkLogDir(Map check) {
     def root = params.multiRun ? "${check.storageDir}/Logs/All_Runs" : "${check.storageDir}/Logs"
-    return "${root}/0_verify_environment/${stage}".toString()
+    return "${root}/0_verify_environment".toString()
 }
 
 // ONE WRITER PER FILE. Tasks append to their log without locking, which is safe only while no
@@ -291,7 +297,7 @@ process CheckReference {
 
     script:
     refIn = check.referencePath
-    dir_log = checkLogDir(check, 's1_CheckReference')
+    dir_log = checkLogDir(check)
     log_file = checkLogFile(check, 's1_CheckReference')
     """
     REFFILE=${refIn}
@@ -333,7 +339,7 @@ process CheckGFF {
 
     script:
     gffIn = check.gffPath
-    dir_log = checkLogDir(check, 's2_CheckGFF')
+    dir_log = checkLogDir(check)
     log_file = checkLogFile(check, 's2_CheckGFF')
 
     """
@@ -375,7 +381,7 @@ process SkipGFFCheck {
     tuple val(check), path('verify_environment_stage2.txt'), emit: report
 
     script:
-    dir_log = checkLogDir(check, 's2_CheckGFF')
+    dir_log = checkLogDir(check)
     log_file = checkLogFile(check, 's2_SkipGFFCheck')
     """
     REPORTFILE="verify_environment.txt"
@@ -406,7 +412,7 @@ process CheckData {
 
     script:
     dataDir = check.dir.data
-    dir_log = checkLogDir(check, 's3_CheckData')
+    dir_log = checkLogDir(check)
     log_file = checkLogFile(check, 's3_CheckData')
     read_pattern = findNameExpr("${check.readPattern}")
 
@@ -491,7 +497,7 @@ process RepairRGTagsLineEndings {
 
     script:
     rgTagsPath = repair.rgTagsPath
-    dir_log = checkLogDir(repair, 's4_RepairRGTagsLineEndings')
+    dir_log = checkLogDir(repair)
     log_file = checkLogFile(repair, 's4_RepairRGTagsLineEndings')
     """
     REPORTFILE="rgtags_lineendings.txt"
@@ -605,7 +611,7 @@ process CheckRGTagsFile {
     readyDir = check.readyOut
     tagDeleteBlock = check.tagDelete.collect { d -> "        log_message \"    ${d}\"" }.join('\n')
     orderDeleteBlock = check.orderDelete.collect { d -> "                log_message \"    ${d}\"" }.join('\n')
-    dir_log = checkLogDir(check, 's4_CheckRGTagsFile')
+    dir_log = checkLogDir(check)
     // The file has always been named for the stage rather than for the process; kept, so that a
     // single run's log tree is the same tree it was.
     log_file = checkLogFile(check, 's4_CheckRGTags')
@@ -911,7 +917,7 @@ process CheckInstalledSoftware {
     path 'verify_environment_stage5.txt', emit: report
 
     script:
-    dir_log = "${params.dir.allLogs}/0_verify_environment/s5_CheckInstalledSoftware"
+    dir_log = "${params.dir.allLogs}/0_verify_environment"
     """
     REPORTFILE="verify_environment.txt"
 
@@ -964,7 +970,7 @@ process CheckTrimParameters {
     autodetect = check.trim_galore.autodetect
     adapter1   = check.trim_galore.adapter1
     adapter2   = check.trim_galore.adapter2
-    dir_log = checkLogDir(check, 's6_CheckTrimParameters')
+    dir_log = checkLogDir(check)
     log_file = checkLogFile(check, 's6_CheckTrimParameters')
     """
     REPORTFILE="verify_environment.txt"
@@ -1049,7 +1055,7 @@ process CheckDirectories {
     tuple val(check), path('verify_environment_stage8.txt'), emit: report
 
     script:
-    dir_log = checkLogDir(check, 's8_CheckDirectories')
+    dir_log = checkLogDir(check)
     log_file = checkLogFile(check, 's8_CheckDirectories')
     """
     REPORTFILE="verify_environment.txt"
@@ -1255,12 +1261,12 @@ CURRENT_PARAMS
         log_message "PIPELINE VERSION:      STATUS=FAIL"
         log_message "RUN PARAMETER CHECK:   STATUS=FAIL"
         mv \$REPORTFILE verify_environment_stage7.txt
-        mkdir -p ${params.dir.allLogs}/0_verify_environment/s7_CheckRunParameters
+        mkdir -p ${params.dir.allLogs}/0_verify_environment
         {
             echo ""
             echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
             cat .command.log
-        } >> ${params.dir.allLogs}/0_verify_environment/s7_CheckRunParameters/0_VerifyEnvironment_s7_CheckRunParameters_nextflow.log
+        } >> ${params.dir.allLogs}/0_verify_environment/0_VerifyEnvironment_s7_CheckRunParameters_nextflow.log
         exit 0
     else
         log_message "PIPELINE VERSION:      ${release}"
@@ -1277,7 +1283,7 @@ CURRENT_PARAMS
                 cp current_table.csv "${storedTable}"
             fi
             log_message "RUN PARAMETERS:        No previous run recorded - this is a fresh project"
-            log_message "RUN PARAMETERS:        \$RECORD ${params.multiRunFile} as \$(wc -l < current_table.csv) row(s)"
+            log_message "RUN PARAMETERS:        \$RECORD ${params.multiRunFile} as \$(( \$(wc -l < current_table.csv) - 1 )) run(s)"
         elif diff -q "${storedTable}" current_table.csv > /dev/null 2>&1; then
             log_message "RUN PARAMETERS:        ${params.multiRunFile} unchanged since the outputs were produced"
         else
@@ -1386,12 +1392,12 @@ CURRENT_PARAMS
     log_message "RUN PARAMETER CHECK:   STATUS=\$STATUS"
 
     mv \$REPORTFILE verify_environment_stage7.txt
-    mkdir -p ${params.dir.allLogs}/0_verify_environment/s7_CheckRunParameters
+    mkdir -p ${params.dir.allLogs}/0_verify_environment
     {
         echo ""
         echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
         cat .command.log
-    } >> ${params.dir.allLogs}/0_verify_environment/s7_CheckRunParameters/0_VerifyEnvironment_s7_CheckRunParameters_nextflow.log
+    } >> ${params.dir.allLogs}/0_verify_environment/0_VerifyEnvironment_s7_CheckRunParameters_nextflow.log
     """
 }
 
@@ -1425,7 +1431,7 @@ process CheckMultiRun {
     path 'verify_environment_stage9.txt', emit: report
 
     script:
-    dir_log = "${params.dir.allLogs}/0_verify_environment/s9_CheckMultiRun"
+    dir_log = "${params.dir.allLogs}/0_verify_environment"
     derived = derivedParameterNames().join(' ')
     known = knownParameterNames().join(' ')
     // Rendered as log_message calls rather than a heredoc so each line lands in the report and

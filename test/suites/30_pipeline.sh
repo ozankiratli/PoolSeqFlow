@@ -142,7 +142,7 @@ test_rerunning_a_finished_project_changes_nothing() {
     assert_eq "$before" "$after" "Output/VCF should be unchanged by a rerun"
     assert_eq "$sums_before" "$sums_after" "frequency tables should be unchanged by a rerun"
     local split_log
-    split_log=$(cat "$PIPELINE_SB"/store/Logs/7_vcf2freq/s4_SplitSNPsAndINDELs/*.log 2>/dev/null)
+    split_log=$(cat "$PIPELINE_SB"/store/Logs/7_vcf2freq/7_s4_SplitSNPsAndINDELs_*.log 2>/dev/null)
     local reruns
     reruns=$(printf '%s' "$split_log" | grep -c "Processing SNPs")
     assert_count 1 "$reruns" "SplitSNPsAndINDELs should do its work once, not again on the rerun"
@@ -245,9 +245,45 @@ test_dictionaries_are_built_on_maindir_and_reused() {
     # .command.log and from there to Logs/, while run.out holds only what Nextflow itself
     # prints. The log accumulates across runs, so a plain search is enough - this message
     # exists only on a run that found an index already built.
-    assert_contains "$(cat "$sb/store/Logs/1_build_dictionaries/s2_1_CreateBwaIndex/"*.log)" \
+    assert_contains "$(cat "$sb/store/Logs/1_build_dictionaries/1_BuildDictionary_s2_1_CreateBwaIndex_"*.log)" \
         "Found a complete existing index" \
         "the second run should say it reused the index rather than rebuilding it"
+}
+
+# NEITHER FILE HAS TO BE GZIPPED, and until 3.0 the reference did.
+#
+# `UngzipReference` ran `gunzip -c` unconditionally, so a plain reference.fasta failed step 1
+# with "not in gzip format" - while the annotation had always been accepted either way, which
+# is what made the asymmetry invisible. Nothing required the .gz anywhere: not step 0, and not
+# the template, whose `referenceFa = referenceFile.replace('.gz', '')` reads as though a plain
+# name works.
+#
+# Both files are uncompressed here rather than one, because that is what a user who has them
+# uncompressed actually has - and because it exercises both branches in one run.
+test_an_uncompressed_reference_and_annotation_are_accepted() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status dict
+    sb=$(make_pipeline_sandbox "plain-reference")
+    gunzip "$sb/main/Reference/reference.fasta.gz"
+    gunzip "$sb/main/Reference/reference.gff.gz"
+    : > "$sb/store/.step0_token"
+    write_sandbox_config "$sb" \
+        "s|^    referenceFile .*|    referenceFile   = 'reference.fasta'|" \
+        "s|^    gffFile .*|    gffFile         = 'reference.gff'|"
+    dict="$sb/main/Reference/Dictionaries"
+
+    status=$(run_dictionaries_only "$sb")
+    assert_status 0 "$status" "step 1 should accept uncompressed inputs; see $sb/run.out"
+
+    # The copy lands under Dictionaries exactly where the decompressed one would, so
+    # everything downstream is looking at the same path it always was.
+    assert_file "$dict/reference.fasta"     "the reference belongs under Dictionaries either way"
+    assert_file "$dict/reference.fasta.fai" "and the fai is built from it"
+    assert_file "$dict/reference.fasta.bwt" "and the bwa index"
+    assert_file "$sb/main/Reference/reference.fasta" "your own file stays where you put it"
+    assert_count 1 "$(find "$dict/snpEff" -name '.build_complete' | wc -l)" \
+        "and snpEff builds its database from the uncompressed annotation"
 }
 
 test_a_second_reference_builds_its_own_snpeff_database() {
@@ -392,7 +428,7 @@ test_step_2_finds_its_clipped_reads_in_either_root() {
     # Process output goes to the per-process log, never to Nextflow's stdout.
     for n in 1 2 3 4 5 6; do
         s="TestSample$n"
-        log="$sb/store/Logs/2_trim_reads/s1_TrimReads/$s/2_TrimQcClip_s1_TrimReads_${s}_nextflow.log"
+        log="$sb/store/Logs/2_trim_reads/2_TrimQcClip_s1_TrimReads_${s}_nextflow.log"
         if [ -f "$log" ]; then
             assert_contains "$(cat "$log")" "Found existing clipped files" \
                 "$s should have been skipped, not re-trimmed"
@@ -485,7 +521,7 @@ test_a_missing_index_is_not_treated_as_a_finished_bam() {
 
     assert_file "$sb/store/Output/Ready/${sample}_ready.bam.bai" "the index should be rebuilt"
 
-    log="$sb/store/Logs/4_clean/$sample/4_SortCleanBam_${sample}_nextflow.log"
+    log="$sb/store/Logs/4_clean/4_SortCleanBam_${sample}_nextflow.log"
     if [ -f "$log" ]; then
         assert_contains "$(cat "$log")" "Processing BAM file" \
             "$sample should have been reprocessed, not skipped"
@@ -496,7 +532,7 @@ test_a_missing_index_is_not_treated_as_a_finished_bam() {
     # Every other sample was complete, so nothing else may have been redone.
     local others
     others=$(cut -d, -f1 "$sb/main/RGTags.csv" | tail -n +2 | grep -vx "$sample" | head -1)
-    log="$sb/store/Logs/4_clean/$others/4_SortCleanBam_${others}_nextflow.log"
+    log="$sb/store/Logs/4_clean/4_SortCleanBam_${others}_nextflow.log"
     assert_contains "$(tail -30 "$log")" "Found existing BAM file and index" \
         "$others was complete and should have been skipped"
 }
@@ -867,8 +903,8 @@ test_a_diverging_parameter_changes_that_runs_numbers() {
     # as the literal 1000: vcftools echoes its own parsed parameter, so the log says
     # `--minQ 1e+03` even though the command line carried 1000.
     local filter_log inherit_log
-    filter_log=$(cat "$MULTIRUN_SB/store/Logs/filter/7_vcf2freq/s3_DepthAndQualityFilter"/*.log)
-    inherit_log=$(cat "$MULTIRUN_SB/store/Logs/inherit/7_vcf2freq/s3_DepthAndQualityFilter"/*.log)
+    filter_log=$(cat "$MULTIRUN_SB/store/Logs/filter/7_vcf2freq/7_s3_DepthAndQualityFilter_"*.log)
+    inherit_log=$(cat "$MULTIRUN_SB/store/Logs/inherit/7_vcf2freq/7_s3_DepthAndQualityFilter_"*.log)
     assert_contains "$inherit_log" "--minQ 30" "the inheriting run should get the configured value"
     assert_not_contains "$filter_log" "--minQ 30" "and the diverging run must not"
     assert_contains "$filter_log" "Sites" "vcftools should have reported what it kept"
