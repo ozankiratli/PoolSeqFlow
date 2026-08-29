@@ -4,8 +4,8 @@
 
 | File | Shipped as | Used at |
 |---|---|---|
-| `logo-full.svg` | `docs/assets/logo-full.svg` | 48px and up — README hero, print, posters |
-| `logo-small.svg` | `docs/assets/logo.svg`, and the mark inside `docs/assets/favicon.svg` | 16–32px — site header, favicon |
+| `logo-full.svg` | `manual/assets/logo-full.svg` | 48px and up — README hero, print, posters |
+| `logo-small.svg` | `manual/assets/logo.svg`, and the mark inside `manual/assets/favicon.svg` | 16–32px — site header, favicon |
 
 Both are the same mark. The vessel and the single helix are byte-identical between them; only the three pools differ.
 
