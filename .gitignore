@@ -55,7 +55,10 @@ plugins-prod
 .tmp/
 *.bak
 *.bak.*
-# MkDocs build output
+# Documentation output. manual/ is the source: dev/scripts/build_docs.py generates the
+# page tree in docs/ from it, and MkDocs builds site/ from that. Both are rebuilt whole
+# and neither is edited, so tracking them would only mean reviewing every sentence twice.
+docs/
 site/
 
 # Compiled Python. Regenerated on first use, and it is one machine's bytecode for one

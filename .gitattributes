@@ -7,6 +7,10 @@
 # Anything a run needs must NOT be listed here. release.yml asserts both
 # directions: required files present, these absent.
 
+# docs/ is generated and untracked, so it cannot reach an archive in any case; the rule
+# stays as insurance. manual/ is what it is generated FROM, and is deliberately absent from
+# this list: a downloaded release carries the whole manual as one readable file, so the
+# documentation does not depend on the site being reachable.
 docs/               export-ignore
 .github/            export-ignore
 mkdocs.yml          export-ignore
