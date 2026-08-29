@@ -5,10 +5,14 @@
 # email  : ozankiratli@protonmail.com
 #
 # Wrapper script for PoolSeqFlow
-# Usage: ./PoolSeqFlow {install|check|run|dryrun|dryclean|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}
+# Usage: ./PoolSeqFlow {install|init|init_multi|check|run|dryrun|dryclean|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}
 #  install        - installs this release: creates its conda environment, copies the
 #                   pipeline to <prefix>/opt/PoolSeqFlow-<version>, puts wrappers in
 #                   <prefix>/bin, then verifies the result
+#  init           - populates a project in the directory you are standing in: the two
+#                   templates and the folders they name. Never overwrites
+#  init_multi     - the same, and switches multiRun on, for a project that analyses one
+#                   set of reads under several parameter sets
 #  check          - verifies the installation: every tool resolves, helpers are
 #                   executable, and parameters.config parses
 #  run            - runs the pipeline; completed steps are detected and skipped
@@ -24,7 +28,9 @@
 #  version        - prints the version of this copy
 #  cite           - prints how to cite this copy, and which DOI to use
 #  list           - lists the installed pipelines and conda environments on this machine
-#  uninstall      - removes this version's conda environment and installed pipeline
+#  uninstall      - removes an installed version, environment and pipeline together. Asks
+#                   which one when several are installed; call it by a versioned name
+#                   (PoolSeqFlow-2.1.0 uninstall) to name one without being asked
 #  uninstall_all  - removes every PoolSeqFlow environment and installation, after confirmation
 #
 # Each subcommand takes no arguments of its own: the wrapper accepts exactly one word and
@@ -52,7 +58,7 @@ VERSION="2.2.0"
 CONCEPT_DOI="10.5281/zenodo.19245611"
 
 usage() {
-    echo "Usage: $0 {install|check|run|dryrun|dryclean|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}"
+    echo "Usage: $0 {install|init|init_multi|check|run|dryrun|dryclean|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}"
     exit 1
 }
 
@@ -105,10 +111,10 @@ require_project_config() {
     echo "ERROR: no parameters.config in $(pwd)" >&2
     echo "" >&2
     echo "PoolSeqFlow runs in your project's directory, not in its own installation." >&2
-    echo "Create the project, put a parameters.config in it, and run from there:" >&2
+    echo "Make the project, populate it, and run from there:" >&2
     echo "    mkdir -p /path/to/project" >&2
-    echo "    cp $INSTALL/parameters.config.template /path/to/project/parameters.config" >&2
     echo "    cd /path/to/project" >&2
+    echo "    $(basename "$0") init" >&2
     echo "    $(basename "$0") $COMMAND" >&2
     exit 1
 }
@@ -119,7 +125,7 @@ require_project_config() {
 # a file added to the release without being added here fails a test rather than going missing
 # from every install.
 PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf dryrun.nf nextflow.config scripts bin install \
-parameters.config.template metadata.csv.template multi-run.csv.example \
+parameters.config.template metadata.csv.template multi-run.csv.example manual \
 README.md CHANGELOG.md LICENSE"
 
 # Where installations live. POOLSEQFLOW_PREFIX chooses; ~/.local by default, because it needs
@@ -159,6 +165,87 @@ installed_payload_versions() {
 
 newest_installed_version() {
     installed_payload_versions "$1" | tail -1
+}
+
+# Every version present as a payload, an environment, or both. An interrupted install can
+# leave one without the other, and either half is still something to offer to remove.
+installed_versions() {
+    {
+        installed_payload_versions "$1"
+        poolseqflow_envs | sed -n 's/^PoolSeqFlow-//p'
+    } | sort -V -u
+}
+
+# Which version `uninstall` should act on. One installed version needs no question. Several
+# do, and the answer is asked for rather than assumed: this wrapper's own version is only the
+# newest by default, so removing it silently would delete the copy most projects are using.
+#
+# With nothing to prompt - a script, CI, a hook - it refuses and names the exact command that
+# removes a specific version, because guessing here deletes somebody's installation.
+choose_version_to_uninstall() {
+    local prefix="$1" versions count v i choice
+
+    # Called by its versioned name - `PoolSeqFlow-2.1.0 uninstall` - so the version is named
+    # already. Nothing to ask, nothing to guess, and this is the path a script should use.
+    case "$(basename "$0")" in
+        PoolSeqFlow-*) printf '%s' "$VERSION"; return 0 ;;
+    esac
+
+    versions=$(installed_versions "$prefix")
+    count=$(printf '%s\n' "$versions" | grep -c . || true)
+
+    # Nothing at all: the caller reports it, having more context about this prefix.
+    [ "$count" -eq 0 ] && { printf ''; return 0; }
+
+    # Exactly this version and nothing else - the unambiguous case, and the common one.
+    if [ "$count" -eq 1 ] && [ "$versions" = "$VERSION" ]; then
+        printf '%s' "$VERSION"
+        return 0
+    fi
+
+    if [ ! -t 0 ]; then
+        if ! printf '%s\n' "$versions" | grep -qxF "$VERSION"; then
+            echo "ERROR: environment 'PoolSeqFlow-$VERSION' is not installed, and neither is" >&2
+            echo "v$VERSION of the pipeline under $prefix/opt." >&2
+        else
+            echo "ERROR: $count versions of PoolSeqFlow are installed under $prefix." >&2
+        fi
+        echo "" >&2
+        echo "Installed:" >&2
+        printf '%s\n' "$versions" | sed 's/^/    PoolSeqFlow-/' >&2
+        echo "" >&2
+        echo "Nothing is attached to ask which one to remove, and removing the wrong" >&2
+        echo "installation is not a thing to guess at. Name the one you mean:" >&2
+        echo "" >&2
+        echo "    PoolSeqFlow-<version> uninstall" >&2
+        return 1
+    fi
+
+    echo "Installed under $prefix:" >&2
+    i=0
+    while IFS= read -r v; do
+        [ -n "$v" ] || continue
+        i=$((i + 1))
+        if [ "$v" = "$VERSION" ]; then
+            printf '  %d) PoolSeqFlow-%s   (this wrapper)\n' "$i" "$v" >&2
+        else
+            printf '  %d) PoolSeqFlow-%s\n' "$i" "$v" >&2
+        fi
+    done <<EOF
+$versions
+EOF
+    echo "" >&2
+    printf 'Which one should be removed? [1-%d, or q to cancel] ' "$i" >&2
+    read -r choice
+    case "$choice" in
+        q|Q|"") echo "Cancelled. Nothing was removed." >&2; return 1 ;;
+        *[!0-9]*|"") echo "Not a number: $choice. Nothing was removed." >&2; return 1 ;;
+    esac
+    if [ "$choice" -lt 1 ] || [ "$choice" -gt "$i" ]; then
+        echo "There is no $choice on that list. Nothing was removed." >&2
+        return 1
+    fi
+    printf '%s\n' "$versions" | sed -n "${choice}p"
 }
 
 # Remove one version's payload and its wrapper, then re-point the plain wrapper at whatever
@@ -457,6 +544,93 @@ export ENV_NAME
 
 ENV_FILE="$INSTALL/install/environment.yml"
 
+# Puts a project's starting files in the directory you are standing in. Everything it writes
+# is something you then edit, so it never overwrites: a second `init` in a project you have
+# already filled in reports what is there and changes nothing.
+#
+# The .example copies are reference, not input: nothing reads them, and they are here so the
+# explanation sits beside the file it describes rather than back in the installation.
+#
+# metadata.csv and the run table are NOT written. Both are tables whose entire content is the
+# experiment - which pairs are one pool, which parameters differ between runs - so a copied
+# one would describe someone else's. parameters.config is different: it is a settings file
+# that is edited in place, so a copy of the template is the right starting point.
+populate_project() {
+    local multi="$1" here made=0 kept=0
+
+    here=$(pwd -P)
+    if [ "$here" = "$INSTALL" ]; then
+        echo "ERROR: this is the PoolSeqFlow installation, not a project." >&2
+        echo "  The installation is a tool: one copy serves any number of projects and is" >&2
+        echo "  replaced wholesale when you upgrade, so a project kept inside it does not" >&2
+        echo "  survive. Make a directory of your own, change into it, and run init there." >&2
+        exit 1
+    fi
+
+    place() {
+        local src="$1" dest="$2"
+        if [ -e "$dest" ]; then
+            printf '  kept     %-22s (already here)\n' "$dest"
+            kept=$((kept + 1))
+        else
+            cp "$src" "$dest"
+            printf '  created  %s\n' "$dest"
+            made=$((made + 1))
+        fi
+    }
+
+    make_dir() {
+        if [ -d "$1" ]; then
+            printf '  kept     %-22s (already here)\n' "$1/"
+            kept=$((kept + 1))
+        else
+            mkdir -p "$1"
+            printf '  created  %s\n' "$1/"
+            made=$((made + 1))
+        fi
+    }
+
+    echo "Populating a PoolSeqFlow project in $here"
+    echo ""
+    place "$INSTALL/parameters.config.template" parameters.config
+    place "$INSTALL/metadata.csv.template" metadata.csv.example
+    [ "$multi" = "multi" ] && place "$INSTALL/multi-run.csv.example" multi-run.csv.example
+    make_dir Data
+    make_dir Reference
+    echo ""
+
+    if [ "$multi" = "multi" ]; then
+        # Only ever flipped in a config this run created. Editing one the user has already
+        # filled in would be reaching into their settings behind their back.
+        if [ "$made" -gt 0 ] && grep -qE '^[[:space:]]*multiRun[[:space:]]*=[[:space:]]*false' parameters.config; then
+            sed 's/^\([[:space:]]*multiRun[[:space:]]*=[[:space:]]*\)false/\1true/' \
+                parameters.config > .parameters.config.init.tmp \
+                && mv .parameters.config.init.tmp parameters.config
+            echo "  multiRun = true is set in parameters.config"
+        else
+            echo "  Set  multiRun = true  in parameters.config yourself - it was already there"
+            echo "  and this does not edit a config you had written."
+        fi
+        echo ""
+        echo "Write your run table next. One column must be RunID; every other column is a"
+        echo "parameter name spelt as parameters.config spells it, and a blank cell means"
+        echo "\"take it from parameters.config\". The rules and four worked examples are in"
+        echo "multi-run.csv.example, now beside you. Name your table in parameters.config"
+        echo "as  multiRunFile."
+        echo ""
+    fi
+
+    echo "$made created, $kept already present."
+    echo ""
+    echo "Next:"
+    echo "  1. put your reads in Data/ and your reference in Reference/"
+    echo "  2. edit parameters.config - mainDir, storageDir, readPattern, referenceFile,"
+    echo "     poolSize and diploidy at minimum"
+    echo "  3. write metadata.csv, which says what your samples are. Start from"
+    echo "     metadata.csv.example: it explains every column and what merges two rows"
+    echo "     into one pool."
+}
+
 case $COMMAND in
     install)
         require_install
@@ -486,6 +660,16 @@ case $COMMAND in
         conda activate "$ENV_NAME"
         bash "$(install_prefix)/opt/PoolSeqFlow-${VERSION}/install/check_install.sh"
         echo "Installation complete."
+        ;;
+
+    init)
+        require_install
+        populate_project single
+        ;;
+
+    init_multi)
+        require_install
+        populate_project multi
         ;;
 
     check)
@@ -876,36 +1060,39 @@ EOF
         # independently - an interrupted install, or a manual `conda env remove`. Each is
         # removed if present, and only the case where neither exists is an error.
         PREFIX=$(install_prefix)
-        HAVE_ENV=0
-        if env_exists "$ENV_NAME"; then HAVE_ENV=1; fi
-        HAVE_PAYLOAD=0
-        if [ -d "$PREFIX/opt/PoolSeqFlow-${VERSION}" ]; then HAVE_PAYLOAD=1; fi
+        # Which version to remove is decided first, and may be a different one from the
+        # wrapper that was invoked. Cancelling, or having no way to ask, stops here.
+        TARGET=$(choose_version_to_uninstall "$PREFIX") || exit 1
 
-        if [ "$HAVE_ENV" -eq 0 ] && [ "$HAVE_PAYLOAD" -eq 0 ]; then
+        if [ -z "$TARGET" ]; then
             echo "Environment '$ENV_NAME' is not installed, and neither is v$VERSION of the" >&2
             echo "pipeline under $PREFIX/opt." >&2
-            INSTALLED=$(poolseqflow_envs)
-            if [ -n "$INSTALLED" ]; then
-                echo "" >&2
-                echo "PoolSeqFlow environments that are installed:" >&2
-                echo "$INSTALLED" | sed 's/^/    /' >&2
-                echo "" >&2
-                echo "Remove one with: conda env remove -n <name>" >&2
-            fi
+            echo "" >&2
+            echo "Nothing is installed under this prefix. If you installed somewhere else," >&2
+            echo "set POOLSEQFLOW_PREFIX to it and try again." >&2
             exit 1
         fi
 
+        TARGET_ENV="PoolSeqFlow-${TARGET}"
+        HAVE_ENV=0
+        if env_exists "$TARGET_ENV"; then HAVE_ENV=1; fi
+        HAVE_PAYLOAD=0
+        if [ -d "$PREFIX/opt/PoolSeqFlow-${TARGET}" ]; then HAVE_PAYLOAD=1; fi
+
+        # The environment and the payload are installed together, but they can be missing
+        # independently - an interrupted install, or a manual `conda env remove`. Each is
+        # removed if present.
         if [ "$HAVE_ENV" -eq 1 ]; then
-            echo "Uninstalling conda environment '$ENV_NAME'..."
+            echo "Uninstalling conda environment '$TARGET_ENV'..."
             conda deactivate
-            conda env remove -n "$ENV_NAME"
+            conda env remove -n "$TARGET_ENV"
         else
-            echo "Conda environment '$ENV_NAME' is already absent."
+            echo "Conda environment '$TARGET_ENV' is already absent."
         fi
         if [ "$HAVE_PAYLOAD" -eq 1 ]; then
-            remove_payload "$VERSION"
+            remove_payload "$TARGET"
         else
-            echo "No pipeline installed at $PREFIX/opt/PoolSeqFlow-${VERSION}."
+            echo "No pipeline installed at $PREFIX/opt/PoolSeqFlow-${TARGET}."
         fi
         ;;
 
