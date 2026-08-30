@@ -67,6 +67,34 @@ test_vcffilter_rename_still_carries_over() {
     assert_eq "99" "$(migrated_value minDP)" "the user's minDP should survive the rename"
 }
 
+# The 3.0 scope renames: samtools -> cleanBAM, bcftools -> variantCall. Whole scopes moved, so
+# the rename table matches on the PREFIX rather than listing every field; a 2.x config names
+# eight of them. Without this the user's calling and cleaning settings all read as DROPPED and
+# they silently get the template defaults back.
+test_the_option_scopes_carry_over_from_their_tool_names() {
+    migrate_config_with -e 's|^    cleanBAM {|    samtools {|' \
+                        -e 's|^    variantCall {|    bcftools {|' \
+                        -e 's|^        mapq .*|        mapq            = 44|' \
+                        -e 's|^        maxDepth .*|        maxDepth        = 7777|'
+    assert_status 0 "$MIGRATE_STATUS" "migration should succeed"
+    assert_eq "44" "$(migrated_value mapq)" "samtools.mapq should land in cleanBAM.mapq"
+    assert_eq "7777" "$(migrated_value maxDepth)" \
+        "bcftools.maxDepth should land in variantCall.maxDepth"
+    assert_contains "$MIGRATE_OUTPUT" "cleanBAM.mapq" "the report should name the new key"
+    assert_contains "$MIGRATE_OUTPUT" "variantCall.maxDepth" "the report should name the new key"
+}
+
+# The `software` block names the TOOLS and was deliberately left alone by the same rename. A
+# prefix rule that reached `software.samtools` would repoint a user's binary at a scope that
+# does not exist, and nothing downstream would say so.
+test_the_scope_rename_leaves_the_software_block_alone() {
+    migrate_config_with -e 's|^    cleanBAM {|    samtools {|' \
+                        -e 's|^    variantCall {|    bcftools {|'
+    assert_status 0 "$MIGRATE_STATUS" "migration should succeed"
+    assert_eq "samtools" "$(migrated_value samtools)" "software.samtools must stay the tool name"
+    assert_eq "bcftools" "$(migrated_value bcftools)" "software.bcftools must stay the tool name"
+}
+
 # The brace-with-trailing-comment case: `vcftools {  // comment` once matched neither the
 # scope-open rule nor the assignment rule, so the whole block's children were qualified one
 # level short and every value in it was dropped.

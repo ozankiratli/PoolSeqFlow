@@ -9,7 +9,7 @@ when it is not. Anything testing `bin/filterFalsePositives.sh`, `bin/createDepth
 
 **Where it came from.** A full pipeline run over `test/data/base/` — the same six samples, the
 same 20 kb synthetic reference, aligned with bwa and called with the pipeline's own
-`bcftools.mpileupOptions` / `callOptions`. It is the `Test.vcf` that run produced, with the
+`variantCall.mpileupOptions` / `callOptions`. It is the `Test.vcf` that run produced, with the
 absolute paths in `##bcftoolsCommand` and `##reference` rewritten to relative ones so the
 committed file says nothing about the machine that made it. Nothing else was touched.
 

@@ -89,9 +89,9 @@ process SortCleanBam {
             - | \
         ${run.software.samtools} view \
             -@ ${task.cpus - 1} \
-            -F ${run.samtools.filter} \
-            -f ${run.samtools.required} \
-            -q ${run.samtools.mapq} \
+            -F ${run.cleanBAM.filter} \
+            -f ${run.cleanBAM.required} \
+            -q ${run.cleanBAM.mapq} \
             -b \
             -o ${target_bam} \
             -

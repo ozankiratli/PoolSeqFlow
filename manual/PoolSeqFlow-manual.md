@@ -642,7 +642,7 @@ At the default `sampleThreshold = 0.2`, an allele present in only one pool out o
 
 #### Very high depth
 
-`bcftools.maxDepth` defaults to `2000` and becomes `mpileup -d`, a per-file cap on reads considered at a position. Pooled libraries are often sequenced deeply on purpose, and a cap that bites truncates the read counts the frequencies are computed from. Check your coverage reports from step 5 against this value before trusting the output — details in [Variant Calling](#maxdepth).
+`variantCall.maxDepth` defaults to `2000` and becomes `mpileup -d`, a per-file cap on reads considered at a position. Pooled libraries are often sequenced deeply on purpose, and a cap that bites truncates the read counts the frequencies are computed from. Check your coverage reports from step 5 against this value before trusting the output — details in [Variant Calling](#maxdepth).
 
 ### Choosing between run layouts
 
@@ -807,9 +807,9 @@ If you are trying to work out why a variant you expected is missing, read this p
 
 | # | Stage | Operates on | Removes | Parameter |
 |---|---|---|---|---|
-| 1 | Alignment filter | Reads | Unmapped, non-paired, duplicate, secondary, supplementary, low-MAPQ reads | `samtools.filter`, `samtools.required`, `samtools.mapq` |
-| 2 | Pileup filter | Reads at a position | Low mapping quality, low base quality; caps depth | `bcftools.baseQualMin`, `bcftools.varQualMin`, `bcftools.maxDepth` |
-| 3 | Variant calling | Sites | Non-variant sites | `bcftools.callOptions` |
+| 1 | Alignment filter | Reads | Unmapped, non-paired, duplicate, secondary, supplementary, low-MAPQ reads | `cleanBAM.filter`, `cleanBAM.required`, `cleanBAM.mapq` |
+| 2 | Pileup filter | Reads at a position | Low mapping quality, low base quality; caps depth | `variantCall.baseQualMin`, `variantCall.varQualMin`, `variantCall.maxDepth` |
+| 3 | Variant calling | Sites | Non-variant sites | `variantCall.callOptions` |
 | 4 | Major-allele normalisation | Allele order | Nothing — it rewrites | — |
 | 5 | False-positive filter | Alternate alleles | Alleles without cross-sample support | `poolSize` or `param_poolSize`, `diploidy`, `filterFalsePositives.sampleThreshold` |
 | 6 | Depth & quality filter | Sites | Sites where any sample is under-covered, and low-QUAL sites | `vcffilter.minDP`, `vcffilter.minQUAL` |
@@ -830,9 +830,9 @@ samtools view -F 0xF0C -f 0x2 -q 30 -b
 
 | Flag | Source | Effect |
 |---|---|---|
-| `-F 0xF0C` | `samtools.filter` | **Excludes** unmapped, mate-unmapped, secondary, QC-fail, duplicate and supplementary reads |
-| `-f 0x2` | `samtools.required` | **Requires** the read to be properly paired |
-| `-q 30` | `samtools.mapq` | **Excludes** reads with mapping quality below 30 |
+| `-F 0xF0C` | `cleanBAM.filter` | **Excludes** unmapped, mate-unmapped, secondary, QC-fail, duplicate and supplementary reads |
+| `-f 0x2` | `cleanBAM.required` | **Requires** the read to be properly paired |
+| `-q 30` | `cleanBAM.mapq` | **Excludes** reads with mapping quality below 30 |
 
 The MAPQ floor is easy to miss because it is not part of either flag word. At `30` it is a strict filter — it discards reads that map ambiguously, which in a repetitive genome can be a substantial fraction. That is usually the right call for Pool-seq, because an ambiguously placed read contributes a read count to the wrong position and frequencies are read counts. But if your coverage reports from step 5 show much less depth than you sequenced for, this is the first place to look.
 
@@ -848,10 +848,10 @@ bcftools mpileup -B -C 50 -q 30 -Q 30 -d 2000 -a AD,DP,SP,INFO/AD -Ou
 
 | Flag | Parameter | Effect |
 |---|---|---|
-| `-q 30` | `bcftools.varQualMin` | Minimum **mapping** quality for a read to be counted |
-| `-Q 30` | `bcftools.baseQualMin` | Minimum **base** quality for a base to be counted |
-| `-C 50` | `bcftools.scaleMapQ` | Downgrades mapping quality for reads with excessive mismatches |
-| `-d 2000` | `bcftools.maxDepth` | Caps reads considered per file per position |
+| `-q 30` | `variantCall.varQualMin` | Minimum **mapping** quality for a read to be counted |
+| `-Q 30` | `variantCall.baseQualMin` | Minimum **base** quality for a base to be counted |
+| `-C 50` | `variantCall.scaleMapQ` | Downgrades mapping quality for reads with excessive mismatches |
+| `-d 2000` | `variantCall.maxDepth` | Caps reads considered per file per position |
 | `-B` | fixed | Disables BAQ (base alignment quality) recalculation |
 | `-a AD,DP,SP,INFO/AD` | fixed | Emits the allelic-depth fields everything downstream depends on |
 
@@ -1014,14 +1014,14 @@ Work from the outside in. A variant lost at stage 1 cannot be recovered by loose
 
 | Symptom | Most likely stage | Parameter to examine |
 |---|---|---|
-| Far less depth than sequenced | 1 | `samtools.mapq`, then duplicate rate in the step 5 reports |
-| Depth plateaus at a round number | 2 | `bcftools.maxDepth` |
+| Far less depth than sequenced | 1 | `cleanBAM.mapq`, then duplicate rate in the step 5 reports |
+| Depth plateaus at a round number | 2 | `variantCall.maxDepth` |
 | Low-frequency alleles absent everywhere | 5 | `poolSize`, or `param_poolSize` for the pool in question, and `diploidy` |
 | Low-frequency alleles absent from one pool only | 5 | That pool's `param_poolSize` — a size set too low raises its threshold alone |
 | Alleles present in one pool only, absent from output | 5 | `filterFalsePositives.sampleThreshold` |
 | Whole sites missing despite good depth | 6 | `vcffilter.minQUAL` |
 | Almost every site gone after filtering | 6 | `vcffilter.minDP` — one under-covered sample removes sites for all of them |
-| Multiallelic sites reduced to two alleles | 3 | `bcftools.callOptions` — confirm `-A` is still present |
+| Multiallelic sites reduced to two alleles | 3 | `variantCall.callOptions` — confirm `-A` is still present |
 
 Changing any of these invalidates existing outputs, and step 0 will stop the next run rather than mix results. That is covered in [Design Decisions](#the-run-refuses-to-mix-settings).
 
@@ -1124,7 +1124,7 @@ Those two are the whole of it. Every VCF step 7 produces — `_sort`, `_sort_fp`
 | Path | Produced by | Useful for |
 |---|---|---|
 | `Alignment/<sample>_alignment_report.txt` | `bamtools stats` | Mapping rate, duplicate rate, paired-end statistics |
-| `Coverage/<sample>_coverage_report.txt` | `samtools coverage` | Per-contig depth and breadth — **check this against `bcftools.maxDepth`** |
+| `Coverage/<sample>_coverage_report.txt` | `samtools coverage` | Per-contig depth and breadth — **check this against `variantCall.maxDepth`** |
 | `Fastqc/<sample>/` | FastQC | Raw, trimmed and clipped read quality |
 | `Trimming/<sample>/` | Trim Galore | How much was removed, and which adapter was detected |
 | `snpeff_summary.html` | SnpEff | Variant effect summary, if annotation ran |
@@ -1144,7 +1144,7 @@ If you ran a table of several runs, the four Nextflow reports describe the whole
 After a run finishes, four checks catch most problems:
 
 1. **Sample columns.** Does the table have the number of columns you expect, in the order you laid out in `metadata.csv`? A count lower than expected means rows were merged by a shared `RG_Sample` ([why](#rg_sample-decides-what-counts-as-a-sample)).
-2. **Coverage against the cap.** If `samtools coverage` reports mean depth near `bcftools.maxDepth` (default 2000), the pileup was truncated and frequencies are biased.
+2. **Coverage against the cap.** If `samtools coverage` reports mean depth near `variantCall.maxDepth` (default 2000), the pileup was truncated and frequencies are biased.
 3. **Row counts.** Compare the site count in `<name>.vcf` with the distinct positions that reached the tables — `tail -n +2 <name>_snp_freq.tsv | cut -f1,2 | sort -u | wc -l`, and the same for the indel table. A very large drop points at the cross-sample filter; check `sampleThreshold` against your sample count in [the table above](#where-m-comes-from).
 4. **Column sums.** Frequencies within a site should sum to 1 in every column.
 
@@ -1168,7 +1168,7 @@ Change one of these and your output changes. Step 0 records them and **refuses t
 | `filterFalsePositives.sampleThreshold` | Fraction of samples that must support an allele | [Variant Calling](#samplethreshold) |
 | `bcftools.*` | Pileup and calling behaviour, including the depth cap | [Variant Calling](#variant-calling) |
 | `vcffilter.minDP`, `vcffilter.minQUAL` | Post-call depth and quality filtering | [Variant Calling](#depth-and-quality) |
-| `samtools.filter`, `samtools.required`, `samtools.mapq` | Which alignments reach the pileup | [Alignment Filters](#alignment-filters) |
+| `cleanBAM.filter`, `cleanBAM.required`, `cleanBAM.mapq` | Which alignments reach the pileup | [Alignment Filters](#alignment-filters) |
 | `cutadapt.at_gc_error` | Composition tolerance driving the clip points | [Trimming & Clipping](#trimming-clipping) |
 | `trim_galore.quality`, `.autodetect`, `.adapter1/2` | What is trimmed off the reads | [Trimming & Clipping](#trimming-clipping) |
 | `annotate`, `gffFile` | Whether step 8 runs and against what | [Pipeline Steps](#step-8-annotate-variants) |
@@ -1206,7 +1206,7 @@ A large part of `parameters.config` is computed. The `cores` block derives every
 
 Editing these by hand breaks the invariant that makes the pipeline predictable — that one number sizes the run, and one pair of paths places everything. Change the input, not the derivation.
 
-The template ships these lines commented out, and uncommenting one is supported rather than forbidden: a derived value you set by hand is used exactly as written, and nothing is derived from its inputs any more. Pin `bcftools.mpileupOptions` and `bcftools.maxDepth` stops meaning anything for that run. That is a reasonable thing to want when you need full control of a command line — it is only a trap when it happens by accident.
+The template ships these lines commented out, and uncommenting one is supported rather than forbidden: a derived value you set by hand is used exactly as written, and nothing is derived from its inputs any more. Pin `variantCall.mpileupOptions` and `variantCall.maxDepth` stops meaning anything for that run. That is a reasonable thing to want when you need full control of a command line — it is only a trap when it happens by accident.
 
 Where the pipeline can tell, it says so. The verification step at the beginning of a run reports when your trimming options have been pinned rather than derived, and if you are using a run table it names any column that sets a computed value directly.
 
@@ -1217,7 +1217,7 @@ In rough order of how expensive it is to get wrong:
 1. **`metadata.csv`** — which FASTQ pairs share an `RG_Sample`. Wrong here means valid results that answer a different question, and fixing it invalidates every BAM. [→](#rg_sample-decides-what-counts-as-a-sample)
 2. **`poolSize` and `diploidy`** — these set the frequency floor. `poolSize` can be given per pool in `metadata.csv`, and `diploidy` applies to a whole run. [→](#poolsize-and-diploidy)
 3. **`filterFalsePositives.sampleThreshold`** — decides whether alleles seen in few pools survive. The default removes them. [→](#samplethreshold)
-4. **`bcftools.maxDepth`** — check it against the depth you sequenced for. [→](#maxdepth)
+4. **`variantCall.maxDepth`** — check it against the depth you sequenced for. [→](#maxdepth)
 5. **`threads`** — must fit the machine, or the run fails at submission. [→](#resources)
 
 Changing any of items 1–4 after outputs exist means deleting those outputs. That is enforced, not advisory.
@@ -1691,7 +1691,7 @@ Four rules, and they are all of them.
 
 **One column must be `RunID`.** It names the run and becomes a directory, so keep it to letters, digits, dot, dash and underscore.
 
-**Every other column is a parameter name, spelt exactly as `parameters.config` spells it, with no `params.` prefix.** Nested ones are dotted: `trim_galore.quality`, `bcftools.maxDepth`. Any parameter may be varied, including ones the pipeline normally computes for itself. A column that does not name a parameter is refused rather than ignored — that is a typo, not a preference.
+**Every other column is a parameter name, spelt exactly as `parameters.config` spells it, with no `params.` prefix.** Nested ones are dotted: `trim_galore.quality`, `variantCall.maxDepth`. Any parameter may be varied, including ones the pipeline normally computes for itself. A column that does not name a parameter is refused rather than ignored — that is a typo, not a preference.
 
 **A blank cell means "take it from `parameters.config`".** That is what keeps a table as short as the difference between the runs. One consequence worth knowing: there is no way to set a parameter to an empty string here, because blank already means something else.
 
@@ -1709,11 +1709,11 @@ reference_b,reference_b.fasta.gz,reference_b.gff.gz,30
 
 ### Setting a value the pipeline would compute
 
-Some parameters are derived from others — `filterFalsePositives.sensitivity` from `poolSize` and `diploidy`, `bcftools.mpileupOptions` from the four `bcftools` values, the whole `cores` ladder from `threads`. Varying either end of that relationship is allowed, and the two behave differently.
+Some parameters are derived from others — `filterFalsePositives.sensitivity` from `poolSize` and `diploidy`, `variantCall.mpileupOptions` from the four `bcftools` values, the whole `cores` ladder from `threads`. Varying either end of that relationship is allowed, and the two behave differently.
 
 **Set an input and the computed value follows it.** A run with `poolSize = 200` gets the sensitivity that a pool of 200 implies; one with `trim_galore.quality = 30` gets trimming options built around 30. You do not have to keep the derived values in step by hand.
 
-**Set a computed value directly and it is used exactly as written** — and nothing is derived from its inputs any more. Pin `bcftools.mpileupOptions` and `bcftools.maxDepth` stops meaning anything for that run. That is a legitimate thing to want when you need a command line under your own control, and any column doing it is named in the report, so it is a choice rather than a surprise.
+**Set a computed value directly and it is used exactly as written** — and nothing is derived from its inputs any more. Pin `variantCall.mpileupOptions` and `variantCall.maxDepth` stops meaning anything for that run. That is a legitimate thing to want when you need a command line under your own control, and any column doing it is named in the report, so it is a choice rather than a surprise.
 
 ### Where the results go
 
@@ -2231,7 +2231,7 @@ Two independent sub-steps per sample:
 | `AlignmentReport` | `bamtools stats` | `Output/Reports/Alignment/<sample>_alignment_report.txt` |
 | `CoverageReport` | `samtools coverage` | `Output/Reports/Coverage/<sample>_coverage_report.txt` |
 
-The coverage report is the one to read on every run: it is how you find out whether `bcftools.maxDepth` truncated your pileup ([why that matters](#maxdepth)).
+The coverage report is the one to read on every run: it is how you find out whether `variantCall.maxDepth` truncated your pileup ([why that matters](#maxdepth)).
 
 ---
 
@@ -2708,8 +2708,8 @@ Work outward through the chain — a read lost at alignment cannot be recovered 
 
 | Check | Parameter |
 |---|---|
-| Was it filtered at alignment? | `samtools.mapq` (30 is strict), `samtools.filter` |
-| Was the pileup truncated? | `bcftools.maxDepth` vs your coverage reports |
+| Was it filtered at alignment? | `cleanBAM.mapq` (30 is strict), `cleanBAM.filter` |
+| Was the pileup truncated? | `variantCall.maxDepth` vs your coverage reports |
 | Was it seen in too few pools? | `filterFalsePositives.sampleThreshold` — the default discards alleles found in one pool out of eight |
 | Below the frequency floor? | `poolSize`, `diploidy` |
 | Site removed on quality? | `vcffilter.minQUAL` |
@@ -2720,12 +2720,12 @@ Work outward through the chain — a read lost at alignment cannot be recovered 
 
 Two usual causes, in order of likelihood:
 
-1. **MAPQ filtering.** At `samtools.mapq = 30`, repetitive genomes lose a lot. Compare read counts in `Output/Aligned/` and `Output/Ready/`.
+1. **MAPQ filtering.** At `cleanBAM.mapq = 30`, repetitive genomes lose a lot. Compare read counts in `Output/Aligned/` and `Output/Ready/`.
 2. **Duplicate removal.** The step 4 log carries `markdup -s` statistics; a high duplicate rate is a library-prep problem, not a pipeline one.
 
 #### Depth plateaus at a round number
 
-`bcftools.maxDepth`, default 2000, caps reads considered per file per position. Deep pooled libraries exceed it, and the truncation biases every frequency at those positions. [maxDepth →](#maxdepth)
+`variantCall.maxDepth`, default 2000, caps reads considered per file per position. Deep pooled libraries exceed it, and the truncation biases every frequency at those positions. [maxDepth →](#maxdepth)
 
 #### Genotype-based tools find nothing in my VCFs
 

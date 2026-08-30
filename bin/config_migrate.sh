@@ -77,10 +77,14 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
     # they had before. Needs a line per rename: without one, a rename reads as one DROPPED plus
     # one NEW. A rename that also changed the meaning goes in reformatted() too, which runs
     # first and makes the template value win.
-    function renamed(k) {
+    function renamed(k,   old) {
         if (k == "vcffilter.minDP")   return "vcftools.minDP"
         if (k == "vcffilter.minQUAL") return "vcftools.minQUAL"
         if (k == "storageDir")        return "projectDir"
+        # Whole-scope renames: every field follows its prefix, so none is listed by name.
+        old = k
+        if (sub(/^cleanBAM\./, "samtools.", old))    return old
+        if (sub(/^variantCall\./, "bcftools.", old)) return old
         return ""
     }
 

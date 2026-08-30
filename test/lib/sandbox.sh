@@ -210,7 +210,7 @@ include { runDefinitions; resolveParameters } from './scripts/resolve_parameters
 def reportKeys() {
     return ['poolSize', 'diploidy', 'filterFalsePositives.sensitivity',
             'trim_galore.quality', 'trim_galore.options',
-            'bcftools.maxDepth', 'bcftools.mpileupOptions',
+            'variantCall.maxDepth', 'variantCall.mpileupOptions',
             'threads', 'cores.bwa', 'referenceFile', 'reference', 'snpEff.db',
             'storageDir', 'dir.utilized', 'dir.output.vcf', 'dir.dictionaries']
 }

@@ -98,23 +98,23 @@ params {
         // options      = "-K ${params.bwa.batchSize} -T ${params.bwa.minScoreOutput}"
     }
     
-    // Samtools parameters
-    samtools {
+    // Step 4: what samtools keeps when it cleans each BAM.
+    cleanBAM {
         filter          = "0xF0C"       // See `man samtools-flags` for more information
         required        = "0x2"         // See `man samtools-flags` for more information
         mapq            = 30
     }
 
 
-    // bcftools parameters
-    bcftools {
+    // Step 6: how bcftools calls variants.
+    variantCall {
         scaleMapQ       = 50
         baseQualMin     = 30
         varQualMin      = 30
         maxDepth        = 2000
         // Built from the four values above; uncomment to take full control of them, maxDepth
         // included. -q is mapping quality, -Q is base quality.
-        // mpileupOptions = "-B -C ${params.bcftools.scaleMapQ} -q ${params.bcftools.varQualMin} -Q ${params.bcftools.baseQualMin} -d ${params.bcftools.maxDepth} -a AD,DP,SP,INFO/AD -Ou"
+        // mpileupOptions = "-B -C ${params.variantCall.scaleMapQ} -q ${params.variantCall.varQualMin} -Q ${params.variantCall.baseQualMin} -d ${params.variantCall.maxDepth} -a AD,DP,SP,INFO/AD -Ou"
 
         callOptions         = "-m -A -v -Ov"
     }

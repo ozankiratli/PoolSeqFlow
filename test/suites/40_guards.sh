@@ -225,7 +225,7 @@ test_a_pinned_option_string_is_used_verbatim() {
     status=$(run_verify_only "$sb")
     assert_status 0 "$status" "a fresh project should verify; see $sb/run.out"
     params=$(cat "$sb/store/Output/run_parameters.txt" 2>/dev/null)
-    assert_contains "$params" "bcftools.mpileupOptions=PINNED -d 99" \
+    assert_contains "$params" "variantCall.mpileupOptions=PINNED -d 99" \
         "the written option string should reach the run untouched"
     assert_not_contains "$params" "-a AD,DP,SP,INFO/AD" \
         "the composed default should not have been used"
@@ -486,7 +486,7 @@ test_a_multirun_table_is_reported_before_anything_runs() {
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
     local sb status report
     sb=$(multirun_sandbox "multirun-ok" '# same reads, two references
-RunID,referenceFile,gffFile,trim_galore.quality,bcftools.mpileupOptions
+RunID,referenceFile,gffFile,trim_galore.quality,variantCall.mpileupOptions
 refA,reference.fasta.gz,reference.gff.gz,,
 refB,reference.fasta.gz,reference.gff.gz,30,"-B -C 50 -q 30 -Q 30 -d 4000 -a AD,DP,SP,INFO/AD -Ou"
 ')
@@ -512,7 +512,7 @@ MULTI-RUN CHECK:           trim_galore.quality" "a blank cell is not an override
     # here rather than leaving someone to find it in a result months later.
     assert_contains "$report" "replace a value the pipeline would compute" \
         "an override of a derived parameter should be called out"
-    assert_contains "$report" "bcftools.mpileupOptions" "by name"
+    assert_contains "$report" "variantCall.mpileupOptions" "by name"
 
     # The value contains commas. If the parsing were splitting on them this is where it
     # would show, as a mangled value rather than an error.
@@ -565,7 +565,7 @@ test_run_definitions_resolve_each_kind_of_divergence() {
     sb=$(make_pipeline_sandbox "rundefs")
     cat > "$sb/main/runs.csv" <<'TABLE'
 # each row diverges in a different way
-RunID,poolSize,trim_galore.quality,bcftools.maxDepth,bcftools.mpileupOptions,threads,referenceFile
+RunID,poolSize,trim_galore.quality,variantCall.maxDepth,variantCall.mpileupOptions,threads,referenceFile
 base,,,,,,
 pool,50,,,,,
 trim,,30,,,,
@@ -594,12 +594,12 @@ TABLE
     assert_contains "$out" "RUN trim trim_galore.quality=30"    "the row's own value"
     assert_contains "$out" "RUN trim trim_galore.options=--fastqc --paired --retain_unpaired -q 30 " \
         "trim_galore.quality must re-derive options"
-    assert_contains "$out" "RUN depth bcftools.mpileupOptions=-B -C 50 -q 30 -Q 30 -d 4000 -a AD,DP,SP,INFO/AD -Ou" \
-        "bcftools.maxDepth must re-derive mpileupOptions"
+    assert_contains "$out" "RUN depth variantCall.mpileupOptions=-B -C 50 -q 30 -Q 30 -d 4000 -a AD,DP,SP,INFO/AD -Ou" \
+        "variantCall.maxDepth must re-derive mpileupOptions"
 
     # A row setting a DERIVED value directly wins, even against its own input in the same row.
     # This is why the row is applied twice, and why there is no column whitelist.
-    assert_contains "$out" "RUN pinned bcftools.mpileupOptions=-B -C 50 -q 30 -Q 30 -d 999 -a AD,DP,SP,INFO/AD -Ou" \
+    assert_contains "$out" "RUN pinned variantCall.mpileupOptions=-B -C 50 -q 30 -Q 30 -d 999 -a AD,DP,SP,INFO/AD -Ou" \
         "a pinned derived value must survive its own derivation"
 
     # threads drives the cores ladder, per run.

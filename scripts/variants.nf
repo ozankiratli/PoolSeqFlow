@@ -24,14 +24,14 @@ def stepParameterMap() {
 
         3: [ artifact: ['bwa.options', 'dir.subpath.aligned'], publish: [] ],
 
-        4: [ artifact: ['samtools.filter', 'samtools.required', 'samtools.mapq',
+        4: [ artifact: ['cleanBAM.filter', 'cleanBAM.required', 'cleanBAM.mapq',
                         'dir.subpath.ready'],
              publish : [] ],
 
         // Step 5 reads no analysis parameter, so it can never be a branch point.
         5: [ artifact: [], publish: [] ],
 
-        6: [ artifact: ['bcftools.mpileupOptions', 'bcftools.callOptions', 'vcf.fileName',
+        6: [ artifact: ['variantCall.mpileupOptions', 'variantCall.callOptions', 'vcf.fileName',
                         'dir.subpath.vcf'],
              publish : [] ],
 

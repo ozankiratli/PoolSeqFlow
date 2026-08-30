@@ -38,9 +38,12 @@ for f in PoolSeqFlow poolseqflow.nf nextflow.config \
     [ -f "$root/$f" ] || fail "missing from archive: $f"
 done
 
-# All nine step modules, not however many happened to be committed.
-steps_found=$(find "$root/scripts" -name '*.nf' | wc -l)
-[ "$steps_found" -eq 9 ] || fail "expected 9 scripts/*.nf, found $steps_found"
+# Every module poolseqflow.nf includes, named rather than counted.
+for f in 0_verify_environment.nf 1_build_dictionaries.nf 2_trim_reads.nf 3_align.nf \
+         4_clean.nf 5_reports.nf 6_variant_call.nf 7_vcf2freq.nf 8_annotate_variants.nf \
+         9_completion.nf citations.nf metadata.nf resolve_parameters.nf variants.nf; do
+    [ -f "$root/scripts/$f" ] || fail "missing from archive: scripts/$f"
+done
 
 # The helpers the process scripts call by bare name via nextflow.config's PATH.
 for f in atomic_mv.sh config_migrate.sh createDepthFile.sh \
@@ -59,10 +62,14 @@ if find "$root" \( -name '__pycache__' -o -name '*.pyc' \) -print -quit | grep -
     fail "compiled Python found in the archive"
 fi
 
-# The executable bit, which the extracted copy must carry.
+# The executable bit, which the extracted copy must carry. SOURCED holds the libraries read by
+# another script rather than run, as install/check_install.sh spells it.
+SOURCED="tool_version.sh"
 [ -x "$root/PoolSeqFlow" ] || fail "./PoolSeqFlow is not executable"
 for s in "$root"/bin/*; do
-    [ -x "$s" ] || fail "$(basename "$s") is not executable"
+    b=$(basename "$s")
+    case " $SOURCED " in *" $b "*) continue ;; esac
+    [ -x "$s" ] || fail "$b is not executable"
 done
 
 # The version the extracted copy would report, in all three places it lives.

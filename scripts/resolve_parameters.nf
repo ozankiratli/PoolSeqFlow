@@ -34,7 +34,7 @@ def derivedParameterNames() {
         'fastqc.options',
         'trim_galore.adapterOptions', 'trim_galore.options',
         'bwa.options',
-        'bcftools.mpileupOptions',
+        'variantCall.mpileupOptions',
         // Computed in parameters.config instead: their inputs are all top-level.
         'referenceFa', 'referencePath', 'gffPath', 'metadataPath', 'multiRunPath',
         'reference', 'gff', 'reads',
@@ -81,8 +81,8 @@ def deriveInto(Map p) {
         "-K ${p.bwa.batchSize} -T ${p.bwa.minScoreOutput}")
 
     // -q is mapping quality and -Q is base quality; they are not interchangeable.
-    fill(p.bcftools, 'mpileupOptions',
-        "-B -C ${p.bcftools.scaleMapQ} -q ${p.bcftools.varQualMin} -Q ${p.bcftools.baseQualMin} -d ${p.bcftools.maxDepth} -a AD,DP,SP,INFO/AD -Ou")
+    fill(p.variantCall, 'mpileupOptions',
+        "-B -C ${p.variantCall.scaleMapQ} -q ${p.variantCall.varQualMin} -Q ${p.variantCall.baseQualMin} -d ${p.variantCall.maxDepth} -a AD,DP,SP,INFO/AD -Ou")
 }
 
 def resolveParameters() {

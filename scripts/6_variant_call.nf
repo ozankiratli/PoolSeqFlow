@@ -40,9 +40,9 @@ process VariantCall {
         echo "VARIANT CALL ${vcf_file}: COMPLETED"
     else
         echo "VARIANT CALL ${vcf_file}: Creating VCF file..."
-        ${run.software.bcftools} mpileup ${run.bcftools.mpileupOptions} \
+        ${run.software.bcftools} mpileup ${run.variantCall.mpileupOptions} \
         -f ${reference} ${ready_bams} | \
-        ${run.software.bcftools} call ${run.bcftools.callOptions} \
+        ${run.software.bcftools} call ${run.variantCall.callOptions} \
         -o ${vcf_file}
 
         echo "VARIANT CALL ${vcf_file}: Fixing minor header issue..."
