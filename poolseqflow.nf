@@ -166,8 +166,8 @@ workflow {
         SortCleanBams.out.ready_bai.flatMap { variant, pair_id, bai ->
             childVariants(plan, variant, 5).collect { child -> tuple(child, pair_id, bai) } })
     VariantCalling(
-        SortCleanBams.out.ready_bam.flatMap { variant, pair_id, bam ->
-            childVariants(plan, variant, 6).collect { child -> tuple(child, pair_id, bam) } },
+        GenerateReports.out.flatMap { variant, pair_id, bam, bai, cap ->
+            childVariants(plan, variant, 6).collect { child -> tuple(child, pair_id, bam, bai, cap) } },
         fai_index, expected_samples)
 
     called_vcf = VariantCalling.out
@@ -178,10 +178,13 @@ workflow {
         childVariants(plan, variant, 8).findAll { child -> child.executes }
             .collect { child -> tuple(child, vcf) } }, snpeff_db)
 
-    // The two artifacts with more than one consuming step, so their gate is assembled here.
-    // Ready BAMs: step 5 per sample, step 6 for the cohort.
-    reports_done = gatherToProducer(plan, GenerateReports.out, 5)
-    calling_done = gatherToProducer(plan, called_vcf.map { variant, _vcf -> tuple(variant, '') }, 6)
+    // Ready BAMs: step 5 per sample, step 6 for the cohort. Step 6's signal gathers through
+    // step 5 to reach the step-4 variant that wrote the BAM. The key is the sample, which
+    // names the file, and only step 5's signal carries one.
+    reports_done = gatherToProducer(plan,
+        GenerateReports.out.map { variant, pair_id, _bam, _bai, _cap -> tuple(variant, pair_id) }, 5)
+    calling_done = gatherToProducer(plan,
+        gatherToProducer(plan, called_vcf.map { variant, _vcf -> tuple(variant, '') }, 6), 5)
     CompleteAfterUse('ready bams',
         reports_done.combine(calling_done, by: 0).map { producer, pair_id, _done -> tuple(producer, pair_id) })
 

@@ -221,7 +221,7 @@ test_a_pinned_option_string_is_used_verbatim() {
     local sb status params
     sb=$(make_pipeline_sandbox "pinned-options")
     write_sandbox_config "$sb" \
-        's|^        maxDepth        = 2000|        maxDepth        = 2000\n        mpileupOptions = "PINNED -d 99"|'
+        's|^        callOptions|        mpileupOptions = "PINNED -d 99"\n        callOptions|'
     status=$(run_verify_only "$sb")
     assert_status 0 "$status" "a fresh project should verify; see $sb/run.out"
     params=$(cat "$sb/store/Output/run_parameters.txt" 2>/dev/null)
@@ -832,6 +832,45 @@ b" "$(cat "$members" 2>/dev/null)" "Shared_1 should record the pair that formed 
 c" "$(cat "$members" 2>/dev/null)" "the members file follows the grouping the plan describes"
     assert_contains "$(cat "$sb/store/Output/.multirun.csv")" "b,30" \
         "while the stored table still holds what produced the results, so the failure repeats"
+}
+
+# A PER-SAMPLE CAP THAT DIVIDES NOTHING IS A WRONG NUMBER, NOT AN ERROR.
+#
+# param_capMaxDepth is listed in metadataColumnsPerStep()[5], but a column listed there reaches
+# the variant key only through a stepIdentity() branch, and step 5 has none of its own. Without
+# one the column is accepted from the user, compared by the change guard, and still divides
+# nothing - so two runs whose only difference is one sample's cap share a step-6 variant and
+# therefore one VCF, called at whichever cap happened to arrive first.
+#
+# Two runs over the same reads and the same reference, differing only in a metadata file that
+# caps one sample. Everything before the cap is decided is still shared; step 5 onward is not.
+test_a_per_sample_cap_splits_the_runs_that_disagree() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status report
+    sb=$(multirun_sandbox "per-sample-cap" 'RunID,metadataFile
+plain,metadata.csv
+capped,metadata_capped.csv
+')
+    # The same rows in the same order, with a cap on one sample. Only the new column moves:
+    # metadataProjection renders a column that is not in the file as an empty value, so steps
+    # 2, 4 and 7 see the two files as identical.
+    awk -F, -v OFS=, 'NR==1 { print $0, "param_capMaxDepth"; next }
+                      { print $0, ($1 == "TestSample3" ? 500 : "") }' \
+        "$sb/main/metadata.csv" > "$sb/main/metadata_capped.csv"
+
+    status=$(run_verify_only "$sb")
+    report=$(cat "$sb/store/Output/plain/Reports/0_verify_environment.txt")
+
+    assert_status 0 "$status" "the table should pass step 0; see $sb/run.out"
+    assert_contains "$report" "All_Runs is a shared directory" \
+        "the reads, the alignments and the ready BAMs are the same either way"
+    assert_contains "$report" "plain belongs to plain alone" \
+        "a run whose caps differ needs its own VCF"
+    assert_contains "$report" "steps 5, 6, 7, 8" \
+        "the split has to start where the cap is decided and carry the VCF with it"
+    assert_not_contains "$report" "identical at every step" \
+        "a cap that divides nothing would leave the two runs sharing one VCF"
 }
 
 # THE REPRODUCIBILITY RULE. Z, 2026-08-28: *"the parameter file being the same with what it was

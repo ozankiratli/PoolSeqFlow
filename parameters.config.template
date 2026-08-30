@@ -105,13 +105,21 @@ params {
         mapq            = 30
     }
 
+    // The depth ceiling decided at step 5 and applied to each BAM at step 6, before calling.
+    // -1 measures one per sample from its own depth histogram, a positive number caps every
+    // sample there, 0 caps nothing.
+    capBAM {
+        maxDepth        = -1
+    }
 
     // Step 6: how bcftools calls variants.
     variantCall {
         scaleMapQ       = 50
         baseQualMin     = 30
         varQualMin      = 30
-        maxDepth        = 2000
+        // mpileup's own ceiling, on top of whatever capBAM applied. Here 0 is no limit, and
+        // only capBAM.maxDepth takes -1.
+        maxDepth        = 0
         // Built from the four values above; uncomment to take full control of them, maxDepth
         // included. -q is mapping quality, -Q is base quality.
         // mpileupOptions = "-B -C ${params.variantCall.scaleMapQ} -q ${params.variantCall.varQualMin} -Q ${params.variantCall.baseQualMin} -d ${params.variantCall.maxDepth} -a AD,DP,SP,INFO/AD -Ou"
@@ -183,6 +191,7 @@ params {
             report {
                 align           = "${params.dir.subpath.reports}/Alignment"
                 coverage        = "${params.dir.subpath.reports}/Coverage"
+                depth           = "${params.dir.subpath.reports}/Depth"
                 fastqc          = "${params.dir.subpath.reports}/Fastqc"
                 trim            = "${params.dir.subpath.reports}/Trimming"
             }
@@ -201,6 +210,7 @@ params {
             report {
                 align           = "${params.dir.outputs}/${params.dir.subpath.report.align}"
                 coverage        = "${params.dir.outputs}/${params.dir.subpath.report.coverage}"
+                depth           = "${params.dir.outputs}/${params.dir.subpath.report.depth}"
                 fastqc          = "${params.dir.outputs}/${params.dir.subpath.report.fastqc}"
                 trim            = "${params.dir.outputs}/${params.dir.subpath.report.trim}"
             }

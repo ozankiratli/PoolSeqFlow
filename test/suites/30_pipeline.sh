@@ -1068,3 +1068,64 @@ test_each_run_keeps_its_working_files_apart_and_leaves_none_behind() {
     left=$(find "$MULTIRUN_SB/main" -maxdepth 1 -name 'Utilized*' -exec find {} -type f \; | wc -l)
     assert_count 0 "$left" "every artifact should have been promoted out of the working volume"
 }
+
+# THE DEPTH REPORT IS THE ONLY DURABLE RECORD OF WHAT WAS CALLED.
+#
+# The capped BAM is transient - built inside step 6 and thrown away - so if the histogram and
+# the decision were not published, nothing anywhere would say which reads reached bcftools.
+# It is written for every sample on every run, whatever capBAM.maxDepth is set to.
+test_every_sample_gets_a_depth_report() {
+    needs_run || return
+    local depth="$PIPELINE_SB/store/Output/Reports/Depth" sample
+    [ -d "$depth" ] || { fail_case "step 5 should publish depth reports"; return; }
+    for sample in $(tail -n +2 "$PIPELINE_SB/main/metadata.csv" | cut -d, -f1); do
+        assert_file "$depth/${sample}_depth_histogram.tsv" "$sample should have a histogram"
+        assert_file "$depth/${sample}_depth_report.txt"    "$sample should have a decision"
+    done
+}
+
+# A SAMPLE THE DETECTOR DECLINES TO CAP MUST SAY SO. It is the one outcome where the pipeline
+# decided to do nothing, and nothing else in the output distinguishes it from a sample that was
+# capped. The fixture is a single clean coverage lobe, so every sample lands here.
+test_a_sample_with_nothing_to_cut_says_it_was_not_capped() {
+    needs_run || return
+    local report
+    report=$(cat "$PIPELINE_SB/store/Output/Reports/Depth/TestSample1_depth_report.txt" 2>/dev/null)
+    assert_contains "$report" "capBAM.maxDepth setting : -1" "the setting it ran under"
+    assert_contains "$report" "none - this sample is not capped" "and that nothing was applied"
+    assert_contains "$report" "without rising again" "with the reason spelled out"
+}
+
+# CapBAM MUST NOT BECOME ALWAYS-ON. It is per-sample work on a whole BAM, and a run where
+# nothing needs capping should not pay for it. Nothing but a task count catches this: an
+# always-on CapBAM that copies its input produces identical results and reports SUCCESS.
+test_nothing_is_capped_when_there_is_nothing_to_cut() {
+    needs_run || return
+    assert_eq "0" "$(task_count "$PIPELINE_SB" "VariantCalling:CapBAM")" \
+        "the fixture has one clean coverage lobe, so no sample should be capped"
+    assert_eq "6" "$(task_count "$PIPELINE_SB" "GenerateReports:DepthProfile")" \
+        "while the histogram is still measured for every sample"
+}
+
+# A FIXED CEILING CAPS EVERY SAMPLE, which is the other half of the same guard: one CapBAM task
+# per sample, not one for the run and not none.
+test_a_fixed_ceiling_caps_every_sample() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status
+    sb=$(make_pipeline_sandbox "fixed-cap")
+    write_sandbox_config "$sb" 's|^        maxDepth        = -1|        maxDepth        = 20|'
+    status=$(run_pipeline "$sb")
+    assert_status 0 "$status" "a fixed ceiling should run; see $sb/run.out"
+    assert_eq "6" "$(task_count "$sb" "VariantCalling:CapBAM")" \
+        "every sample should be capped when a depth is named"
+    assert_contains "$(cat "$sb/store/Output/Reports/Depth/TestSample1_depth_report.txt")" \
+        "capBAM.maxDepth = 20" "and the report should say where the number came from"
+    assert_file "$sb/store/Output/VCF/Test.vcf" "and calling should still produce a VCF"
+
+    # The capped BAM is transient: it belongs to no root and must not survive the step.
+    if compgen -G "$sb/store/Output/**/*_capped.bam" >/dev/null 2>&1 \
+       || compgen -G "$sb/main/Utilized*/**/*_capped.bam" >/dev/null 2>&1; then
+        fail_case "a capped BAM reached a storage root; it is meant to live and die inside step 6"
+    fi
+}

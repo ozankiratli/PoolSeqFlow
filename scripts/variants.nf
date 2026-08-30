@@ -28,8 +28,8 @@ def stepParameterMap() {
                         'dir.subpath.ready'],
              publish : [] ],
 
-        // Step 5 reads no analysis parameter, so it can never be a branch point.
-        5: [ artifact: [], publish: [] ],
+        // Step 5 decides each sample's depth cap, so the cap setting refines what it passes on.
+        5: [ artifact: ['capBAM.maxDepth'], publish: [] ],
 
         6: [ artifact: ['variantCall.mpileupOptions', 'variantCall.callOptions', 'vcf.fileName',
                         'dir.subpath.vcf'],
@@ -57,8 +57,9 @@ def stepFolders() {
             'dir.subpath.report.fastqc', 'dir.subpath.report.trim'],
         3: ['dir.subpath.aligned'],
         4: ['dir.subpath.ready'],
-        // Step 5 declares no process output at all - both reports are written by absolute path.
-        5: ['dir.subpath.report.align', 'dir.subpath.report.coverage'],
+        // Every step 5 report is published by absolute path, so none of these is a declared
+        // process output.
+        5: ['dir.subpath.report.align', 'dir.subpath.report.coverage', 'dir.subpath.report.depth'],
         6: ['dir.subpath.vcf'],
         7: ['dir.subpath.vcf', 'dir.subpath.freq'],
         // snpEff writes its summary straight into Reports/.
@@ -102,11 +103,12 @@ def stepIdentity(Map run, int step) {
 
     def parts = entry.artifact.collect { name -> "${name}=${dig(run, name)}" }
 
-    // Steps 2, 4 and 7 take metadata column values; step 6 takes the row ORDER, which decides
+    // Steps 2, 4, 5 and 7 take metadata column values; step 6 takes the row ORDER, which decides
     // the VCF's sample columns.
     if (step == 2) parts += metadataProjection(run, metadataColumnsPerStep()[2]).collect { r -> "metadata=${r}" }
     if (step == 3) parts += referenceIdentity(run).collect { p -> "reference=${p}" }
     if (step == 4) parts += metadataProjection(run, metadataColumnsPerStep()[4]).collect { r -> "metadata=${r}" }
+    if (step == 5) parts += metadataProjection(run, metadataColumnsPerStep()[5]).collect { r -> "metadata=${r}" }
     if (step == 6) {
         parts += referenceIdentity(run).collect { p -> "reference=${p}" }
         parts += metadataOrder(run).collect { r -> "sampleorder=${r}" }
@@ -120,7 +122,7 @@ def stepIdentity(Map run, int step) {
 // Which step's output each step consumes. Not simply "the one before it": the pipeline branches
 // after calling, and step 8 reads step 6's VCF exactly as step 7 does.
 def stepDependencies() {
-    return [ 2: [], 3: [2], 4: [3], 5: [4], 6: [4], 7: [6], 8: [6] ]
+    return [ 2: [], 3: [2], 4: [3], 5: [4], 6: [5], 7: [6], 8: [6] ]
 }
 
 // Everything deciding what a run has produced by the end of step k, cumulative, which is what

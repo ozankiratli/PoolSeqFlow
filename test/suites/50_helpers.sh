@@ -817,3 +817,119 @@ test_citations_deduplicate_a_shared_reference() {
     assert_count 1 "$(grep -c '@article{danecek2021samtools,' "$out/references.bib")" \
         "the shared reference should appear once"
 }
+
+DC_CORPUS=""
+
+# Build the corpus once and reuse it: twenty analytic histograms, a few milliseconds each.
+depth_corpus() {
+    [ -n "$DC_CORPUS" ] && return 0
+    DC_CORPUS=$(guard_path "$TEST_TMPDIR/depth-corpus")
+    rm -rf "$DC_CORPUS"
+    python3 "$REPO_ROOT/test/tools/depth_corpus.py" "$DC_CORPUS" >/dev/null 2>&1
+}
+
+# One histogram's chosen cutoff.
+depth_cut() {
+    python3 "$REPO_ROOT/bin/depth_cutoff.py" "$DC_CORPUS/$1.tsv" 2>/dev/null | sed -n 1p
+}
+
+# THE WHOLE DETECTOR, AGAINST TWENTY DISTRIBUTIONS, FOR THE COST OF NONE.
+#
+# The bounds in expected.tsv come from how each case was BUILT - `lo` is the 99.9th percentile
+# of its real coverage, `hi` is where the planted pile-up begins - so this measures the
+# detector against the intent of the corpus rather than against its own last output. A cutoff
+# below `lo` truncates legitimate reads; one above `hi` truncates nothing worth truncating.
+test_the_depth_detector_agrees_with_the_whole_corpus() {
+    depth_corpus
+    local name verdict lo hi desc cut
+    while IFS=$'\t' read -r name verdict lo hi desc; do
+        [ "$name" = "name" ] && continue
+        cut=$(depth_cut "$name")
+        if [ "$verdict" = "none" ]; then
+            assert_eq "0" "$cut" "$name ($desc) must be left uncapped"
+        else
+            if [ "$cut" -le "$lo" ] || [ "$cut" -ge "$hi" ]; then
+                fail_case "$name ($desc): cut at $cut, which is outside $lo..$hi"
+            fi
+        fi
+    done < "$DC_CORPUS/expected.tsv"
+}
+
+# A CLEAN LIBRARY MUST NEVER BE CAPPED, whatever depth it runs at. This is the failure that
+# would go unnoticed: capping a sample that needed no capping silently truncates real coverage,
+# and the frequency tables that come out of it look perfectly ordinary.
+test_a_clean_library_is_never_capped_at_any_depth() {
+    depth_corpus
+    local name
+    for name in clean-8x clean-40x clean-200x clean-800x clean-4000x; do
+        assert_eq "0" "$(depth_cut "$name")" "$name spans one lobe and has nothing to cut"
+    done
+}
+
+# THE ANCHOR IS THE DEEPER OF TWO MEDIANS, and each half of that is load-bearing.
+#
+# bad-reference is two thirds junk at depth 1-5: its median POSITION is depth 3, so an anchor
+# there searches upward from below the real coverage and cuts into it. Its median BASE is 63,
+# in the lobe, because junk holds no reads. hill-dominant is the other way round - the pile-up
+# holds most of the reads, so the base median lands inside the anomaly while the position
+# median stays in the coverage. Taking the deeper of the two is what survives both.
+test_the_anchor_survives_a_poor_reference_and_a_dominant_pileup() {
+    depth_corpus
+    assert_eq "0" "$(depth_cut "bad-reference")" \
+        "junk at depth 1-5 is not coverage and must not drag the anchor below the lobe"
+    local cut; cut=$(depth_cut "bad-reference-hill")
+    [ "$cut" -gt 142 ] && [ "$cut" -lt 2500 ] \
+        || fail_case "the same poor reference with a real hill should still cap; cut at $cut"
+    assert_eq "0" "$(depth_cut "hill-dominant")" \
+        "a pile-up holding most of the genome is not distinguishable from a deep library"
+}
+
+# The cap goes where coverage RAN OUT, not where it came back. Both of these have a wide empty
+# trough, so taking the far side of it would truncate a 30000x organelle to 15849 and a 50000x
+# spike to 35482 - arithmetically a cap, and useless.
+test_the_cap_lands_at_the_bottom_of_the_trough() {
+    depth_corpus
+    local mito spike
+    mito=$(depth_cut "mito")
+    spike=$(depth_cut "spike-far")
+    [ "$mito" -lt 1000 ] || fail_case "the organelle cap should sit just above coverage, not at $mito"
+    [ "$spike" -lt 1000 ] || fail_case "the spike cap should sit just above coverage, not at $spike"
+}
+
+# Malformed input is a failure, not a silent zero: a cutoff of 0 means "do not cap", so
+# returning it for an unreadable histogram would disable capping and report success.
+test_the_depth_detector_refuses_a_histogram_it_cannot_read() {
+    helpers_sandbox
+    printf 'not a histogram\n' > "$HELPERS_DIR/bad.tsv"
+    python3 "$REPO_ROOT/bin/depth_cutoff.py" "$HELPERS_DIR/bad.tsv" >/dev/null 2>&1
+    assert_status 1 "$?" "a line that is not depth TAB positions should fail"
+
+    printf '10\t5\n-3\t2\n' > "$HELPERS_DIR/negative.tsv"
+    python3 "$REPO_ROOT/bin/depth_cutoff.py" "$HELPERS_DIR/negative.tsv" >/dev/null 2>&1
+    assert_status 1 "$?" "a negative depth should fail"
+
+    python3 "$REPO_ROOT/bin/depth_cutoff.py" >/dev/null 2>&1
+    assert_status 2 "$?" "no argument is a usage mistake, not a bad file"
+}
+
+# An empty histogram is a real state - a sample whose BAM holds no aligned reads - and the
+# answer is "nothing to cap", not a crash.
+test_an_empty_histogram_caps_nothing() {
+    helpers_sandbox
+    : > "$HELPERS_DIR/empty.tsv"
+    local out; out=$(python3 "$REPO_ROOT/bin/depth_cutoff.py" "$HELPERS_DIR/empty.tsv")
+    assert_status 0 "$?" "an empty histogram is not an error"
+    assert_eq "0" "$(printf '%s' "$out" | sed -n 1p)" "and caps nothing"
+    assert_contains "$out" "no covered positions" "saying why"
+}
+
+# Every decision is published, so every decision needs a sentence. A cutoff on its own tells a
+# reader what happened and never whether it should have.
+test_every_depth_decision_explains_itself() {
+    depth_corpus
+    local reason
+    reason=$(python3 "$REPO_ROOT/bin/depth_cutoff.py" "$DC_CORPUS/clean-200x.tsv" | sed -n 2p)
+    assert_contains "$reason" "without rising again" "an uncapped sample says why it was left alone"
+    reason=$(python3 "$REPO_ROOT/bin/depth_cutoff.py" "$DC_CORPUS/hill-small.tsv" | sed -n 2p)
+    assert_contains "$reason" "rises again" "a capped one says what it found"
+}

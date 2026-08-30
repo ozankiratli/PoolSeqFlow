@@ -4,6 +4,53 @@ include { searchRoots } from './variants.nf'
 // frequency tables'.
 include { metadataOrder } from './metadata.nf'
 
+// Truncate one sample's BAM to the ceiling step 5 chose for it.
+//
+// The capped BAM is TRANSIENT: produced here, read by VariantCall, and written to neither root.
+// It has no promotion row and is never skip-checked.
+process CapBAM {
+    tag { run.runId ? "${run.runId}:${pair_id}" : pair_id }
+
+    input:
+    tuple val(run), val(pair_id), path(ready_bam), path(ready_bai), val(cap)
+
+    output:
+    tuple val(run), val(pair_id), path("${pair_id}_capped.bam"), emit: capped_bam
+
+    script:
+    search_roots = searchRoots(run)
+    rel_vcf = "${run.dir.subpath.vcf}"
+    vcf_file = "${run.vcf.fileName}.vcf"
+    dir_log = "${run.dir.logs}/6_variant_call"
+
+    """
+    set -eo pipefail
+
+    # Nothing to do if the VCF this feeds already exists. A header-only BAM satisfies the output
+    # declaration; VariantCall finds the VCF and never opens it.
+    vcf_at=\$(find_artifact.sh "${rel_vcf}/${vcf_file}" ${search_roots} || true)
+    if [ -n "\$vcf_at" ]; then
+        echo "CAP BAM ${pair_id}: The VCF this feeds already exists"
+        echo "CAP BAM ${pair_id}: Found: \$vcf_at"
+        echo "CAP BAM ${pair_id}: Nothing to cap; SKIPPED"
+        ${run.software.samtools} view -H -b -o ${pair_id}_capped.bam ${ready_bam}
+    else
+        echo "CAP BAM ${pair_id}: Capping at depth ${cap}..."
+        ${run.software.samtools} view -h ${ready_bam} \
+            | cap_depth.awk -v cap=${cap} \
+            | ${run.software.samtools} view -b -o ${pair_id}_capped.bam -
+        echo "CAP BAM ${pair_id}: COMPLETED"
+    fi
+
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/6_VariantCalling_s1_CapBAM_${pair_id}_nextflow.log
+    """
+}
+
 process VariantCall {
     tag { run.runId ? "${run.runId}:calling_variants" : "calling_variants" }
 
@@ -68,11 +115,24 @@ process VariantCall {
 
 workflow VariantCalling {
     take:
-    out_ready_bams   // [run, pair_id, ready_bam]
+    profiled         // [run, pair_id, ready_bam, ready_bai, cap file] - from step 5
     fai_index        // [run, fai] - one per run
     expected         // [run, how many samples that run started with]
 
     main:
+    // The ceiling is computed by a task, so it arrives as a file. A sample whose ceiling is 0
+    // is not sent to CapBAM at all.
+    routed = profiled.branch { _run, _pair_id, _bam, _bai, cap_file ->
+        capped  : cap_file.text.trim() != '0'
+        uncapped: true
+    }
+
+    CapBAM(routed.capped.map { run, pair_id, bam, bai, cap_file ->
+        tuple(run, pair_id, bam, bai, cap_file.text.trim()) })
+
+    out_ready_bams = CapBAM.out.capped_bam
+        .mix(routed.uncapped.map { run, pair_id, bam, _bai, _cap -> tuple(run, pair_id, bam) })
+
     // The gather point: per sample above, one task per run over its whole cohort below.
     cohorts = out_ready_bams.groupTuple(by: 0)
         .join(expected, by: 0)

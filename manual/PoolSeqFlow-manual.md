@@ -54,10 +54,10 @@ Raw FASTQ reads
 [Step 4] BAM cleanup (name-sort → fixmate → coord-sort → markdup → addRG → filter → index)
       │
       ▼
-[Step 5] Alignment & coverage reports (BAMtools, SAMtools)
+[Step 5] Alignment, coverage & depth reports (BAMtools, SAMtools) → depth ceiling per sample
       │
       ▼
-[Step 6] Variant calling (BCFtools mpileup + call)
+[Step 6] Depth capping, then variant calling (BCFtools mpileup + call)
       │
       ├────────────────────────────────────────────┐
       ▼                                            ▼
@@ -434,7 +434,7 @@ storageDir/
 
 `<name>` is `vcf.fileName`, which is `Test` until you change it.
 
-Start with `Output/Reports/Coverage/` and `Output/run_parameters.txt`. The first tells you whether your depth was truncated by the pileup cap; the second is a read-only record of exactly which settings produced these files.
+Start with `Output/Reports/Depth/` and `Output/run_parameters.txt`. The first says what depth ceiling each sample was given and why; the second is a read-only record of exactly which settings produced these files.
 
 Your inputs stay where they were, under `mainDir` — `Data/`, `Reference/` and the dictionaries built from your reference are working material, not results, and none of them are copied here.
 
@@ -642,7 +642,7 @@ At the default `sampleThreshold = 0.2`, an allele present in only one pool out o
 
 #### Very high depth
 
-`variantCall.maxDepth` defaults to `2000` and becomes `mpileup -d`, a per-file cap on reads considered at a position. Pooled libraries are often sequenced deeply on purpose, and a cap that bites truncates the read counts the frequencies are computed from. Check your coverage reports from step 5 against this value before trusting the output — details in [Variant Calling](#maxdepth).
+Deep is not a problem in itself: no flat depth ceiling ships any more. Each sample gets one measured from its own coverage, and a library that is uniformly deep is left alone — see [Depth capping](#depth-capping). What a very deep run does change is what an *anomaly* looks like, so read `Output/Reports/Depth/` rather than assuming: a sample reported uncapped had nothing separable to cut, which on a deeply and unevenly sequenced library is worth knowing.
 
 ### Choosing between run layouts
 
@@ -799,7 +799,7 @@ Note that this applies to the permanent copies too, not just the scratch ones: t
 ## The Filter Chain
 <!--@ page: filter-chain -->
 
-A read that makes it into a frequency table has passed eight separate filters spread across four steps. This page walks the whole chain in order: what each filter removes, which parameter controls it, and what you are trading when you move that parameter.
+A read that makes it into a frequency table has passed nine separate filters spread across four steps. This page walks the whole chain in order: what each filter removes, which parameter controls it, and what you are trading when you move that parameter.
 
 If you are trying to work out why a variant you expected is missing, read this page top to bottom — the answer is usually earlier in the chain than people look.
 
@@ -808,15 +808,16 @@ If you are trying to work out why a variant you expected is missing, read this p
 | # | Stage | Operates on | Removes | Parameter |
 |---|---|---|---|---|
 | 1 | Alignment filter | Reads | Unmapped, non-paired, duplicate, secondary, supplementary, low-MAPQ reads | `cleanBAM.filter`, `cleanBAM.required`, `cleanBAM.mapq` |
-| 2 | Pileup filter | Reads at a position | Low mapping quality, low base quality; caps depth | `variantCall.baseQualMin`, `variantCall.varQualMin`, `variantCall.maxDepth` |
-| 3 | Variant calling | Sites | Non-variant sites | `variantCall.callOptions` |
-| 4 | Major-allele normalisation | Allele order | Nothing — it rewrites | — |
-| 5 | False-positive filter | Alternate alleles | Alleles without cross-sample support | `poolSize` or `param_poolSize`, `diploidy`, `filterFalsePositives.sampleThreshold` |
-| 6 | Depth & quality filter | Sites | Sites where any sample is under-covered, and low-QUAL sites | `vcffilter.minDP`, `vcffilter.minQUAL` |
-| 7 | SNP/INDEL split | Sites | Splits into two files; nothing is lost | — |
-| 8 | Frequency conversion | — | Nothing | — |
+| 2 | Depth capping | Reads at a position | Reads above a ceiling measured from the sample's own coverage | `capBAM.maxDepth` or `param_capMaxDepth` |
+| 3 | Pileup filter | Reads at a position | Low mapping quality, low base quality; optionally caps depth again | `variantCall.baseQualMin`, `variantCall.varQualMin`, `variantCall.maxDepth` |
+| 4 | Variant calling | Sites | Non-variant sites | `variantCall.callOptions` |
+| 5 | Major-allele normalisation | Allele order | Nothing — it rewrites | — |
+| 6 | False-positive filter | Alternate alleles | Alleles without cross-sample support | `poolSize` or `param_poolSize`, `diploidy`, `filterFalsePositives.sampleThreshold` |
+| 7 | Depth & quality filter | Sites | Sites where any sample is under-covered, and low-QUAL sites | `vcffilter.minDP`, `vcffilter.minQUAL` |
+| 8 | SNP/INDEL split | Sites | Splits into two files; nothing is lost | — |
+| 9 | Frequency conversion | — | Nothing | — |
 
-Stages 1–3 happen in [steps 4 and 6](#pipeline-steps); stages 4–8 are the five sub-steps of step 7.
+Stages 1–4 happen in [steps 4, 5 and 6](#pipeline-steps); stages 5–9 are the five sub-steps of step 7.
 
 ---
 
@@ -840,10 +841,52 @@ Duplicate removal happens just upstream (`samtools markdup -r`) and matters more
 
 Full flag reference: [Alignment Filters](#alignment-filters).
 
-### 2. Pileup filter (step 6)
+### 2. Depth capping (steps 5 and 6) { #depth-capping }
+
+Step 5 measures a per-position depth histogram for every sample and publishes it to `Reports/Depth/`. From that histogram it decides a ceiling for that sample, and step 6 applies the ceiling to the BAM before calling. Nothing is deleted: a position deeper than the ceiling is truncated to it, and the sample's ready BAM is untouched on disk.
+
+**Why the ceiling is measured rather than set.** Pooled coverage is uneven by design, so there is no depth that is "too deep" in the abstract. What is worth truncating is a *second population* of positions at high depth — a collapsed repeat, or a PCR hill, where reads belonging to several places in the genome stack up on one. Those positions carry read counts that no single locus produced, and a frequency is a read count. A single hand-set number cannot find them: it cuts legitimate coverage in a deep sample and lets the pile-up through in a shallow one, and nothing in the output says which happened.
+
+**What the detector looks for.** One rise and fall is a library. A rise, a fall to nothing, and a *second* rise is two populations, and the ceiling goes where coverage ran out:
+
+![A collapsed repeat: coverage at 120x, a second population at 4000x, and the cap between them](assets/depth-hill-small.svg)
+
+Blue is the sample before capping, green after. Everything above the ceiling collapses onto it, which is the spike at 447. Both axes are logarithmic and both have to be — the second population here holds two thousandths of the covered genome, so on a linear count axis it is invisible.
+
+The same shape at a different scale is the same decision. Organelle contamination is a small number of positions two orders of magnitude above the library:
+
+![Organelle contamination: 16 kb at 30000x above a 150x library, capped at 502](assets/depth-mito.svg)
+
+**A long tail is not a second population.** This is the distinction the whole stage turns on, and it is why nothing here uses a mean, a median or a maximum — the maximum is precisely the thing being cut. An overdispersed library reaching 3000× has one population, and is left alone:
+
+![An overdispersed library reaching 3000x, uncapped](assets/depth-heavy-tail.svg)
+
+So is a library on a reference that most of the genome does not map to. Two thirds of the covered positions here sit at depth 1–5. That is not coverage and it is not an anomaly either, and the ceiling has to stay above the real lobe at 60× rather than below it:
+
+![A poor reference: a junk population at depth 1-5, a trough, then real coverage at 60x](assets/depth-bad-reference.svg)
+
+**The three outcomes, and the third is the one to read.** Under the default `capBAM.maxDepth = -1` a sample is capped where the detector finds a second population, and left **uncapped** where it does not — including when the histogram is one the detector cannot read. Every sample's decision is published as a sentence beside its histogram, whether it was capped or not, because "nothing was done" is the one outcome you cannot see in the output.
+
+The detector declines deliberately when the deep population is too large to call an artefact:
+
+![A pile-up at 20000x outweighing the real coverage at 200x, left uncapped](assets/depth-hill-dominant.svg)
+
+Four fifths of the covered genome is at 20000× and one fifth at 200×. Which of those is the artefact cannot be read off a depth histogram, and capping at 500 would truncate most of a real genome on a guess. PoolSeqFlow reports it and does nothing. If you know which population is real, `param_capMaxDepth` in `metadata.csv` sets that sample's ceiling by hand — see [Metadata](#the-four-kinds-of-column).
+
+**The knob.**
+
+| `capBAM.maxDepth` | What happens |
+|---|---|
+| `-1` *(default)* | Measure a ceiling per sample from its own histogram; leave the sample uncapped where there is nothing to cut |
+| a positive number | Cap every sample at that depth |
+| `0` | Do not cap at all |
+
+`param_capMaxDepth` overrides it for one sample and takes the same three values. The histogram is published on every run whichever you choose — it costs little and it is what tells you whether the sample needed capping.
+
+### 3. Pileup filter (step 6)
 
 ```bash
-bcftools mpileup -B -C 50 -q 30 -Q 30 -d 2000 -a AD,DP,SP,INFO/AD -Ou
+bcftools mpileup -B -C 50 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou
 ```
 
 | Flag | Parameter | Effect |
@@ -851,15 +894,17 @@ bcftools mpileup -B -C 50 -q 30 -Q 30 -d 2000 -a AD,DP,SP,INFO/AD -Ou
 | `-q 30` | `variantCall.varQualMin` | Minimum **mapping** quality for a read to be counted |
 | `-Q 30` | `variantCall.baseQualMin` | Minimum **base** quality for a base to be counted |
 | `-C 50` | `variantCall.scaleMapQ` | Downgrades mapping quality for reads with excessive mismatches |
-| `-d 2000` | `variantCall.maxDepth` | Caps reads considered per file per position |
+| `-d 0` | `variantCall.maxDepth` | A second, flat cap on reads per file per position. `0` is **no limit** |
 | `-B` | fixed | Disables BAQ (base alignment quality) recalculation |
 | `-a AD,DP,SP,INFO/AD` | fixed | Emits the allelic-depth fields everything downstream depends on |
 
-`-d 2000` deserves attention on a pooled run. It is a per-file cap, and deep pooled libraries can exceed it. When they do, the read counts the frequencies are computed from are truncated, which biases estimates in a way nothing downstream will flag. Compare it against your step 5 coverage reports — see [maxDepth](#maxdepth).
+**`variantCall.maxDepth` is not the same setting as `capBAM.maxDepth`, and the two zeros do not mean the same thing.** `capBAM.maxDepth = 0` means *do not cap*; `variantCall.maxDepth = 0` means *impose no ceiling*, because that is what `-d 0` means to `bcftools mpileup`. Both ship as a state where nothing is truncated flatly, and the measured per-sample ceiling from stage 2 does the work instead.
 
-`-B` is a deliberate choice for pooled data. BAQ downweights bases near indels to suppress false positives that arise from misalignment in a single diploid genome. In a pool, the same signal may be a genuine low-frequency indel, and BAQ's correction assumes a genotype model that does not apply. Disabling it keeps the raw evidence and leaves the decision to the cross-sample filter at stage 5.
+It ships as `0` because a flat number applied to every sample is what stage 2 exists to replace. Setting it to a positive value restores a backstop under the measured ceiling — one number for every sample of every run, applied after capping. If you set it, compare it against your step 5 coverage reports first: a cap that bites truncates the read counts frequencies are computed from, and nothing downstream flags it. See [maxDepth](#maxdepth).
 
-### 3. Variant calling (step 6)
+`-B` is a deliberate choice for pooled data. BAQ downweights bases near indels to suppress false positives that arise from misalignment in a single diploid genome. In a pool, the same signal may be a genuine low-frequency indel, and BAQ's correction assumes a genotype model that does not apply. Disabling it keeps the raw evidence and leaves the decision to the cross-sample filter at stage 6.
+
+### 4. Variant calling (step 6)
 
 ```bash
 bcftools call -m -A -v -Ov
@@ -873,7 +918,7 @@ bcftools call -m -A -v -Ov
 
 `-A` is the flag that makes this a Pool-seq caller rather than a general one. The default behaviour prunes alternate alleles that no plausible genotype supports, which is sound for an individual and wrong for a pool, where a true allele at frequency 0.01 supports no genotype at all.
 
-### 4. Major-allele normalisation (step 7)
+### 5. Major-allele normalisation (step 7)
 
 `bin/MajorAlleleToRef.py` re-encodes the VCF so the **most-read allele is the reference**. It does not remove anything; it rewrites.
 
@@ -889,7 +934,7 @@ The ordering is **cohort-wide**, not per-sample. `REF` is the allele most read a
 
 The script runs **twice** — once before the false-positive filter and again after it, because splitting and rejoining multiallelic records can change allele order.
 
-### 5. False-positive filter (step 7)
+### 6. False-positive filter (step 7)
 
 This is the filter that makes the pipeline pool-aware, and the one most worth understanding before you change anything.
 
@@ -979,7 +1024,7 @@ Each pool can be set to get its own row of that table. `param_poolSize` in `meta
 
 The `*` → `X` substitution around the rejoin masks the spanning-deletion allele, which `norm -m+` does not handle in this position. It is restored immediately afterwards.
 
-### 6. Depth and quality filter (step 7)
+### 7. Depth and quality filter (step 7)
 
 Two commands, both operating on whole sites:
 
@@ -994,15 +1039,15 @@ vcftools --vcf <name>_dp.vcf --minQ 30 --recode --recode-INFO-all --out <name>_d
 `vcftools --minQ 30` (`vcffilter.minQUAL`)
 : Removes sites whose `QUAL` falls below 30.
 
-The depth test has to be site-level rather than per-sample. Both vcftools and bcftools express a genotype-level verdict by rewriting `FORMAT/GT` and nothing else — `AD` and `DP` survive untouched — and stage 8 reads `AD`. Stage 4 has already set every `GT` to `./.` besides, so a genotype filter would have nothing left to mark.
+The depth test has to be site-level rather than per-sample. Both vcftools and bcftools express a genotype-level verdict by rewriting `FORMAT/GT` and nothing else — `AD` and `DP` survive untouched — and stage 9 reads `AD`. Stage 5 has already set every `GT` to `./.` besides, so a genotype filter would have nothing left to mark.
 
 Alternative expressions, what each trades, and how to pick a value: [Depth and quality](#depth-and-quality).
 
-### 7. SNP/INDEL split (step 7)
+### 8. SNP/INDEL split (step 7)
 
 Two `vcftools` passes over the same input — `--remove-indels` and `--keep-only-indels` — produce a SNP VCF and an INDEL VCF. Nothing is discarded; every surviving site lands in exactly one of the two files, and each is converted to its own frequency table.
 
-### 8. Frequency conversion (step 7)
+### 9. Frequency conversion (step 7)
 
 No filtering. `bin/createDepthFile.sh` extracts `CHROM`, `POS`, `REF`, `ALT`, `INFO/AD` and per-sample `FORMAT/AD`, and `bin/depth2freq.awk` divides each allele's read count by the row's total to give a frequency. The output format is described in [Interpreting Results](#interpreting-results).
 
@@ -1010,18 +1055,20 @@ No filtering. `bin/createDepthFile.sh` extracts `CHROM`, `POS`, `REF`, `ALT`, `I
 
 ### Tuning the chain
 
-Work from the outside in. A variant lost at stage 1 cannot be recovered by loosening stage 5.
+Work from the outside in. A variant lost at stage 1 cannot be recovered by loosening stage 6.
 
 | Symptom | Most likely stage | Parameter to examine |
 |---|---|---|
 | Far less depth than sequenced | 1 | `cleanBAM.mapq`, then duplicate rate in the step 5 reports |
-| Depth plateaus at a round number | 2 | `variantCall.maxDepth` |
-| Low-frequency alleles absent everywhere | 5 | `poolSize`, or `param_poolSize` for the pool in question, and `diploidy` |
-| Low-frequency alleles absent from one pool only | 5 | That pool's `param_poolSize` — a size set too low raises its threshold alone |
-| Alleles present in one pool only, absent from output | 5 | `filterFalsePositives.sampleThreshold` |
-| Whole sites missing despite good depth | 6 | `vcffilter.minQUAL` |
-| Almost every site gone after filtering | 6 | `vcffilter.minDP` — one under-covered sample removes sites for all of them |
-| Multiallelic sites reduced to two alleles | 3 | `variantCall.callOptions` — confirm `-A` is still present |
+| Depth plateaus at one number in one sample | 2 | That sample's `Reports/Depth/` report — a measured ceiling was applied |
+| Depth plateaus at the same number in every sample | 3 | `variantCall.maxDepth`, or `capBAM.maxDepth` set to a fixed depth |
+| A sample you expected to be capped was not | 2 | Its `Reports/Depth/` report says why; `param_capMaxDepth` overrules it |
+| Low-frequency alleles absent everywhere | 6 | `poolSize`, or `param_poolSize` for the pool in question, and `diploidy` |
+| Low-frequency alleles absent from one pool only | 6 | That pool's `param_poolSize` — a size set too low raises its threshold alone |
+| Alleles present in one pool only, absent from output | 6 | `filterFalsePositives.sampleThreshold` |
+| Whole sites missing despite good depth | 7 | `vcffilter.minQUAL` |
+| Almost every site gone after filtering | 7 | `vcffilter.minDP` — one under-covered sample removes sites for all of them |
+| Multiallelic sites reduced to two alleles | 4 | `variantCall.callOptions` — confirm `-A` is still present |
 
 Changing any of these invalidates existing outputs, and step 0 will stop the next run rather than mix results. That is covered in [Design Decisions](#the-run-refuses-to-mix-settings).
 
@@ -1090,11 +1137,11 @@ Every column within one site sums to 1. A zero means the allele was not observed
 
 ### Reading the tables correctly
 
-**`REF` is the major allele, not the reference genome's base.** Step 7 re-encodes each site so the most-read allele becomes `REF` ([why](#4-major-allele-normalisation-step-7)). This makes rows comparable across samples and runs, but it means `REF` will often disagree with the FASTA you supplied. If you need the assembly's base, take it from the assembly.
+**`REF` is the major allele, not the reference genome's base.** Step 7 re-encodes each site so the most-read allele becomes `REF` ([why](#5-major-allele-normalisation-step-7)). This makes rows comparable across samples and runs, but it means `REF` will often disagree with the FASTA you supplied. If you need the assembly's base, take it from the assembly.
 
 **"Most-read" is decided across the whole cohort.** A sample where the cohort-minor allele dominates locally will show a `REF` frequency below 0.5. That is a real signal, not a defect.
 
-**A missing row means the variant did not survive the chain, not that it is absent.** Sites are removed at eight points between the FASTQ and the table. Before concluding a variant is absent from your population, check it against [The Filter Chain](#tuning-the-chain) — in particular the cross-sample requirement at stage 5, which discards alleles seen in too few pools regardless of how frequent they are in those pools.
+**A missing row means the variant did not survive the chain, not that it is absent.** Sites are removed at nine points between the FASTQ and the table. Before concluding a variant is absent from your population, check it against [The Filter Chain](#tuning-the-chain) — in particular the cross-sample requirement at stage 6, which discards alleles seen in too few pools regardless of how frequent they are in those pools.
 
 **Frequencies are read proportions, not estimates with error bars.** The table reports the fraction of reads carrying each allele. Sampling error in that fraction depends on depth at the position and on the pool size, and the pipeline does not propagate it. If your analysis needs uncertainty, compute it from the depth — which is why the VCFs retain `AD` and `DP`.
 
@@ -1124,7 +1171,9 @@ Those two are the whole of it. Every VCF step 7 produces — `_sort`, `_sort_fp`
 | Path | Produced by | Useful for |
 |---|---|---|
 | `Alignment/<sample>_alignment_report.txt` | `bamtools stats` | Mapping rate, duplicate rate, paired-end statistics |
-| `Coverage/<sample>_coverage_report.txt` | `samtools coverage` | Per-contig depth and breadth — **check this against `variantCall.maxDepth`** |
+| `Coverage/<sample>_coverage_report.txt` | `samtools coverage` | Per-contig depth and breadth |
+| `Depth/<sample>_depth_histogram.tsv` | `samtools stats` | The sample's whole depth distribution, one line per depth |
+| `Depth/<sample>_depth_report.txt` | PoolSeqFlow | **The ceiling put on that sample, and why** |
 | `Fastqc/<sample>/` | FastQC | Raw, trimmed and clipped read quality |
 | `Trimming/<sample>/` | Trim Galore | How much was removed, and which adapter was detected |
 | `snpeff_summary.html` | SnpEff | Variant effect summary, if annotation ran |
@@ -1135,7 +1184,7 @@ Those two are the whole of it. Every VCF step 7 produces — `_sort`, `_sort_fp`
 
 `run_parameters.txt` is **not** in here — it sits one level up, at the root of `Output/`, beside the results rather than among the reports about them. It is a readable record of the analysis parameters these outputs were built from.
 
-The two worth reading on every run are the coverage report and `run_parameters.txt` — the first tells you whether the depth cap bit, the second tells you exactly what settings produced the files sitting next to it.
+The three worth reading on every run are the coverage report, the depth report and `run_parameters.txt`. The depth report is the one that is easy to skip and should not be: the capped BAM it describes is transient, so this file is the only record of which reads reached bcftools for that sample.
 
 If you ran a table of several runs, the four Nextflow reports describe the whole invocation rather than any one run, and are written once under `Output/All_Runs/Reports/`.
 
@@ -1144,7 +1193,7 @@ If you ran a table of several runs, the four Nextflow reports describe the whole
 After a run finishes, four checks catch most problems:
 
 1. **Sample columns.** Does the table have the number of columns you expect, in the order you laid out in `metadata.csv`? A count lower than expected means rows were merged by a shared `RG_Sample` ([why](#rg_sample-decides-what-counts-as-a-sample)).
-2. **Coverage against the cap.** If `samtools coverage` reports mean depth near `variantCall.maxDepth` (default 2000), the pileup was truncated and frequencies are biased.
+2. **What was capped.** `grep -H 'ceiling applied' Output/Reports/Depth/*_depth_report.txt`. A ceiling far below the sample's typical depth, or a sample left uncapped when you expected otherwise, are both worth a look at its histogram before you trust the frequencies.
 3. **Row counts.** Compare the site count in `<name>.vcf` with the distinct positions that reached the tables — `tail -n +2 <name>_snp_freq.tsv | cut -f1,2 | sort -u | wc -l`, and the same for the indel table. A very large drop points at the cross-sample filter; check `sampleThreshold` against your sample count in [the table above](#where-m-comes-from).
 4. **Column sums.** Frequencies within a site should sum to 1 in every column.
 
@@ -1166,13 +1215,14 @@ Change one of these and your output changes. Step 0 records them and **refuses t
 | `poolSize` | Individuals per pool; sets the minimum credible allele frequency. Can be set per pool in `metadata.csv` | [Variant Calling](#poolsize-and-diploidy) |
 | `diploidy` | Ploidy; same threshold. Can be set per run | [Variant Calling](#poolsize-and-diploidy) |
 | `filterFalsePositives.sampleThreshold` | Fraction of samples that must support an allele | [Variant Calling](#samplethreshold) |
-| `bcftools.*` | Pileup and calling behaviour, including the depth cap | [Variant Calling](#variant-calling) |
+| `capBAM.maxDepth` | The depth ceiling put on each BAM. Can be set per sample in `metadata.csv` | [Filter Chain](#depth-capping) |
+| `variantCall.*` | Pileup and calling behaviour, including a flat depth cap on top of the measured one | [Variant Calling](#variant-calling) |
 | `vcffilter.minDP`, `vcffilter.minQUAL` | Post-call depth and quality filtering | [Variant Calling](#depth-and-quality) |
 | `cleanBAM.filter`, `cleanBAM.required`, `cleanBAM.mapq` | Which alignments reach the pileup | [Alignment Filters](#alignment-filters) |
 | `cutadapt.at_gc_error` | Composition tolerance driving the clip points | [Trimming & Clipping](#trimming-clipping) |
 | `trim_galore.quality`, `.autodetect`, `.adapter1/2` | What is trimmed off the reads | [Trimming & Clipping](#trimming-clipping) |
 | `annotate`, `gffFile` | Whether step 8 runs and against what | [Pipeline Steps](#step-8-annotate-variants) |
-| `metadata.csv` | Which FASTQ pairs are one pool, each pool's size, and column order — the `RG_*` and `param_*` columns only | [Metadata](#metadata) |
+| `metadata.csv` | Which FASTQ pairs are one pool, each pool's size and depth ceiling, and column order — the `RG_*` and `param_*` columns only | [Metadata](#metadata) |
 | The run table | Whatever it varies, per run. Every column in it is a parameter | [Multi-run](#multi-run) |
 
 #### Parameters that change speed, not answers
@@ -1210,6 +1260,40 @@ The template ships these lines commented out, and uncommenting one is supported 
 
 Where the pipeline can tell, it says so. The verification step at the beginning of a run reports when your trimming options have been pinned rather than derived, and if you are using a run table it names any column that sets a computed value directly.
 
+### Where a parameter can be set { #parameter-scope }
+
+The tables above sort parameters by *what they affect*. The other axis is *how widely a value applies*, and it has three levels:
+
+| Level | Where you write it | Applies to |
+|---|---|---|
+| **Global** | `parameters.config` | Every sample of every run |
+| **Per run** | a column in the run table | Every sample of one run — [Multi-run](#multi-run) |
+| **Per sample** | a `param_*` column in `metadata.csv` | The rows that carry a value |
+
+**Any parameter can be set globally or per run.** The run table takes any parameter name as a column, spelt as `parameters.config` spells it.
+
+**Per-sample is a closed list**, because each one needs code that knows to look for it:
+
+| Column | Overrides | Read at |
+|---|---|---|
+| `param_poolSize` | `poolSize` | step 7 |
+| `param_capMaxDepth` | `capBAM.maxDepth` | step 5 |
+| `param_adapter1`, `param_adapter2` | `trim_galore.adapter1/2` | step 2 |
+
+A `param_` column that is not on this list is refused rather than ignored — a name the pipeline cannot act on is a typo, not a preference, and silently recording it would leave you with a setting you can see in your own file and that never took effect.
+
+#### What a per-sample value costs you in a run table
+
+**The step a per-sample parameter is read at decides how much two runs can still share.** Runs sharing a value share the work up to the step that first reads it, and diverge from there on. So the same kind of override is cheap in one place and expensive in another:
+
+| Two runs differ in… | They still share | They repeat |
+|---|---|---|
+| `param_poolSize` | trimming, alignment, BAM cleanup, reports, calling | the frequency tables only |
+| `param_capMaxDepth` | trimming, alignment, BAM cleanup | reports, capping, calling, and everything after |
+| `param_adapter1/2` | nothing | the whole analysis |
+
+Two runs can only differ in a `param_*` value by using **different metadata files** — `metadataFile` is itself a parameter, so it can be a column in the run table. Step 0 prints the resulting split before any compute is spent, so check there rather than inferring it: it names each results directory, which runs share it, and which steps it holds.
+
 ### What to decide before your first run
 
 In rough order of how expensive it is to get wrong:
@@ -1217,7 +1301,7 @@ In rough order of how expensive it is to get wrong:
 1. **`metadata.csv`** — which FASTQ pairs share an `RG_Sample`. Wrong here means valid results that answer a different question, and fixing it invalidates every BAM. [→](#rg_sample-decides-what-counts-as-a-sample)
 2. **`poolSize` and `diploidy`** — these set the frequency floor. `poolSize` can be given per pool in `metadata.csv`, and `diploidy` applies to a whole run. [→](#poolsize-and-diploidy)
 3. **`filterFalsePositives.sampleThreshold`** — decides whether alleles seen in few pools survive. The default removes them. [→](#samplethreshold)
-4. **`variantCall.maxDepth`** — check it against the depth you sequenced for. [→](#maxdepth)
+4. **`capBAM.maxDepth`** — leave it at `-1` unless you know your libraries need otherwise. It is the one item here you can safely decide *after* the first run, because the depth reports tell you what it did. [→](#depth-capping)
 5. **`threads`** — must fit the machine, or the run fails at submission. [→](#resources)
 
 Changing any of items 1–4 after outputs exist means deleting those outputs. That is enforced, not advisory.
@@ -1545,7 +1629,7 @@ The **name** of a column is what decides how it is treated. There is no second s
 |---|---|
 | `SampleID` | **Required and unique.** Matched against the sample name `readPattern` takes from your FASTQ filenames, and becomes the read group's `ID` in the BAM |
 | `RG_*` | A read-group tag. Eight are known, listed below. A blank cell omits that tag rather than writing an empty one |
-| `param_*` | A setting from `parameters.config`, overridden for these samples only. Three are known: `param_poolSize`, `param_adapter1`, `param_adapter2`. A blank cell means "use the global value" |
+| `param_*` | A setting from `parameters.config`, overridden for these samples only. Four are known: `param_poolSize`, `param_capMaxDepth`, `param_adapter1`, `param_adapter2`. A blank cell means "use the global value" |
 | anything else | Yours. Population, timepoint, replicate, phenotype, collection site, a measurement from another experiment — whatever this study needs recorded |
 
 **`RG_` and `param_` are closed lists, and an unrecognised one is refused rather than ignored.** For `RG_` that stops a typo quietly losing a tag. For `param_` the reason is sharper: a `param_` column the pipeline did not recognise would be a setting you had written down, could see in your own file, and that was never applied to anything.
@@ -1611,6 +1695,14 @@ Because the size describes the **pool** rather than the row, two rules follow:
 Leave the column out entirely and every pool uses the global `poolSize` from `parameters.config`, which is the right answer when your pools really are all the same size.
 
 The threshold each column was filtered at is recorded in the filtered VCF's header. Those VCFs are intermediates and do not survive a completed run — the durable record is `.poolseqflow_metadata`, kept beside the results.
+
+### A depth ceiling belongs to the library
+
+`param_capMaxDepth` overrides `capBAM.maxDepth` for one row. Unlike pool size, it is a property of that **sequencing run** rather than of the pool, so rows sharing an `RG_Sample` are free to differ: two libraries of one pool can have been amplified quite differently, and each gets its own ceiling.
+
+It takes the same three values as the global setting — `-1` to measure a ceiling from that sample's own coverage, a positive number to fix one, `0` to leave the sample uncapped — and a blank cell means the global `capBAM.maxDepth`. See [Depth capping](#depth-capping) for what the measurement does and when it declines to act.
+
+Reach for this column when you have read a sample's depth report and disagree with it. The usual case is a library where the deep population is too large for the detector to call an artefact, so it reports the sample uncapped: if you know that population is a PCR hill rather than real coverage, pin the ceiling here.
 
 ### Adapter overrides
 
@@ -1822,11 +1914,11 @@ Remember that the denominator is the number of **VCF columns**, which is the num
 ### Pileup settings
 
 ```groovy
-bcftools {
+variantCall {
     scaleMapQ   = 50     // -C  downgrade coefficient for mismatch-heavy reads
     varQualMin  = 30     // -q  minimum mapping quality
     baseQualMin = 30     // -Q  minimum base quality
-    maxDepth    = 2000   // -d  per-file depth cap
+    maxDepth    = 0      // -d  a flat depth cap on top of capBAM; 0 is no limit
 }
 ```
 
@@ -1838,17 +1930,25 @@ bcftools {
 
 #### `maxDepth`
 
-`-d 2000` caps the reads considered **per file per position**. This is the parameter most likely to bite a Pool-seq run without announcing itself.
+`-d` caps the reads considered **per file per position**, and it ships as `0`, which to `bcftools mpileup` means *no limit*. The BAMs reaching this point have already been capped per sample by [stage 2 of the filter chain](#depth-capping), from each sample's own coverage — a second flat number on top of a measured one is what that stage exists to remove.
 
-Pooled libraries are often sequenced deeply on purpose — depth is what buys frequency resolution. When depth exceeds the cap, the pileup stops counting, and the read counts your frequencies are computed from are truncated. Nothing downstream flags this.
+**This is not `capBAM.maxDepth`.** That one is measured per sample and applied to the BAM; this one is a single number applied to every sample of every run, after capping. They take different sentinels, and only `capBAM.maxDepth` accepts `-1`:
 
-**Check it against your data.** After a run, look at `Output/Reports/Coverage/`:
+| Value | `capBAM.maxDepth` | `variantCall.maxDepth` |
+|---|---|---|
+| `-1` | Measure a ceiling per sample | Not valid |
+| `0` | Do not cap | No limit |
+| positive `N` | Cap every sample at `N` | Cap the pileup at `N` |
+
+**When to set it.** Leave it at `0` unless you have a reason to want a hard backstop under the measured ceiling — a memory ceiling on a shared machine is the usual one, since a very deep pile-up costs mpileup memory whether or not it was capped. If you do set it, size it against your data rather than guessing. After a run, the depth reports say what each sample actually looked like:
 
 ```bash
-grep -H . Output/Reports/Coverage/*_coverage_report.txt | head
+grep -H 'ceiling applied' Output/Reports/Depth/*_depth_report.txt
 ```
 
-If mean depth approaches or exceeds 2000 anywhere you care about, raise `maxDepth` above your highest expected per-sample depth. There is a memory and runtime cost to a higher cap, but a truncated pileup is a biased result.
+A cap that bites truncates the read counts your frequencies are computed from, and nothing downstream flags it — which was the whole problem with the fixed `2000` this replaced.
+
+**Coming from 2.2.0 or earlier**, migration carries your `bcftools.maxDepth` across as `variantCall.maxDepth` and adds `capBAM.maxDepth = -1` beside it, reported as a new parameter. Your runs then do **both**: they cap per sample from the data *and* keep your old flat ceiling underneath. That is deliberate — nothing silently loosens a limit you set — but it is probably not what you want long term. Set `variantCall.maxDepth = 0` to keep only the measured ceiling, or `capBAM.maxDepth = 0` to keep only the old behaviour.
 
 ### Calling
 
@@ -1914,7 +2014,7 @@ The last row is worth noting as a trap: `-i "FMT/DP>=20"` reads like the obvious
 
 !!! note "Genotype-level filtering is not available here"
 
-    A per-sample depth floor — blanking one pool's frequency while keeping the row — cannot be done in the VCF, because vcftools and bcftools both express a genotype-level verdict by rewriting `GT`, and `GT` is set to `./.` throughout by major-allele normalisation ([why](#4-major-allele-normalisation-step-7)). Frequency conversion reads `AD`. If you need per-sample blanking rather than whole-site removal, it has to happen in `bin/depth2freq.awk`, which already computes each sample's depth as the denominator.
+    A per-sample depth floor — blanking one pool's frequency while keeping the row — cannot be done in the VCF, because vcftools and bcftools both express a genotype-level verdict by rewriting `GT`, and `GT` is set to `./.` throughout by major-allele normalisation ([why](#5-major-allele-normalisation-step-7)). Frequency conversion reads `AD`. If you need per-sample blanking rather than whole-site removal, it has to happen in `bin/depth2freq.awk`, which already computes each sample's depth as the denominator.
 
 ### Output naming
 
@@ -1952,7 +2052,7 @@ The result is written to `Output/Ready/` as `<sample>_ready.bam` with its index.
 ### The filter
 
 ```groovy
-samtools {
+cleanBAM {
     filter   = "0xF0C"   // -F : exclude any read with these bits set
     required = "0x2"     // -f : require these bits
     mapq     = 30        // -q : minimum mapping quality
@@ -2046,13 +2146,15 @@ Raw FASTQ reads
       ▼
 [Step 4] BAM cleanup (name-sort → fixmate → coord-sort → markdup → addRG → filter → index)
       │
-      ├──────────────────────┐
-      ▼                      ▼
-[Step 5] Reports    [Step 6] Variant calling (BCFtools mpileup + call)
-                             │
-                             ├────────────────────────────────┐
-                             ▼                                ▼
-                    [Step 7] VCF → frequency tables   [Step 8] Annotation (optional)
+      ▼
+[Step 5] Reports, and the depth ceiling for each sample
+      │
+      ▼
+[Step 6] Cap each BAM, then variant calling (BCFtools mpileup + call)
+      │
+      ├────────────────────────────────┐
+      ▼                                ▼
+[Step 7] VCF → frequency tables   [Step 8] Annotation (optional)
 ```
 
 ### What runs per sample and what runs once
@@ -2066,8 +2168,8 @@ This distinction explains most of the pipeline's runtime behaviour.
 | 2 Trim & clip | Per sample | Two sub-steps, the second depends on the first's FastQC output |
 | 3 Align | Per sample | |
 | 4 Cleanup | Per sample | |
-| 5 Reports | Per sample | Two sub-steps, independent |
-| 6 Variant call | **Once, jointly** | One `bcftools mpileup` over every BAM |
+| 5 Reports | Per sample | Three sub-steps, independent; one of them sets that sample's depth ceiling |
+| 6 Variant call | Capping per sample, then **once, jointly** | Capping runs only for samples that have a ceiling; then one `bcftools mpileup` over every BAM |
 | 7 Frequencies | Once, five sub-steps | Serial chain; the last runs twice, on SNPs and on INDELs |
 | 8 Annotation | Once | Optional; runs on step 6's output, not step 7's |
 
@@ -2224,14 +2326,17 @@ Output: `Output/Ready/<sample>_ready.bam` and `.bai`.
 
 `scripts/5_reports.nf`
 
-Two independent sub-steps per sample:
+Three independent sub-steps per sample:
 
 | Sub-step | Command | Output |
 |---|---|---|
 | `AlignmentReport` | `bamtools stats` | `Output/Reports/Alignment/<sample>_alignment_report.txt` |
 | `CoverageReport` | `samtools coverage` | `Output/Reports/Coverage/<sample>_coverage_report.txt` |
+| `DepthProfile` | `samtools stats` | `Output/Reports/Depth/<sample>_depth_histogram.tsv` and `_depth_report.txt` |
 
-The coverage report is the one to read on every run: it is how you find out whether `variantCall.maxDepth` truncated your pileup ([why that matters](#maxdepth)).
+`DepthProfile` also decides the depth ceiling step 6 applies to that sample, which is why this step is no longer a leaf: it passes the BAM, its index and the chosen ceiling on to variant calling. It runs whatever `capBAM.maxDepth` is set to — the histogram is worth having even when nothing is capped, and the reports are what [step 6](#depth-capping) is judged by.
+
+Reading the depth report on every run is the habit worth forming. The capped BAM step 6 builds is transient, so this file is the only record of which reads were actually called for that sample.
 
 ---
 
@@ -2240,9 +2345,11 @@ The coverage report is the one to read on every run: it is how you find out whet
 `scripts/6_variant_call.nf`
 
 ```bash
-bcftools mpileup -B -C 50 -q 30 -Q 30 -d 2000 -a AD,DP,SP,INFO/AD -Ou -f reference <all BAMs> \
+bcftools mpileup -B -C 50 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou -f reference <all BAMs> \
   | bcftools call -m -A -v -Ov -o <name>.vcf
 ```
+
+Before that, `CapBAM` truncates each BAM to the ceiling step 5 chose for it. It runs **only for samples that have one**: a sample the detector left alone, or a run with `capBAM.maxDepth = 0`, goes to bcftools with its ready BAM unchanged, and no `CapBAM` task appears in the trace. The capped BAM never reaches either storage root — it is built here, read by the pileup, and discarded, which is why step 5's reports are the durable record.
 
 One joint task over every BAM, producing a multi-sample VCF with `AD` and `DP` FORMAT fields. Every flag and its consequence: [Variant Calling](#variant-calling).
 
@@ -2266,7 +2373,7 @@ Five sub-steps in a serial chain, each deleting its input once its output is saf
 | 4 | `SplitSNPsAndINDELs` | Two vcftools passes into a SNP VCF and an INDEL VCF |
 | 5 | `CalculateFrequencies` | Extracts `AD` and divides to frequencies; runs once per split file |
 
-Sub-step 2 is the pool-aware core of the pipeline and is documented in full in [The Filter Chain](#5-false-positive-filter-step-7). The minimum credible frequency it enforces is
+Sub-step 2 is the pool-aware core of the pipeline and is documented in full in [The Filter Chain](#6-false-positive-filter-step-7). The minimum credible frequency it enforces is
 
 $$f_{\min} = \frac{1}{2 \times \text{diploidy} \times \text{poolSize}}$$
 
@@ -2497,6 +2604,7 @@ Either reference file may be gzipped or plain.
     └── Reports/
         ├── Alignment/
         ├── Coverage/
+        ├── Depth/                # Depth histogram and chosen ceiling, per sample
         ├── Fastqc/<sample>/
         ├── Trimming/<sample>/
         ├── 0_verify_environment.txt
@@ -2700,7 +2808,7 @@ Column order follows `metadata.csv` **row order**. Where rows share an `RG_Sampl
 
 #### `REF` does not match my reference genome
 
-Correct. Step 7 re-encodes each site so the most-read allele across the whole cohort becomes `REF`, which is what makes frequencies comparable across samples and runs. If you need the assembly's base, take it from the assembly. [Why →](#4-major-allele-normalisation-step-7)
+Correct. Step 7 re-encodes each site so the most-read allele across the whole cohort becomes `REF`, which is what makes frequencies comparable across samples and runs. If you need the assembly's base, take it from the assembly. [Why →](#5-major-allele-normalisation-step-7)
 
 #### A variant I know is real is missing
 
@@ -2709,7 +2817,7 @@ Work outward through the chain — a read lost at alignment cannot be recovered 
 | Check | Parameter |
 |---|---|
 | Was it filtered at alignment? | `cleanBAM.mapq` (30 is strict), `cleanBAM.filter` |
-| Was the pileup truncated? | `variantCall.maxDepth` vs your coverage reports |
+| Was the depth truncated? | That sample's `Output/Reports/Depth/` report, then `variantCall.maxDepth` |
 | Was it seen in too few pools? | `filterFalsePositives.sampleThreshold` — the default discards alleles found in one pool out of eight |
 | Below the frequency floor? | `poolSize`, `diploidy` |
 | Site removed on quality? | `vcffilter.minQUAL` |
@@ -2723,9 +2831,11 @@ Two usual causes, in order of likelihood:
 1. **MAPQ filtering.** At `cleanBAM.mapq = 30`, repetitive genomes lose a lot. Compare read counts in `Output/Aligned/` and `Output/Ready/`.
 2. **Duplicate removal.** The step 4 log carries `markdup -s` statistics; a high duplicate rate is a library-prep problem, not a pipeline one.
 
-#### Depth plateaus at a round number
+#### Depth plateaus at one number
 
-`variantCall.maxDepth`, default 2000, caps reads considered per file per position. Deep pooled libraries exceed it, and the truncation biases every frequency at those positions. [maxDepth →](#maxdepth)
+Something capped it, and the depth report says what. `grep -H 'ceiling applied' Output/Reports/Depth/*_depth_report.txt`.
+
+If the plateau is in **one sample** at an unround number, that is its measured ceiling and it is working as intended — the report gives the reason, and `param_capMaxDepth` overrules it for that sample. If **every sample** plateaus at the same number, the cap is flat rather than measured: either `capBAM.maxDepth` is set to a fixed depth, or `variantCall.maxDepth` is non-zero. [Depth capping →](#depth-capping)
 
 #### Genotype-based tools find nothing in my VCFs
 

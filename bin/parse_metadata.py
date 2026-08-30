@@ -51,12 +51,14 @@ RG_TAGS = {
 # paramColumns() in scripts/metadata.nf. A CLOSED LIST, like RG_TAGS.
 PARAM_COLUMNS = {
     "param_poolSize": "poolSize",
+    "param_capMaxDepth": "capBAM.maxDepth",
     "param_adapter1": "trim_galore.adapter1",
     "param_adapter2": "trim_galore.adapter2",
 }
 
 # The param_ columns with rules of their own, beyond being recognised.
 POOL_SIZE = "param_poolSize"
+CAP_MAX_DEPTH = "param_capMaxDepth"
 ADAPTER_COLUMNS = ("param_adapter1", "param_adapter2")
 
 # A tab ends a field in the SAM header, and a control character has no business in one.
@@ -205,6 +207,15 @@ def check(path):
                 f"line {lineno}: {POOL_SIZE} '{size}' is not a whole number of individuals. "
                 f"It is how many individuals went into the pool, and sensitivity is "
                 f"1 / (2 * diploidy * {POOL_SIZE}). Leave it blank to use the global poolSize."
+            )
+
+        # -1, 0 and any positive depth are all valid, so only the shape is checked.
+        cap = row.get(CAP_MAX_DEPTH, "")
+        if cap and not (cap == "-1" or cap.isdigit()):
+            errors.append(
+                f"line {lineno}: {CAP_MAX_DEPTH} '{cap}' is not a depth. Write -1 to measure "
+                f"this sample's ceiling from its own depth histogram, 0 to leave it uncapped, "
+                f"or the depth to cap it at. Leave it blank to use the global capBAM.maxDepth."
             )
 
     # ONE POOL, ONE SIZE: rows sharing an RG_Sample become a single VCF column. A blank cell

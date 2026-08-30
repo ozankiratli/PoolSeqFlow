@@ -55,6 +55,9 @@ FENCE = re.compile(r"^\s*(```|~~~)")
 EXPLICIT_ID = re.compile(r"\{:?\s*#([\w-]+)\s*\}\s*$")
 MD_LINK = re.compile(r"(?<!!)\[([^\]]*)\]\(\s*(#[^)\s]*)\s*\)")
 HTML_ANCHOR = re.compile(r'(href=")(#[^"]*)(")')
+# An image is written as the manual itself reads it, `assets/…` beside the manual. Every page
+# but the home page is emitted one directory down, so the path has to move with it.
+MD_IMAGE = re.compile(r"(!\[[^\]]*\]\(\s*)(assets/)")
 
 
 class ManualError(Exception):
@@ -270,6 +273,8 @@ def render(page: Page, owner: dict[str, Page]) -> str:
 
     text = MD_LINK.sub(rewrite_md, text)
     text = HTML_ANCHOR.sub(rewrite_html, text)
+    if posixpath.dirname(page.path):
+        text = MD_IMAGE.sub(lambda m: m.group(1) + "../" + m.group(2), text)
     if unknown:
         raise ManualError(
             f"{page.path}: link to an anchor no heading provides: " + ", ".join(sorted(set(unknown)))

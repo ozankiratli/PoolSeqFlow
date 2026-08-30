@@ -24,9 +24,10 @@ def rgTagMap() {
 // The parameters a row may override, mapped to the parameter each one displaces.
 // Mirrored by PARAM_COLUMNS in bin/parse_metadata.py.
 def paramColumns() {
-    return ['param_poolSize': 'poolSize',
-            'param_adapter1': 'trim_galore.adapter1',
-            'param_adapter2': 'trim_galore.adapter2']
+    return ['param_poolSize'   : 'poolSize',
+            'param_capMaxDepth': 'capBAM.maxDepth',
+            'param_adapter1'   : 'trim_galore.adapter1',
+            'param_adapter2'   : 'trim_galore.adapter2']
 }
 
 // All of them, in a fixed order.
@@ -40,6 +41,10 @@ def adapterColumns() {
 
 def poolSizeColumn() {
     return 'param_poolSize'
+}
+
+def capMaxDepthColumn() {
+    return 'param_capMaxDepth'
 }
 
 def metadataRow(Map run, String sampleId) {
@@ -69,6 +74,7 @@ def metadataColumnsPerStep() {
     return [
         2: adapterColumns(),
         4: rgTagMap().keySet().toList(),
+        5: [capMaxDepthColumn()],
         7: [poolSizeColumn()],
     ]
 }
@@ -120,6 +126,14 @@ def poolSizeArgument(Map run) {
         .collect { pool, size -> "${pool}=${size}".toString() }
         .sort()
         .join(',')
+}
+
+// One sample's effective capBAM.maxDepth: its own param_capMaxDepth cell, or the run's setting
+// where the cell is blank.
+def sampleCapMaxDepth(Map run, String sampleId) {
+    def row = metadataRow(run, sampleId)
+    def own = row == null ? '' : "${row[capMaxDepthColumn()] ?: ''}"
+    return (own ?: "${run.capBAM.maxDepth}").toString()
 }
 
 // One sample's effective Trim Galore options: a row setting both adapters replaces the run's

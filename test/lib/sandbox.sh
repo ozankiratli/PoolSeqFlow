@@ -280,12 +280,16 @@ workflow {
     // Three BAMs where the run started with four. Any file will do - the guard fires before
     // anything is handed to bcftools.
     def stand_in = file("${base.metadataPath}")
+    // The ceiling is READ rather than carried, so this one has to be a file holding a number.
+    // Zero keeps CapBAM out of it entirely, which is what this case wants.
+    def no_cap = file("${base.mainDir}/zero_cap.txt")
     VariantCalling(
-        channel.fromList(['s1', 's2', 's3']).map { s -> tuple(base, s, stand_in) },
+        channel.fromList(['s1', 's2', 's3']).map { s -> tuple(base, s, stand_in, stand_in, no_cap) },
         channel.of(tuple(base, stand_in)),
         channel.of(tuple(base, 4)))
 }
 ENTRY
+    printf '0\n' > "$sb/main/zero_cap.txt"
     _run_entry "$sb" multirun_guards.nf
 }
 

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" width="760" height="300" role="img" aria-label="A poor reference: Two thirds of the covered genome sits at depth 1-5. It is not coverage, and it is not an anomaly either.">
+<title>A poor reference</title>
+<style>.ink{fill:#aeaeae;font:13px system-ui,sans-serif}.sm{fill:#aeaeae;font:11px system-ui,sans-serif;opacity:.75}.hd{fill:#aeaeae;font:600 14px system-ui,sans-serif}.rule{stroke:#485266;stroke-width:1;fill:none}@media (prefers-color-scheme: light){.ink,.sm,.hd{fill:#3b4252}.rule{stroke:#c4ccda}}</style>
+<text class="hd" x="66" y="18">A poor reference</text>
+<line class="rule" x1="66.0" y1="30" x2="66.0" y2="254" opacity="0.35"/>
+<text class="sm" x="66.0" y="270" text-anchor="middle">1</text>
+<line class="rule" x1="291.3" y1="30" x2="291.3" y2="254" opacity="0.35"/>
+<text class="sm" x="291.3" y="270" text-anchor="middle">10</text>
+<line class="rule" x1="516.7" y1="30" x2="516.7" y2="254" opacity="0.35"/>
+<text class="sm" x="516.7" y="270" text-anchor="middle">100</text>
+<line class="rule" x1="742.0" y1="30" x2="742.0" y2="254" opacity="0.35"/>
+<text class="sm" x="742.0" y="270" text-anchor="middle">1,000</text>
+<line class="rule" x1="66" y1="254.0" x2="742" y2="254.0" opacity="0.25"/>
+<text class="sm" x="58" y="258.0" text-anchor="end">10<tspan baseline-shift="super" font-size="8">0</tspan></text>
+<line class="rule" x1="66" y1="226.0" x2="742" y2="226.0" opacity="0.25"/>
+<text class="sm" x="58" y="230.0" text-anchor="end">10<tspan baseline-shift="super" font-size="8">1</tspan></text>
+<line class="rule" x1="66" y1="198.0" x2="742" y2="198.0" opacity="0.25"/>
+<text class="sm" x="58" y="202.0" text-anchor="end">10<tspan baseline-shift="super" font-size="8">2</tspan></text>
+<line class="rule" x1="66" y1="170.0" x2="742" y2="170.0" opacity="0.25"/>
+<text class="sm" x="58" y="174.0" text-anchor="end">10<tspan baseline-shift="super" font-size="8">3</tspan></text>
+<line class="rule" x1="66" y1="142.0" x2="742" y2="142.0" opacity="0.25"/>
+<text class="sm" x="58" y="146.0" text-anchor="end">10<tspan baseline-shift="super" font-size="8">4</tspan></text>
+<line class="rule" x1="66" y1="114.0" x2="742" y2="114.0" opacity="0.25"/>
+<text class="sm" x="58" y="118.0" text-anchor="end">10<tspan baseline-shift="super" font-size="8">5</tspan></text>
+<line class="rule" x1="66" y1="86.0" x2="742" y2="86.0" opacity="0.25"/>
+<text class="sm" x="58" y="90.0" text-anchor="end">10<tspan baseline-shift="super" font-size="8">6</tspan></text>
+<line class="rule" x1="66" y1="58.0" x2="742" y2="58.0" opacity="0.25"/>
+<text class="sm" x="58" y="62.0" text-anchor="end">10<tspan baseline-shift="super" font-size="8">7</tspan></text>
+<line class="rule" x1="66" y1="30.0" x2="742" y2="30.0" opacity="0.25"/>
+<text class="sm" x="58" y="34.0" text-anchor="end">10<tspan baseline-shift="super" font-size="8">8</tspan></text>
+<path d="M66.0,52.5 L133.8,52.5 L133.8,58.6 L173.5,58.6 L173.5,64.6 L201.7,64.6 L201.7,70.7 L223.5,70.7 L223.5,76.8 L241.3,76.8 L241.3,82.9 L256.4,82.9 L256.4,89.0 L269.5,89.0 L269.5,95.0 L281.0,95.0 L281.0,101.1 L291.3,101.1 L291.3,107.1 L300.7,107.1 L300.7,113.0 L309.2,113.0 L309.2,118.8 L317.0,118.8 L317.0,124.0 L324.3,124.0 L324.3,128.5 L331.0,128.5 L331.0,131.6 L337.3,131.6 L337.3,133.0 L343.3,133.0 L343.3,123.6 L354.1,123.6 L354.1,119.9 L363.9,119.9 L363.9,115.4 L372.8,115.4 L372.8,111.3 L381.0,111.3 L381.0,107.6 L388.5,107.6 L388.5,104.3 L395.5,104.3 L395.5,101.5 L402.1,101.5 L402.1,99.1 L408.2,99.1 L408.2,96.9 L413.9,96.9 L413.9,89.8 L422.0,89.8 L422.0,87.7 L429.4,87.7 L429.4,86.0 L436.3,86.0 L436.3,84.9 L442.8,84.9 L442.8,84.1 L448.8,84.1 L448.8,83.7 L454.5,83.7 L454.5,80.1 L461.7,80.1 L461.7,80.5 L468.3,80.5 L468.3,81.3 L474.5,81.3 L474.5,82.5 L480.4,82.5 L480.4,81.5 L487.2,81.5 L487.2,83.9 L493.6,83.9 L493.6,86.7 L499.6,86.7 L499.6,89.9 L505.3,89.9 L505.3,91.5 L511.6,91.5 L511.6,96.1 L517.6,96.1 L517.6,101.1 L523.3,101.1 L523.3,105.0 L529.5,105.0 L529.5,111.6 L535.3,111.6 L535.3,117.5 L541.6,117.5 L541.6,125.9 L547.5,125.9 L547.5,133.7 L553.7,133.7 L553.7,144.0 L559.6,144.0 L559.6,153.9 L565.7,153.9 L565.7,166.2 L571.4,166.2 L571.4,178.2 L577.4,178.2 L577.4,191.8 L583.5,191.8 L583.5,207.7 L589.3,207.7 L589.3,223.8 L595.2,223.8 L595.2,254.0 L66.0,254.0Z" fill="#60c0ff" opacity="0.22"/>
+<path d="M66.0,52.5 L133.8,52.5 L133.8,58.6 L173.5,58.6 L173.5,64.6 L201.7,64.6 L201.7,70.7 L223.5,70.7 L223.5,76.8 L241.3,76.8 L241.3,82.9 L256.4,82.9 L256.4,89.0 L269.5,89.0 L269.5,95.0 L281.0,95.0 L281.0,101.1 L291.3,101.1 L291.3,107.1 L300.7,107.1 L300.7,113.0 L309.2,113.0 L309.2,118.8 L317.0,118.8 L317.0,124.0 L324.3,124.0 L324.3,128.5 L331.0,128.5 L331.0,131.6 L337.3,131.6 L337.3,133.0 L343.3,133.0 L343.3,123.6 L354.1,123.6 L354.1,119.9 L363.9,119.9 L363.9,115.4 L372.8,115.4 L372.8,111.3 L381.0,111.3 L381.0,107.6 L388.5,107.6 L388.5,104.3 L395.5,104.3 L395.5,101.5 L402.1,101.5 L402.1,99.1 L408.2,99.1 L408.2,96.9 L413.9,96.9 L413.9,89.8 L422.0,89.8 L422.0,87.7 L429.4,87.7 L429.4,86.0 L436.3,86.0 L436.3,84.9 L442.8,84.9 L442.8,84.1 L448.8,84.1 L448.8,83.7 L454.5,83.7 L454.5,80.1 L461.7,80.1 L461.7,80.5 L468.3,80.5 L468.3,81.3 L474.5,81.3 L474.5,82.5 L480.4,82.5 L480.4,81.5 L487.2,81.5 L487.2,83.9 L493.6,83.9 L493.6,86.7 L499.6,86.7 L499.6,89.9 L505.3,89.9 L505.3,91.5 L511.6,91.5 L511.6,96.1 L517.6,96.1 L517.6,101.1 L523.3,101.1 L523.3,105.0 L529.5,105.0 L529.5,111.6 L535.3,111.6 L535.3,117.5 L541.6,117.5 L541.6,125.9 L547.5,125.9 L547.5,133.7 L553.7,133.7 L553.7,144.0 L559.6,144.0 L559.6,153.9 L565.7,153.9 L565.7,166.2 L571.4,166.2 L571.4,178.2 L577.4,178.2 L577.4,191.8 L583.5,191.8 L583.5,207.7 L589.3,207.7 L589.3,223.8 L595.2,223.8" fill="none" stroke="#60c0ff" stroke-width="1.4" opacity="0.9"/>
+<text class="sm" x="66" y="292"><tspan fill="#60c0ff">— before</tspan><tspan dx="20">nothing is capped</tspan></text>
+<text class="sm" x="742" y="292" text-anchor="end">depth →</text>
+<text class="sm" transform="translate(14,142.0) rotate(-90)" text-anchor="middle">covered positions</text>
+</svg>
