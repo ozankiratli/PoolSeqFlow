@@ -83,6 +83,26 @@ test_step_0_states_how_many_individuals_each_pool_holds() {
         "the fixture sets no param_poolSize, so every pool takes the global one"
 }
 
+# The citations are part of the record a run leaves behind, so they are written beside the
+# results rather than printed and lost. The fixture runs with annotate on, so SnpEff is one of
+# the tools it invoked and has to be listed.
+test_citations_are_written_beside_the_results() {
+    needs_run || return
+    local o="$PIPELINE_SB/store/Output"
+    assert_file "$o/CITATIONS.md"    "the readable citations should be written"
+    assert_file "$o/references.bib"  "and the bibliography beside them"
+
+    local md; md=$(cat "$o/CITATIONS.md")
+    assert_contains "$md" "PoolSeqFlow" "the pipeline itself should be cited"
+    assert_contains "$md" "BWA"         "and every tool the run invoked"
+    assert_contains "$md" "SnpEff"      "including SnpEff, since this run annotates"
+
+    # The whole point of generating these from a run rather than shipping them: the version is
+    # the one that actually ran. A bare tool name with no version would be a static list.
+    assert_contains "$md" "BWA 0.7"     "the version invoked should be recorded"
+    assert_contains "$(cat "$o/references.bib")" "Version" "and carried into the BibTeX"
+}
+
 # Every frequency must be a proportion. A value outside [0,1] means the allele counts and
 # the depth disagree somewhere upstream.
 test_all_frequencies_are_proportions() {

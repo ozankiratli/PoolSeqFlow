@@ -1,32 +1,20 @@
-// PoolSeqFlow parameters.
+// PoolSeqFlow parameters. The manual explains every setting in this file:
+//     https://ozankiratli.github.io/PoolSeqFlow/
 //
-// This file is the only supported way to configure a run. Do not override parameters on
-// the command line (`nextflow run ... --poolSize 50`): Nextflow passes CLI parameters as
-// strings, so `--annotate false` sets the string "false", which evaluates as true and
-// silently leaves annotation enabled. Values set here keep their real types.
-// The ./PoolSeqFlow wrapper takes a single subcommand and rejects extra arguments.
+// Configure runs here and nowhere else. Nextflow passes command-line parameters as strings,
+// so `--annotate false` sets the string "false", which evaluates as true.
 
 params {
     //main parameters
     threads         =  8                 // cores per task
     memory          = '24 GB'            // memory ceiling per task
-    // This project's own directory, and the one you launch the run from - this file is read
-    // from wherever you are when you start it. Put it on the faster volume; on a cluster,
-    // the node's own disk rather than the shared archive.
-    //
-    // It is NOT where PoolSeqFlow is installed, and it may not be: one installation serves
-    // any number of projects, each with its own mainDir, and step 0 refuses a run where the
-    // two are the same directory. A mainDir underneath the installation is allowed but
-    // warned about - nothing collides, but the two have very different lifetimes.
+    // Your project directory, and the one you launch from. The faster volume. It may be
+    // neither the installation nor storageDir.
     mainDir         = "/path/to/project/directory"
-    // Where finished results are kept. May be a slower archive volume on another
-    // filesystem, and must not be the same directory as mainDir.
-    //
-    // Called storageDir, not projectDir: Nextflow defines `projectDir` itself, as the
-    // directory the pipeline script lives in, and a params entry of that name shadows it.
-    // Renamed from projectDir - `./PoolSeqFlow migrate_config` carries the old value over.
+    // Permanent storage, and a slower volume will do. Called projectDir before 3.0;
+    // `./PoolSeqFlow migrate_config` carries the old value over.
     storageDir      = "/path/to/permanent/storage"
-    // The names of the files you place, and where they go, all relative to mainDir:
+    // The files you place, all relative to mainDir:
     //   mainDir/Data/            the reads              (dataSource names it)
     //   mainDir/Reference/       reference + annotation (referenceFile, gffFile)
     //   mainDir/metadata.csv     what your samples ARE  (metadataFile)
@@ -35,72 +23,35 @@ params {
     referenceFile   = 'reference.fasta.gz'
     poolSize        = 100
     diploidy        = 2
-    // One row per pair of FASTQ files: SampleID, the RG_* columns that become read-group
-    // tags, and any columns of your own describing the experiment. metadata.csv.template in
-    // the installation explains the three kinds of column and what merges two rows into one
-    // pool. It replaces RGTags.csv, which could only hold SAM tags.
+    // One row per pair of FASTQ files. metadata.csv.template explains the columns; it
+    // replaces RGTags.csv.
     metadataFile    = 'metadata.csv'
     annotate        = true
     gffFile         = 'reference.gff.gz'
 
-    // Several runs from one invocation - the same reads against two references, or one
-    // reference at a few trimming settings.
-    //
-    // false means every parameter comes from this file and nothing else is read. It is NOT
-    // "a table with one row": a single run has no RunID, its outputs are not filed under
-    // one, and nothing here is suffixed. Turning this on is what introduces all of that.
-    //
-    // true reads multiRunFile below, in this directory. Its header is parameter names as
-    // they are spelt here, without the `params.` prefix, and one column must be RunID. Each
-    // row carries only the parameters that differ from the values above; anything left blank
-    // comes from this file as usual, so a table stays as short as the difference between the
-    // runs.
-    //
-    // Runs share mainDir AND storageDir. There is one results tree, and only what actually
-    // differs between runs gets a name inside it: work all of them share sits at the ordinary
-    // paths below, work a run does alone is filed under Output/${RunID}, and its logs under
-    // Logs/${RunID}. So a table whose rows differ only in a late filter costs one run plus the
-    // diverging tail, and you can see which is which by looking. Add a storageDir column to
-    // send one run somewhere else entirely.
+    // Several runs from one invocation - the same reads against two references, say. true
+    // reads multiRunFile below: a RunID column, plus one column per parameter that differs
+    // from the values above. See multi-run.csv.example in the installation.
     multiRun        = false
     multiRunFile    = 'runs.csv'
 
     referenceFa     = "${params.referenceFile.replace('.gz', '')}"
 
-    // Core allocation. Every value below is computed from `threads` above, in
-    // scripts/resolve_parameters.nf, and is left commented out here so that changing
-    // `threads` moves all of them together.
-    //
-    // Uncomment any single one to pin it. A value you set is used exactly as written and
-    // also feeds the ones computed from it - pinning `samtools` moves `javaGc` with it.
-    //
-    // Each tool is quantised to the largest power of two at or below `threads`, capped at
-    // 8, which is where the published scaling for these tools flattens out. threads = 1
-    // forces every tool to a single core.
+    // Core allocation, computed from `threads` and left commented out so that changing
+    // `threads` moves all of it together. Uncomment any one to pin it; a pinned value still
+    // feeds the ones computed from it.
     cores {
         // ladder    = largest power of two <= threads, capped at 8
-        //
-        // Trim Galore is costed on its full footprint, not its worker count: --cores N runs
-        // N+4 threads (N workers + 2 decompressors + 1 batcher + 1 writer) for any N >= 2,
-        // while --cores 1 bypasses the pool and is genuinely single-threaded. So `trim` is
-        // the largest N whose N+4 still fits in `threads`:
-        //   12+ cores -> 8    8+ -> 4    6+ -> 2    otherwise -> 1
-        // trim      = as above
-        // trimTotal = trim > 1 ? trim + 4 : 1        threads actually spawned
+        // trim      = largest N whose N+4 fits in threads: 12+ -> 8, 8+ -> 4, 6+ -> 2, else 1
+        // trimTotal = trim > 1 ? trim + 4 : 1        threads Trim Galore actually spawns
         // bwa       = ladder                         bwa mem -t N
         // cutadapt  = ladder                         cutadapt --cores N
-        // fastqc    = threads >= 2 ? 2 : 1           one thread per file; step 2 only ever hands it a pair
-        //
-        // samtools -@ counts ADDITIONAL threads, so 0 means one core and 1 means two.
-        // samtools  = threads >= 2 ? 1 : 0
-        // Same count as samtools, separate so it can be tuned on its own.
-        // -XX:ParallelGCThreads is a total, not an increment.
-        // javaGc    = samtools + 1
+        // fastqc    = threads >= 2 ? 2 : 1           one thread per file
+        // samtools  = threads >= 2 ? 1 : 0           -@ counts ADDITIONAL threads
+        // javaGc    = samtools + 1                   -XX:ParallelGCThreads is a total
     }
 
-    // java parameters
-    // Only the heap size lives here. -XX:ParallelGCThreads is set per process from
-    // task.cpus, so the JVM always gets the cores that task actually reserved.
+    // java parameters. -XX:ParallelGCThreads is set per process from task.cpus.
     java {
         heapSize        = '-Xmx8g'
     }
@@ -108,9 +59,7 @@ params {
     // fastqc parameters
     fastqc {
         memory          = 2048  // megabytes, as a plain number - FastQC rejects "2G"
-        // For the standalone FastQC binary (used on the clipped reads in step 2).
-        // -t is supplied by each process from task.cpus. Uncomment to take full control;
-        // `memory` above is then unused.
+        // Uncomment to take full control; `memory` is then unused. -t comes from task.cpus.
         // options      = "--memory ${params.fastqc.memory}"
     }
 
@@ -123,9 +72,8 @@ params {
         autodetect      = true
         adapter1        = ''
         adapter2        = ''
-        // Both are built from the values above. Uncomment either to take full control of it;
-        // what it was built from is then unused. --cores and --fastqc_args are supplied by
-        // TrimReads from task.cpus.
+        // Built from the values above; uncomment either to take full control of it.
+        // --cores and --fastqc_args come from task.cpus.
         // adapterOptions = autodetect ? '' : "-a ${params.trim_galore.adapter1} -a2 ${params.trim_galore.adapter2}"
         // options        = "--fastqc --paired --retain_unpaired -q ${params.trim_galore.quality} ${params.trim_galore.adapterOptions}"
     }
@@ -135,10 +83,9 @@ params {
         min_length     = 50      // inert on its own - see the options lines below
         // --cores is supplied by ClipReads from task.cpus
         options        = ""
-        // To apply min_length, comment out the line above and uncomment the one below.
-        // ClipReads also passes -l, a read length limit it computes from the FastQC report,
-        // and cutadapt applies -m after -l - so a min_length above that computed limit
-        // discards every read and the step succeeds with empty output.
+        // To apply min_length, comment the line above and uncomment the one below. ClipReads
+        // also passes -l, a limit it computes from the FastQC report, and cutadapt applies -m
+        // AFTER -l: a min_length above that limit discards every read and still exits 0.
         // options     = "-m ${params.cutadapt.min_length}"   // discard reads shorter than min_length after clipping
     }
 
@@ -146,8 +93,8 @@ params {
     bwa {
         minScoreOutput  = 30
         batchSize       = 10000000
-        // Built from the two values above. -t is supplied by Align from task.cpus.
-        // Uncomment to take full control; the two values above are then unused.
+        // Built from the two values above; uncomment to take full control. -t comes from
+        // task.cpus.
         // options      = "-K ${params.bwa.batchSize} -T ${params.bwa.minScoreOutput}"
     }
     
@@ -165,9 +112,8 @@ params {
         baseQualMin     = 30
         varQualMin      = 30
         maxDepth        = 2000
-        // Built from the four values above. -q is mapping quality and -Q is base quality;
-        // they are not interchangeable. Uncomment to take full control; the four values
-        // above are then unused, including maxDepth.
+        // Built from the four values above; uncomment to take full control of them, maxDepth
+        // included. -q is mapping quality, -Q is base quality.
         // mpileupOptions = "-B -C ${params.bcftools.scaleMapQ} -q ${params.bcftools.varQualMin} -Q ${params.bcftools.baseQualMin} -d ${params.bcftools.maxDepth} -a AD,DP,SP,INFO/AD -Ou"
 
         callOptions         = "-m -A -v -Ov"
@@ -202,72 +148,29 @@ params {
     // Directories.
     //
     // Everything the run reads repeatedly is on mainDir; everything it has finished with is
-    // on storageDir. Before 3.0 every entry here resolved to storageDir, so mainDir held
-    // only work/ - which, under the symlink strategy, holds symlinks. Reads and reference
-    // therefore crossed the slower volume on every access, and nothing in the configuration
-    // made that visible.
+    // on storageDir.
     dir {
         // Placed by you, and never moved or deleted by the pipeline.
         data            = "${params.mainDir}/${params.dataSource}"
         references      = "${params.mainDir}/Reference"
-        // Derived from your reference by step 1: the decompressed FASTA, the bwa index, the
-        // .fai and the snpEff database. Kept separate from Reference/ itself so it is plain
-        // which files are yours and which the pipeline may delete and rebuild.
-        //
-        // They stay here rather than being archived. mainDir is durable, every name in here
-        // is keyed by the reference it came from, so several genomes coexist safely - and a
-        // later run against a genome already built here skips step 1 entirely.
+        // Built from your reference by step 1. Yours to keep, the pipeline's to rebuild.
         dictionaries    = "${params.dir.references}/Dictionaries"
-        // Outputs land here first and move to Output/ once the step that consumes them has
-        // succeeded, so each byte crosses to storageDir once instead of being read across it
-        // many times. Mirrors Output/'s own tree. `clean` leaves it alone; `reset` removes it.
+        // Outputs land here first and move to Output/ once whatever reads them has succeeded.
         utilized        = "${params.mainDir}/Utilized"
 
         outputs         = "${params.storageDir}/Output"
 
-        // ONE RESULTS TREE, AND ONLY DIVERGENCE GETS A NAME. Under multiRun there are three
-        // kinds of owner inside Output/ and Logs/, and each is named for what it is:
-        //
-        //     Output/All_Runs/     what every run shares - the dictionaries' logs, the
-        //                          session reports, and from the sharing stage the steps
-        //                          they all agree on
-        //     Output/Shared_<N>/   what SOME of them share, with a members file saying which
-        //     Output/<RunID>/      what one run did alone
-        //
-        // A single run has nothing to distinguish itself from, so it is none of these: its
-        // tree sits at Output/ directly and is exactly what it has always been. Settled rule 3
-        // and the reason for the conditional here.
-        //
-        // `multiRun` is top-level, so overriding it really does re-derive these - unlike an
-        // override aimed at something inside a scope, which arrives after its derivations
-        // have already run.
+        // Under multiRun, Output/ and Logs/ are divided into All_Runs/, Shared_<N>/ and
+        // <RunID>/. A single run sits at Output/ directly.
         allOutputs      = params.multiRun ? "${params.storageDir}/Output/All_Runs" : "${params.storageDir}/Output"
         allLogs         = params.multiRun ? "${params.storageDir}/Logs/All_Runs"   : "${params.storageDir}/Logs"
-        // The installed pipeline's own directories, which are not under either of your two
-        // storage roots: one installation serves any number of projects.
-        //
-        // `projectDir` here is Nextflow's own variable - the directory the pipeline script
-        // lives in - not a parameter of ours. It became usable only when our storage root
-        // was renamed from projectDir to storageDir, because a params entry of that name
-        // shadows it.
-        //
-        // These read "${params.mainDir}/..." until 3.0, which was wrong from the first
-        // working version onward: nothing has ever been installed under a project's working
-        // directory, so `bin` named a path that did not exist in any release. It stayed
-        // invisible because Nextflow puts the pipeline's own bin/ on each task's PATH by
-        // itself, so every helper resolved through that instead. The hazard was that
-        // env.PATH below PREPENDS this path: a mainDir that happened to contain a bin/
-        // directory would have shadowed the conda environment's tools for every task.
+        // The installation's own, under neither storage root. `projectDir` is Nextflow's
+        // variable, not a parameter of ours.
         bin             = "${projectDir}/bin"
         logs            = "${params.storageDir}/Logs"
         snpEff          = "${params.dir.dictionaries}/snpEff"
 
-        // The names below are relative to EITHER root, because Utilized/ mirrors Output/
-        // exactly. That mirror is the whole reason a skip check can ask which volume holds
-        // an artifact by trying one relative path against both roots
-        // (bin/find_artifact.sh), rather than translating between two layouts - so the two
-        // trees are built from one set of names here instead of being written out twice
-        // and left to drift.
+        // Relative to EITHER root: Utilized/ mirrors Output/ exactly.
         subpath {
             aligned         = "Aligned"
             ready           = "Ready"
@@ -285,10 +188,7 @@ params {
             }
         }
 
-        // Permanent storage: where an artifact ends up. A step whose output is read again
-        // writes to "${params.dir.utilized}/<the same subpath>" instead, and is promoted
-        // here once the step that consumes it has succeeded - the two paths differ only in
-        // their root. A step whose output is never read again writes here directly.
+        // Permanent storage: where an artifact ends up.
         output {
             aligned         = "${params.dir.outputs}/${params.dir.subpath.aligned}"
             ready           = "${params.dir.outputs}/${params.dir.subpath.ready}"
@@ -306,41 +206,27 @@ params {
             }
         }
 
-        // Nextflow's own dag, trace, timeline and report describe the INVOCATION - every run
-        // in it - so they belong with the rest of the work every run shares. Referenced by
-        // nextflow.config, which is read before any run exists and so cannot ask a run where
-        // its reports go.
-        //
-        // Last in this block, and it has to be: interpolation here is eager and top to bottom,
-        // so a reference to `subpath` from above it reads null and the config fails to parse
-        // with nothing but a NullPointerException to say so.
+        // Nextflow's own dag, trace, timeline and report. Last in this block, and it has to
+        // be: interpolation is eager and top to bottom, so a reference to `subpath` from above
+        // it reads null and the config fails to parse.
         sessionReports  = "${params.dir.allOutputs}/${params.dir.subpath.reports}"
     }
 
-    // Full paths to the files you place, and to what step 1 derives from them.
-    //
-    // These sit below the dir block rather than beside the file names above because config
-    // interpolation is a single forward pass: a parameter may only reference one that is
-    // already defined. A forward reference fails with "Unable to parse config file" and
-    // leaves the real cause - a NullPointerException - only in .nextflow.log.
+    // Full paths to the files you place. Below the dir block, not beside the file names
+    // above: interpolation is a single forward pass, and a forward reference fails to parse.
     referencePath   = "${params.dir.references}/${params.referenceFile}"
     gffPath         = "${params.dir.references}/${params.gffFile}"
     metadataPath    = "${params.mainDir}/${params.metadataFile}"
     multiRunPath    = "${params.mainDir}/${params.multiRunFile}"
 
-    // The reference is decompressed into Dictionaries by step 1 and read from there by
-    // alignment and calling. There is deliberately no `gff` beside it: nothing decompresses
-    // the annotation, because snpEff reads the file you placed - gzipped or not - and builds
-    // its database from that. A `gff` parameter here named a path no process ever created.
+    // The decompressed reference, written by step 1. There is no `gff` beside it: snpEff
+    // builds its database from the file you placed, gzipped or not.
     reference       = "${params.dir.dictionaries}/${params.referenceFile.replace('.gz', '')}"
     reads           = "${params.dir.data}/${params.readPattern}"
 
 
-    // Add software commands. 
-    // WARNING: It is possible to use the software installed on the system instead of conda environment.
-    //          Replace the command with the full path of the software. 
-    //          Due to version conflicts the pipeline might misbehave. 
-    //          Use with caution!
+    // How each tool is invoked. Replace a command with a full path to use a system binary
+    // instead of the conda environment's - at your own risk, as versions may conflict.
     software {
         java            = 'java'
         cutadapt        = 'cutadapt'

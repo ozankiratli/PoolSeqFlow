@@ -3,9 +3,7 @@ process AnnotateVariants {
     cpus { run.cores.javaGc }
 
     input:
-    // One tuple, not two inputs: the database marker is a per-run singleton and separate
-    // inputs are matched positionally, so with N runs in flight it could be paired with
-    // another run's VCF.
+    // One tuple, not two inputs: the marker is matched to the VCF by run.
     tuple val(run), path(vcf), path(snpeff_db_verify)
 
     output:
@@ -33,20 +31,13 @@ process AnnotateVariants {
         ln -s ${target_annotated_vcf} .
         echo "ANNOTATING VCF ${vcf}: COMPLETED"
     else
-        # snpEff is given an absolute path for its summary and will NOT create the directory,
-        # so it has to exist first. This only ever worked by accident: every other step wrote
-        # into the run's own Output tree earlier in the run and made it on the way past. Once a
-        # variant can be the first thing to write into its own directory - which is exactly
-        # what a Shared_<N> is - the accident stops holding and snpEff exits 255.
+        # snpEff is given an absolute path for its summary and exits 255 rather than creating the
+        # directory, so it has to exist first.
         mkdir -p ${report_folder} ${target_folder}
 
         echo "ANNOTATING VCF ${vcf}: Creating symbolic links for snpEff database"
         ln -s ${run.dir.snpEff}/* .
-        # Keep the temp in the task directory rather than system /tmp: it is the same
-        # order of magnitude as the call set, so it belongs on the filesystem sized for
-        # the run, and `cleanup = true` reaps it. The trap removes it however the task
-        # ends - the plain rm below it only ran when everything succeeded, so a bcftools
-        # or snpEff failure orphaned a whole-genome VCF, once per retry.
+        # In the task directory, not system /tmp, and removed by the trap however the task ends.
         TMPFILE=\$(mktemp -p . --suffix=.vcf)
         trap 'rm -f "\$TMPFILE"' EXIT
         

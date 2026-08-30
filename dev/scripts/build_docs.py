@@ -65,7 +65,10 @@ def slugify(text: str) -> str:
     """Reproduce Python-Markdown's toc slugify over a heading's rendered text."""
     text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
     text = re.sub(r"<[^>]+>", "", text)
-    text = text.replace("`", "").replace("*", "").replace("_", "")
+    # Backticks and asterisks fall to the class below. Underscores must NOT: `\w` keeps them,
+    # so `RG_Sample` anchors as rg_sample, and stripping one here would name a heading the
+    # built site does not have.
+    text = text.replace("`", "").replace("*", "")
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
     text = re.sub(r"[^\w\s-]", "", text).strip().lower()
     return re.sub(r"[-\s]+", "-", text)
@@ -319,11 +322,18 @@ def main() -> int:
         print(f"manual is valid: {len(rendered)} pages, {len(owner)} anchors, nav current")
         return 0
 
-    MKDOCS.write_text(nav)
+    # Only rewrite what changed, so `mkdocs serve` rebuilds the edited page and not the site.
+    changed = 0
+    if MKDOCS.read_text() != nav:
+        MKDOCS.write_text(nav)
+        changed += 1
     for path, text in rendered.items():
         target = DOCS / path
+        if target.exists() and target.read_text() == text:
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text)
+        changed += 1
     for orphan in sorted({str(p.relative_to(DOCS)) for p in DOCS.rglob("*.md")} - set(rendered)):
         (DOCS / orphan).unlink()
     for name in STATIC:
@@ -332,7 +342,7 @@ def main() -> int:
         if directory.is_dir() and not any(directory.iterdir()):
             directory.rmdir()
 
-    print(f"wrote {len(rendered)} pages, {len(STATIC)} asset directories and the nav")
+    print(f"{len(rendered)} pages, {changed} written")
     return 0
 
 

@@ -1,13 +1,8 @@
 #!/bin/bash
 
-# pipefail is what matters here: this script's real work is one long pipeline whose last
-# stage is awk, and awk succeeds on empty input. Without it every bcftools in the chain
-# could fail and the script would still exit 0, emitting an empty VCF that the caller
-# publishes to permanent storage - where the existence-based skip logic then reuses it on
-# every later run, even after the underlying problem is fixed.
+# pipefail is load-bearing: the pipeline below ends in awk, which succeeds on empty input.
 set -euo pipefail
 
-# Initialize variables
 VCF=""
 THRESHOLD=""
 SENSITIVITY=""
@@ -15,7 +10,6 @@ POOLSIZES=""
 DIPLOIDY=""
 BCFTOOLS="bcftools"
 
-# Usage help function
 usage() {
   echo "Usage: $0 -v <vcf-file> -t <threshold> -s <sensitivity> [-p <pool sizes> -d <diploidy>] [-b <bcftools-path>]"
   echo "Options:"
@@ -34,7 +28,6 @@ usage() {
   exit 1
 }
 
-# Parse flags with getopts
 while getopts "v:t:s:p:d:b:" opt; do
   case $opt in
     v) VCF="$OPTARG" ;;
@@ -48,46 +41,27 @@ while getopts "v:t:s:p:d:b:" opt; do
   esac
 done
 
-# Validate required flags
 if [ -z "$VCF" ] || [ -z "$THRESHOLD" ] || [ -z "$SENSITIVITY" ]; then
   echo "Error: -v, -t and -s are required flags" >&2
   usage
 fi
 
-# -p carries sizes, not sensitivities, so it cannot be turned into thresholds without the
-# ploidy. Refused rather than defaulted to 2: a wrong ploidy silently halves or doubles every
-# threshold, and nothing downstream would look wrong.
+# -p carries sizes, not sensitivities, so it needs the ploidy to turn one into a threshold.
 if [ -n "$POOLSIZES" ] && [ -z "$DIPLOIDY" ]; then
   echo "Error: -p needs -d, to turn a pool size into a sensitivity" >&2
   usage
 fi
 
 SAMPLENUMBER=$(${BCFTOOLS} query -l ${VCF} | wc -l)
-# Checked rather than assumed: MINSAMPLES is the right-hand side of the COUNT(...) >= N
-# clause below, so a sample count of zero does not fail - it quietly sets the threshold to
-# zero and disables the cross-sample filter while the rest of the expression still runs.
+# Zero samples would set MINSAMPLES to zero and disable the cross-sample filter, not fail.
 if [ "$SAMPLENUMBER" -eq 0 ]; then
   echo "Error: no samples found in ${VCF}" >&2
   exit 1
 fi
 MINSAMPLES=$(awk "BEGIN {printf \"%f\", $SAMPLENUMBER * $THRESHOLD}")
 
-# WHY THE SAMPLE COUNT IS AWK'S AND NOT bcftools view -i's.
-#
-# The clause this replaces was COUNT(FORMAT/AD[:1]/FORMAT/DP[:] >= s) >= MINSAMPLES, with ONE s
-# for the whole file - so a pool of 10 was judged at a pool of 100's resolution. Making s
-# per-column inside an -i expression needs the thresholds to be a per-sample field, which means
-# annotating a FORMAT tag onto every record, filtering, and stripping it again: a bgzipped
-# temporary, a tabix index, and two extra bcftools passes to carry six constants.
-#
-# It also binds each threshold to the sample's column POSITION. This pipeline treats the
-# metadata file's row order as a separate identity from its values precisely because order
-# decides the VCF's columns - so a positional binding is one permutation away from applying the
-# wrong pool's threshold and silently changing which variants survive. Matching on the VCF's own
-# sample NAMES cannot do that, and lets the filter refuse a column it was given no size for.
-#
-# Measured on a real 135-record 6-sample VCF: identical output to all three annotate-based
-# mechanisms, and byte-identical to the expression above when every pool is the same size.
+# Each column gets its own threshold, matched on the VCF's sample NAME rather than its position.
+# A column with no pool size is refused when -p was given, and takes -s when it was not.
 ${BCFTOOLS} norm -m - ${VCF} | \
 ${BCFTOOLS} view -i "INFO/AD[1]>0" | \
 awk -v pools="${POOLSIZES}" -v diploidy="${DIPLOIDY}" -v fallback="${SENSITIVITY}" \
@@ -117,7 +91,7 @@ BEGIN {
         if (c in SENS_OF) continue
         if ($c in SENS) {
             SENS_OF[c] = SENS[$c]
-            # What was actually applied to this column, beside the data it was applied to.
+            # Records the size and threshold used, in the VCF header.
             printf "##PoolSeqFlowPool=<ID=%s,PoolSize=%d,Sensitivity=%.10g>\n", \
                    $c, SIZE[$c], SENS[$c]
         } else if (strict) {
@@ -132,9 +106,8 @@ BEGIN {
     print; next
 }
 {
-    # AD and DP are located per record rather than assumed: bcftools writes FORMAT in whatever
-    # order the fields were produced, and reading a fixed position would silently compare the
-    # wrong numbers.
+    # AD and DP are located per record: bcftools writes FORMAT in whatever order the fields were
+    # produced.
     split($9, fmt, ":"); adi = 0; dpi = 0
     for (i in fmt) { if (fmt[i] == "AD") adi = i; else if (fmt[i] == "DP") dpi = i }
     if (!adi || !dpi) {

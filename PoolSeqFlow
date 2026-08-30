@@ -6,55 +6,30 @@
 #
 # Wrapper script for PoolSeqFlow
 # Usage: ./PoolSeqFlow {install|init|init_multi|check|run|dryrun|dryclean|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}
-#  install        - installs this release: creates its conda environment, copies the
-#                   pipeline to <prefix>/opt/PoolSeqFlow-<version>, puts wrappers in
-#                   <prefix>/bin, then verifies the result
-#  init           - populates a project in the directory you are standing in: the two
-#                   templates and the folders they name. Never overwrites
-#  init_multi     - the same, and switches multiRun on, for a project that analyses one
-#                   set of reads under several parameter sets
-#  check          - verifies the installation: every tool resolves, helpers are
-#                   executable, and parameters.config parses
-#  run            - runs the pipeline; completed steps are detected and skipped
-#                   automatically, so this both starts and resumes a run
-#  dryrun         - verifies the project, works out where every run's results would go, and
-#                   creates that directory tree empty, so the layout can be looked at and
-#                   approved before any compute is spent. Records nothing and computes
-#                   nothing; your own files are not changed.
-#  dryclean       - removes the preview `dryrun` made
+#  install        - creates this release's conda environment and installs the pipeline
+#  init           - populates the current directory as a project
+#  init_multi     - the same, plus multiRun on
+#  check          - verifies the installation
+#  run            - runs the pipeline; also resumes one
+#  dryrun         - creates the directory tree a run would write, empty
+#  dryclean       - removes that preview
 #  migrate_config - carries an older parameters.config onto the current template
 #  clean          - cleans the Nextflow work directory
-#  reset          - cleans the Nextflow work directory and deletes all output files. (Use with caution!)
+#  reset          - deletes all output files as well. (Use with caution!)
 #  version        - prints the version of this copy
-#  cite           - prints how to cite this copy, and which DOI to use
-#  list           - lists the installed pipelines and conda environments on this machine
-#  uninstall      - removes an installed version, environment and pipeline together. Asks
-#                   which one when several are installed; call it by a versioned name
-#                   (PoolSeqFlow-2.1.0 uninstall) to name one without being asked
-#  uninstall_all  - removes every PoolSeqFlow environment and installation, after confirmation
+#  cite           - prints how to cite this copy
+#  list           - lists what is installed on this machine
+#  uninstall      - removes one installed version, asking which when several exist
+#  uninstall_all  - removes every PoolSeqFlow environment and installation
 #
-# Each subcommand takes no arguments of its own: the wrapper accepts exactly one word and
-# rejects anything else. Two environment variables adjust it instead:
-#
-#  POOLSEQFLOW_PREFIX - where `install` puts things, and where `list` and `uninstall` look.
-#                       Defaults to ~/.local, or to the prefix an installed copy already
-#                       lives in, so it usually need not be set at all.
-#  POOLSEQFLOW_HOME   - the pipeline to use, overriding the copy this wrapper belongs to.
-#                       For running a checkout without installing it.
-#
-# The conda environment is named after the release (PoolSeqFlow-<version>), and the pipeline
-# is installed under the same name, so each version runs against its own pinned tool set and
-# an old result stays reproducible.
+# Each subcommand takes no arguments. POOLSEQFLOW_PREFIX and POOLSEQFLOW_HOME adjust it.
 
 set -e
 eval "$(conda shell.bash hook)"
 
 VERSION="2.2.0"
 
-# Zenodo concept DOI - the software as a whole. It always resolves to the newest
-# release and never changes, which is why it is the one on the badge and in the
-# docs. Every release ALSO gets its own version DOI, and that is the one a paper
-# should carry, because results depend on the version. `cite` says so.
+# Zenodo all-versions DOI. A release's own DOI is reached through it.
 CONCEPT_DOI="10.5281/zenodo.19245611"
 
 usage() {
@@ -62,21 +37,12 @@ usage() {
     exit 1
 }
 
-# Stamped by `install` into the copy it deploys; empty in the source tree and in a checkout
-# run in place. Written rather than derived because the installed wrapper is reached through a
-# symlink on PATH, and resolving a symlink back to its target is the one step in all of this
-# that varies between systems - `readlink -f` is GNU, and BSD readlink has no -f at all.
-#
-# It is a default, not an override: POOLSEQFLOW_HOME still wins, so a developer can point an
-# installed wrapper at a checkout without reinstalling.
+# Stamped by `install` into the copy it deploys; empty everywhere else. A default, not an
+# override: POOLSEQFLOW_HOME still wins.
 POOLSEQFLOW_INSTALLED_HOME=""
 
-# Where this copy of PoolSeqFlow lives: the pipeline, scripts/ and the bin/ helpers. It is
-# not the project you are running - that is the directory you are standing in.
-#
-# Three sources, in order: the environment, so a checkout can be pointed at explicitly; the
-# stamp above, for an installed copy; and failing both, this script's own resolved path, which
-# is what makes a plain `./PoolSeqFlow` in a clone work with no setup at all.
+# Where this copy of PoolSeqFlow lives - the pipeline, scripts/ and bin/ - not the project,
+# which is the directory you are standing in.
 if [ -n "${POOLSEQFLOW_HOME:-}" ]; then
     INSTALL="$POOLSEQFLOW_HOME"
 elif [ -n "$POOLSEQFLOW_INSTALLED_HOME" ]; then
@@ -86,12 +52,7 @@ else
 fi
 export POOLSEQFLOW_HOME="$INSTALL"
 
-# Confirm the payload is actually there, for the subcommands that need it.
-#
-# Checked lazily rather than at startup: `version`, `cite`, `list`, `uninstall` and
-# `uninstall_all` are answerable from this script alone, and refusing them because the
-# pipeline is missing would take away the commands most likely to be wanted when an
-# installation is broken.
+# Confirms the payload is there, for the subcommands that need it.
 require_install() {
     [ -f "$INSTALL/poolseqflow.nf" ] && return 0
     echo "ERROR: cannot find the PoolSeqFlow installation." >&2
@@ -101,11 +62,7 @@ require_install() {
     exit 1
 }
 
-# Refuse early when the current directory is not a project.
-#
-# Checked here rather than left to Nextflow: a missing include surfaces as
-# "ERROR ~ Unable to parse config file" with the real cause - a NullPointerException -
-# only in .nextflow.log, which is not a message anyone can act on.
+# Refuses early when the current directory is not a project.
 require_project_config() {
     [ -f parameters.config ] && return 0
     echo "ERROR: no parameters.config in $(pwd)" >&2
@@ -119,30 +76,13 @@ require_project_config() {
     exit 1
 }
 
-# What an installation consists of: exactly the set `git archive` puts in a release tarball,
-# which .gitattributes defines by exclusion. Installing from a clone and installing from a
-# download therefore deploy identical trees. test/suites/00_static.sh checks the two agree, so
-# a file added to the release without being added here fails a test rather than going missing
-# from every install.
+# What an installation consists of. Must match what `git archive` puts in a release tarball.
 PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf dryrun.nf nextflow.config scripts bin install \
 parameters.config.template metadata.csv.template multi-run.csv.example manual \
 README.md CHANGELOG.md LICENSE"
 
-# Where installations live. POOLSEQFLOW_PREFIX chooses; ~/.local by default, because it needs
-# no privileges and is already on PATH for many users.
-#
-# An environment variable rather than a --prefix flag: the wrapper takes exactly one
-# subcommand and rejects everything else, and that contract is worth keeping. `make install
-# PREFIX=...` has the same shape.
-#
-# When neither is given, an installed wrapper works it out from its own stamp. A payload
-# always sits at <prefix>/opt/PoolSeqFlow-<version>, so two components back is the prefix.
-# That is what makes `list` and `uninstall` correct without the user having to remember which
-# prefix they installed into - otherwise both would look under ~/.local, find nothing, and
-# report that nothing is installed while several copies sat elsewhere.
-#
-# A wrapper run from a clone has no stamp and falls back to the default. That is the case
-# where a prefix is being chosen rather than recalled, so there is nothing to get wrong.
+# Where installations live: POOLSEQFLOW_PREFIX, else an installed wrapper's own location,
+# else ~/.local.
 install_prefix() {
     if [ -n "${POOLSEQFLOW_PREFIX:-}" ]; then
         printf '%s' "$POOLSEQFLOW_PREFIX"
@@ -153,8 +93,7 @@ install_prefix() {
     fi
 }
 
-# Every version installed under a prefix, oldest first. Sorted by version rather than by
-# mtime: reinstalling an older release must not make it the newest.
+# Every version installed under a prefix, sorted by version, oldest first.
 installed_payload_versions() {
     local prefix="$1" d
     for d in "$prefix"/opt/PoolSeqFlow-*; do
@@ -167,8 +106,7 @@ newest_installed_version() {
     installed_payload_versions "$1" | tail -1
 }
 
-# Every version present as a payload, an environment, or both. An interrupted install can
-# leave one without the other, and either half is still something to offer to remove.
+# Every version present as a payload, an environment, or both.
 installed_versions() {
     {
         installed_payload_versions "$1"
@@ -176,17 +114,12 @@ installed_versions() {
     } | sort -V -u
 }
 
-# Which version `uninstall` should act on. One installed version needs no question. Several
-# do, and the answer is asked for rather than assumed: this wrapper's own version is only the
-# newest by default, so removing it silently would delete the copy most projects are using.
-#
-# With nothing to prompt - a script, CI, a hook - it refuses and names the exact command that
-# removes a specific version, because guessing here deletes somebody's installation.
+# Which version `uninstall` acts on: the only one installed, the one a versioned wrapper
+# names, or the one chosen at the prompt. Refuses with nothing attached to ask.
 choose_version_to_uninstall() {
     local prefix="$1" versions count v i choice
 
-    # Called by its versioned name - `PoolSeqFlow-2.1.0 uninstall` - so the version is named
-    # already. Nothing to ask, nothing to guess, and this is the path a script should use.
+    # A versioned wrapper - `PoolSeqFlow-2.1.0 uninstall` - names the version already.
     case "$(basename "$0")" in
         PoolSeqFlow-*) printf '%s' "$VERSION"; return 0 ;;
     esac
@@ -194,10 +127,9 @@ choose_version_to_uninstall() {
     versions=$(installed_versions "$prefix")
     count=$(printf '%s\n' "$versions" | grep -c . || true)
 
-    # Nothing at all: the caller reports it, having more context about this prefix.
+    # Empty: the caller reports it, having more context about this prefix.
     [ "$count" -eq 0 ] && { printf ''; return 0; }
 
-    # Exactly this version and nothing else - the unambiguous case, and the common one.
     if [ "$count" -eq 1 ] && [ "$versions" = "$VERSION" ]; then
         printf '%s' "$VERSION"
         return 0
@@ -248,13 +180,8 @@ EOF
     printf '%s\n' "$versions" | sed -n "${choice}p"
 }
 
-# Remove one version's payload and its wrapper, then re-point the plain wrapper at whatever
-# is left - or remove it, if nothing is. A dangling `PoolSeqFlow` would be a command on PATH
-# with no code behind it, which fails far less clearly than its absence.
-#
-# Removing the payload you are currently running from is safe on Linux: the shell holds the
-# script open, and unlinking an open file keeps its contents readable until the last close.
-# Verified rather than assumed - see the self-uninstall case in test/suites/20_launcher.sh.
+# Removes one version's payload and its wrapper, then re-points the plain wrapper at the
+# newest that remains, or removes it once nothing does.
 remove_payload() {
     local version="$1" prefix dest bindir newest
     prefix=$(install_prefix)
@@ -276,12 +203,8 @@ remove_payload() {
     return 0
 }
 
-# Copy the runtime to $PREFIX/opt/PoolSeqFlow-<version> and put wrappers on PATH.
-#
-# $PREFIX/bin gets one symlink per version plus a plain `PoolSeqFlow` pointing at the newest
-# installed, so a bare `PoolSeqFlow run` means the newest and any specific version stays
-# reachable by name. Both are symlinks into the versioned payload, so removing a version
-# removes its wrapper's target rather than leaving a working command with no code behind it.
+# Copies the runtime to $PREFIX/opt/PoolSeqFlow-<version> and puts two symlinks in
+# $PREFIX/bin: one per version, plus a plain `PoolSeqFlow` pointing at the newest installed.
 deploy_payload() {
     local prefix dest bindir here item newest
     prefix=$(install_prefix)
@@ -305,7 +228,7 @@ deploy_payload() {
         for item in $PAYLOAD_ITEMS; do
             cp -r "$INSTALL/$item" "$dest"/
         done
-        # Stamp the copy with its own location. See POOLSEQFLOW_INSTALLED_HOME above.
+        # Stamps the copy with its own location.
         sed -i "s|^POOLSEQFLOW_INSTALLED_HOME=\"\"$|POOLSEQFLOW_INSTALLED_HOME=\"$dest\"|" \
             "$dest/PoolSeqFlow"
         grep -q "^POOLSEQFLOW_INSTALLED_HOME=\"$dest\"$" "$dest/PoolSeqFlow" || {
@@ -343,18 +266,14 @@ deploy_payload() {
     echo ""
 }
 
-# `conda env list` prints "<name>  [*]  <path>" per environment, so grepping the whole
-# line for the name also matches any OTHER environment whose path happens to contain it.
-# That is not hypothetical here: the repository directory is itself called PoolSeqFlow,
-# so an environment created underneath it matches. Compare the name column only, and
-# compare it whole (-x) and literally (-F) so a name containing '.' or '+' still works.
+# Whether an environment of this exact name exists. `conda env list` prints the path too,
+# so only the name column is compared, whole and literally.
 env_exists() {
     conda env list | awk '{print $1}' | grep -qxF "$1"
 }
 
-# Every PoolSeqFlow environment on this machine: the versioned ones and the single
-# unversioned name older releases used. `|| true` because grep exits 1 when nothing
-# matches, and this script runs under `set -e`.
+# Every PoolSeqFlow environment on this machine, versioned or legacy. `|| true` because
+# grep exits 1 on no match and this runs under `set -e`.
 poolseqflow_envs() {
     conda env list | awk '{print $1}' | grep -E '^PoolSeqFlow(-.+)?$' | sort || true
 }
@@ -364,12 +283,8 @@ other_version_envs() {
     poolseqflow_envs | grep -vxF "$ENV_NAME" | grep -vxF "$LEGACY_ENV" || true
 }
 
-# Activate this version's environment, or explain what to do about its absence.
-#
-# This deliberately never falls back to another version's environment. The pinned tool
-# versions are part of what produced a result, so running this code against a different
-# release's tools would leave `.poolseqflow_versions` recording a version that did not
-# actually produce the outputs.
+# Activates this version's environment, or explains its absence. Never falls back to
+# another version's.
 require_env() {
     if env_exists "$ENV_NAME"; then
         conda activate "$ENV_NAME"
@@ -395,14 +310,11 @@ require_env() {
     exit 1
 }
 
-# Report the other PoolSeqFlow environments present, if any. An operator who has upgraded a
-# few times should be told they are accumulating rather than discover it from a full disk.
+# Reports the other PoolSeqFlow environments present, if any.
 report_other_envs() {
     OTHERS=$(poolseqflow_envs | grep -vxF "$ENV_NAME" || true)
     [ -n "$OTHERS" ] || return 0
     echo "Other PoolSeqFlow environments on this machine:"
-    # Annotated the same way `list` does. The legacy name matches poolseqflow_envs too, and
-    # calling it "a different version" would be wrong - it predates versioned names.
     for env in $OTHERS; do
         if [ "$env" = "$LEGACY_ENV" ]; then
             printf '    %-24s unversioned - predates per-version environments\n' "$env"
@@ -418,46 +330,19 @@ report_other_envs() {
     echo ""
 }
 
-# Resolve a setting through Nextflow rather than parsing parameters.config by hand -
-# values are interpolated (workDir is built from mainDir), so text matching gets them
-# wrong. Requires the conda environment to be active.
-#
-# The installation is named explicitly because that is where nextflow.config lives, while
-# the current directory supplies parameters.config. Verified to resolve both correctly from
-# a project directory: ${launchDir} entries come from here, ${projectDir} entries from there.
+# Resolves one setting through Nextflow, which interpolates it. Needs the environment active,
+# and the installation named, because nextflow.config lives there.
 nf_config_value() {
     nextflow config -flat "$INSTALL" 2>/dev/null | sed -n "s|^$1 = ||p" | head -1 | tr -d "'\""
 }
 
-# The named directories inside the results tree, one path per line: a run's own results, and
-# from the sharing stage a group's.
-#
-# `nextflow config -flat` is this script's only path oracle, and it reports the BASE
-# configuration - so it cannot name Output/<RunID>, which the resolver builds per run.
-# Reading the multi-run table here instead would be a third copy of the rule that decides
-# where a run's results go, and the two that already exist are only kept in step by a test.
-#
-# So this asks the disk rather than the configuration - and specifically it asks the COPY of the
-# multi-run table that step 0 keeps beside the results. That copy is written by the pipeline, at
-# a path this script already knows, and it describes the runs that actually produced what is
-# there. Reading the user's own table instead would be a third copy of the rule that decides
-# where a run's results go, and it would answer wrongly for a project whose table has since been
-# edited or deleted.
-#
-# Shared directories are found by the members file rather than the table, because their names -
-# All_Runs, Shared_<N> - are assigned by the divergence analysis and are not in it.
-#
-# Both helpers end in an explicit `return 0`, and it is load-bearing rather than tidy. This
-# script runs under `set -e`, a function's exit status is its last command's, and the last
-# command here is a test that is FALSE in the ordinary single-run case - so without it
-# `ROOTS=$(run_storage_roots ...)` aborts reset silently, before it prints anything at all.
+# Lists each run's and each shared group's directory in the results tree, read from the disk.
+# The trailing `return 0` is load-bearing under `set -e`.
 run_storage_roots() {
     local storage="$1" d id
     [ -n "$storage" ] && [ -d "$storage/Output" ] || return 0
     if [ -f "$storage/Output/.multirun.csv" ]; then
-        # First column, skipping the header and any comment or blank line. A RunID has to be a
-        # usable directory name (bin/parse_multirun.py refuses anything else), so it can hold no
-        # comma and needs no CSV parsing here.
+        # First column, skipping the header and any comment or blank line.
         while IFS= read -r id; do
             [ -n "$id" ] && [ -d "$storage/Output/$id" ] && printf '%s\n' "$storage/Output/$id"
         done <<EOF
@@ -471,8 +356,8 @@ EOF
     return 0
 }
 
-# The per-run working directories, likewise. Utilized_<RunID> sits beside Utilized under
-# mainDir, so the prefix is ours and the glob cannot pick up anything of the user's.
+# The per-run working directories, likewise. The Utilized_ prefix is ours, so the glob
+# cannot pick up anything of the user's.
 run_utilized_dirs() {
     local main="$1" d
     [ -n "$main" ] && [ -d "$main" ] || return 0
@@ -482,16 +367,8 @@ run_utilized_dirs() {
     return 0
 }
 
-# Whether a preview directory is one this command may replace or remove.
-#
-# `dryrun` rebuilds the preview from scratch and `dryclean` removes it, and both do it with
-# `rm -rf` on a path taken from the configuration - so both ask this first. A preview is empty
-# directories, one README.txt, and a members.txt inside each shared directory. Anything else in
-# there is the user's, and the answer to finding it is to say so and stop: this is the one
-# directory of the three that sits in the project rather than in a storage root, which is
-# exactly where someone is most likely to have put something of their own.
-#
-# Returns 0 when the directory is ours to remove, including when it is not there at all.
+# Whether a preview directory is ours to `rm -rf` - empty directories, a README.txt and a
+# members.txt per shared directory, nothing else. Returns 0 when it is not there at all.
 dryrun_is_ours() {
     local dir="$1" foreign f
     [ -d "$dir" ] || return 0
@@ -517,44 +394,20 @@ fi
 
 COMMAND=$1
 
-# The environment is named after the release it belongs to, and the name is derived from
-# VERSION above so a version bump carries it automatically.
-#
-# Earlier releases all shared one environment called "PoolSeqFlow". That made upgrading
-# quietly wrong: `install` found an environment of that name already present, did nothing,
-# and the new release then ran against the previous release's pinned tools while
-# `.poolseqflow_versions` recorded the new one. A versioned name makes the tool set behind
-# a result identifiable.
-#
-# The cost is smaller than `du` suggests but not negligible. Conda hardlinks most package
-# files from its shared cache, so environments overlap on disk. Measured on this
-# environment: 1000 MB total, of which 696 MB (90% of files) is hardlinked and shared, and
-# 304 MB (10% of files) is genuinely per-environment. So a second version costs roughly
-# 300 MB even where the packages match, plus the full size of anything whose version
-# differs. Counting files rather than bytes makes the sharing look better than it is.
+# One environment per release, named from VERSION above so a bump carries it.
 ENV_NAME="PoolSeqFlow-${VERSION}"
 
-# What an install from before the change above is called. Detected so the error messages
-# can say so; never activated.
+# What releases before per-version environments called theirs. Detected so the error
+# messages can say so; never activated.
 LEGACY_ENV="PoolSeqFlow"
 
-# check_install.sh names the environment in its "how to fix this" epilogue. Exported rather
-# than hardcoded there, so the two can never disagree about which one this copy uses.
+# check_install.sh names the environment in its epilogue.
 export ENV_NAME
 
 ENV_FILE="$INSTALL/install/environment.yml"
 
-# Puts a project's starting files in the directory you are standing in. Everything it writes
-# is something you then edit, so it never overwrites: a second `init` in a project you have
-# already filled in reports what is there and changes nothing.
-#
-# The .example copies are reference, not input: nothing reads them, and they are here so the
-# explanation sits beside the file it describes rather than back in the installation.
-#
-# metadata.csv and the run table are NOT written. Both are tables whose entire content is the
-# experiment - which pairs are one pool, which parameters differ between runs - so a copied
-# one would describe someone else's. parameters.config is different: it is a settings file
-# that is edited in place, so a copy of the template is the right starting point.
+# Puts a project's starting files in the directory you are standing in. Never overwrites, and
+# never writes metadata.csv or the run table - only their .example copies.
 populate_project() {
     local multi="$1" here made=0 kept=0
 
@@ -600,8 +453,7 @@ populate_project() {
     echo ""
 
     if [ "$multi" = "multi" ]; then
-        # Only ever flipped in a config this run created. Editing one the user has already
-        # filled in would be reaching into their settings behind their back.
+        # Only ever flipped in a config this run created, never in one the user has written.
         if [ "$made" -gt 0 ] && grep -qE '^[[:space:]]*multiRun[[:space:]]*=[[:space:]]*false' parameters.config; then
             sed 's/^\([[:space:]]*multiRun[[:space:]]*=[[:space:]]*\)false/\1true/' \
                 parameters.config > .parameters.config.init.tmp \
@@ -638,25 +490,13 @@ case $COMMAND in
         if env_exists "$ENV_NAME"; then
             echo "Environment '$ENV_NAME' already exists."
         else
-            # -n overrides the `name:` key inside environment.yml. Without it conda takes
-            # the name from that key and every release lands in the same environment again,
-            # which is the behaviour the versioned name exists to end.
+            # -n overrides the `name:` key inside environment.yml.
             conda env create -n "$ENV_NAME" -f "$ENV_FILE"
         fi
         echo
-        # The environment and the code are installed together and versioned together: the
-        # pinned tools are part of what produced a result, so a payload without its matching
-        # environment - or the reverse - cannot reproduce anything.
         deploy_payload
         report_other_envs
-        # An environment that was created but is missing a tool is not an install.
-        # Verify before reporting success: a tool that is absent here would
-        # otherwise surface partway through a run, hours in. `set -e` means a
-        # failed check fails the install.
-        #
-        # Checked against the DEPLOYED copy rather than this one, because that is the copy
-        # that will run - a helper that lost its executable bit in the copy would otherwise
-        # go unnoticed until a run reached it.
+        # Against the DEPLOYED copy, which is the one that will run.
         conda activate "$ENV_NAME"
         bash "$(install_prefix)/opt/PoolSeqFlow-${VERSION}/install/check_install.sh"
         echo "Installation complete."
@@ -678,10 +518,8 @@ case $COMMAND in
         bash "$INSTALL/install/check_install.sh"
         ;;
     run|resume)
-        # PoolSeqFlow resumes through its own filesystem checks: every step looks for
-        # its outputs in storageDir and skips itself if they are already there. Nextflow's
-        # -resume is not used - it depends on the work/ task directories, which
-        # `cleanup = true` deletes on completion. Use `reset` to force a full re-run.
+        # Resuming is what `run` already does: every step skips itself when its outputs are
+        # already in storage. Nextflow's own -resume is not used.
         if [ "$COMMAND" = "resume" ]; then
             echo "Note: 'resume' is deprecated - 'run' already resumes automatically."
         fi
@@ -689,19 +527,14 @@ case $COMMAND in
         require_project_config
         echo "Running pipeline in $(pwd)..."
         require_env
-        # Named by absolute path: the pipeline lives with the installation, while the
-        # directory we are standing in is the project and supplies parameters.config.
+        # Absolute: the pipeline lives with the installation, the project is where we stand.
         nextflow run "$INSTALL/poolseqflow.nf"
         wait
         conda deactivate
         ;;
     dryrun)
-        # WHAT A RUN WOULD DO, WITHOUT DOING ANY OF IT.
-        #
-        # A different entry point, not a flag on the same one: dryrun.nf runs step 0 and then
-        # builds the directory tree, and never reaches the pipeline. --dryRun is passed as well
-        # because the two do different halves of the job - the entry point stops the compute,
-        # the flag stops step 0 recording a baseline for results that are not going to exist.
+        # Its own entry point plus --dryRun: dryrun.nf stops the compute, the flag stops
+        # step 0 recording.
         require_install
         require_project_config
         require_env
@@ -711,8 +544,6 @@ case $COMMAND in
             exit 1
         fi
         dryrun_is_ours "$DRYDIR" || exit 1
-        # Replaced rather than added to. The tree describes ONE configuration, so a directory
-        # left over from an earlier preview would read as somewhere this run is going to write.
         if [ -d "$DRYDIR" ]; then
             echo "Replacing the previous preview in $DRYDIR"
             rm -rf "$DRYDIR"
@@ -729,8 +560,6 @@ case $COMMAND in
         nextflow run "$INSTALL/dryrun.nf" --dryRun true
         wait
         conda deactivate
-        # Shown rather than pointed at: the preview explains itself, and the whole point is
-        # that it is read before anything is committed to.
         if [ -f "$DRYDIR/README.txt" ]; then
             echo ""
             cat "$DRYDIR/README.txt"
@@ -751,8 +580,7 @@ case $COMMAND in
             exit 0
         fi
         dryrun_is_ours "$DRYDIR" || exit 1
-        # No confirmation prompt, unlike reset. Everything in here is empty by construction -
-        # a preview has never held a result - so there is nothing to lose and nothing to weigh.
+        # No confirmation prompt, unlike reset: a preview is empty by construction.
         echo "Removing the dry run preview:"
         echo "    $DRYDIR"
         rm -rf "$DRYDIR"
@@ -781,9 +609,8 @@ case $COMMAND in
         echo "     cp $TEMPLATE parameters.config"
         echo "-------------------------------------------------------------------------"
         echo ""
-        # The old config and the migrated output are the project's, in the current
-        # directory; the template is the installation's. Passed explicitly because
-        # config_migrate.sh defaults all three to the current directory.
+        # All three passed explicitly: config_migrate.sh otherwise defaults them to the
+        # current directory, where the template does not live.
         bash "$MIGRATE" parameters.config "$TEMPLATE" parameters.config
         echo ""
         echo "Now compare the result against the template before running:"
@@ -798,13 +625,8 @@ case $COMMAND in
         UTILDIR=$(nf_config_value params.dir.utilized)
         MAINDIR=$(nf_config_value params.mainDir)
 
-        # Everything that will be removed is listed before anything is, including the case
-        # where workDir cannot be resolved.
-        #
-        # `rm -rf .nextflow*` used to sit below the if/else that reports on workDir rather
-        # than inside it, so a project whose workDir could not be read was told only that
-        # the work directory was being left in place - while Nextflow's history and cache
-        # were deleted anyway, unmentioned. The deletion was right; the silence was not.
+        # Everything that will be removed is listed before anything is, including when
+        # workDir cannot be resolved.
         echo ""
         echo "Removing:"
         if [ -n "$WORKDIR" ]; then
@@ -812,16 +634,10 @@ case $COMMAND in
         fi
         echo "    $(pwd)/.nextflow*    - Nextflow's own history and cache"
         echo ""
-        # Stated out loud because it is the whole difference between clean and reset, and
-        # because from 3.0 Utilized holds real outputs - produced by a run and not yet moved
-        # to permanent storage - rather than scratch. A user reaching for `clean` after an
-        # interrupted run needs to know those survive it.
         echo "Not removed:"
         [ -n "$UTILDIR" ] && [ -d "$UTILDIR" ] && \
             echo "    $UTILDIR - outputs not yet moved to permanent storage"
-        # Under multiRun each run gets its own, because dir.utilized hangs off mainDir and the
-        # runs share it. Named individually rather than as a glob: this list is what a user
-        # reaching for `clean` after an interrupted run reads to decide whether it is safe.
+        # Under multiRun each run has its own. Named individually rather than as a glob.
         while IFS= read -r d; do
             if [ -n "$d" ]; then echo "    $d - outputs not yet moved to permanent storage"; fi
         done <<EOF
@@ -859,10 +675,7 @@ EOF
             echo "ERROR: could not resolve params.storageDir - is parameters.config present?" >&2
             exit 1
         fi
-        # There is one results tree, so removing it removes every run's and every group's
-        # results with it. They are still NAMED here: what a reset deletes is the thing a user
-        # is about to lose, and "Output/" alone does not say that three runs were in there.
-        # Found on disk rather than read from the table; see run_storage_roots.
+        # Every run's and every group's directory, named individually in the disclosure below.
         RUN_ROOTS=$(run_storage_roots "$STORAGE")
         RUN_UTILS=$(run_utilized_dirs "$MAINDIR")
         echo ""
@@ -889,11 +702,6 @@ EOF
         echo ""
         echo "Your reads in $DATADIR are not touched, and neither are the reference and"
         echo "annotation files you placed in $REFDIR - only what was built from them."
-        # Named explicitly because they now live in this directory rather than beside the
-        # results, and because a reset that took the configuration with it would leave a
-        # project that could not be re-run at all. Written as two whole sentences rather
-        # than one sentence with a conditional tail: an unresolvable metadataPath would
-        # otherwise leave the line ending in "and".
         if [ -n "$METADATA" ]; then
             echo "Nothing you wrote in $(pwd) is removed either - not parameters.config,"
             echo "and not $METADATA."
@@ -914,53 +722,30 @@ EOF
         echo "Resetting pipeline..."
         rm -rf .nextflow*
         if [ -n "$WORKDIR" ]; then rm -rf "$WORKDIR"; fi
-        # `$STORAGE/Reports` only exists for projects created before 2.1.0, when reports
-        # were written outside Output/. `$STORAGE/Reference` likewise only exists for
-        # projects created before 3.0.0, when the reference and everything derived from it
-        # lived on storageDir; both are on mainDir now. Harmless when absent, so they stay.
-        #
-        # `$STORAGE/PoolSeqFlow_*` used to be removed here too. It was dropped: the
-        # PoolSeqFlow_pipeline_{dag,trace,timeline,report} files have gone to
-        # ${params.dir.output.reports} in every release since 1.0.0, never to storageDir
-        # itself, so the glob never matched anything this pipeline created - it could only
-        # ever have deleted a user's own file or directory that happened to start with
-        # "PoolSeqFlow_", undisclosed and with rm -rf.
+        # Reports and Reference at the storage root only exist for projects created before
+        # 2.1.0 and 3.0.0 respectively. Harmless when absent, so they stay on the list.
         rm -rf "$STORAGE"/Reports "$STORAGE"/Logs "$STORAGE"/Output \
                "$STORAGE"/Reference
-        # Everything step 1 derives from your reference, and any output that has not yet been
-        # moved to permanent storage. The two files the dictionaries are derived FROM are
-        # yours, sit one level up in Reference/, and are not touched. An empty value means
-        # parameters.config predates the parameter, in which case the `$STORAGE/Reference`
-        # line above is the one that applies.
+        # What step 1 derived from your reference, and what has not yet been promoted. The
+        # reference itself sits one level up and is not touched.
         if [ -n "$DICTDIR" ]; then rm -rf "$DICTDIR"; fi
         if [ -n "$UTILDIR" ]; then rm -rf "$UTILDIR"; fi
-        # Each run's own working root. Its RESULTS root needs no line of its own any more -
-        # it is inside $STORAGE/Output, which has just gone - but the working roots hang off
-        # mainDir and are still separate. Removed from the list computed BEFORE the
-        # confirmation prompt, so what is deleted is exactly what was disclosed; re-scanning
-        # here could pick up something that appeared in between.
-        # `if`, not `[ -n "$d" ] && ...`: a while loop's exit status is its last body
-        # command's, so an empty list would leave the loop returning 1 and `set -e` would
-        # abort reset PARTWAY THROUGH deleting. Same reason as the `return 0` on the two
-        # helpers above.
+        # Each run's own working root, from the list computed before the prompt. `if`, not
+        # `[ -n "$d" ] && ...`: an empty list would leave the loop returning 1 under `set -e`.
         while IFS= read -r d; do
             if [ -n "$d" ]; then rm -rf "$d"; fi
         done <<EOF
 $RUN_UTILS
 EOF
-        # From 3.0 these sit inside the directory whose results they describe, so Output/
-        # took them. At the storage root they only exist for a project created before 3.0 -
-        # the same category as $STORAGE/Reports and $STORAGE/Reference above - and leaving
-        # one would make the next run fail its checks for no reason, or attribute fresh
-        # results to an earlier release. Harmless when absent.
+        # From 3.0 the guard files sit beside the results Output/ has just taken. At the
+        # storage root they only exist for a project created before 3.0.
         rm -f "$STORAGE"/.poolseqflow_params "$STORAGE"/.poolseqflow_rgtags \
               "$STORAGE"/.poolseqflow_metadata \
               "$STORAGE"/.poolseqflow_versions "$STORAGE"/.poolseqflow_version
         echo "Reset complete."
         ;;
     list)
-        # Two families, reported together: the code and the tools it was pinned against are
-        # installed as a pair, and either one alone cannot reproduce a result.
+        # Payloads and environments together: they are installed as a pair.
         PREFIX=$(install_prefix)
         PAYLOADS=$(installed_payload_versions "$PREFIX")
         echo "Installed pipelines under $PREFIX/opt:"
@@ -1053,15 +838,9 @@ a version DOI when reporting results.
 EOF
         ;;
     uninstall)
-        # Checked rather than attempted: `conda env remove` on an absent environment exits
-        # non-zero, and under `set -e` that surfaced as a raw conda error with no indication
-        # of which environments do exist.
-        # The environment and the payload are installed together, but they can be missing
-        # independently - an interrupted install, or a manual `conda env remove`. Each is
-        # removed if present, and only the case where neither exists is an error.
         PREFIX=$(install_prefix)
-        # Which version to remove is decided first, and may be a different one from the
-        # wrapper that was invoked. Cancelling, or having no way to ask, stops here.
+        # Decided first, and may be a version other than this wrapper's. Cancelling, or
+        # having no way to ask, stops here.
         TARGET=$(choose_version_to_uninstall "$PREFIX") || exit 1
 
         if [ -z "$TARGET" ]; then
@@ -1079,9 +858,8 @@ EOF
         HAVE_PAYLOAD=0
         if [ -d "$PREFIX/opt/PoolSeqFlow-${TARGET}" ]; then HAVE_PAYLOAD=1; fi
 
-        # The environment and the payload are installed together, but they can be missing
-        # independently - an interrupted install, or a manual `conda env remove`. Each is
-        # removed if present.
+        # Installed together, but either half can be missing on its own, so each is checked
+        # before it is removed.
         if [ "$HAVE_ENV" -eq 1 ]; then
             echo "Uninstalling conda environment '$TARGET_ENV'..."
             conda deactivate
@@ -1097,8 +875,6 @@ EOF
         ;;
 
     uninstall_all)
-        # A separate subcommand rather than `uninstall all`, so the wrapper keeps taking
-        # exactly one argument - the contract parameters.config.template documents.
         INSTALLED=$(poolseqflow_envs)
         if [ -z "$INSTALLED" ]; then
             echo "No PoolSeqFlow conda environments are installed. Nothing to do."
@@ -1136,20 +912,16 @@ EOF
             y|Y|yes|YES|Yes) ;;
             *) echo "Aborted - nothing was removed."; exit 1 ;;
         esac
-        # Whichever one is active has to be stepped out of before it can be removed. It may
-        # be that none is, so a failure here is not interesting.
+        # An active environment has to be stepped out of first; there may be none.
         conda deactivate 2>/dev/null || true
-        # A plain `for` rather than `... | while read`: a piped loop runs in a subshell, so
-        # a failure inside it would not stop the script the way `set -e` should. Environment
-        # names cannot contain whitespace - `conda env list` is column-separated and
-        # poolseqflow_envs takes the first field - so word splitting is safe here.
+        # A plain `for`, not `... | while read`: a piped loop is a subshell, where `set -e`
+        # would not stop the script. Environment names cannot contain whitespace.
         for env in $INSTALLED; do
             echo "Removing $env..."
             conda env remove -n "$env" -y
         done
-        # Same reasoning for the payloads. remove_payload re-points the plain wrapper each
-        # time and removes it once the last version is gone, so the loop leaves nothing on
-        # PATH pointing at a directory that is no longer there.
+        # remove_payload re-points the plain wrapper each time and removes it with the last
+        # version, so nothing is left on PATH pointing at a directory that has gone.
         for v in $PAYLOADS; do
             remove_payload "$v" || true
         done

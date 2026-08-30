@@ -1,81 +1,49 @@
-# Sample metadata — one row per pair of FASTQ files.
+# Sample metadata — one row per pair of FASTQ files. This is the file that says what your
+# samples ARE. Blank lines and lines starting with # are ignored, so these notes can stay.
 #
-# This is the file that says what your samples ARE. It replaces RGTags.csv, which could only
-# hold SAM read-group tags, so anything about the experiment itself had to be smuggled into a
-# description field or into the sample name. Here it gets columns of its own.
-#
-# Blank lines and lines starting with # are ignored, so these notes can stay.
+# The manual explains all of this at length, under "Metadata":
+#     https://ozankiratli.github.io/PoolSeqFlow/
 #
 # ---------------------------------------------------------------------------------------
 # FOUR KINDS OF COLUMN, and the name is what tells them apart.
 #
-#   SampleID     Required, and unique. It is matched against the sample name taken from your
-#                FASTQ file names — with readPattern '*_R{1,2}.fq.gz', the file
-#                Sample1T1Rep1_R1.fq.gz gives the sample Sample1T1Rep1 — and it becomes the
-#                read group's ID in the BAM.
+#   SampleID     Required, and unique. Matched against the sample name your FASTQ file names
+#                give — with readPattern '*_R{1,2}.fq.gz', Sample1T1Rep1_R1.fq.gz gives the
+#                sample Sample1T1Rep1 — and it becomes the read group's ID in the BAM.
 #
-#   RG_*         A read group tag. The known ones are RG_Sample, RG_Library, RG_Platform,
-#                RG_PlatformUnit, RG_Description, RG_Center, RG_Date and RG_FlowOrder. A
-#                blank cell simply omits that tag. Nothing else may start with RG_: an
-#                unrecognised one is refused rather than ignored, because it would otherwise
-#                be a typo that silently loses a value.
+#   RG_*         A read group tag: RG_Sample, RG_Library, RG_Platform, RG_PlatformUnit,
+#                RG_Description, RG_Center, RG_Date, RG_FlowOrder. A blank cell omits that
+#                tag. Nothing else may start with RG_; an unrecognised one is refused.
 #
-#   param_*      A parameter from parameters.config, overridden for these samples only. The
-#                known ones are param_poolSize, param_adapter1 and param_adapter2. A blank
-#                cell means "use the global setting", which is the normal case. Same closed
-#                list as RG_, and for a sharper reason: a param_ column the pipeline did not
-#                recognise would be a setting you had written down, could see in your own
-#                file, and that was never applied to anything.
+#   param_*      A parameter from parameters.config, overridden for these samples only:
+#                param_poolSize, param_adapter1, param_adapter2. A blank cell means "use the
+#                global setting". A closed list, like RG_.
 #
-#   anything     Your own. Population, timepoint, replicate, phenotype, collection site,
-#   else         whatever the experiment needs. The pipeline records these and never
-#                interprets them — they are here for you, and for the analysis layer. Add,
-#                remove and edit them freely: step 0's change guard does not look at them, so
-#                none of this invalidates results you have already produced.
+#   anything     Your own — population, timepoint, replicate, phenotype, collection site.
+#   else         Recorded and never interpreted. Add, remove and edit them freely: step 0's
+#                change guard does not look at them, so results already produced stay valid.
 #
 # ---------------------------------------------------------------------------------------
-# RG_Sample IS THE ONE THAT CHANGES THE RESULT, so it is worth a paragraph.
+# RG_Sample IS THE ONE THAT CHANGES THE RESULT. It is the pool a row belongs to, and becomes
+# one column in the VCF and one in every frequency table. Rows sharing an RG_Sample are
+# MERGED: their reads are pooled and their depths added — which is how you say that two
+# sequencing runs, two lanes or two libraries are the same pool of individuals. Leave the
+# column out, or a cell blank, and RG_Sample takes the SampleID, so every row is its own pool.
+# Step 0 prints the pooling it worked out before any compute is spent.
 #
-# It is the pool a row belongs to, and it becomes one column in the VCF and one column in
-# every frequency table. Rows that share an RG_Sample are MERGED: their reads are pooled and
-# their depths added. That is how you tell the pipeline that two sequencing runs, two lanes or
-# two libraries are the same pool of individuals.
+# param_poolSize IS A PROPERTY OF THE POOL: how many individuals went into it. It sets that
+# pool's detection limit, sensitivity = 1 / (2 * diploidy * poolSize), so one number for the
+# whole run judges a pool of 10 at a pool of 500's resolution. Rows sharing an RG_Sample must
+# give the SAME value, and a blank cell counts as a different answer rather than as agreement.
+# Leave the column out and every pool uses the global poolSize.
 #
-# Rows that should stay separate need different RG_Sample values. If you leave the column out
-# entirely, or leave a cell blank, RG_Sample takes the SampleID — so every row is its own
-# pool, which is what you want when each sample was sequenced once.
-#
-# Step 0 prints the pooling it worked out before any compute is spent, so a mistake here is
-# visible in seconds rather than in a result months later.
-#
-# ---------------------------------------------------------------------------------------
-# param_poolSize IS A PROPERTY OF THE POOL, and follows from the paragraph above. It is how
-# many individuals went into the pool, and it sets that column's detection limit:
-#
-#     sensitivity = 1 / (2 * diploidy * poolSize)
-#
-# which is the smallest allele fraction a pool of that size can produce — one chromosome out
-# of all of them. Anything below it is noise, and the false-positive filter drops it. A pool
-# of 10 and a pool of 500 therefore have very different limits, and giving the whole run one
-# number judges the small pool at the large one's resolution.
-#
-# Because it belongs to the pool, rows sharing an RG_Sample must give the SAME value — and a
-# blank cell counts as a different answer, not as agreement, since blank means the global
-# poolSize. Leave the column out entirely and every pool uses the global one.
+# param_adapter1 and param_adapter2 override trim_galore.adapter1 / adapter2 for that row
+# only. Give both or neither. A value containing a comma must be quoted: "Pop1, coastal".
 #
 # ---------------------------------------------------------------------------------------
-# PER-SAMPLE TRIMMING, optional. param_adapter1 and param_adapter2 override the global
-# trim_galore.adapter1 / adapter2 for that row only. Give both or neither; one of the two is
-# a setting that cannot be acted on, so it is refused. Leave them out unless you need them.
-#
-# A value containing a comma must be quoted: "Pop1, coastal".
-#
-# ---------------------------------------------------------------------------------------
-# The table below is an example. Eight FASTQ pairs, four pools: each pool was sequenced twice,
-# so its two rows share an RG_Sample and merge into one column - and the two rows of a pool
-# repeat that pool's param_poolSize, because it describes the pool rather than the row.
-# `population`, `timepoint`, `replicate` and `phenotype` are columns of the user's own - the
-# pipeline carries them and does nothing with them. Replace the whole table with yours.
+# The table below is an example: eight FASTQ pairs, four pools, each pool sequenced twice, so
+# its two rows share an RG_Sample and repeat that pool's param_poolSize. `population`,
+# `timepoint`, `replicate` and `phenotype` are columns of the user's own. Replace it with yours.
 SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,param_poolSize,population,timepoint,replicate,phenotype
 Sample1T1Rep1,Sample1T1,Lib1,ILLUMINA,Unit1,50,Pop1,T1,1,susceptible
 Sample1T1Rep2,Sample1T1,Lib1,ILLUMINA,Unit1,50,Pop1,T1,2,susceptible

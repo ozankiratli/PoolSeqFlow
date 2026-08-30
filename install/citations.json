@@ -1,0 +1,183 @@
+{
+  "_comment": [
+    "Citations for the software a run invokes. bin/write_citations.py turns this into",
+    "CITATIONS.md and references.bib beside the results, listing only what that run used.",
+    "",
+    "Keys match params.software, plus nextflow, python and poolseqflow. 'when' says what has",
+    "to be true for the tool to be invoked; absent means always.",
+    "",
+    "Entries with no paper carry a url instead, and are emitted as @misc. Tools that exist but",
+    "are not citable in their own right - unzip, the JVM - are listed with cite: false so that",
+    "the omission is recorded here rather than looking like an oversight."
+  ],
+
+  "poolseqflow": {
+    "name": "PoolSeqFlow",
+    "type": "software",
+    "key": "poolseqflow",
+    "authors": "Kiratli, Ozan L. Z.",
+    "title": "PoolSeqFlow: a Nextflow pipeline for allele frequency analysis from pooled sequencing data",
+    "doi": "10.5281/zenodo.19245611",
+    "url": "https://github.com/ozankiratli/PoolSeqFlow",
+    "note": "Cite the version DOI of the release you ran, not the concept DOI."
+  },
+
+  "nextflow": {
+    "name": "Nextflow",
+    "type": "article",
+    "key": "ditommaso2017nextflow",
+    "authors": "Di Tommaso, Paolo and Chatzou, Maria and Floden, Evan W. and Barja, Pablo Prieto and Palumbo, Emilio and Notredame, Cedric",
+    "title": "Nextflow enables reproducible computational workflows",
+    "journal": "Nature Biotechnology",
+    "year": "2017",
+    "volume": "35",
+    "number": "4",
+    "pages": "316--319",
+    "doi": "10.1038/nbt.3820"
+  },
+
+  "bwa": {
+    "name": "BWA",
+    "type": "article",
+    "key": "li2009bwa",
+    "authors": "Li, Heng and Durbin, Richard",
+    "title": "Fast and accurate short read alignment with Burrows-Wheeler transform",
+    "journal": "Bioinformatics",
+    "year": "2009",
+    "volume": "25",
+    "number": "14",
+    "pages": "1754--1760",
+    "doi": "10.1093/bioinformatics/btp324"
+  },
+
+  "samtools": {
+    "name": "SAMtools and BCFtools",
+    "type": "article",
+    "key": "danecek2021samtools",
+    "tools": {"samtools": "SAMtools", "bcftools": "BCFtools"},
+    "authors": "Danecek, Petr and Bonfield, James K. and Liddle, Jennifer and Marshall, John and Ohan, Valeriu and Pollard, Martin O. and Whitwham, Andrew and Keane, Thomas and McCarthy, Shane A. and Davies, Robert M. and Li, Heng",
+    "title": "Twelve years of SAMtools and BCFtools",
+    "journal": "GigaScience",
+    "year": "2021",
+    "volume": "10",
+    "number": "2",
+    "pages": "giab008",
+    "doi": "10.1093/gigascience/giab008",
+    "also": ["li2011snpcalling"],
+    "note": "One paper covers both. The multiallelic calling model is described separately."
+  },
+
+  "_bcftools_model": {
+    "name": "BCFtools variant calling model",
+    "type": "article",
+    "key": "li2011snpcalling",
+    "referenced_only": true,
+    "authors": "Li, Heng",
+    "title": "A statistical framework for SNP calling, mutation discovery, association mapping and population genetical parameter estimation from sequencing data",
+    "journal": "Bioinformatics",
+    "year": "2011",
+    "volume": "27",
+    "number": "21",
+    "pages": "2987--2993",
+    "doi": "10.1093/bioinformatics/btr509"
+  },
+
+  "vcftools": {
+    "name": "VCFtools",
+    "type": "article",
+    "key": "danecek2011vcftools",
+    "authors": "Danecek, Petr and Auton, Adam and Abecasis, Goncalo and Albers, Cornelis A. and Banks, Eric and DePristo, Mark A. and Handsaker, Robert E. and Lunter, Gerton and Marth, Gabor T. and Sherry, Stephen T. and McVean, Gilean and Durbin, Richard",
+    "title": "The variant call format and VCFtools",
+    "journal": "Bioinformatics",
+    "year": "2011",
+    "volume": "27",
+    "number": "15",
+    "pages": "2156--2158",
+    "doi": "10.1093/bioinformatics/btr330"
+  },
+
+  "cutadapt": {
+    "name": "Cutadapt",
+    "type": "article",
+    "key": "martin2011cutadapt",
+    "authors": "Martin, Marcel",
+    "title": "Cutadapt removes adapter sequences from high-throughput sequencing reads",
+    "journal": "EMBnet.journal",
+    "year": "2011",
+    "volume": "17",
+    "number": "1",
+    "pages": "10--12",
+    "doi": "10.14806/ej.17.1.200"
+  },
+
+  "bamtools": {
+    "name": "BamTools",
+    "type": "article",
+    "key": "barnett2011bamtools",
+    "authors": "Barnett, Derek W. and Garrison, Erik K. and Quinlan, Aaron R. and Stromberg, Michael P. and Marth, Gabor T.",
+    "title": "BamTools: a C++ API and toolkit for analyzing and managing BAM files",
+    "journal": "Bioinformatics",
+    "year": "2011",
+    "volume": "27",
+    "number": "12",
+    "pages": "1691--1692",
+    "doi": "10.1093/bioinformatics/btr174"
+  },
+
+  "snpEff": {
+    "name": "SnpEff",
+    "type": "article",
+    "key": "cingolani2012snpeff",
+    "when": "annotate",
+    "authors": "Cingolani, Pablo and Platts, Adrian and Wang, Le Lily and Coon, Melissa and Nguyen, Tung and Wang, Luan and Land, Susan J. and Lu, Xiangyi and Ruden, Douglas M.",
+    "title": "A program for annotating and predicting the effects of single nucleotide polymorphisms, SnpEff: SNPs in the genome of Drosophila melanogaster strain w1118; iso-2; iso-3",
+    "journal": "Fly",
+    "year": "2012",
+    "volume": "6",
+    "number": "2",
+    "pages": "80--92",
+    "doi": "10.4161/fly.19695"
+  },
+
+  "fastqc": {
+    "name": "FastQC",
+    "type": "software",
+    "key": "andrews2010fastqc",
+    "authors": "Andrews, Simon",
+    "title": "FastQC: a quality control tool for high throughput sequence data",
+    "url": "https://www.bioinformatics.babraham.ac.uk/projects/fastqc/",
+    "note": "No accompanying paper; cite the software."
+  },
+
+  "trim_galore": {
+    "name": "Trim Galore",
+    "type": "software",
+    "key": "krueger2012trimgalore",
+    "authors": "Krueger, Felix",
+    "title": "Trim Galore: a wrapper around Cutadapt and FastQC to consistently apply adapter and quality trimming",
+    "url": "https://github.com/FelixKrueger/TrimGalore",
+    "note": "No accompanying paper; cite the software. It wraps Cutadapt, which is cited separately."
+  },
+
+  "python": {
+    "name": "Python",
+    "type": "software",
+    "key": "python",
+    "authors": "{Python Software Foundation}",
+    "title": "Python Language Reference",
+    "url": "https://www.python.org/",
+    "note": "Used by the pipeline's helper scripts."
+  },
+
+  "java": {
+    "name": "Java runtime",
+    "cite": false,
+    "reason": "A runtime for FastQC and SnpEff rather than a tool with its own method; those two are cited instead."
+  },
+
+  "unzip": {
+    "name": "unzip",
+    "cite": false,
+    "reason": "A general-purpose archive utility with no bearing on the method."
+  }
+}

@@ -1,20 +1,15 @@
 name: Documentation
 
-# Builds the MkDocs site and publishes it straight from main. There is no
-# gh-pages branch: the built site is uploaded as an artifact and deployed by
-# actions/deploy-pages, so the repository holds only source and the built HTML
-# never lands in a branch anyone has to look at.
+# Builds the MkDocs site and publishes it straight from main. No gh-pages branch: the
+# site is uploaded as an artifact and deployed by actions/deploy-pages.
 #
 # One-time repository setting this depends on:
 #   Settings -> Pages -> Build and deployment -> Source: "GitHub Actions"
 #
-# Note it cannot be "Deploy from a branch -> main -> /docs". That serves the
-# folder as-is, and docs/ holds Markdown, not HTML - GitHub would run Jekyll
-# over MkDocs sources and produce nonsense. The folder option only works for a
-# directory of finished HTML.
+# It cannot be "Deploy from a branch -> main -> /docs", which serves the folder as-is;
+# docs/ holds Markdown, not finished HTML.
 #
-# Pull requests build with --strict but do not deploy, so a broken link fails in
-# review rather than after merge.
+# Pull requests build with --strict but do not deploy.
 
 on:
   push:
@@ -59,19 +54,16 @@ jobs:
       - name: Install build dependencies
         run: pip install -r manual/requirements.txt
 
-      # docs/ is not in the repository: it is generated from the manual on every
-      # build, so the published site can never be built from a stale page tree.
+      # docs/ is not in the repository; it is generated from the manual on every build.
       # This also fails on a broken cross-reference, before MkDocs is reached.
       - name: Generate the page tree from the manual
         run: python3 dev/scripts/build_docs.py
 
-      # --strict turns broken internal links and nav references into build
-      # failures, so a bad link is caught here rather than shipped.
+      # --strict turns broken internal links and nav references into build failures.
       - name: Build
         run: mkdocs build --strict
 
-      # Fails early and clearly if Pages is not enabled, rather than leaving the
-      # deploy step to report it less legibly.
+      # Fails early and clearly if Pages is not enabled.
       - uses: actions/configure-pages@v6
         if: github.event_name != 'pull_request'
 

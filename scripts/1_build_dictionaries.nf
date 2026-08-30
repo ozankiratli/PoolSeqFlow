@@ -1,32 +1,13 @@
 include { deepCopy } from './resolve_parameters.nf'
 
-// WHICH DICTIONARY SET A RUN USES: the paths step 1 writes, and nothing else.
-//
-// Dictionaries live under mainDir/Reference/Dictionaries by settled rule 4, and runs SHARE
-// mainDir - so two runs naming the same reference resolve to exactly the same output paths.
-// Left alone under multiRun they would both build it, at the same time, into one place; and
-// atomic_mv.sh has no locking, so that is a race rather than merely duplicated work.
-//
-// This is therefore not an optimisation and does not belong to E1v's sharing work: step 1 is
-// the one step whose artifacts were already shared before multi-run existed, so threading
-// runs through it without grouping would BREAK something that works today.
+// Which dictionary set a run uses: the paths step 1 writes, and nothing else.
 def dictionaryKey(Map run) {
     return [run.dir.dictionaries, run.referenceFa, run.dir.snpEff, run.snpEff.db]
         .collect { part -> "${part}" }
         .join(' | ')
 }
 
-// What step 1 reads apart from those paths. Two runs that land on the same key must agree on
-// all of it: "build it once" would otherwise hand one of them a dictionary built to the
-// other's settings, which is the silent-wrong-result failure this project keeps finding.
-//
-// Reported rather than resolved. Which of two conflicting settings should win is the user's
-// decision and there is no safe default - see the working agreement about not automating a
-// decision away.
-//
-// Resource settings are deliberately absent: heap size and core counts change how long the
-// build takes, not what it produces, and a dictionary is shared so it cannot have per-run
-// resources anyway.
+// What step 1 reads apart from those paths. Two runs landing on one key must agree on all of it.
 def dictionarySettings(Map run) {
     return [
         'referenceFile'      : "${run.referenceFile}",
@@ -42,9 +23,6 @@ def dictionarySettings(Map run) {
 }
 
 // One entry per distinct dictionary set, in the order the runs first ask for it.
-//
-// Single run in, single entry out, identical to the run itself apart from the two fields
-// noted below - both of which are already what a single run holds, so nothing moves.
 def dictionaryRuns(List runs) {
     def groups = [:]
     runs.each { run ->
@@ -72,12 +50,9 @@ def dictionaryRuns(List runs) {
         }
 
         def dict = deepCopy(first)
-        // Shared work, so its log belongs to the project rather than to whichever run happens
-        // to be listed first. For a single run this IS that run's own Logs directory, so the
-        // line changes nothing outside multiRun.
+        // Logs at project level, not under any one run.
         dict.dir.logs = "${params.dir.allLogs}"
-        // Built when ANY member wants it: one database serves them all, and a run that does
-        // not annotate is not harmed by its existence.
+        // Built when ANY member wants it.
         dict.annotate = members.any { member -> member.annotate }
         return dict
     }
@@ -108,18 +83,7 @@ process UngzipReference {
         ln -s ${refOut} .
         echo "UNGZIP ${run.referenceFile}:             COMPLETED"
     else
-        # GZIPPED OR NOT, the same way BuildSnpEffDb already takes the annotation either way.
-        #
-        # `gunzip -c` was unconditional, so a plain reference.fasta died with "not in gzip
-        # format" - and nothing anywhere required the .gz: not step 0, and not the template,
-        # whose own `referenceFa = referenceFile.replace('.gz', '')` reads as though a plain
-        # name is expected to work. The GFF has always accepted both, which is exactly what
-        # made the asymmetry invisible.
-        #
-        # Copied rather than symlinked, so that what lands under Dictionaries is a real file in
-        # both cases and atomic_mv.sh's guarantee still holds. It costs one copy of the genome
-        # - which is what the gzipped path has always cost too, since it writes a decompressed
-        # copy beside the compressed original.
+        # Gzipped or not; the plain case is copied, not symlinked.
         if [[ "${refIn}" == *.gz ]]; then
             echo "UNGZIP ${run.referenceFile}:             Decompressing reference file..."
             gunzip -c ${refIn} > ${run.referenceFa}
@@ -158,12 +122,7 @@ process CreateBwaIndex {
     set -eo pipefail
 
     echo "BWA INDEX ${run.referenceFile}:          Start building BWA index..."
-    # Test the exact five files the symlinks below point at, one test each. The previous
-    # form counted output lines from `ls ${referenceDir}/*.bwt` and friends chained with
-    # &&, which was wrong twice over: an unmatched glob makes ls exit non-zero, so on a
-    # first run the whole substitution fails and takes the task with it once pipefail is
-    # on; and *.bwt matches an index built for a differently named reference, so the
-    # check could pass while the `ln -s` below still had nothing to point at.
+    # The exact five files the symlinks below point at, one test each.
     INDEX_COMPLETE=true
     for ext in bwt ann amb pac sa; do
         if [ ! -f "${run.reference}.\$ext" ]; then INDEX_COMPLETE=false; fi
@@ -214,8 +173,7 @@ process CreateSamtoolsFaiIndex {
     set -eo pipefail
 
     echo "SAMTOOLS INDEX ${run.referenceFile}:     Start building samtools fai index..."
-    # The exact file the symlink below points at, rather than counting any *.fai in the
-    # directory - see the note in CreateBwaIndex for why the ls|wc form had to go.
+    # The exact file the symlink below points at, not any *.fai in the directory.
     if [ -f "${run.reference}.fai" ]; then
         echo "SAMTOOLS INDEX ${run.referenceFile}:     Found existing fai index file"
         echo "SAMTOOLS INDEX ${run.referenceFile}:     Found: ${run.reference}.fai"
@@ -253,15 +211,7 @@ process BuildSnpEffDb {
     script:
     gff = run.gffPath
     ref = run.referencePath
-    // The marker lives inside the genome's own database directory, not at the top of the
-    // snpEff folder. One snpEff folder serves every reference a project has built, so a
-    // single top-level marker answered "has any database been built here?" when the
-    // question is "has THIS genome's database been built?". Building against a second
-    // reference found the marker, skipped the build, and inherited the first genome's
-    // database - and the failure did not surface until step 8, after alignment and
-    // calling, as "Genome download failed!" (snpEff falls through to -download when the
-    // config names a database it cannot find). Every index file in this step was already
-    // keyed by reference name; this was the one artifact that was not.
+    // The marker lives inside the genome's own database directory.
     build_verify_path = "${run.dir.snpEff}/data/${run.snpEff.db}/.build_complete"
     dir_log = "${run.dir.logs}/1_build_dictionaries"
 
@@ -294,12 +244,8 @@ process BuildSnpEffDb {
         printf '%s\\n' "\$GENOME_LINE" > ${run.snpEff.config}
 
         echo "SNPEFF DB BUILD:    Build database"
-        # -c names the config explicitly. Without it snpEff only finds a config in the
-        # working directory when it is called exactly 'snpEff.config', and otherwise
-        # silently falls back to the one bundled with the install - which has no entry
-        # for this genome, so the build dies with "Property: '<db>.genome' not found".
-        # That made params.snpEff.config a parameter that broke the run if it was ever
-        # changed from its default.
+        # -c names the config explicitly: without it snpEff falls back to the bundled one, which
+        # has no entry for this genome.
         ${run.software.snpEff} build ${run.snpEff.buildOptions} \
             -c ${run.snpEff.config} \
             ${run.snpEff.db}
@@ -314,33 +260,16 @@ process BuildSnpEffDb {
             echo "SNPEFF DB BUILD:    Database creation successful!"
             echo "SNPEFF DB BUILD:    Publishing database to ${run.dir.snpEff}"
 
-            # THE DATABASE AND ITS MARKER ARE PUBLISHED TOGETHER, AS ONE DIRECTORY.
-            #
-            # The marker is what every later run reads to decide this database is usable, so
-            # it must not be able to appear beside a half-written one. Writing it INSIDE the
-            # staged directory and then moving that directory atomically makes "marker
-            # present" mean "database complete". It was a second atomic move after a
-            # non-atomic `cp -r`, so a kill in between left a partial database and no marker.
-            #
-            # THE UNIT IS THE GENOME'S DIRECTORY, NOT data/, and that is what makes it
-            # possible at all: several genomes share data/, and `mv` of a directory onto an
-            # existing directory nests it rather than replacing it - so publishing data/
-            # wholesale could only ever be the merge that `cp -r` was doing.
+            # Published as ONE directory with the marker inside it, so "marker present" means
+            # "database complete". The unit is the GENOME's directory, never data/, which several
+            # genomes share.
             touch data/${run.snpEff.db}/\$BUILD_COMPLETE || return 1
             mkdir -p ${run.dir.snpEff}/data || return 1
-            # A database with no marker is incomplete by definition - it is exactly what a
-            # kill during an earlier publish leaves - so it is discarded rather than merged
-            # into. atomic_mv.sh refuses an existing directory as a destination, which is the
-            # same rule seen from the other side. Nothing else can be here: the caller has
-            # already established that the marker is absent.
+            # A database with no marker is discarded, not merged into.
             rm -rf ${run.dir.snpEff}/data/${run.snpEff.db} || return 1
             atomic_mv.sh data/${run.snpEff.db} ${run.dir.snpEff}/data/${run.snpEff.db} || return 1
 
-            # Merge this genome's line into the shared config instead of replacing the
-            # file. The config sits next to the shared data/ directory and snpEff reads
-            # every entry in it, so it has to name every genome built here - a plain cp
-            # left it holding only the most recently built one, which made every earlier
-            # genome unannotatable even though its database was still on disk.
+            # Merged into the shared config, which has to name every genome built here.
             DEST_CONFIG="${run.dir.snpEff}/${run.snpEff.config}"
             if [ ! -f "\$DEST_CONFIG" ]; then
                 cp ${run.snpEff.config} "\$DEST_CONFIG" || return 1
@@ -359,19 +288,12 @@ process BuildSnpEffDb {
         echo "SNPEFF DB BUILD: Existing database found for ${run.snpEff.db}, skipping..."
         ln -s ${build_verify_path} .
     else
-        # A project built by an earlier release has its marker at the top of the snpEff
-        # folder rather than inside the genome's database directory, so the first run
-        # after upgrading rebuilds once. Deliberate: the old marker records that *a*
-        # database was built, not which genome it was for, so it cannot be adopted
-        # without guessing. The rebuild lands in the same place and merges its config
-        # line, and every run after it skips normally.
+        # A pre-3.0 project has its marker at the top of the snpEff folder.
         if [ -f "${run.dir.snpEff}/.build_complete" ]; then
             echo "SNPEFF DB BUILD: Found a marker from a release that kept one marker for"
             echo "SNPEFF DB BUILD: the whole snpEff folder. It does not say which genome it"
             echo "SNPEFF DB BUILD: was built for, so ${run.snpEff.db} is being rebuilt once."
         fi
-        # The marker is written and published by buildSnpEffDb itself, inside the database
-        # directory it moves into place, so there is no window here to fail in.
         buildSnpEffDb || exit 1
         ln -s ${build_verify_path} .
     fi
@@ -387,13 +309,9 @@ process BuildSnpEffDb {
 
 workflow BuildDictionaries {
     take:
-    // One entry per distinct dictionary set, from dictionaryRuns() - NOT one per run. See
-    // dictionaryKey above for why the two are not the same thing.
+    // One entry per distinct dictionary set, NOT one per run - see dictionaryKey.
     dictionary_runs
-    // Every run's step 0 having passed, as one signal. A pure ordering barrier: nothing in
-    // this step reads it, and it is `val` rather than `path` because N runs each publish a
-    // report called 0_verify_environment.txt and staging N files of one name is a collision
-    // for no purpose.
+    // Every run's step 0, as one signal: an ordering barrier, never read.
     verify
 
     main:
@@ -403,18 +321,12 @@ workflow BuildDictionaries {
     CreateBwaIndex(UngzipReference.out.reference)
     CreateSamtoolsFaiIndex(UngzipReference.out.reference)
 
-    // `annotate` is a per-run parameter, so which references need a snpEff database is a
-    // property of the data rather than of the script. Filtering the channel says that
-    // directly; the `if (params.annotate)` this replaces could only ever read the base
-    // config, and would have built for every reference or none.
+    // `annotate` is per run, so this filters the channel.
     BuildSnpEffDb(ready.filter { run, _verify -> run.annotate })
 
     emit:
-    // No `reference` here. UngzipReference's output is consumed inside this workflow by the
-    // two index builders, but re-exporting it published a channel poolseqflow.nf has never
-    // read - not in any release. snpEff is the only other thing that could have wanted it,
-    // and BuildSnpEffDb does not: it runs alongside UngzipReference rather than after it, and
-    // copies the reference the user placed.
+    // No `reference` emit: it is consumed inside this workflow by the two index builders, and
+    // BuildSnpEffDb copies the user's reference itself.
     bwa_index         = CreateBwaIndex.out.bwa_index
     fai_index         = CreateSamtoolsFaiIndex.out.fai_index
     snpeff_db_verify  = BuildSnpEffDb.out.snpeff_db_verify

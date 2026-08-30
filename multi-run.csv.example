@@ -1,9 +1,7 @@
 # Multi-run table — EXAMPLE, not a template.
 #
 # Nothing copies this file. Read it, then write your own table with only the rows and columns
-# your comparison actually needs. It is deliberately not called .template for that reason: the
-# .template files are the ones the tooling copies for you, and a table copied wholesale would
-# describe someone else's experiment.
+# your comparison actually needs.
 #
 # To use one:
 #     1. write your table, anywhere in your project directory
@@ -12,7 +10,7 @@
 #
 # The table is read before any compute is spent: an unusable one stops the run outright, and a
 # usable one is printed in full - the runs, where each one's results go, and what differs - in
-# step 0's report. A mistake here costs you a few seconds, not a night of alignment.
+# step 0's report.
 #
 # ---------------------------------------------------------------------------------------
 # THE RULES, ALL FOUR OF THEM
@@ -22,13 +20,12 @@
 #
 # 2. Every other column is a parameter name spelt exactly as parameters.config spells it,
 #    with NO `params.` prefix. Nested ones are dotted: trim_galore.quality, bcftools.maxDepth.
-#    ANY parameter may be varied - including the ones the pipeline normally computes for
-#    itself, because pinning one is a legitimate thing to want. A name that is not a
-#    parameter is refused rather than ignored; that is a typo, not a preference.
+#    ANY parameter may be varied, including the ones the pipeline normally computes for
+#    itself. A name that is not a parameter is refused rather than ignored.
 #
-# 3. A BLANK CELL MEANS "take it from parameters.config". That is what keeps a table as short
-#    as the difference between the runs. Consequence worth knowing: there is no way to set a
-#    parameter to an empty string here, because blank already means something else.
+# 3. A BLANK CELL MEANS "take it from parameters.config", so a table is only as long as the
+#    difference between the runs. There is therefore no way to set a parameter to an empty
+#    string here.
 #
 # 4. A value containing a comma must be quoted - "-a AD,DP,SP,INFO/AD". The default
 #    readPattern, *_R{1,2}.fq.gz, is exactly such a value.
@@ -46,8 +43,7 @@
 #
 # Setting a COMPUTED value directly is used exactly as written, and then nothing is derived
 # from its inputs any more - pin bcftools.mpileupOptions and bcftools.maxDepth stops meaning
-# anything for that run. Step 0 names any column that does this, so it is a choice rather
-# than a surprise.
+# anything for that run. Step 0 names any column that does this.
 #
 # ---------------------------------------------------------------------------------------
 # FOUR EXAMPLES. Pick the shape you need; do not use all of them at once.

@@ -49,7 +49,9 @@ make_pipeline_sandbox() {
     sb=$(guard_path "$TEST_TMPDIR/$name")
     rm -rf "$sb"
     mkdir -p "$sb/install" "$sb/main" "$sb/store"
-    cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$sb/install"/
+    # install/ too: it carries citations.json, which a run reads at the end. Copied whole
+    # rather than by file, so the next thing added there is present without a change here.
+    cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$REPO_ROOT"/install "$sb/install"/
     cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/dryrun.nf "$REPO_ROOT"/nextflow.config "$sb/install"/
     # The wrapper too, so cases can exercise clean/reset against a real project instead of
     # reimplementing what they do.

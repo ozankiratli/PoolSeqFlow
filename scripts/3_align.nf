@@ -1,6 +1,4 @@
-// The roots a skip check searches. Under sharing an artifact this step reads may have
-// been produced by a variant with a coarser working root than its own, so the list comes
-// from the divergence analysis rather than being spelled out here.
+// The roots a skip check searches, from the divergence analysis.
 include { searchRoots } from './variants.nf'
 
 process Align {
@@ -8,10 +6,7 @@ process Align {
     cpus { run.cores.bwa }
 
     input:
-    // The index arrives in the same tuple as the reads rather than as a second input. Two
-    // separate inputs are matched positionally, which was safe only while the index rode a
-    // value channel and broadcast to every sample; with N runs in flight there are N indices
-    // and positional matching would hand a sample the wrong one.
+    // The index rides in the same tuple as the reads, matched to them by run.
     tuple val(run), val(pair_id), path(read1), path(read2), path(bwa_index)
 
     output:
@@ -20,10 +15,8 @@ process Align {
     script:
     reference = run.reference
     aligned_bam_file = "${pair_id}_aligned.bam"
-    // Read again by SortCleanBam, so this is working data: it is written to the working
-    // volume and promoted to Output/Aligned/ once cleaning has succeeded for this sample.
-    // Unlike Trimmed/, this directory is flat - one BAM per sample, no per-sample folder -
-    // so the relative path carries the file name rather than a directory.
+    // Read again by SortCleanBam, so it goes to the working volume and is promoted once cleaning
+    // has succeeded. This directory is flat, so the relative path carries the file name.
     search_roots = searchRoots(run)
     rel_aligned = "${run.dir.subpath.aligned}"
     target_folder = "${run.dir.utilized}/${rel_aligned}"
@@ -33,10 +26,8 @@ process Align {
     """
     set -eo pipefail
 
-    # Either volume: still here if cleaning has not finished with it, in permanent storage
-    # if it has. Permanent root first, so a residue copy cannot outrank a promoted one. An
-    # absent artifact is the ordinary answer on a first run, not an error, so the exit
-    # status is discarded and emptiness is what the branch tests.
+    # Either volume, permanent-first. An absent artifact is the ordinary answer, so emptiness is
+    # what the branch tests.
     aligned_at=\$(find_artifact.sh "${rel_aligned}/${aligned_bam_file}" ${search_roots} || true)
 
     echo "ALIGNING ${pair_id}: Aligning the reads to the reference..."
@@ -74,10 +65,8 @@ workflow AlignReads {
     bwa_index    // [run, index files] - one per run, not one per sample
 
     main:
-    // One index per run, combined against that run's samples. `combine(by: 0)` is the
-    // cartesian product WITHIN a key, which is exactly what the implicit value channel used
-    // to do; `join` would be wrong here, because it matches one-to-one and would leave every
-    // sample after the first without an index.
+    // One index per run, combined against that run's samples: `combine(by: 0)` is the cartesian
+    // product within a key.
     Align(reads.combine(bwa_index, by: 0))
 
     emit:

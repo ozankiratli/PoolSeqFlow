@@ -15,6 +15,8 @@
 # Reports:
 #   CARRIED   your value was kept
 #   RENAMED   the parameter was renamed this release; your value followed it
+#   COMPUTED  the pipeline now derives it; your value was ignored
+#   REFORMAT  its format changed this release, so the template value was used
 #   NEW       the template has a parameter your config did not - review the default
 #   DROPPED   your config had a parameter this release no longer uses
 
@@ -49,8 +51,8 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
         sub(/^params\.?/, "", p)
         return (p == "") ? k : p "." k
     }
-    # A value is the users to keep only if it is a literal. Anything referencing another
-    # parameter is derived, and this release may compute it differently.
+    # A value is yours to keep only if it is a literal; anything referencing another parameter
+    # is derived.
     function literal(v) { return (index(v, "params.") == 0 && index(v, "${") == 0) }
 
     # Strip a trailing // comment that is not inside a quoted string.
@@ -71,14 +73,10 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
     # win even though both sides look like plain literals.
     function reformatted(k) { return (k == "fastqc.memory") }
 
-    # Parameters renamed in this release, keyed by their CURRENT name and returning the
-    # name they had before. Without this a rename is two unrelated events - one DROPPED
-    # and one NEW - and the user silently gets the template default back.
-    #
-    # Add a line whenever a parameter is renamed. If a rename also changed what the
-    # parameter means, add the new name to reformatted() as well: that check runs first,
-    # so the template value wins and the rename is reported without carrying a value
-    # that no longer means the same thing.
+    # Parameters renamed in this release, keyed by their CURRENT name and returning the name
+    # they had before. Needs a line per rename: without one, a rename reads as one DROPPED plus
+    # one NEW. A rename that also changed the meaning goes in reformatted() too, which runs
+    # first and makes the template value win.
     function renamed(k) {
         if (k == "vcffilter.minDP")   return "vcftools.minDP"
         if (k == "vcffilter.minQUAL") return "vcftools.minQUAL"
@@ -98,10 +96,9 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
         # scope close
         if (line ~ /^\}/) { if (depth > 0) depth--; if (pass == 2) print; next }
 
-        # scope open:  name {          (a trailing // comment is allowed, as on the close
-        # above - without that, annotating a block header silently drops every value in
-        # it: the line matches neither this rule nor the assignment rule below, so depth
-        # is never incremented and the keys in that block are qualified one level short)
+        # scope open:  name {          a trailing // comment is allowed, as on the close above.
+        # A block header this does not match leaves depth un-incremented, and every key inside
+        # it is then qualified one level short.
         if (line ~ /^[A-Za-z_][A-Za-z0-9_]*[ \t]*\{[ \t]*(\/\/.*)?$/) {
             name = line; sub(/[ \t]*\{.*$/, "", name)
             stack[++depth] = name
@@ -190,12 +187,10 @@ show DROPPED  "No longer used - dropped"                      "  %-30s was %s%s\
 #
 # 3.0 puts the project's own files on mainDir. Before it, every dir.* entry resolved to
 # storageDir, so that is where an existing project keeps its reads, reference and metadata.
-# The config migrates automatically; the files cannot. They are large, they are the user's,
-# and moving them is not a decision a config tool should take on its own - so this detects
-# and reports, and never performs.
+# Detected and reported here; never moved.
 #
-# Read from the backup, not from $OLD: they are the same file whenever the output path is
-# left at its default, and by this point it holds the migrated config.
+# Read from the backup, not from $OLD: with the default output path they are the same file,
+# and by this point it holds the migrated config.
 cfg_value() {
     [ -f "$1" ] || return 0
     sed -n "s|^[[:space:]]*$2[[:space:]]*=[[:space:]]*||p" "$1" \
@@ -210,9 +205,8 @@ NEW_MAIN=$(cfg_value "$OUT" mainDir)
 DATASRC=$(cfg_value "$OUT" dataSource)
 REFFILE=$(cfg_value "$OUT" referenceFile)
 GFFFILE=$(cfg_value "$OUT" gffFile)
-# Read from the OLD config, not the migrated one: a project this branch applies to predates
-# metadata.csv entirely, so its sample file is whatever rgTagsFile named. The file still has to
-# be moved - and then rewritten by hand into the new schema, which the report below says.
+# From the OLD config: a project this applies to predates metadata.csv, so its sample file is
+# whatever rgTagsFile named.
 RGFILE=$(cfg_value "$BAK" rgTagsFile)
 
 MOVES=()
@@ -231,16 +225,9 @@ if [ -n "$OLD_STORE" ] && [ -n "$NEW_MAIN" ]; then
     fi
 fi
 
-# The change guard's own baseline files. Before 3.0 they sat at the storage root, one
-# project's worth; from 3.0 they sit inside the directory whose results they describe,
-# because a run no longer has a storage root of its own - there is one results tree and a
-# run is a directory inside it.
-#
-# Reported rather than moved, like everything else here, but for a different reason: these
-# are what "has anything changed since these outputs were produced" is answered against.
-# Left behind, the next run finds no baseline, calls the project fresh and records the
-# CURRENT config as though it had produced the outputs already on disk - so the guard would
-# report PASS having stopped guarding. That is worth a line of its own below.
+# The change guard's baseline files, which sat at the storage root before 3.0 and now sit inside
+# the directory whose results they describe. Left behind, the next run finds no baseline, calls
+# the project fresh, and records the current config as though it had produced what is on disk.
 NEW_STORE=$(cfg_value "$OUT" storageDir)
 GUARD_MOVES=()
 if [ -n "$OLD_STORE" ] && [ -n "$NEW_STORE" ]; then

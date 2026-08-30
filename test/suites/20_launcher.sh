@@ -105,6 +105,56 @@ test_uninstall_removes_the_pipeline_as_well_as_the_environment() {
         "and so should both wrappers, rather than dangling"
 }
 
+# Removing one version must leave the others alone, and must leave the plain wrapper pointing
+# at a version that still exists rather than at the hole it just made. An older version is
+# uninstalled by calling its OWN wrapper - each copy knows only the version it belongs to.
+test_uninstall_leaves_the_other_installed_versions_alone() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    local sb; sb=$(dirname "$LAUNCHER_PREFIX")
+    # An OLDER version alongside, wrappers and all, as its own `install` would have left it.
+    # Older rather than newer on purpose: removing the newest is the case where the plain
+    # wrapper has to be repointed, and a newer sibling would leave it correct by accident.
+    mkdir -p "$LAUNCHER_PREFIX/opt/PoolSeqFlow-0.1.0"
+    : > "$LAUNCHER_PREFIX/opt/PoolSeqFlow-0.1.0/PoolSeqFlow"
+    ln -sfn "$LAUNCHER_PREFIX/opt/PoolSeqFlow-0.1.0/PoolSeqFlow" \
+            "$LAUNCHER_PREFIX/bin/PoolSeqFlow-0.1.0"
+
+    assert_contains "$(readlink "$LAUNCHER_PREFIX/bin/PoolSeqFlow")" "PoolSeqFlow-$PSF_VERSION" \
+        "before uninstalling, the plain wrapper should point at the newest"
+    # Called by its versioned name, which names the version and so needs no prompt.
+    local out; out=$( cd "$sb" && PATH="$sb/stub/bin:$PATH" \
+        POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" \
+        "$LAUNCHER_PREFIX/bin/PoolSeqFlow-$PSF_VERSION" uninstall 2>&1 )
+    assert_contains "$out" "Removed" "should remove the version its wrapper belongs to"
+    assert_no_file "$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION/PoolSeqFlow" \
+        "its own payload should be gone"
+    assert_no_file "$LAUNCHER_PREFIX/bin/PoolSeqFlow-$PSF_VERSION" \
+        "and its own wrapper with it"
+    assert_dir "$LAUNCHER_PREFIX/opt/PoolSeqFlow-0.1.0" "the other version must stay installed"
+    assert_file "$LAUNCHER_PREFIX/bin/PoolSeqFlow-0.1.0" "and keep its own wrapper"
+    assert_contains "$(readlink "$LAUNCHER_PREFIX/bin/PoolSeqFlow")" "PoolSeqFlow-0.1.0" \
+        "the plain wrapper must fall back to the version that is left, not dangle"
+}
+
+# With several installed and nothing attached to ask, picking one would be guessing at which
+# installation to delete. It refuses and names the command that is exact instead.
+test_uninstall_refuses_to_choose_a_version_without_a_terminal() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    local sb; sb=$(dirname "$LAUNCHER_PREFIX")
+    mkdir -p "$LAUNCHER_PREFIX/opt/PoolSeqFlow-0.1.0"
+    : > "$LAUNCHER_PREFIX/opt/PoolSeqFlow-0.1.0/PoolSeqFlow"
+
+    local out status
+    out=$( cd "$sb" && PATH="$sb/stub/bin:$PATH" POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" \
+           ./PoolSeqFlow uninstall 2>&1 ) && status=0 || status=$?
+    assert_status 1 "$status" "should refuse rather than pick one"
+    assert_contains "$out" "PoolSeqFlow-0.1.0" "should list what is installed"
+    assert_contains "$out" "PoolSeqFlow-<version> uninstall" "should name the exact command"
+    assert_dir "$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION" "and must remove nothing"
+    assert_dir "$LAUNCHER_PREFIX/opt/PoolSeqFlow-0.1.0" "and must remove nothing"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env remove" "and attempt no removal"
+}
+
 test_install_reports_environments_left_from_other_versions() {
     run_launcher_with_envs "base PoolSeqFlow PoolSeqFlow-0.1.0" install
     assert_contains "$LAUNCHER_OUTPUT" "Other PoolSeqFlow environments" "should report what else is installed"
@@ -169,6 +219,64 @@ test_wrapper_rejects_extra_arguments() {
     assert_status 1 "$LAUNCHER_STATUS" "no argument should be refused"
     run_launcher_with_envs "base" nonsense_command
     assert_status 1 "$LAUNCHER_STATUS" "an unknown subcommand should be refused"
+}
+
+# Everything `init` writes is something you then edit, so a second run must leave it alone.
+test_init_populates_a_project_without_overwriting() {
+    local proj out
+    proj=$(guard_path "$TEST_TMPDIR/init-project")
+    rm -rf "$proj"; mkdir -p "$proj"
+
+    out=$(cd "$proj" && POOLSEQFLOW_HOME="$REPO_ROOT" bash "$REPO_ROOT/PoolSeqFlow" init 2>&1)
+    assert_contains "$out" "created  parameters.config" "should create the config"
+    assert_contains "$out" "created  metadata.csv.example" "should copy the metadata example"
+    [ -d "$proj/Data" ] || fail_case "init should create Data/"
+    [ -d "$proj/Reference" ] || fail_case "init should create Reference/"
+    # metadata.csv is a table describing the experiment, so the user writes it.
+    if [ -e "$proj/metadata.csv" ]; then
+        fail_case "init must not write metadata.csv"
+    fi
+
+    echo "# edited by the user" >> "$proj/parameters.config"
+    out=$(cd "$proj" && POOLSEQFLOW_HOME="$REPO_ROOT" bash "$REPO_ROOT/PoolSeqFlow" init 2>&1)
+    assert_contains "$out" "0 created, 4 already present" "a second init should change nothing"
+    assert_contains "$(cat "$proj/parameters.config")" "edited by the user" \
+        "a second init must not overwrite a file you have edited"
+}
+
+# multi-run.csv.example is documentation, not a template: the runs and the parameters that
+# differ between them are the whole content of a table, so only the user can write one.
+test_init_multi_switches_multirun_on_without_inventing_a_table() {
+    local proj out
+    proj=$(guard_path "$TEST_TMPDIR/init-multi-project")
+    rm -rf "$proj"; mkdir -p "$proj"
+
+    out=$(cd "$proj" && POOLSEQFLOW_HOME="$REPO_ROOT" bash "$REPO_ROOT/PoolSeqFlow" init_multi 2>&1)
+    assert_contains "$(grep -E '^[[:space:]]*multiRun[[:space:]]*=' "$proj/parameters.config")" \
+        "true" "init_multi should switch multiRun on"
+    assert_contains "$out" "multi-run.csv.example" "should point at the rules for writing a table"
+    [ -f "$proj/multi-run.csv.example" ] || fail_case "init_multi should leave the example beside you"
+    if [ -e "$proj/runs.csv" ]; then
+        fail_case "init_multi must not invent a run table"
+    fi
+}
+
+# A project inside the installation does not survive an upgrade, and the installation may be
+# read-only or shared between users. Refused outright rather than left to fail later.
+test_init_refuses_to_populate_inside_the_installation() {
+    local inst out status
+    inst=$(guard_path "$TEST_TMPDIR/init-install")
+    rm -rf "$inst"; mkdir -p "$inst"
+    cp "$REPO_ROOT/PoolSeqFlow" "$REPO_ROOT/parameters.config.template" \
+       "$REPO_ROOT/metadata.csv.template" "$inst/"
+    : > "$inst/poolseqflow.nf"
+
+    out=$(cd "$inst" && POOLSEQFLOW_HOME="$inst" bash "$inst/PoolSeqFlow" init 2>&1) && status=0 || status=$?
+    assert_status 1 "$status" "init inside the installation should be refused"
+    assert_contains "$out" "not a project" "should say what is wrong"
+    if [ -d "$inst/Data" ]; then
+        fail_case "it must not have populated the installation"
+    fi
 }
 
 # Every advertised subcommand must exist, and every implemented one must be advertised.

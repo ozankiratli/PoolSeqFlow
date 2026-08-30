@@ -3,21 +3,13 @@ name: Publish a release
 # Tag a release to publish it: bump VERSION in ./PoolSeqFlow, write the CHANGELOG
 # entry, commit, then `git tag v2.1.2 && git push --tags`.
 #
-# What this builds is deliberately not GitHub's "Source code" archive. It is a
-# curated tarball - the pipeline only, without docs/, .github/ or the mkdocs
-# config - wrapped in a PoolSeqFlow-<version>/ directory so extracting it does
-# not scatter files across someone's current directory. What goes in is decided
-# by `export-ignore` in .gitattributes, in one place, next to the files.
+# Not GitHub's "Source code" archive: a curated tarball, the pipeline only, wrapped
+# in a PoolSeqFlow-<version>/ directory. What goes in is decided by `export-ignore`
+# in .gitattributes.
 #
-# It is built with `git archive` rather than `tar` so the executable bit on
-# ./PoolSeqFlow and bin/* comes straight from the git index instead of depending
-# on the runner's umask. A downloaded wrapper that will not run is the worst
-# possible first contact with the tool.
-#
-# tar.gz only, no zip. The pipeline is Linux and macOS only, and zip does not
-# carry the executable bit reliably across the tools people extract it with. An
-# archive format someone has to look up is a smaller problem than a broken
-# permission they will not think to check.
+# Built with `git archive`, not `tar`, so the executable bit on ./PoolSeqFlow and
+# bin/* comes from the git index rather than the runner's umask. tar.gz only: zip
+# does not carry that bit reliably.
 
 on:
   push:
@@ -38,17 +30,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The wrapper is the authority: it is what `./PoolSeqFlow version`
-          # prints, so it is what a user will quote in a bug report.
+          # The wrapper is the authority: it is what `./PoolSeqFlow version` prints.
           declared=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' PoolSeqFlow)
           if [ -z "$declared" ]; then
             echo "could not find VERSION=\"...\" in ./PoolSeqFlow" >&2
             exit 1
           fi
 
-          # The header comment carries the version too and nothing keeps the two
-          # in step. A bump that misses one leaves the file people read first
-          # disagreeing with the command they run.
+          # The header comment carries the version too, and nothing keeps the two in step.
           header=$(sed -n 's/^# Version: \(.*\)$/\1/p' PoolSeqFlow)
           if [ "$header" != "$declared" ]; then
             echo "./PoolSeqFlow disagrees with itself:" >&2
@@ -56,9 +45,7 @@ jobs:
             exit 1
           fi
 
-          # The version lives in nextflow.config's manifest too - that is what Nextflow
-          # reports and what step 0 records alongside a project's outputs, so a stale
-          # value there would misattribute results to the wrong release.
+          # And in nextflow.config's manifest, which is what step 0 records.
           nfversion=$(sed -n "s/^[[:space:]]*version[[:space:]]*=[[:space:]]*'\(.*\)'.*/\1/p" nextflow.config)
           if [ "$nfversion" != "$declared" ]; then
             echo "./PoolSeqFlow says VERSION=\"$declared\" but nextflow.config's" >&2
@@ -77,9 +64,7 @@ jobs:
             fi
           fi
 
-          # Refuse to publish a version the changelog does not describe. The
-          # changelog is how anyone decides whether an upgrade will change their
-          # results, which for this pipeline is not a formality.
+          # Refuses to publish a version the changelog does not describe.
           if ! grep -q "^## \[$declared\]" CHANGELOG.md; then
             echo "CHANGELOG.md has no '## [$declared]' section" >&2
             exit 1
@@ -89,8 +74,7 @@ jobs:
           echo "name=PoolSeqFlow-$declared" >> "$GITHUB_OUTPUT"
           echo "Building PoolSeqFlow-$declared"
 
-      # Same script ci.yml runs on every pull request, so what is published here
-      # has already been checked in review rather than only at tag time.
+      # The same script ci.yml runs on every pull request.
       - name: Build and verify the archive
         env:
           NAME: ${{ steps.version.outputs.name }}
@@ -98,11 +82,8 @@ jobs:
           set -euo pipefail
           dev/scripts/verify-archive.sh HEAD dist
 
-          # The same archive under a stable name. GitHub's
-          # /releases/latest/download/<asset> only resolves a filename it can
-          # predict, so a versioned name alone would mean editing the website on
-          # every release. The directory inside is still versioned, so an
-          # extracted copy is never ambiguous about what it is.
+          # The same archive under a stable name, which is what
+          # /releases/latest/download/<asset> needs. The directory inside stays versioned.
           cp "dist/${NAME}.tar.gz" dist/PoolSeqFlow.tar.gz
 
           ( cd dist && sha256sum ./*.tar.gz > SHA256SUMS )

@@ -9,32 +9,20 @@
 #   2. Every helper in bin/ is present and executable.
 #   3. If parameters.config exists, that Nextflow can parse it.
 #
-# Where the tool list comes from
-# ------------------------------
-# With a parameters.config present the commands are read from `params.software`
-# through `nextflow config`, so a command repointed at a system binary is checked
-# as configured rather than as shipped. That override is the setting most likely
-# to be wrong and least likely to announce itself at run time - a missing tool
-# fails in the middle of step 4, hours in.
-#
-# Without one - a fresh install, before there is anything to configure - the
-# canonical list below is used instead.
+# With a parameters.config present the commands come from `params.software` through
+# `nextflow config`, so a command repointed at a system binary is checked as configured.
+# Without one, the canonical list below is used.
 
 set -uo pipefail
 
-# Two directories, and they are no longer the same one. The installation holds the tools,
-# the helpers and nextflow.config; the directory the check was invoked from is the project
-# and holds parameters.config. Captured before the cd, because everything below runs from
-# the installation.
+# Two directories: the installation holds the helpers and nextflow.config, the directory this
+# was invoked from is the project and holds parameters.config. Captured before the cd.
 PROJECT_DIR="$PWD"
 cd "$(dirname "$0")/.." || exit 1
 INSTALL_DIR="$PWD"
 
-# Which environment this copy expects. ./PoolSeqFlow exports it; derived from the same
-# source here so the epilogue still names the right one when this script is run directly,
-# and so the name can never be stale relative to the launcher. Under `set -u` an unset
-# variable would abort the run outright, which is the other reason this is not left to the
-# caller.
+# Which environment this copy expects: from ./PoolSeqFlow's export, or read out of the wrapper
+# when this script is run directly.
 if [ -z "${ENV_NAME:-}" ]; then
     _version=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' PoolSeqFlow 2>/dev/null | head -1)
     ENV_NAME="PoolSeqFlow${_version:+-$_version}"
@@ -49,29 +37,12 @@ fi
 missing=0
 checked=0
 
-# Tools the pipeline runs, as params.software names them. `nextflow` is not in
-# that block - it is the engine rather than a pipeline tool - but nothing works
-# without it, and python3/awk carry bin/ helpers, so all three are checked too.
+# Tools the pipeline runs, as params.software names them, plus nextflow, python3 and awk, which
+# are not in that block but are needed all the same.
 CANONICAL="java cutadapt fastqc trim_galore samtools bamtools bwa bcftools vcftools snpEff unzip"
 
-# Ask a tool for its version. Every one of these answers differently, and several
-# report on stderr or exit non-zero while doing it, so each is handled by name and
-# the result is only ever used for display.
-tool_version() {
-    local name="$1" cmd="$2" raw=""
-    case "$name" in
-        java)     raw=$("$cmd" -version 2>&1) ;;
-        bwa)      raw=$("$cmd" 2>&1 | sed -n 's/^Version: *//p') ;;
-        snpEff)   raw=$("$cmd" -version 2>&1) ;;
-        unzip)    raw=$("$cmd" -v 2>&1) ;;
-        nextflow) raw=$("$cmd" -version 2>&1 | sed -n 's/.*version *//p') ;;
-        *)        raw=$("$cmd" --version 2>&1) ;;
-    esac
-    # First non-empty line. bamtools leads with a blank line and several tools
-    # follow the version with a banner, so neither `head -1` nor the whole output
-    # is right on its own. Tabs are squeezed too - snpEff separates with them.
-    printf '%s' "$(printf '%s\n' "$raw" | grep -m1 . | tr -s ' \t' ' ' | sed 's/^ *//; s/ *$//')"
-}
+# Shared with the citation writer, so the two report the same versions.
+. "$INSTALL_DIR/bin/tool_version.sh"
 
 check_tool() {
     local name="$1" cmd="$2" resolved version
@@ -85,8 +56,7 @@ check_tool() {
 
     version=$(tool_version "$name" "$cmd")
     if [ -z "$version" ]; then
-        # It resolved but would not report a version. Not fatal - some tools
-        # simply have no version flag - but worth seeing.
+        # Resolved but reported no version. Not fatal; some tools have no version flag.
         printf '  %-14s %-12s %sFOUND%s    %s(version not reported)%s\n' \
             "$name" "$cmd" "$YELLOW" "$RESET" "$DIM" "$RESET"
     else
@@ -106,16 +76,14 @@ echo
 declare -a NAMES=() CMDS=()
 source_note=""
 
-# Say which list is in use and, when it is the fallback, why - "no config yet" and
-# "nextflow could not read the config" send you to very different places.
+# Which list is in use, with the reason when it is the fallback.
 if [ ! -f "$PROJECT_DIR/parameters.config" ]; then
     source_note="canonical list - no parameters.config in $PROJECT_DIR"
 elif ! command -v nextflow >/dev/null 2>&1; then
     source_note="canonical list - nextflow not available to read parameters.config"
 else
-    # Values are interpolated by Nextflow, so this reads what the pipeline will
-    # actually invoke rather than what the file appears to say. Read from the project
-    # directory, against the installation, exactly as a run would.
+    # Interpolated by Nextflow, so this reads what the pipeline will actually invoke. From the
+    # project directory against the installation, exactly as a run would.
     while read -r n c; do
         [ -n "$n" ] || continue
         NAMES+=("$n"); CMDS+=("$c")
@@ -148,17 +116,22 @@ echo
 echo "Pipeline helpers"
 echo
 
-for f in atomic_mv.sh config_migrate.sh createDepthFile.sh \
-         depth2freq.awk filterFalsePositives.sh MajorAlleleToRef.py; do
+# Enumerated, not hand-listed. SOURCED holds the libraries that are read by another script
+# rather than run, and so need no executable bit.
+SOURCED="tool_version.sh"
+
+for path in bin/*; do
+    f=$(basename "$path")
+    case " $SOURCED " in *" $f "*) continue ;; esac
+    [ -d "$path" ] && continue
+
     checked=$((checked + 1))
     if [ ! -f "bin/$f" ]; then
         printf '  %-28s %sMISSING%s\n' "$f" "$RED" "$RESET"
         missing=$((missing + 1))
     elif [ ! -x "bin/$f" ]; then
-        # Nextflow puts the pipeline's own bin/ on every task's PATH, and the process
-        # scripts call these by bare name, so a lost executable bit fails mid-run rather
-        # than here. (nextflow.config also prepends dir.bin, but that is belt over braces -
-        # until 3.0 it named a directory that never existed and the helpers still resolved.)
+        # The process scripts call these by bare name off Nextflow's bin/ PATH, so a lost
+        # executable bit fails mid-run.
         printf '  %-28s %sNOT EXECUTABLE%s  chmod +x bin/%s\n' "$f" "$RED" "$RESET" "$f"
         missing=$((missing + 1))
     else

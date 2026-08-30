@@ -7,23 +7,12 @@ Exit 0 and print a JSON array of run definitions; exit 1 and print every problem
 stderr; exit 2 for a usage mistake, so a caller can tell "your file is wrong" from "you
 called me wrong".
 
-WHY THIS IS PYTHON AND NOT AWK OR SHELL. The values here are parameter values, and one of
-the parameters people are most likely to vary between runs is `readPattern`, whose default
-is `*_R{1,2}.fq.gz` - a comma inside a value. Splitting on commas would quietly cut that in
-half and produce a row with one field too many, which is the kind of wrong that looks like a
-different mistake entirely. csv.reader implements the actual quoting rules, so
-`"*_R{1,2}.fq.gz"` survives.
-
-WHY IT REPORTS EVERYTHING RATHER THAN THE FIRST PROBLEM. A hand-written table with four
-mistakes in it should take one fix-and-rerun cycle, not four. Each message carries the line
-number the problem is on.
+Every problem is reported at once, each with the line number it is on.
 
 EMPTY CELL MEANS "INHERIT". A row carries only the parameters that differ from
-parameters.config, so a short table stays short; anything left blank comes from the config
-as usual. The consequence, stated because it is a real limit rather than an oversight:
-there is no way to set a parameter to an empty STRING from this file, because an empty cell
-already means something else. The one parameter where an empty string is meaningful -
-trim_galore.adapterOptions - is derived from trim_galore.autodetect, so set that instead.
+parameters.config; anything left blank comes from the config as usual. So there is no way to
+set a parameter to an empty STRING here. The one parameter where an empty string is meaningful,
+trim_galore.adapterOptions, is derived from trim_galore.autodetect - set that instead.
 """
 
 import csv
@@ -47,8 +36,7 @@ def rows_of(path):
     out = []
     with open(path, newline="", encoding="utf-8") as handle:
         for lineno, raw in enumerate(handle, start=1):
-            # Tolerate CRLF without rewriting the file. Step 0 used to repair line endings
-            # in the user's RGTags.csv in place; that wart is gone, and this is why.
+            # CRLF is tolerated; the file the user wrote is never rewritten.
             stripped = raw.strip("\r\n").strip()
             if not stripped or stripped.startswith("#"):
                 continue
@@ -106,8 +94,7 @@ def check(path):
     if not body:
         errors.append(f"{path}: has a header but no runs")
 
-    # Field counts and RunID values. Reported even when the header is already wrong, so one
-    # pass finds everything.
+    # Field counts and RunID values, reported even when the header is already wrong.
     width = len(header)
     ids = {}
     id_at = header.index(RUN_ID) if RUN_ID in header else None
@@ -132,8 +119,7 @@ def check(path):
             )
         elif re.match(r"^(All_Runs|Shared_[0-9]+)$", run_id):
             # A run's directory sits beside the ones named for shared work, so those names
-            # are taken. Refused rather than renamed: the run would otherwise write into a
-            # directory whose contents claim to belong to a different set of runs.
+            # are taken.
             errors.append(
                 f"line {lineno}: {RUN_ID} '{run_id}' is a name the pipeline uses itself. "
                 f"Results shared by every run are filed under All_Runs, and results shared "
@@ -158,7 +144,7 @@ def check(path):
     for _lineno, fields in body:
         run = {}
         for column, value in zip(header, fields):
-            # Blank means inherit; see the module docstring.
+            # A blank cell is omitted from the record, which is what makes it inherit.
             if column == RUN_ID or value != "":
                 run[column] = value
         runs.append(run)

@@ -13,18 +13,13 @@
 #   MALFORMED <tab> line <tab> which-file <tab>
 #   COUNTS  <tab> added <tab> changed <tab> removed <tab> malformed
 #
-# Exit 0 whether or not anything differs: this classifies, it does not judge. Deciding which
-# differences invalidate existing outputs is the caller's job. Exit 2 on a usage error.
+# Exit 0 whether or not anything differs: this classifies, it does not judge. Exit 2 on a usage
+# error.
 #
-# Why the distinction matters. A CHANGED value means the user altered a setting, and the
-# outputs on disk were produced with the old one. ADDED and REMOVED mean the set of
-# parameters itself moved, which is what a release does - the outputs predate the parameter
-# existing, so there is no earlier value to conflict with. A plain `diff` shows both as a
-# pair of +/- lines, which is why every release that introduced a parameter used to fail
-# every existing project and tell it to delete its results.
+# CHANGED is a key both files hold with different values; ADDED and REMOVED are keys only one of
+# them has, so the parameter set itself moved.
 #
-# Split on the FIRST '=' only. Values legitimately contain '=' (option strings do), and
-# splitting on the last or on every one would corrupt them.
+# Split on the FIRST '=' only: values legitimately contain '='.
 
 set -euo pipefail
 
@@ -43,10 +38,7 @@ for f in "$STORED" "$CURRENT"; do
     fi
 done
 
-# A blank line is ordinary padding and ignored. A non-blank line with no '=' is reported
-# rather than skipped: a manifest is machine-written, so a line that does not parse means
-# something upstream is wrong, and silently dropping it would hide a key from the comparison
-# and make a real change look like no change at all.
+# A blank line is padding; a non-blank line with no '=' is reported as MALFORMED, not skipped.
 awk '
     FNR == NR {
         if ($0 ~ /^[[:space:]]*$/) next

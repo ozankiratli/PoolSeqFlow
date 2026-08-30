@@ -21,7 +21,6 @@ def reorder_to_make_most_read_ref(vcf_file, output_file):
 
         for line in infile:
             if line.startswith("#"):
-                # Write header lines as-is
                 outfile.write(line)
                 continue
 
@@ -77,7 +76,6 @@ def reorder_to_make_most_read_ref(vcf_file, output_file):
             ] + new_samples) + "\n")
 
 def main():
-    # Set up argument parser
     parser = argparse.ArgumentParser(
         description='Reorder VCF alleles to make most frequent allele the reference'
     )
@@ -97,14 +95,11 @@ def main():
         help='Print progress information'
     )
 
-    # Parse arguments
     args = parser.parse_args()
 
-    # Check input file exists
     if not Path(args.input_vcf).exists():
         sys.exit(f"Error: Input file {args.input_vcf} does not exist")
 
-    # Check output directory exists
     output_dir = Path(args.output_vcf).parent
     if not output_dir.exists():
         sys.exit(f"Error: Output directory {output_dir} does not exist")

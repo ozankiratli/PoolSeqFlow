@@ -1,25 +1,20 @@
 #!/bin/bash
 
-# Same reasoning as filterFalsePositives.sh: without pipefail the SAMPLENAMES assignment
-# below takes its status from `cut`, so a failing bcftools yields an empty sample list and
-# a header row with no sample columns - while the query on the last line still emits data
-# for every sample. The frequency table then has more columns than headings.
+# pipefail is load-bearing: the SAMPLENAMES pipeline below ends in `cut`, which succeeds
+# whatever bcftools did.
 set -euo pipefail
 
-# Initialize variables
 VCF=""
 BCFTOOLS="bcftools"
 
-# Usage help function
 usage() {
-  echo "Usage: $0 -v <vcf-file> -t <threshold> -s <sensitivity> [-b <bcftools-path>]"
+  echo "Usage: $0 -v <vcf-file> [-b <bcftools-path>]"
   echo "Options:"
   echo "  -v <vcf-file>       Input VCF File (required)"
   echo "  -b <bcftools-path>  The path for bcftools. Default: 'bcftools'"
   exit 1
 }
 
-# Parse flags with getopts
 while getopts "v:b:" opt; do
   case $opt in
     v) VCF="$OPTARG" ;;
@@ -29,7 +24,6 @@ while getopts "v:b:" opt; do
   esac
 done
 
-# Validate required flags
 if [ -z "$VCF" ]; then
   echo "Error: -v <vcf-file>, is required" >&2
   usage

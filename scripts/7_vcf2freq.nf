@@ -1,22 +1,9 @@
-// Step 7 turns the called VCF into frequency tables, through four intermediates.
+// Step 7 turns the called VCF into frequency tables, through four intermediates, each consumed
+// and deleted by the next process.
 //
-// WHERE EACH FILE LIVES. Only Test.vcf coming in and the *_freq.tsv tables going out are
-// results. Everything between them - _sort, _sort_fp, _sort_fp_dq and the two split VCFs -
-// is consumed and deleted by the next process in the chain, so those never leave the
-// working volume and never need a two-root lookup: there is only ever one place they can
-// be. The frequency tables have no consumer at all and are written straight to permanent
-// storage. Test.vcf itself is promoted, but by step 6, not here.
-//
-// THE SKIP CHECKS LOOK DOWNSTREAM, not at their own output. A process here asks "has
-// anything later in the chain already been produced?" and if so writes a zero-byte
-// placeholder for its own output rather than redoing work whose result has already been
-// superseded. That is why SortRefAltByFrequency has five branches: it can be satisfied by
-// any of four later artifacts. Those later artifacts are all either transient or terminal,
-// which is what keeps every one of these checks single-rooted.
+// THE SKIP CHECKS LOOK DOWNSTREAM: a process asks whether anything later in the chain already
+// exists, and writes a zero-byte placeholder if so.
 
-// The pool sizes behind the false-positive filter's per-column sensitivity. A pool is a set of
-// rows sharing an RG_Sample, which is what bcftools makes one VCF column - so this is the only
-// place in step 7 that the metadata file reaches.
 include { poolSizeArgument } from './metadata.nf'
 
 process SortRefAltByFrequency {
@@ -29,8 +16,7 @@ process SortRefAltByFrequency {
     tuple val(run), path("*_sort.vcf"), emit: sorted_vcf
 
     script:
-    // Transient - see the header: consumed and deleted by the next process, so it stays
-    // on the working volume for its whole life.
+    // Transient: consumed and deleted by the next process, so it never leaves the working volume.
     target_folder_vcf = "${run.dir.utilized}/${run.dir.subpath.vcf}"
     target_folder_freq = "${run.dir.output.freq}"
 
@@ -54,14 +40,8 @@ process SortRefAltByFrequency {
     indel_vcf = "${indel_base}.vcf"
     target_indel_vcf = "${target_folder_vcf}/${indel_vcf}"
 
-    // The frequency-table names come from params.vcf.fileName, not from vcf.baseName. Every
-    // other name in this file accumulates suffixes as the VCF moves down the chain
-    // (Test -> _sort -> _fp -> _dq), but CalculateFrequencies strips them all back off before
-    // writing, so the tables are always Test_snp_freq.tsv / Test_indel_freq.tsv. Building
-    // these guards from vcf.baseName gave each process a different, suffixed name that no
-    // step ever writes - so on a rerun of a finished project the guards never matched, the
-    // vcftools passes ran again, and the split VCFs reappeared in Output/VCF after
-    // CalculateFrequencies had already consumed them.
+    // From vcf.fileName, NOT vcf.baseName: CalculateFrequencies strips the accumulated suffixes
+    // before writing.
     snp_freq_base = "${run.vcf.fileName}_snp_freq"
     snp_freq_tsv = "${snp_freq_base}.tsv"
     target_snp_freq_tsv = "${target_folder_freq}/${snp_freq_tsv}"
@@ -136,8 +116,7 @@ process FilterPotentialFalsePositives {
     tuple val(run), path("*_fp.vcf"), emit: filterfp_vcf
 
     script:
-    // Transient - see the header: consumed and deleted by the next process, so it stays
-    // on the working volume for its whole life.
+    // Transient: consumed and deleted by the next process, so it never leaves the working volume.
     target_folder_vcf = "${run.dir.utilized}/${run.dir.subpath.vcf}"
     target_folder_freq = "${run.dir.output.freq}"
 
@@ -169,10 +148,7 @@ process FilterPotentialFalsePositives {
     sensitivity = run.filterFalsePositives.sensitivity
     threshold = run.filterFalsePositives.sampleThreshold
 
-    // EVERY pool, named, including those taking the global poolSize - so the filter can refuse
-    // a VCF column it has no size for instead of falling back to `sensitivity` and filtering
-    // that pool at a resolution nobody chose. `sensitivity` stays the flat default for anyone
-    // running the script by hand.
+    // EVERY pool, named, including those taking the global poolSize.
     pool_sizes = poolSizeArgument(run)
     diploidy = run.diploidy
 
@@ -206,19 +182,10 @@ process FilterPotentialFalsePositives {
         ln -s ${target_filterfp_vcf} .
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: COMPLETED"
     else
-        # In the task directory, not system /tmp, and removed by the trap however the
-        # task ends. The plain rm further down only ran on the success path.
+        # In the task directory, not system /tmp, and removed by the trap however the task ends.
         TMP_FILE=\$(mktemp -p . --suffix=.vcf)
         trap 'rm -f "\$TMP_FILE"' EXIT
         
-        # Following code does the following:
-        # 1. Converts multiallelic sites into biallelic sites.
-        # 2. Filters out sites with 0 coverage.
-        # 3. Filters out low coverage and low allele frequency sites.
-        # 4. Replaces '*' with 'X' in the REF and ALT fields, for compatibility with bcftools norm.
-        # 5. Normalizes the VCF file.
-        # 6. Replaces back 'X' with '*' in the REF and ALT fields.
-        # 7. Reorders alleles to match the reference.
 
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Filtering possible false positives..."
         filterFalsePositives.sh -v ${vcf} -t ${threshold} -s ${sensitivity} \\
@@ -232,10 +199,7 @@ process FilterPotentialFalsePositives {
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Creating symbolic link..."
         ln -s ${target_filterfp_vcf} .
 
-        # No status check here. `set -eo pipefail` has already aborted the task if the
-        # move above failed, so reaching this line means the replacement is in place.
-        # This was guarded by `[ \$? -eq 0 ]`, which read the exit status of the `ln -s`
-        # on the line above rather than of the move it was written to check.
+        # No status check: `set -eo pipefail` would already have aborted a failed move.
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Removing input VCF file: ${vcf}..."
         rm \$(realpath ${vcf})
 
@@ -261,14 +225,12 @@ process DepthAndQualityFilter {
     tuple val(run), path("*_dq.vcf"), emit: filterdq_vcf
 
     script:
-    // Transient - see the header: consumed and deleted by the next process, so it stays
-    // on the working volume for its whole life.
+    // Transient: consumed and deleted by the next process, so it never leaves the working volume.
     target_folder_vcf = "${run.dir.utilized}/${run.dir.subpath.vcf}"
     target_folder_freq = "${run.dir.output.freq}"
 
-    // Depth-filtered intermediate. Stays in the task directory and is never moved to
-    // permanent storage - only the quality-filtered result is kept. Named _dp so it
-    // cannot be picked up by the process's own "*_dq.vcf" output glob.
+    // Depth-filtered intermediate, kept in the task directory. Named _dp so the process's own
+    // "*_dq.vcf" output glob cannot pick it up.
     filterdp_vcf = "${vcf.baseName}_dp.vcf"
 
     filterdq_base = "${vcf.baseName}_dq"
@@ -329,10 +291,7 @@ process DepthAndQualityFilter {
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Creating symbolic link..."
         ln -s ${target_filterdq_vcf} .
 
-        # No status check here. `set -eo pipefail` has already aborted the task if the
-        # move above failed, so reaching this line means the replacement is in place.
-        # This was guarded by `[ \$? -eq 0 ]`, which read the exit status of the `ln -s`
-        # on the line above rather than of the move it was written to check.
+        # No status check: `set -eo pipefail` would already have aborted a failed move.
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Removing input VCF file: ${vcf}..."
         rm \$(realpath ${vcf})
 
@@ -359,8 +318,7 @@ process SplitSNPsAndINDELs {
     tuple val(run), path("*_indel.vcf"), emit: indel_vcf
 
     script:
-    // Transient - see the header: consumed and deleted by the next process, so it stays
-    // on the working volume for its whole life.
+    // Transient: consumed and deleted by the next process, so it never leaves the working volume.
     target_folder_vcf = "${run.dir.utilized}/${run.dir.subpath.vcf}"
     target_folder_freq = "${run.dir.output.freq}"
 
@@ -387,17 +345,8 @@ process SplitSNPsAndINDELs {
     """
     set -eo pipefail
     echo "SPLIT SNPS AND INDELS ${vcf}: Splitting ${vcf.baseName} to SNP and INDEL VCFs..."
-    # AND, WHERE THE THREE PROCESSES ABOVE USE OR, AND THE DIFFERENCE IS NOT A SLIP.
-    #
-    # For them the question is "was my output already produced and consumed?", and ONE
-    # downstream artifact answers it: nothing downstream could exist without it. Their output
-    # is a single transient that its consumer deleted, so a dummy is right and rebuilding it
-    # would re-run the chain to make something nobody needs.
-    #
-    # This process has TWO outputs and one of them can be missing while the other is done. If
-    # only one frequency table exists, the other still has to be calculated - and calculating
-    # it needs a real split VCF, not the dummy this branch would emit. So both have to be
-    # there before the work can be called finished, which is also what the message says.
+    # AND, where the three processes above use OR: this one has TWO outputs, and calculating a
+    # missing table needs a real split VCF, not the dummy this branch emits.
     if [ -f ${target_snp_freq_tsv} ] && [ -f ${target_indel_freq_tsv} ]; then
         echo "SPLIT SNPS AND INDELS ${vcf}: Found both of the freq files"
         echo "SPLIT SNPS AND INDELS ${vcf}: Found: ${target_snp_freq_tsv} ${target_indel_freq_tsv}"
@@ -451,11 +400,8 @@ process SplitSNPsAndINDELs {
             echo "SPLIT SNPS AND INDELS ${vcf}: COMPLETED"
         fi
 
-        # Removed here and not a line earlier: this process is the one place in the chain
-        # that reads its input TWICE - once to pull out the SNPs, once for the INDELs - so
-        # it can only go after both passes. That is why the deletion was missing from this
-        # process alone while its three siblings had it, and why _sort_fp_dq.vcf was left
-        # sitting in Output/VCF beside the real results on every run since 1.0.
+        # After both passes, not a line earlier: this process is the one place in the chain that
+        # reads its input twice, once for the SNPs and once for the INDELs.
         echo "SPLIT SNPS AND INDELS ${vcf}: Removing input VCF file: ${vcf}..."
         rm \$(realpath ${vcf})
     fi
@@ -505,10 +451,7 @@ process CalculateFrequencies {
         echo "CALCULATE FREQUENCIES ${vcf}: Creating symbolic link..."
         ln -s ${target_freq_file} .
 
-        # No status check here. `set -eo pipefail` has already aborted the task if the
-        # move above failed, so reaching this line means the replacement is in place.
-        # This was guarded by `[ \$? -eq 0 ]`, which read the exit status of the `ln -s`
-        # on the line above rather than of the move it was written to check.
+        # No status check: `set -eo pipefail` would already have aborted a failed move.
         echo "CALCULATE FREQUENCIES ${vcf}: Removing input VCF file: ${vcf}..."
         rm \$(realpath ${vcf})
         echo "CALCULATE FREQUENCIES ${vcf}: COMPLETED"
@@ -533,8 +476,7 @@ workflow VCF2Frequencies {
     DepthAndQualityFilter(FilterPotentialFalsePositives.out.filterfp_vcf)
 
     prepared_vcfs = SplitSNPsAndINDELs(DepthAndQualityFilter.out.filterdq_vcf)
-    // Both halves carry their own run, so mixing them keeps each frequency table attached to
-    // the run that produced it - two tasks per run rather than two per invocation.
+    // Both halves carry their own run, so this is two tasks per run, not two per invocation.
     all_vcfs = prepared_vcfs.snp_vcf
         .mix(prepared_vcfs.indel_vcf)
 

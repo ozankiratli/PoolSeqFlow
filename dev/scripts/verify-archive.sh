@@ -9,9 +9,7 @@
 #
 # Prints the path of the archive it built on success.
 #
-# Kept here rather than inline in the workflows so the two cannot drift, and so
-# it can be run locally before pushing. dev/ carries export-ignore, so this file
-# never ships to a user.
+# dev/ carries export-ignore, so this file never ships to a user.
 
 set -euo pipefail
 
@@ -50,21 +48,18 @@ for f in atomic_mv.sh config_migrate.sh createDepthFile.sh \
     [ -f "$root/bin/$f" ] || fail "missing from archive: bin/$f"
 done
 
-# Repository furniture must NOT ship. This is the other half of .gitattributes:
-# if an export-ignore is dropped, this catches it.
+# Repository furniture must NOT ship: the other half of .gitattributes' export-ignore.
 for f in docs .github mkdocs.yml .gitignore .gitattributes dev Project; do
     [ ! -e "$root/$f" ] || fail "should have been export-ignored: $f"
 done
 
-# Compiled Python must not ship: it is one machine's bytecode for one interpreter
-# version, and it is regenerated on first use anyway. bin/__pycache__ was tracked and
-# did ship until 2.3.0. Note the executable-bit loop below would not catch it - a
-# directory carries the execute bit, so __pycache__ passes that check.
+# Compiled Python must not ship. Checked here and not by the executable-bit loop below, which a
+# directory passes.
 if find "$root" \( -name '__pycache__' -o -name '*.pyc' \) -print -quit | grep -q .; then
     fail "compiled Python found in the archive"
 fi
 
-# The executable bit is the whole reason for git archive over tar.
+# The executable bit, which the extracted copy must carry.
 [ -x "$root/PoolSeqFlow" ] || fail "./PoolSeqFlow is not executable"
 for s in "$root"/bin/*; do
     [ -x "$s" ] || fail "$(basename "$s") is not executable"

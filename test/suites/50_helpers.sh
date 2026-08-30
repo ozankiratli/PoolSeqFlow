@@ -759,3 +759,61 @@ A1,counted twice,Pop1
 '
     assert_status 0 "$PM_STATUS" "this is the user's own column"
 }
+
+# ---------------------------------------------------------------- citations --
+
+# Writes both citation files into a scratch directory and echoes it. Runs against the real
+# install/citations.json, so a malformed entry fails here rather than at the end of a run.
+write_citations() {
+    local annotate="$1"; shift
+    local out
+    out=$(guard_path "$TEST_TMPDIR/citations-$annotate")
+    rm -rf "$out"; mkdir -p "$out"
+    python3 "$REPO_ROOT/bin/write_citations.py" \
+        --data "$REPO_ROOT/install/citations.json" \
+        --out-dir "$out" --pipeline-version 3.0.0 --annotate "$annotate" \
+        "$@" >/dev/null 2>&1
+    CITE_STATUS=$?
+    printf '%s' "$out"
+}
+
+# Citing a tool the run never invoked is claiming a step that did not happen. `annotate` is
+# the case that exists today; the analysis layer will add more conditional tools, and this is
+# the rule they will follow.
+test_citations_omit_a_tool_the_run_did_not_invoke() {
+    local on off
+    on=$(write_citations true  bwa=0.7.19 snpEff=5.4.0c)
+    off=$(write_citations false bwa=0.7.19 snpEff=5.4.0c)
+
+    assert_contains "$(cat "$on/CITATIONS.md")" "SnpEff" \
+        "a run that annotates has invoked SnpEff"
+    assert_not_contains "$(cat "$off/CITATIONS.md")" "SnpEff" \
+        "a run with annotate = false has not, and must not cite it"
+    assert_not_contains "$(cat "$off/references.bib")" "cingolani" \
+        "and it must not reach the bibliography either"
+
+    # The rest of the list is unaffected - this removes one entry, not the section.
+    assert_contains "$(cat "$off/CITATIONS.md")" "BWA" "everything else is still cited"
+}
+
+# The version is the reason these are generated per run rather than shipped as a static list.
+test_citations_record_the_version_that_ran() {
+    local out; out=$(write_citations true bwa=0.7.19 trim_galore=0.6.10 snpEff=5.4.0c)
+    assert_contains "$(cat "$out/CITATIONS.md")" "BWA 0.7.19" "the readable list carries it"
+    # trim_galore and snpEff are the two whose display name does not lowercase into their key,
+    # so they are the ones a name-based lookup loses.
+    assert_contains "$(cat "$out/CITATIONS.md")" "Trim Galore 0.6.10" "including the awkward names"
+    assert_contains "$(cat "$out/references.bib")" "Version 0.6.10 used" "and so does the BibTeX"
+    assert_contains "$(cat "$out/references.bib")" "Version 5.4.0c used" "for every entry"
+}
+
+# SAMtools and BCFtools are one paper. Both tools are named for the reader; the bibliography
+# carries the reference once, because a duplicate key is a BibTeX error.
+test_citations_deduplicate_a_shared_reference() {
+    local out; out=$(write_citations false samtools=1.24 bcftools=1.24)
+    local md; md=$(cat "$out/CITATIONS.md")
+    assert_contains "$md" "SAMtools"  "both tools are named"
+    assert_contains "$md" "BCFtools"  "both tools are named"
+    assert_count 1 "$(grep -c '@article{danecek2021samtools,' "$out/references.bib")" \
+        "the shared reference should appear once"
+}

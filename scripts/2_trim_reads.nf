@@ -1,20 +1,11 @@
-// The roots a skip check searches. Under sharing an artifact this step reads may have
-// been produced by a variant with a coarser working root than its own, so the list comes
-// from the divergence analysis rather than being spelled out here.
+// The roots a skip check searches, from the divergence analysis.
 include { searchRoots } from './variants.nf'
 // Trim Galore's options for one sample: the run's, or the row's when it overrides the adapters.
 include { sampleTrimOptions } from './metadata.nf'
 
-// The (variant, sample) read channel.
-//
-// Takes the variant LIST rather than a channel because channel.fromFilePairs is a factory: it
-// globs the filesystem while the DAG is being built and fixes N there, so it has to be handed
-// a concrete parameter set. Reproducing its sample-id derivation by hand is exactly what step
-// 0's CheckMetadataFile must agree with, and having two implementations of that rule is how they
-// come to disagree - so the factory is called once per variant instead.
-//
-// One glob per step-2 variant and not per run: `reads` is part of step 2's identity, so every
-// member of a variant globs the same files by construction.
+// The (variant, sample) read channel, and what derives every sample id. Takes the variant LIST,
+// not a channel: channel.fromFilePairs globs while the DAG is built and fixes N there. One glob
+// per step-2 variant, not per run.
 def readPairChannel(List variants) {
     def per = variants.collect { variant ->
         channel.fromFilePairs("${variant.reads}", checkIfExists: true)
@@ -28,9 +19,7 @@ process TrimReads {
     cpus { run.cores.trimTotal }
 
     input:
-    // `verify` is step 0's completion for THIS run and nothing more - the script body never
-    // names it. `val`, not `file`: it was staged and never read, and under multiRun every run
-    // publishes a report of the same name.
+    // `verify` is step 0's completion for this run; the script never names it.
     tuple val(run), val(pair_id), path(read1), path(read2), val(verify)
 
     output:
@@ -42,23 +31,15 @@ process TrimReads {
         path("*_val_2_fastqc.zip"), emit: fastqc_files
 
     script:
-    // The reads this step produces are read again - by ClipReads, then by step 3 - so they
-    // are working data and stay on the working volume until alignment has finished with
-    // them. Utilized/ and Output/ take the same relative path, which is what lets the skip
-    // checks below ask find_artifact.sh which volume actually holds a file.
+    // Read again by ClipReads and then by step 3, so these stay on the working volume. Utilized/
+    // and Output/ take the same relative path, which is what the skip checks search.
     search_roots = searchRoots(run)
     rel_trimmed = "${run.dir.subpath.trimmed}/${pair_id}"
     target_folder_trimmed = "${run.dir.utilized}/${rel_trimmed}"
-    // The FastQC zips are read again too - ClipReads unzips them to work out the clipping
-    // bounds - so they are working data by the same rule, small though they are. They are
-    // promoted when ClipReads succeeds, which is a different gate from the reads above and
-    // therefore a separate attachment point. The htmls that FastQC writes beside them have
-    // no consumer at all, so those go straight to permanent storage and the two are split
-    // across the roots here rather than moved together.
+    // The zips are read again by ClipReads, on a different gate from the reads above.
     rel_fastqc = "${run.dir.subpath.report.fastqc}/${pair_id}"
     target_folder_fastqc_work = "${run.dir.utilized}/${rel_fastqc}"
-    // The rest is never read again - unpaired reads, the trim reports, the FastQC htmls -
-    // so it goes straight to permanent storage and never enters Utilized.
+    // The rest is never read again, so it goes straight to permanent storage.
     target_folder_unpaired = "${run.dir.output.unpaired}/${pair_id}"
     target_folder_fastqc = "${run.dir.output.report.fastqc}/${pair_id}"
     target_folder_report_trim = "${run.dir.output.report.trim}/${pair_id}"
@@ -78,31 +59,17 @@ process TrimReads {
 
     dir_log = "${run.dir.logs}/2_trim_reads"
 
-    // THIS SAMPLE'S OPTIONS, WHICH ARE THE RUN'S UNLESS ITS METADATA ROW SAYS OTHERWISE.
-    //
-    // A row that gives both adapter1 and adapter2 replaces the adapter fragment for that
-    // sample alone; anything else gets `run.trim_galore.options` unchanged, so a project with
-    // no overrides produces byte-identical commands to one from before the column existed.
-    // Step 0 refuses the one combination this cannot honour - a row with adapters against a
-    // pinned trim_galore.options - rather than quietly dropping one of the two.
+    // The run's, unless this sample's metadata row overrides both adapters.
     trim_options = sampleTrimOptions(run, "${pair_id}".toString())
 
-    // `cpus` reserves Trim Galore's full footprint, because --cores N actually runs N+4
-    // threads (N workers + 2 decompressors + 1 batcher + 1 writer). Map back to the
-    // worker count here. --cores 1 is the exception: it bypasses the pool entirely and
-    // is genuinely single-threaded, so a 1-core reservation stays 1 worker.
+    // `cpus` reserves the full footprint - --cores N runs N+4 threads - so map back to workers.
     trim_cores = task.cpus > 4 ? task.cpus - 4 : 1
 
     """
     set -eo pipefail
 
-    # The clipped reads are the artifact that can be on either volume: still under
-    # Utilized/ if alignment has not finished with them, in Output/ if it has. Asking one
-    # directory would re-trim a sample whose reads an earlier run already promoted. The
-    # roots are given permanent-first, so a residue copy cannot outrank a finished one.
-    #
-    # An absent artifact is find_artifact.sh's ordinary answer, not an error, so its exit
-    # status is discarded here and emptiness is what the branch tests.
+    # Either volume, permanent-first. An absent artifact is find_artifact.sh's ordinary answer,
+    # so emptiness is what the branch tests.
     clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" ${search_roots} || true)
     clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" ${search_roots} || true)
     fastqc1_at=\$(find_artifact.sh "${rel_fastqc}/${fastqc1}" ${search_roots} || true)
@@ -119,9 +86,8 @@ process TrimReads {
         touch ${fastqc2}
         echo "TRIMMING READS ${pair_id}: COMPLETED"
     elif [ -n "\$fastqc1_at" ] && [ -n "\$fastqc2_at" ] && [ -f ${target_file_val1} ] && [ -f ${target_file_val2} ]; then
-        # The *_val_* reads are looked for in one place on purpose: ClipReads deletes them
-        # rather than promoting them, so the working volume is the only place they can ever
-        # be. The zips it consumes are promoted, so those take both roots.
+        # The *_val_* reads take ONE root: ClipReads deletes them rather than promoting them.
+        # The zips it consumes take both.
         echo "TRIMMING READS ${pair_id}: Found existing trimmed files and FASTQC zip files"
         echo "TRIMMING READS ${pair_id}: Found: ${target_file_val1} ${target_file_val2}"
         echo "TRIMMING READS ${pair_id}: Found: \$fastqc1_at \$fastqc2_at"
@@ -137,10 +103,8 @@ process TrimReads {
             --cores ${trim_cores} --fastqc_args "-t ${task.cpus}" \\
             --basename ${pair_id} ${read1} ${read2}
 
-        # Split by whether anything reads it again. The zips are ClipReads' input, so they
-        # go to the working volume and are promoted once it has succeeded; the htmls are
-        # for you to look at and go straight to permanent storage. They end up in the same
-        # directory either way - Utilized/ mirrors Output/ - just not at the same time.
+        # Split by whether anything reads it again: the zips are ClipReads' input and go to the
+        # working volume, the htmls straight to permanent storage.
         echo "TRIMMING READS ${pair_id}: Moving FASTQC zips to ${target_folder_fastqc_work}"
         mkdir -p ${target_folder_fastqc_work}
         for f in *.zip; do atomic_mv.sh "\$f" ${target_folder_fastqc_work}/; done
@@ -194,15 +158,12 @@ process ClipReads {
         path("*_R2_clipped.fq.gz"), emit: clipped_fastqs
 
     script:
-    // Step 3 reads these, so they stay on the working volume and are promoted once
-    // alignment has succeeded for this sample. See TrimReads above.
+    // Step 3 reads these, so they stay on the working volume until alignment has succeeded.
     search_roots = searchRoots(run)
     rel_trimmed = "${run.dir.subpath.trimmed}/${pair_id}"
     target_folder_trimmed = "${run.dir.utilized}/${rel_trimmed}"
-    // The clipped FastQC zips and htmls this process produces have no consumer, so they go
-    // straight to permanent storage. The *_val_* zips it CONSUMES are the other case: they
-    // are on the working volume, staged in above, and promoted into this same directory
-    // once this process succeeds.
+    // The clipped zips and htmls produced here have no consumer, so they go straight to permanent
+    // storage. The *_val_* zips consumed here are promoted into this directory instead.
     target_folder_fastqc = "${run.dir.output.report.fastqc}/${pair_id}"
 
     clipped1 = "${pair_id}_R1_clipped.fq.gz"
@@ -221,9 +182,7 @@ process ClipReads {
     # FastQC is a JVM program; give it the cores this task reserved.
     export _JAVA_OPTIONS="${run.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
 
-    # Either volume, for the same reason as TrimReads: promotion may already have moved
-    # these to permanent storage. The link goes to wherever they actually are, not to
-    # where this process would have written them.
+    # Either volume: promotion may already have moved these, and the link follows.
     clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" ${search_roots} || true)
     clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" ${search_roots} || true)
 
@@ -248,10 +207,8 @@ process ClipReads {
 
         echo "CLIPPING READS ${pair_id}: Calculating clipping parameters..."
 
-        # Print the first and last cycle whose A/T and G/C ratios are both within
-        # tolerance. Cycles where T or C is zero are skipped: dividing by them aborts
-        # awk mid-pipeline, which plain `set -e` does not catch, leaving the bounds
-        # silently derived from a truncated table.
+        # The first and last cycle whose A/T and G/C ratios are both within tolerance. Cycles
+        # where T or C is zero are skipped: dividing by them aborts awk mid-pipeline.
         clip_range() {
             sed -n '/>>Per base sequence content/,/>>END_MODULE/p' "\$1" |
             head -n -1 | tail -n +2 |
@@ -277,8 +234,7 @@ process ClipReads {
                     }
                 }
                 END {
-                    # `exit 3` above still runs END, so re-assert it here or the
-                    # status below would overwrite the header diagnostic.
+                    # `exit 3` above still runs END, so re-assert it here.
                     if (bad_header) exit 3
                     if (first == "") exit 4
                     print first, last
@@ -306,8 +262,8 @@ process ClipReads {
             esac
         done
 
-        # Clip the 5' end by the larger of the two lower bounds, then truncate to the
-        # larger of the two usable spans. Unchanged from the original calculation.
+        # Clip the 5' end by the larger of the two lower bounds, then truncate to the larger of
+        # the two usable spans.
         Clip5=\$Min1
         if [ "\$Min2" -gt "\$Clip5" ]; then Clip5=\$Min2; fi
         rL1=\$(( Max1 - Clip5 ))
@@ -323,14 +279,9 @@ process ClipReads {
         echo "CLIPPING READS ${pair_id}: usable cycles R1 \$Min1-\$Max1, R2 \$Min2-\$Max2"
         echo "CLIPPING READS ${pair_id}: 5' clip=\$Clip5, read length limit=\$readLengthLimit"
 
-        # cutadapt applies -m (minimum length) AFTER -l (truncate to length), so a minimum
-        # above the read length limit computed just above discards every pair - and cutadapt
-        # still exits 0. That leaves empty clipped FASTQs which the existence-based skip
-        # checks would then treat as a finished step for good.
-        #
-        # The value is read out of cutadapt.options rather than taken from
-        # params.cutadapt.min_length, because that options line is user-edited and may carry
-        # a literal instead. No -m at all - the default - means nothing to check.
+        # cutadapt applies -m (minimum length) AFTER -l (truncate to length), so a minimum above
+        # the limit computed just above discards every pair while still exiting 0. The minimum is
+        # read out of the option string; no -m at all means nothing to check.
         clip_min_length() {
             set -- ${run.cutadapt.options}
             while [ \$# -gt 0 ]; do
@@ -345,8 +296,8 @@ process ClipReads {
 
         minLength=\$(clip_min_length)
         if [ -n "\$minLength" ]; then
-            # The paired form is "R1:R2". cutadapt's default --pair-filter=any drops the
-            # pair when either mate is too short, so the larger of the two is what binds.
+            # The paired form is "R1:R2", and --pair-filter=any drops the pair when either mate
+            # is too short, so the larger of the two binds.
             minR1=\${minLength%%:*}
             minR2=\${minLength#*:}
             if [ "\$minR2" = "\$minLength" ]; then minR2=\$minR1; fi
@@ -359,9 +310,6 @@ process ClipReads {
             done
 
             if [ "\$minValid" = no ]; then
-                # Deliberately a warning, not an error: this check exists to catch one
-                # specific trap, not to validate cutadapt's option grammar. An option string
-                # it cannot parse must not be able to block an otherwise valid run.
                 echo "CLIPPING READS ${pair_id}: WARNING: could not read a numeric minimum length from cutadapt.options; skipping the read length limit check" >&2
             else
                 minBinding=\$minR1
@@ -420,15 +368,11 @@ workflow TrimQcClip{
     verify    // [run, step 0 completion for that run]
 
     main:
-    // combine, not join, and by the run rather than positionally. Step 0 emits ONE report
-    // per run against N samples, so this is the broadcast a value channel used to do
-    // implicitly - written out, because with N runs in flight there is no longer a single
-    // value to broadcast.
+    // combine, not join, and by the run: step 0 emits one report per run against N samples.
     TrimReads(reads.combine(verify, by: 0))
 
-    // by: [0,1] - the run AND the sample. Joining on the sample alone would pair one run's
-    // reads with another run's zips whenever both trim a sample of the same name, which is
-    // the ordinary case: multi-run's whole point is the same data under different settings.
+    // by: [0,1] - the run AND the sample; on the sample alone one run's reads would pair with
+    // another run's zips.
     trimmed_and_qc = TrimReads.out.trimmed_fastqs.join(TrimReads.out.fastqc_files, by: [0, 1])
     ClipReads(trimmed_and_qc)
 

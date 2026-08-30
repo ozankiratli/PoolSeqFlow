@@ -67,6 +67,34 @@ test_release_archive_carries_the_runtime() {
     done
 }
 
+# The built site is development material and stays out; the manual it is generated from
+# ships, so a download carries its own documentation with no network and no site visit.
+# The attribute is checked directly because it is the rule that has to hold, and it holds
+# before the manual is first committed; the archive is checked too once it is tracked.
+test_release_archive_carries_the_manual() {
+    local manual="manual/PoolSeqFlow-manual.md"
+    [ -f "$REPO_ROOT/$manual" ] || { fail_case "$manual is missing"; return; }
+    local attr
+    attr=$(cd "$REPO_ROOT" && git check-attr export-ignore -- "$manual")
+    assert_contains "$attr" "unspecified" "the manual must not be export-ignore'd out of a release"
+
+    (cd "$REPO_ROOT" && git ls-files --error-unmatch "$manual" >/dev/null 2>&1) || return 0
+    local listing
+    listing=$(cd "$REPO_ROOT" && git archive HEAD 2>/dev/null | tar -t 2>/dev/null)
+    [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
+    assert_contains "$listing" "$manual" "release tarball must carry the manual"
+}
+
+# Parses the manual, resolves every cross-reference and rebuilds the nav in memory. Catches
+# a link to a heading that no longer exists, two headings competing for one anchor, and a
+# nav left behind by a page that moved - none of which are visible until the site is built.
+test_manual_is_valid_and_the_nav_is_current() {
+    local out status
+    out=$(cd "$REPO_ROOT" && python3 dev/scripts/build_docs.py --check 2>&1)
+    status=$?
+    assert_eq "0" "$status" "the manual does not generate cleanly:"$'\n'"$out"
+}
+
 # The version is written in three places and they have to agree, or release.yml refuses to
 # publish. Cheaper to catch here than in CI.
 test_version_is_consistent_across_all_three_places() {

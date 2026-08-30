@@ -2,8 +2,6 @@ include { derivedParameterNames } from './resolve_parameters.nf'
 include { knownParameterNames } from './resolve_parameters.nf'
 include { dig; deepCopyVariant; runToken } from './variants.nf'
 include { sharingGroups; parentVariant; childVariants; variantForRun } from './variants.nf'
-// The metadata file's projections. Step 0 compares one of them against the copy beside the
-// results, and reports the pooling another of them implies.
 include { metadataGuardLines; samplesWithAdapterOverrides; trimOptionsArePinned;
           poolSizes; poolSizeColumn } from './metadata.nf'
 
@@ -17,42 +15,13 @@ def flattenParams(Map m, String prefix, Map out) {
     return out
 }
 
-// The parameters that decide what the numbers are. Everything else - where files live,
-// how many cores to use, where a tool is installed - can change freely between runs
-// without invalidating an existing result.
-//
-// This is an exclusion list on purpose: a parameter added in a later release is treated
-// as analysis-affecting until someone decides otherwise, which fails safe. Add new path
-// or resource parameters here.
-//
-// Takes the run's own effective parameters rather than reading the global `params`. Called
-// once per run, it would otherwise write N identical manifests describing the base config -
-// so every run would record settings it did not use, and the guard would never fire.
-//
-// Returns the `key=value` lines rather than one joined string, because sharedParameters() below
-// needs to compare them key by key.
+// The parameters that decide what the numbers are, as `key=value` lines. Takes a run's own
+// effective parameters, never the global `params`.
 def analysisParams(Map p) {
-    // dataSource is deliberately NOT excluded. It names the subdirectory the reads are read
-    // from, so two different datasets under one storageDir are two different analyses - and
-    // while it was excluded, both passed this check and the second run reused the first
-    // dataset's trimmed reads, because step 2 keys its skip test on the sample id alone.
-    // Nothing recorded which data produced a set of outputs.
-    //
-    // runId is excluded for the same reason mainDir and storageDir are: it names where the
-    // results go, not what they are. It is also the one key here that does not exist in
-    // parameters.config at all, so leaving it in would add a line to every manifest and fail
-    // the change check on every project that upgrades into 3.0.
-    // dryRun and dryRunDir describe the INVOCATION, not the project: one says this is a
-    // preview rather than a run, the other says where to put the preview. Leaving them in
-    // would make every dry run report the parameters as changed - `dryRun=true` against a
-    // stored `dryRun=false` - which is the one thing a preview must not do.
+    // Excluded: paths, resources, tool locations, and the parsed metadata, which has its own
+    // guard. Everything not named here counts as analysis-affecting.
     def skipKey = [
         'mainDir', 'storageDir', 'runId', 'dryRun', 'dryRunDir',
-        // `metadata` is the parsed contents of the metadata file, carried in every run map. It
-        // is excluded because the metadata change guard already compares its own projection of
-        // it - read groups and the columns that change a number, never the design columns - and
-        // flattening it in here would put the whole file in the parameter manifest, so adding a
-        // column of your own would fail the parameter check as a changed parameter.
         'metadata',
         'referencePath', 'gffPath', 'metadataPath', 'multiRunPath', 'referenceFa', 'reference', 'gff', 'reads',
         'threads', 'memory'
@@ -64,13 +33,7 @@ def analysisParams(Map p) {
         .sort()
 }
 
-// Turn a readPattern into a find(1) expression matching both mates.
-//
-// The mate group cannot become a bracket class: `{1,2}` -> `[1,2]` happens to work only
-// because each alternative is one character. `{R1,R2}` -> `[R1,R2]` is a class matching a
-// single character out of R, 1, ',' or 2, so it matches no real FASTQ at all - the check
-// then finds nothing and passes vacuously while the run has no data. Expanding the group
-// into one -name per alternative is exact for any length.
+// Turns a readPattern into a find(1) expression matching both mates, one -name per alternative.
 def findNameExpr(String pattern) {
     def open  = pattern.indexOf('{')
     def close = pattern.indexOf('}')
@@ -83,49 +46,23 @@ def findNameExpr(String pattern) {
     return '\\( ' + alts.collect { alt -> "-name '${head}${alt}${tail}'" }.join(' -o ') + ' \\)'
 }
 
-// WHAT EACH CHECK READS, and therefore how many times it needs to run.
-//
-// Step 0 used to run every stage once per run, so three runs against one reference produced
-// three CheckReference tasks and three identical reports for one file. Z, 2026-08-27: *"the
-// pipeline first needs to parse out the multi-run csv, and decide on the shape of the pipeline.
-// Then the checks should represent each step that is needed by the pipeline. Otherwise we are
-// creating redundant and confusing log files for people to review and it will be harder to
-// fix."* A check now runs once per distinct value of what it actually reads, and its verdict is
-// handed back to every run that shares that value.
-//
-// AUTHORED, and carrying the same risk as stepParameterMap(): name too few parameters and one
-// run's verdict is used for a run whose value differs - which is worse here than there, because
-// catching exactly that is what the check is for. A case in test/suites/00_static.sh
-// re-extracts each process body and fails if it reads anything its entry does not declare.
-//
-// The names are dotted paths into a RUN's own parameters, read with dig(). Never `params`,
-// which is the base configuration rather than what any particular run is using.
+// What each check reads, and therefore how many times it runs: once per distinct value, with the
+// verdict handed back to every run sharing it. Dotted paths into a run's own parameters.
 def checkParameterMap() {
     return [
-        // The user-placed files, one check per file however many runs name it. Deliberately not
-        // step 1's dictionary key, which is a (reference, GFF) PAIR: what this stage asks is
-        // whether one file is on disk, so one file is one check.
+        // One check per file, however many runs name it.
         CheckReference     : ['referencePath'],
         CheckGFF           : ['gffPath'],
-        // SkipGFFCheck reads nothing - its report is two fixed lines - so one task serves every
-        // run that does not annotate. An empty list is a statement, not an omission.
+        // Reads nothing: its report is two fixed lines.
         SkipGFFCheck       : [],
-        // dir.data is mainDir + dataSource; dataSource is named as well because the report
-        // prints it, and a name that reaches the report is a name that decides the report.
         CheckData          : ['dir.data', 'dataSource', 'readPattern'],
         CheckTrimParameters: ['trim_galore.autodetect', 'trim_galore.adapter1',
                               'trim_galore.adapter2'],
-        // Two of the four roots. The other two - the installation and the launch directory -
-        // are properties of the invocation and cannot differ between runs.
         CheckDirectories   : ['mainDir', 'storageDir'],
     ]
 }
 
-// The key two runs must share to share a check.
-//
-// THE STORAGE ROOT IS PART OF EVERY KEY, for the reason variantKey() gives: a check writes a
-// log, and two runs whose storageDir columns differ have no directory in common to put it in.
-// Prefixing makes them simply never group, rather than needing a refusal or a special case.
+// The key two runs must share to share a check. The storage root is part of it.
 def checkKey(Map run, String check) {
     def names = checkParameterMap()[check]
     if (names == null) {
@@ -139,11 +76,6 @@ def checkKey(Map run, String check) {
 }
 
 // The tasks a check will run: one per distinct key, each carrying the runs it answers for.
-//
-// The lead member is the lowest RunID rather than the first table row, exactly as variantsAt()
-// picks one, so reordering the CSV cannot change which run's map a shared check carries. It is
-// a deep copy for the same reason a variant is: the item gains its own bookkeeping and must not
-// write it into a run map that the rest of the pipeline is still reading.
 def checkGroups(List runDefs, String check) {
     def groups = [:]
     runDefs.each { run ->
@@ -161,47 +93,20 @@ def checkGroups(List runDefs, String check) {
     }
 }
 
-// WHERE A STEP-0 STAGE WRITES ITS LOG, and why it is not a run's own Logs tree.
-//
-// A check keyed to what it validates can answer for two runs out of three, which belongs to
-// neither of their trees - and step 0 runs before any run has results for a log to sit beside.
-// So every stage here logs at invocation level, which is what the three stages that were
-// already not per run - CheckInstalledSoftware and CheckMultiRun - have
-// done since E1t. `All_Runs` means "the invocation" in this one place rather than "shared by
-// every run"; the file name says which runs each task actually answered for.
-//
-// VerifyAll is the exception and stays in the run's own tree, because it really is per run.
-//
-// ONE DIRECTORY PER WORKFLOW (Z, 2026-08-28), not one per process. Every log file already
-// carries the step, the stage and the runs it answered for, so the directory was repeating
-// what the name already said - at the cost of a level of nesting per process, in a tree the
-// user is expected to read. The one-writer-per-file rule is carried by the FILE NAME, which is
-// why collapsing the directories cannot break it.
+// Where a step-0 stage writes its log: invocation level. VerifyAll is the exception and is per
+// run.
 def checkLogDir(Map check) {
     def root = params.multiRun ? "${check.storageDir}/Logs/All_Runs" : "${check.storageDir}/Logs"
     return "${root}/0_verify_environment".toString()
 }
 
-// ONE WRITER PER FILE. Tasks append to their log without locking, which is safe only while no
-// two of them share a file - and a keyed check runs N times into one directory. Naming the file
-// after the runs it answered for makes collision impossible and says who it is about.
-//
-// The repair stage this once described had it wrong since E1t, and is gone with the rest of
-// the RGTags handling: two runs naming two different tables gave two tasks appending to one
-// file.
-//
-// Single run: no synthetic key anywhere (settled rule 3), so the name is exactly what it was.
+// One log file per stage, named after the runs it answered for. One writer per file.
 def checkLogFile(Map check, String stage) {
     def token = check.runId == null ? '' : "_${check.members.collect { m -> runToken(m) }.join('+')}"
     return "0_VerifyEnvironment_${stage}${token}_nextflow.log".toString()
 }
 
 // A check's verdict, handed back to every run it answers for.
-//
-// combine(by: 0) on the key rather than a join: what is matched is the same string computed by
-// one function on both sides, and every run reaches exactly one task of every check that
-// applies to it. A join would drop an unmatched key silently, which is the failure mode this
-// whole design exists to avoid.
 def reportPerRun(Object runs, Object reports, String check) {
     return runs
         .map { run -> tuple(checkKey(run, check), run) }
@@ -209,44 +114,22 @@ def reportPerRun(Object runs, Object reports, String check) {
         .map { _key, run, report -> tuple(run, report) }
 }
 
-// THE METADATA CHANGE GUARD IS KEYED TO THE STEP-6 VARIANT, and nothing coarser will do.
-//
-// What it asks is whether the file has been edited since the things that absorbed it were
-// produced - the read group values, which step 4 bakes into each BAM, and the row order, which
-// step 6 turns into the VCF's sample column order. So its answer depends on the CONTENT of two
-// directories, and two runs may share the file and still have different ones.
-//
-// Step 6's key is the finest of the two and contains step 4's, so runs that share it share both
-// artifacts and therefore share one answer. Anything coarser lets a run with no BAMs decide for
-// a run that has them - and the branch below treats "no BAMs and no VCF" as "nothing has
-// consumed the file yet" and RECORDS A NEW BASELINE, so the edit would be adopted while the
-// BAMs on disk still carried the old read groups. Every other wrong existence answer in this
-// pipeline costs redundant work; this one costs the guard itself.
-//
-// THE PROBE LOOKS IN FOUR PLACES, NOT TWO. Permanent storage as well as the working volume, and
-// the producing VARIANT's directories rather than the member's own: since sharing was turned on
-// the ready BAMs are promoted to (say) Output/All_Runs/Ready, which no member's own Output/
-// contains - so a guard that looked only there answered 0 on every invocation after promotion
-// and had already stopped guarding.
+// The metadata change guard: has the file been edited since the read groups step 4 baked into
+// each BAM, and the row order step 6 turned into the VCF's sample columns? One per step-6 variant.
 def metadataChecks(Map plan) {
     return plan.variants[6].collect { variant ->
-        // The BAMs came from step 4, which is step 6's parent; the filtered VCFs and the
-        // frequency tables are step 7's, which may be several branches below one call.
+        // The BAMs are step 4's, which is step 6's parent; the VCFs and tables are step 7's.
         def ready = parentVariant(plan, variant)
         def filtered = childVariants(plan, variant, 7)
 
-        // What has to go for an edit to become the new baseline, in the order it is listed.
-        // The row order lives only in the called VCF and everything derived from it; the read
-        // group values live in the BAMs as well, which is why the lists differ by one entry.
+        // What has to go for an edit to become the new baseline. Row order lives only in the
+        // called VCF and what follows it; read group values live in the BAMs too.
         def orderDelete = ([variant.dir.output.vcf] +
                            filtered.collect { child -> child.dir.output.vcf } +
                            filtered.collect { child -> child.dir.output.freq })
                           .collect { d -> d.toString() }.unique()
 
-        // WHICH ROWS MERGE INTO ONE COLUMN. Rows sharing an RG_Sample are one pool: bcftools
-        // names VCF sample columns by SM, so their reads are pooled and their depths added.
-        // That is the one thing in this file that silently changes what a result MEANS rather
-        // than whether it is produced, so step 0 states it before any compute is spent.
+        // Which rows merge into one column: rows sharing an RG_Sample are one pool.
         def pools = [:]
         variant.metadata.each { row ->
             def pool = "${row.RG_Sample}".toString()
@@ -259,21 +142,14 @@ def metadataChecks(Map plan) {
                 storageDir  : variant.storageDir,
                 members     : variant.members,
                 checkTag    : variant.members.collect { m -> runToken(m) }.join('+'),
-                // The key of the CheckData task whose verdict this stage reads. Every member
-                // shares it: step 2's identity contains `reads`, which is dir.data plus
-                // readPattern, and step 6's identity contains step 2's.
+                // The CheckData task whose verdict this stage reads; every member shares it.
                 dataKey     : checkKey(variant, 'CheckData'),
                 metadataPath: "${variant.metadataPath}".toString(),
                 sampleIds   : variant.metadata.collect { row -> "${row.SampleID}".toString() },
                 pooled      : pools.findAll { _pool, ids -> ids.size() > 1 }
                                    .collect { pool, ids -> [pool: pool, ids: ids.sort()] }
                                    .sort { a, b -> a.pool <=> b.pool },
-                // HOW MANY INDIVIDUALS EACH COLUMN STANDS FOR. It sets that column's detection
-                // limit, so like the pooling above it changes what a result MEANS rather than
-                // whether one is produced - and like the pooling, it is stated before any
-                // compute is spent. Only the pools that override are listed: a project using
-                // the global poolSize throughout would otherwise get a line per sample saying
-                // the same number.
+                // Only the pools that set param_poolSize.
                 poolOverrides: variant.metadata
                                    .findAll { row -> row[poolSizeColumn()] }
                                    .collect { row -> "${row.RG_Sample}".toString() }
@@ -281,33 +157,20 @@ def metadataChecks(Map plan) {
                                    .sort()
                                    .collect { pool -> [pool: pool, size: poolSizes(variant)[pool]] },
                 globalPoolSize: "${variant.poolSize}".toString(),
-                // The projection the guard compares - read groups and the columns that change a
-                // number, never the design columns. See scripts/metadata.nf.
+                // What the guard compares: read groups and the columns that change a number.
                 guardLines  : metadataGuardLines(variant),
-                // A row that overrides the adapters cannot be honoured when the run pins
-                // trim_galore.options outright, so the combination is refused rather than
-                // silently resolved in one direction.
                 adapterOverrides: samplesWithAdapterOverrides(variant),
                 optionsPinned: trimOptionsArePinned(variant),
                 dataDir     : "${variant.dir.data}".toString(),
                 readPattern : "${variant.readPattern}".toString(),
                 samtools    : "${variant.software.samtools}".toString(),
-                // Beside the results it describes: the baseline belongs in the directory holding
-                // the VCF whose column order it decided, which for a shared step is the group's
-                // rather than any one member's.
                 storedMeta  : "${variant.dir.outputs}/.poolseqflow_metadata".toString(),
                 readyOut    : "${ready.dir.output.ready}".toString(),
                 readyWork   : "${ready.dir.utilized}/${ready.dir.subpath.ready}".toString(),
                 vcfOut      : "${variant.dir.output.vcf}".toString(),
                 vcfWork     : "${variant.dir.utilized}/${variant.dir.subpath.vcf}".toString(),
                 orderDelete : orderDelete,
-                // A POOL SIZE CHANGE INVALIDATES THE FILTER AND NOTHING ELSE. It is a step 7
-                // parameter: the BAMs carry read groups, which it does not touch, and the
-                // called VCF is the filter's INPUT rather than its output. So this deletes what
-                // step 7 derived - the frequency tables, and the working intermediates whose
-                // existence is what the skip checks read - and leaves the expensive half of the
-                // analysis alone. Lumping it in with a read group edit would have told people
-                // to realign everything to change one number.
+                // A pool size change invalidates only what step 7 derived.
                 sizeDelete  : (filtered.collect { child -> child.dir.output.freq } +
                                filtered.collect { child ->
                                    "${child.dir.utilized}/${child.dir.subpath.vcf}" })
@@ -499,18 +362,10 @@ process CheckData {
     """
 }
 
-// THE SAMPLE METADATA, AND WHAT IT HAS ALREADY DECIDED.
-//
-// Much smaller than the stage it replaces, because bin/parse_metadata.py now owns everything
-// that is a property of the FILE - unknown RG_ columns, duplicate SampleIDs, ragged rows,
-// half-set adapter pairs - and runs while the DAG is being built, before this exists. What is
-// left here is everything that needs the project rather than the file: whether the reads and
-// the rows describe the same samples, which rows merge into one pool, and whether the file has
-// been edited since the results that absorbed it were produced.
-//
-// The empty-value check went with the rest. It refused any blank cell, which was right when
-// every column was a read group tag and is wrong now: a blank RG_ cell omits that tag on
-// purpose, and a blank design column is just a blank.
+// The sample metadata, checked against the project: whether the reads and the rows describe the
+// same samples, which rows merge into one pool, how big each pool is, and whether the file has
+// been edited since the results that absorbed it were produced. Everything that is a property of
+// the FILE alone belongs to bin/parse_metadata.py and has already run.
 process CheckMetadataFile {
     tag { check.checkTag }
 
@@ -524,10 +379,8 @@ process CheckMetadataFile {
     metadataFile = check.metadataPath
     dataDir = check.dataDir
     readPattern = findNameExpr(check.readPattern)
-    // A sample ID is the part of a FASTQ name that precedes the mate token. Take that
-    // token from readPattern rather than assuming _R1/_R2: step 2 keys every sample off
-    // Channel.fromFilePairs, which derives the prefix from the glob and accepts any
-    // {1,2} scheme, so this check has to agree with it or it rejects valid layouts.
+    // A sample ID is the part of a FASTQ name before the mate token, which comes from
+    // readPattern, as step 2's own Channel.fromFilePairs derives it.
     mateBrace = check.readPattern.indexOf('{')
     mateClose = check.readPattern.indexOf('}')
     hasMateGroup = mateBrace >= 0 && mateClose > mateBrace
@@ -535,36 +388,27 @@ process CheckMetadataFile {
     mateTail = hasMateGroup ? check.readPattern.substring(mateClose + 1) : ''
     mateAlts = hasMateGroup ? check.readPattern.substring(mateBrace + 1, mateClose).split(',').collect { alt -> alt.trim() } : []
 
-    // The mate token must be separated from the sample name. Without a separator the
-    // split is guesswork: Sample11/Sample12 are equally readable as one sample's two
-    // mates or as two different samples, so refuse rather than pick one.
+    // The mate token must be separated from the sample name: Sample11/Sample12 read equally as
+    // one sample's two mates and as two samples.
     mateSeparators = ['_', '.', '-']
     mateSeparated = hasMateGroup && mateAlts.every { alt ->
         mateSeparators.any { sep -> (matePrefix + alt).startsWith(sep) }
     }
 
-    // Strip the exact text the pattern says follows the sample name, one alternative at
-    // a time. Literal, so it holds for non-numeric mates (_F/_R) too.
+    // Strips the exact text the pattern says follows the sample name, one alternative at a time.
     stripMate = mateAlts.collect { alt -> 'base="${base%' + matePrefix + alt + mateTail + '}"' }.join('; ')
     storedMeta = check.storedMeta
-    // FOUR ROOTS, NOT TWO, and all of them the producing variant's - see metadataChecks() for
-    // why each half of that matters. Permanent storage and the working volume both, because the
-    // branch below reads "no BAMs and no VCF" as "nothing has consumed the file yet" and
-    // records a new baseline; and the variant's directories rather than a member's, because a
-    // shared artifact is promoted to the group's directory and appears in no member's own.
+    // Where the producing variant left them: both volumes for the BAMs, both for the VCF.
     readyDirOut = check.readyOut
     readyDirWork = check.readyWork
     vcfDirOut = check.vcfOut
     vcfDirWork = check.vcfWork
-    // What has to be deleted for an edit to take effect, rendered as log_message calls because
-    // there may be several: one call per step-7 branch below this VCF.
     readyDir = check.readyOut
+    // What has to be deleted for an edit to take effect, one log_message call per directory.
     tagDeleteBlock = check.tagDelete.collect { d -> "        log_message \"    ${d}\"" }.join('\n')
     orderDeleteBlock = check.orderDelete.collect { d -> "                log_message \"    ${d}\"" }.join('\n')
     sizeDeleteBlock = check.sizeDelete.collect { d -> "            log_message \"    ${d}\"" }.join('\n')
     sizeColumn = poolSizeColumn()
-    // The rows as the guard sees them, and the sample ids as the reads check compares them.
-    // Rendered here, from the parsed file, so the task never touches a CSV.
     guardBlock = check.guardLines.join('\n')
     idsBlock = check.sampleIds.join('\n')
     poolBlock = check.pooled.isEmpty()
@@ -586,8 +430,6 @@ process CheckMetadataFile {
             '    STATUS="FAIL"']).join('\n')
         : '    :'
     dir_log = checkLogDir(check)
-    // The file has always been named for the stage rather than for the process; kept, so that a
-    // single run's log tree is the same tree it was.
     log_file = checkLogFile(check, 's4_CheckMetadata')
 
     """
@@ -601,9 +443,7 @@ process CheckMetadataFile {
         echo "\$1"
     }
 
-    # THE ROWS, AS THE PIPELINE READ THEM. Not the file: bin/parse_metadata.py parsed it once
-    # while the DAG was being built, and what arrives here is the projection the guard compares
-    # - read groups and the columns that change a number, never the design columns.
+    # The guard's projection of the rows, not the file itself.
     cat > current_metadata.txt <<'METADATA'
 ${guardBlock}
 METADATA
@@ -631,10 +471,7 @@ SAMPLEIDS
         log_message "Sample metadata file exists: ${metadataFile}"
         log_message "METADATA FILE CHECK:   PASS"
 
-        # THE READS AND THE ROWS MUST DESCRIBE THE SAME SAMPLES.
-        #
-        # Derived from readPattern rather than assumed, because step 2 derives it that way and
-        # two implementations of one rule is how they come to disagree.
+        # The reads and the rows must describe the same samples.
         if [ "${hasMateGroup}" != "true" ]; then
             sample_ids=""
             log_message "readPattern '${check.readPattern}' has no {1,2} mate group, so sample IDs cannot be derived"
@@ -657,7 +494,7 @@ SAMPLEIDS
             done | sort -u)
 
             MATCHED="yes"
-            # Reads with no row: a hard failure. Step 4 would have no read group to write.
+            # Reads with no row: a hard failure.
             for sample in \$sample_ids; do
                 if ! grep -qxF "\$sample" metadata_ids.txt; then
                     log_message "Sample '\$sample' has reads but no row in ${metadataFile}"
@@ -671,10 +508,7 @@ SAMPLEIDS
                 log_message "METADATA SAMPLE MATCH: PASS"
             fi
 
-            # A row with no reads is the other direction, and it is NOT a failure: a table
-            # kept ahead of the data is a reasonable thing to have. It is said out loud
-            # because the row still counts - it is part of what decides whether two runs
-            # share step 6 - and because it is usually a typo in a sample name.
+            # A row with no reads is reported but not a failure.
             printf '%s\\n' \$sample_ids > read_ids.txt
             while IFS= read -r row_id; do
                 [ -n "\$row_id" ] || continue
@@ -684,28 +518,15 @@ SAMPLEIDS
             done < metadata_ids.txt
         fi
 
-        # WHICH ROWS BECOME ONE COLUMN. bcftools names VCF sample columns by SM, so rows that
-        # share an RG_Sample are pooled - their reads merged and their depths added. Stated
-        # before any compute is spent, because it changes what the numbers MEAN and nothing
-        # downstream can tell you it was not what you wanted.
+        # Which rows become one column: rows sharing an RG_Sample are pooled.
 ${poolBlock}
 
-        # AND HOW MANY INDIVIDUALS EACH OF THOSE COLUMNS STANDS FOR, which sets its detection
-        # limit: sensitivity = 1 / (2 * diploidy * poolSize) is the smallest allele fraction a
-        # pool that size can produce, and the false-positive filter drops everything below it.
+        # And how many individuals each column stands for.
 ${sizeBlock}
 
 ${adapterBlock}
 
-        # Detect edits made after the file was already consumed. Step 4 bakes the read group
-        # into each BAM, and the row order sets the sample column order of the VCF in step 6.
-        # Neither is re-derived once its output exists, so an edit after that point leaves the
-        # results describing a version of this file that is no longer on disk - silently,
-        # because completed steps are skipped by looking for output files rather than by
-        # checking what produced them.
-        #
-        # Test each candidate separately: 'ls a b' reports failure when either operand is
-        # missing, so a single ls over two globs would call an existing VCF absent.
+        # Detect edits made after the file was already consumed.
         any_exists() {
             for f in "\$@"; do
                 [ -e "\$f" ] && return 0
@@ -716,30 +537,18 @@ ${adapterBlock}
         HAVE_VCF=0;  any_exists ${vcfDirOut}/*.vcf ${vcfDirOut}/*.vcf.gz \\
                                 ${vcfDirWork}/*.vcf ${vcfDirWork}/*.vcf.gz && HAVE_VCF=1
 
-        # Every message about the baseline is written in this verb, so a dry run cannot
-        # report having recorded something it did not write.
+        # Every message about the baseline uses this verb.
         RGVERB="Recording"
         if [ "\$DRY_RUN" = "true" ]; then RGVERB="Would record"; fi
 
-        # A dry run never records a baseline. This is the only writer, so guarding it here
-        # covers both branches that call it - and it is a guard rather than a caller-side
-        # check because the two callers are the two branches where a preview is most tempting
-        # to treat as a real run: nothing has consumed the file yet, so recording "costs
-        # nothing". It costs the next real run its baseline.
+        # The only writer of the baseline, and where the dry-run guard sits.
         record_baseline() {
             if [ "\$DRY_RUN" = "true" ]; then return 0; fi
             mkdir -p "\$(dirname "${storedMeta}")"
             cp current_metadata.txt "${storedMeta}"
         }
 
-        # A guard line with the pool size field removed, so two of them compare equal exactly
-        # when the sizes are the only thing that moved.
-        #
-        # awk rather than `sed 's/\\t${sizeColumn}=[^\\t]*//'`, which is what this was: \\t in a
-        # sed PATTERN is a GNU extension, and BSD sed reads it as a literal 't' without
-        # complaining. The comparison would then never hold, the pool size branch below would
-        # never be reached, and a size edit would be reported as a read group change - telling
-        # the user on that machine to delete every BAM. Silent, and only on their machine.
+        # A guard line with the pool size field removed.
         drop_size() {
             awk -F'\\t' -v OFS='\\t' '{
                 out = \$1
@@ -749,13 +558,10 @@ ${adapterBlock}
         }
 
         if [ "\$HAVE_BAMS" -eq 0 ] && [ "\$HAVE_VCF" -eq 0 ]; then
-            # Nothing has consumed the file yet, so an edit costs nothing. Record it.
             record_baseline
             log_message "\$RGVERB the metadata baseline - nothing has consumed the file yet"
             log_message "METADATA CHANGE CHECK: PASS"
         elif [ ! -f "${storedMeta}" ]; then
-            # Outputs from before this check existed. There is no baseline to compare
-            # against and no way to reconstruct one, so adopt the current file and say so.
             record_baseline
             log_message "Cleaned BAMs exist but predate this check - no baseline to compare"
             log_message "\$RGVERB the current metadata as the baseline"
@@ -766,16 +572,14 @@ ${adapterBlock}
             log_message "Sample metadata unchanged since the existing outputs were produced"
             log_message "METADATA CHANGE CHECK: PASS"
         elif [ "\$(sort "${storedMeta}")" = "\$(sort current_metadata.txt)" ]; then
-            # Same rows, different order. The read groups in the BAMs are matched by ID rather
-            # than by position, so they are untouched; only the VCF column order is wrong.
+            # Same rows, different order.
             if [ "\$HAVE_VCF" -eq 0 ]; then
                 record_baseline
                 log_message "Row order changed, but no VCF exists to have used it"
                 log_message "\$RGVERB the new order as the baseline"
                 log_message "METADATA CHANGE CHECK: PASS"
             else
-                # Report this as two orderings - a line diff of a permutation shows the
-                # same text as both removed and added, which reads as nonsense.
+                # Reported as two orderings.
                 id_list() { awk -F'\\t' '{ printf "%s%s", sep, \$1; sep=", " }' "\$1"; }
                 log_message "Row order has CHANGED since the existing outputs were produced:"
                 log_message ""
@@ -791,15 +595,10 @@ ${orderDeleteBlock}
                 STATUS="FAIL"
             fi
         elif [ "\$(drop_size "${storedMeta}")" = "\$(drop_size current_metadata.txt)" ]; then
-            # Only the pool sizes moved. That is a step 7 parameter: it changes which variants
-            # survive the false-positive filter, and nothing about how the reads were trimmed,
-            # aligned, grouped or called. Reported separately so the fix is proportionate.
+            # Only the pool sizes moved, which is a step 7 parameter.
             log_message "Pool sizes have CHANGED since the existing outputs were produced:"
             log_message ""
-            # Only the field that moved, per sample. A line diff here would print the whole
-            # read group twice for every row and leave the reader to spot the one number that
-            # differs - and this branch only fires when everything else is identical, so the
-            # rows are in the same order on both sides and can be compared by id.
+            # Only the field that moved, per sample, matched by id.
             while IFS= read -r line; do
                 printf '%s\\n' "\$line" | tee -a \$REPORTFILE
             done < <(awk -F'\\t' '
@@ -859,14 +658,7 @@ ${tagDeleteBlock}
     """
 }
 
-// ONCE, not once per run: what is on PATH is a property of the machine, and asking N times
-// would give N identical answers at the cost of N tasks.
-//
-// It is handed the union of every run's software settings rather than reading params.software
-// itself. A multi-run table may name a different binary for one run - any parameter may be
-// varied, that is settled - and a check that only ever looked at the base config would pass
-// while that run's tool was missing, which is exactly the class of failure step 0 exists to
-// catch before any compute is spent.
+// Once per invocation, not once per run, and handed the UNION of every run's software settings.
 process CheckInstalledSoftware {
     input:
     val software_list
@@ -977,32 +769,8 @@ process CheckTrimParameters {
     """
 }
 
-// A run stands in four directories, and confusing any two of them is the failure this
-// catches. The installation holds the code; the project directory is where you launched and
-// where parameters.config was read from; mainDir is the fast working volume; storageDir is
-// permanent storage.
-//
-// mainDir and storageDir are two tiers, not two names for one place: outputs are written to
-// the working volume and promoted to permanent storage once whatever consumes them has
-// succeeded. Pointing both at the same directory makes every promotion a no-op that moves a
-// file onto itself, and makes `clean` and `reset` - which treat the two roots differently -
-// impossible to reason about.
-//
-// Neither storage root may BE the installation. The installation is a tool: one copy serves
-// any number of projects, it is replaced wholesale on upgrade, and from 3.0 it may be
-// read-only and shared. A project working directory kept inside it would be destroyed by an
-// upgrade and would make two projects impossible; permanent storage kept inside it would
-// take the results and their provenance with it.
-//
-// Compared as RESOLVED paths. A string comparison passes happily on `/data/x` versus
-// `/data/x/`, versus `/data/y/../x`, versus a symlink to the same directory, and each of
-// those is the same directory with a different spelling.
-//
-// Containment is warned about, not rejected. One root inside another is harmless in itself -
-// the managed subdirectories still do not collide - but the lifetimes differ sharply enough
-// that it is worth saying out loud. The check that actually matters for collisions is that
-// no two computed directories in the `dir` block resolve alike, and that belongs where the
-// block is built, not here.
+// mainDir and storageDir must DIFFER, and neither may BE the installation. Compared as resolved
+// paths. Containment is warned about, not refused.
 process CheckDirectories {
     tag { check.checkTag }
 
@@ -1025,8 +793,7 @@ process CheckDirectories {
 
     STATUS="PASS"
 
-    # -m resolves symlinks, '..' and trailing slashes without requiring the directory to
-    # exist yet; mainDir need not be there before the first run creates work/ under it.
+    # -m resolves symlinks, '..' and trailing slashes without requiring the directory to exist.
     MAIN=\$(realpath -m "${check.mainDir}")
     STORE=\$(realpath -m "${check.storageDir}")
     INSTALL=\$(realpath -m "${workflow.projectDir}")
@@ -1074,8 +841,6 @@ process CheckDirectories {
         STATUS="FAIL"
     fi
 
-    # Containment. Harmless mechanically - nothing collides - but the lifetimes differ, so
-    # it is said out loud rather than discovered during an upgrade or a reset.
     case "\$MAIN/" in
         "\$INSTALL"/*)
             log_message "DIRECTORY CHECK:       WARNING: mainDir is inside the installation. Allowed, but"
@@ -1089,9 +854,7 @@ process CheckDirectories {
             ;;
     esac
 
-    # parameters.config is read from the directory the run was launched in. When that is not
-    # mainDir the run still works, but the project's settings and the project's working files
-    # are in two different places, which is worth knowing before wondering where a file went.
+    # parameters.config comes from the launch directory.
     if [ "\$MAIN" != "\$LAUNCH" ]; then
         log_message "DIRECTORY CHECK:       NOTE: the run was launched in \$LAUNCH, which is not mainDir."
         log_message "DIRECTORY CHECK:       parameters.config was read from there; the work happens in mainDir."
@@ -1109,46 +872,17 @@ process CheckDirectories {
     """
 }
 
-// THE REPRODUCIBILITY GUARD, and it is ONE task for the whole project.
+// The reproducibility guard: ONE task for the whole project, freezing every run's effective
+// configuration. Two inputs, compared differently:
 //
-// Z, 2026-08-28: *"Copy the parameters.config and multirun.csv to .parameters.config and
-// .multirun.csv, if they don't exist it is the first run, if they exist they can be compared in
-// terms of what they contain."* And the rule those copies enforce: *"the parameter file being
-// the same with what it was in the beginning and the parameters that are set for each run being
-// kept as they are."*
+//   .multirun.csv       AS WRITTEN.
+//   .parameters.config  BY RESOLVED VALUE, through analysisParams(). The file itself is stored
+//                       beside it verbatim.
 //
-// TWO INPUTS, COMPARED THE WAY EACH ONE HAS TO BE.
-//
-//   .multirun.csv     compared AS WRITTEN. It is the user's own file, nothing in a release
-//                     touches it, and by settled rule 7 every column is a deliberate
-//                     divergence - so any edit to it is a change to the run set, full stop.
-//                     This is also what makes a REGROUPING visible: `Shared_<N>` numbers are
-//                     assigned in order of appearance, so an edited table can leave `Shared_1`
-//                     naming a different pair than the one whose results are in it, and the
-//                     table copy sees that directly instead of inferring it from a member list.
-//
-//   .parameters.config  compared BY RESOLVED VALUE, because it also carries settings that
-//                     cannot change a number - mainDir, storageDir, threads, memory, cores.*,
-//                     software.*, java.* (Z, 2026-08-28: "Ignore resources and paths"). Moving
-//                     a project to another disk or running it on a bigger node must not
-//                     invalidate finished results. That is exactly what analysisParams()
-//                     excludes, so the comparison runs on its output; the raw file is stored
-//                     beside it as the record of what was actually written.
-//
-// The two together freeze every run's effective configuration: the base from the config, the
-// per-run overrides from the table. That is why this needs no per-run task and no per-directory
-// manifest - both of which it replaces.
-//
-// THE VERSION IS A BLOCK OF ITS OWN, checked first and short-circuiting everything else. Z,
-// 2026-08-28: *"Nobody should ever resume to a pipeline using a different version. That needs a
-// block on its own. Reset and re-run."* This REVERSES the old rule, under which a version was
-// recorded and never enforced - so a project can no longer span two releases, and the whole
-// added-by-a-release classification that existed to let it is gone with it.
+// The version is checked FIRST and short-circuits everything else.
 process CheckRunParameters {
     input:
-    // The base configuration's analysis parameters, already flattened. Rendered while the DAG
-    // is built, like the sharing report - `params` is fully resolved by then, and doing it here
-    // would mean a process reading the global configuration instead of being handed it.
+    // Rendered while the DAG is built, where `params` is fully resolved.
     val manifest
 
     output:
@@ -1161,9 +895,7 @@ process CheckRunParameters {
     storedCfg   = "${root}/.parameters.config"
     storedTable = "${root}/.multirun.csv"
     readable    = "${root}/run_parameters.txt"
-    // Where the two files actually are. parameters.config is read from the directory the run
-    // was launched in (nextflow.config: includeConfig "${launchDir}/parameters.config"), which
-    // is not necessarily mainDir; the table is a parameter like any other.
+    // parameters.config comes from the LAUNCH directory; the multi-run table is a parameter.
     liveCfg     = "${workflow.launchDir}/parameters.config"
     liveTable   = params.multiRun ? "${params.multiRunPath}" : ''
     release     = workflow.manifest.version ?: 'unknown'
@@ -1181,11 +913,7 @@ CURRENT_PARAMS
 
     STATUS="PASS"
 
-    # A DRY RUN RECORDS NOTHING. Every comparison below is made exactly as it would be in a
-    # real run and gives exactly the same answer; what does not happen is the writing of the
-    # files that answer it next time. A preview that left a baseline behind would have the
-    # next real run comparing against parameters no result was ever produced under - which is
-    # the one thing a preview must not be able to do.
+    # A dry run makes every comparison below and writes none of the files that answer it.
     DRY_RUN="${params.dryRun}"
     RECORD="Recording"
     if [ "\$DRY_RUN" = "true" ]; then
@@ -1193,11 +921,7 @@ CURRENT_PARAMS
         log_message "RUN PARAMETERS:        DRY RUN - everything is checked, nothing is recorded"
     fi
 
-    # THE VERSION, FIRST AND ON ITS OWN. Completed steps are skipped by looking for output
-    # files, so continuing into a different release would mix results produced by two versions
-    # of the code with nothing on disk to say which is which. Nothing else is compared when
-    # this fires: the parameter set moves between releases, and reporting that as an edit to
-    # your own config on top of this would be two wrong messages instead of one right one.
+    # The version, first and on its own.
     if [ ! -f "${version}" ]; then
         if [ "\$DRY_RUN" != "true" ]; then
             mkdir -p "${root}"
@@ -1230,9 +954,8 @@ CURRENT_PARAMS
         log_message "PIPELINE VERSION:      ${release}"
     fi
 
-    # THE MULTI-RUN TABLE, AS WRITTEN. Line endings and trailing blanks are normalised, and
-    # nothing else: row order decides which group gets which Shared_<N> name, and a comment is
-    # a thing a user writes on purpose.
+    # The multi-run table, as written. Line endings and trailing blanks are normalised, nothing
+    # else.
     if [ -n "${liveTable}" ]; then
         sed -e 's/\\r\$//' -e 's/[[:space:]]*\$//' -e '/^\$/d' "${liveTable}" > current_table.csv
         if [ ! -f "${storedTable}" ]; then
@@ -1266,8 +989,7 @@ CURRENT_PARAMS
         fi
     fi
 
-    # parameters.config, by resolved value rather than as written - see the note above this
-    # process for which families are excluded and why.
+    # parameters.config, by resolved value rather than as written.
     if [ ! -f "${stored}" ]; then
         if [ "\$DRY_RUN" != "true" ]; then
             mkdir -p "${root}"
@@ -1277,9 +999,7 @@ CURRENT_PARAMS
     elif diff -q "${stored}" current_params.txt > /dev/null 2>&1; then
         log_message "RUN PARAMETERS:        parameters.config unchanged since the outputs were produced"
     else
-        # The classification is only about how the difference READS now. Every kind of it fails:
-        # the one case that used to be forgiven - a parameter a release introduced - cannot
-        # happen any more, because a release change is blocked above before this runs.
+        # The classification only decides how the difference reads; every kind fails.
         classify_manifest.sh "${stored}" current_params.txt > param_diff.txt
 
         N_MALFORMED=\$(awk -F'\\t' '\$1 == "COUNTS" { print \$5 }' param_diff.txt)
@@ -1317,10 +1037,7 @@ CURRENT_PARAMS
         STATUS="FAIL"
     fi
 
-    # THE COPIES THEMSELVES, kept whether or not they are what is compared. They are the record
-    # of what was actually written - comments, layout and all - which is what you would cite,
-    # and what tells you months later why a value was what it was. Refreshed only on a clean
-    # pass, so a failure leaves the originals for the diff above to keep reporting against.
+    # The copies themselves, comments and layout and all, refreshed only on a clean pass.
     if [ "\$STATUS" = "PASS" ] && [ "\$DRY_RUN" = "true" ]; then
         log_message "RUN PARAMETERS:        Nothing was written - re-run without dryrun to record it"
     elif [ "\$STATUS" = "PASS" ]; then
@@ -1359,30 +1076,14 @@ CURRENT_PARAMS
     """
 }
 
-// Stage 9: the multi-run table, when there is one.
-//
-// The parsing and the syntactic checks are in bin/parse_multirun.py rather than here. Two
-// reasons, and the first is a correctness one: the values in that file are parameter values,
-// and readPattern - which is exactly the sort of thing people vary between runs - defaults to
-// `*_R{1,2}.fq.gz`, a value with a comma in it. Splitting on commas would cut it in half and
-// produce a row with the wrong number of fields, reported as a completely different mistake.
-// Python's csv module implements the real quoting rules. The second reason is that a script
-// can be unit-tested in milliseconds, while every check written here costs a JVM start.
-//
-// What this stage adds on top is the part that needs to know the parameters: which columns
-// name a value the pipeline would otherwise compute for itself.
-//
-// FROM E1u ONWARDS THIS IS NOT THE FIRST GATE. The runs have to exist before the DAG can be
-// built, so resolve_parameters.nf parses and validates the table earlier still, and an
-// unusable one stops the invocation before any task is submitted - including this one. What
-// is left here is the part that is worth having in the durable record rather than only on a
-// terminal: what the table expanded to, and what it detached from its derivation. The FAIL
-// branches below are kept as a backstop and because this stage can be run on its own; in the
-// ordinary entry point they are not reached.
+// Stage 9: the multi-run table, when there is one. The syntactic checks belong to
+// bin/parse_multirun.py; what this adds needs the parameters - which columns name a value the
+// pipeline computes for itself. Not the first gate: resolve_parameters.nf has already refused an
+// unusable table, and the FAIL branches here are a backstop.
 process CheckMultiRun {
     input:
-    // The divergence analysis, already rendered. It is computed while the DAG is built - before
-    // this task exists - so what arrives is text and a list of directories, not the plan.
+    // The divergence analysis arrives already rendered: text and a list of directories, not the
+    // plan.
     tuple val(sharing_lines), val(conflict_lines), val(member_files)
 
     output:
@@ -1392,14 +1093,11 @@ process CheckMultiRun {
     dir_log = "${params.dir.allLogs}/0_verify_environment"
     derived = derivedParameterNames().join(' ')
     known = knownParameterNames().join(' ')
-    // Rendered as log_message calls rather than a heredoc so each line lands in the report and
-    // on the console the same way every other line here does.
     sharing_block = sharing_lines.collect { line -> "        log_message \"${line}\"" }.join('\n')
     conflict_block = conflict_lines.isEmpty()
         ? '        :'
         : (conflict_lines.collect { line -> "        log_message \"${line}\"" } + ['        STATUS="FAIL"']).join('\n')
-    // `mkdir -p` then write: the directory does not exist yet on a first run, and this is the
-    // only thing that creates it before the analysis starts filling it.
+    // `mkdir -p` then write: on a first run this is what creates the directory.
     member_block = member_files.isEmpty()
         ? '        :'
         : member_files.collect { entry ->
@@ -1444,8 +1142,7 @@ process CheckMultiRun {
     else
         printf '%s' "\$RUNS" > runs.json
 
-        # Every RunID, and what each row actually sets. Printed in full because this is the
-        # only place the expansion is visible before it starts costing compute.
+        # Every RunID, and what each row actually sets, printed in full.
         printf '%s\\n' ${known} > known_params.txt
         python3 - runs.json "${params.storageDir}" known_params.txt ${derived} <<'PYEOF' >> \$REPORTFILE || STATUS="FAIL"
 import json, sys
@@ -1458,10 +1155,7 @@ derived = set(sys.argv[4:])
 print(f"MULTI-RUN CHECK:       {len(runs)} runs")
 for run in runs:
     run_id = run["RunID"]
-    # Where this run's OWN results go. There is one results tree per project now, and a run
-    # is a directory inside it rather than a tree of its own - so what is named here is only
-    # the part no other run shares. A storageDir column still sends a run somewhere else
-    # entirely, which is why it is read rather than assumed.
+    # Where this run's OWN results go, from its own storageDir column when it has one.
     where = f'{run.get("storageDir", storage)}/Output/{run_id}'
     print(f"MULTI-RUN CHECK:       {run_id} -> {where}")
     varied = {k: v for k, v in run.items() if k not in ("RunID", "storageDir")}
@@ -1471,11 +1165,7 @@ for run in runs:
     else:
         print("MULTI-RUN CHECK:           (nothing differs from parameters.config)")
 
-# Encouraged, not enforced. Runs that share one storageDir share one results tree, and that
-# is what lets work common to several of them be done once and filed where they can all
-# reach it. A run pointed somewhere else has no tree in common with the others, so it
-# repeats every step for itself - which is a legitimate thing to want and an expensive
-# thing to do by accident, so it is said out loud rather than refused.
+# The runs that set a storageDir of their own: reported, not refused.
 detached = sorted({run["RunID"] for run in runs if "storageDir" in run})
 if detached:
     print("MULTI-RUN CHECK:       these runs set a storageDir of their own:")
@@ -1486,13 +1176,8 @@ if detached:
     print("MULTI-RUN CHECK:       on is done once and filed under All_Runs or Shared_<N>. A run with")
     print("MULTI-RUN CHECK:       its own storageDir shares nothing and repeats every step alone.")
 
-# A column naming something the pipeline computes is allowed on purpose - benchmarking a
-# pinned thread count or an options string outright is a real use. It is reported because
-# the value then stops tracking whatever it was derived from, which is easy to set up by
-# accident and impossible to see afterwards.
-# A column that is not a parameter at all. Any parameter may be varied - that is settled,
-# and there is deliberately no whitelist - but a name that is not one cannot be, and
-# accepting it would mean a run whose setting was silently ignored. Almost always a typo.
+# A column naming a derived value is allowed and reported; the value then stops tracking what it
+# was derived from. A column that is not a parameter at all is refused.
 unknown = sorted({k for run in runs for k in run if k != "RunID" and k not in known})
 if unknown:
     print("MULTI-RUN CHECK:       these columns do not name a parameter in parameters.config:")
@@ -1511,18 +1196,10 @@ if overrides:
     print("MULTI-RUN CHECK:       used exactly as written; nothing is re-derived from them.")
 PYEOF
 
-        # WHERE THE RUNS DIVERGE, said out loud before any compute is spent.
-        #
-        # A wrong entry in stepParameterMap() is the failure this design risks and it is
-        # silent: two runs would share an artifact one of them did not ask for. Stating the
-        # partition here is what makes it reviewable - a grouping you did not expect is
-        # visible in seconds rather than inferred months later from a result.
+        # Where the runs diverge.
 ${sharing_block}
 
-        # A members file inside each shared directory, so the grouping can be recovered from
-        # the results themselves rather than only from this report. A RECORD, not a guard: what
-        # stops an edited table from mixing two groupings in one directory is the stored copy of
-        # the table itself, in stage 7 above.
+        # A members file inside each shared directory. A record, not a guard.
 ${member_block}
 
         # And the one disagreement a group cannot absorb.
@@ -1546,15 +1223,8 @@ process VerifyAll {
     tag { run.runId ?: '-' }
 
     input:
-    // ONE TUPLE, JOINED ON THE RUN. These used to be nine separate `val` inputs, which
-    // Nextflow matches POSITIONALLY - item k of each channel is paired with item k of the
-    // others. That was safe while every stage emitted exactly one report, and becomes a
-    // silent mismatch the moment there are N: nothing would make run B's reference check line
-    // up with run B's trim check, and the report would describe a run that never existed.
-    //
-    // The two global stages stay separate on purpose. They ride value channels, which
-    // broadcast to every task of this process, which is the behaviour that is wanted for a
-    // check that ran once for the whole invocation.
+    // ONE TUPLE, joined on the run. The three invocation-level stages stay separate: they ride
+    // value channels and broadcast to every task.
     tuple val(run), val(reference_log), val(gffFile_log), val(dataSource_log),
           val(metadata_log), val(trim_log), val(directory_log)
     val software_log
@@ -1576,12 +1246,8 @@ process VerifyAll {
         echo "\$1"
     }
 
-    # The report is the durable record of what step 0 checked, so it has to leave the
-    # task directory: `cleanup = true` empties that on success, which means the report
-    # currently survives only when the run fails. Publishing it also makes the path
-    # docs/pipeline/steps.md and directories.md already advertise real.
-    # The log mirror belongs here too. It used to sit below the `exit 1`, so a failed
-    # verification - the one case where the log is actually wanted - never reached it.
+    # The report has to leave the task directory, which `cleanup = true` empties on success. Called
+    # on both paths, and before the `exit 1`, so a failed verification is archived too.
     archive_logs() {
         mkdir -p ${output_folder}
         atomic_mv.sh \$REPORTFILE ${output_folder}/\$REPORTFILE
@@ -1626,72 +1292,48 @@ process VerifyAll {
 
 workflow VerifyEnvironment {
     take:
-    // THE PLAN AND THE RUN LIST, in one value channel rather than a channel of runs.
-    //
-    // Which checks this invocation needs is worked out before anything runs, exactly as the
-    // divergence analysis is - and two of them are keyed by the analysis itself, so they need
-    // it here. flatMap expands the pair into one item per check task. N separate items would
-    // have to be regrouped at runtime by an operator that cannot see the shape, which is the
-    // thing this stage exists to stop doing.
+    // The plan and the run list in ONE value channel; flatMap expands the pair into one item per
+    // check task.
     context
-    // The divergence analysis, rendered at DAG-build time: what step 0 should say about the
-    // grouping, and any publish-only disagreement that makes a group impossible. A value
-    // channel, because it describes the invocation rather than a run.
+    // Rendered at DAG-build time: what step 0 says about the grouping, and any publish-only
+    // disagreement that makes a group impossible.
     sharing
 
     main:
     runs = context.flatMap { ctx -> ctx.runs }
 
     CheckReference(context.flatMap { ctx -> checkGroups(ctx.runs, 'CheckReference') })
-    // `annotate` is a per-run parameter, so which runs need a GFF is decided by filtering the
-    // runs rather than by an `if` over the base config. Under multiRun one run may annotate
-    // while another does not; the `if` this replaces could only answer for all of them.
-    //
-    // Filtered BEFORE grouping, so the two stages key on the runs they actually serve: an empty
-    // side produces an empty list and therefore no task at all.
+    // `annotate` is per run: the two sides are filtered out of the run list before grouping, so
+    // an empty side produces no task at all.
     CheckGFF(context.flatMap { ctx -> checkGroups(ctx.runs.findAll { run -> run.annotate }, 'CheckGFF') })
     SkipGFFCheck(context.flatMap { ctx -> checkGroups(ctx.runs.findAll { run -> !run.annotate }, 'SkipGFFCheck') })
 
     CheckData(context.flatMap { ctx -> checkGroups(ctx.runs, 'CheckData') })
     CheckTrimParameters(context.flatMap { ctx -> checkGroups(ctx.runs, 'CheckTrimParameters') })
     CheckDirectories(context.flatMap { ctx -> checkGroups(ctx.runs, 'CheckDirectories') })
-    // ONE task for the whole project, like the software and multi-run stages: it compares the
-    // two files the user wrote, not anything a run resolved for itself.
+    // One task for the whole project: the two files the user wrote.
     CheckRunParameters(channel.value(analysisParams(params).join('\n')))
 
-    // The metadata check, one task per step-6 variant. It needs one thing matched onto it
-    // rather than computed - this group's CheckData verdict - and nothing else: the file has
-    // already been parsed, and the rows travel in the run map.
-    //
-    // The repair stage that used to sit here is gone. It existed because three consumers read
-    // the raw bytes, and none of them does now; a dedicated stage that rewrote a file the user
-    // wrote was the price of that, and there is nothing left to pay it for.
+    // One task per step-6 variant, with this group's CheckData verdict matched onto it.
     CheckMetadataFile(
         context.flatMap { ctx -> metadataChecks(ctx.plan) }
             .map { item -> tuple(item.dataKey, item) }
             .combine(CheckData.out.report.map { check, report -> tuple(check.checkKey, report) }, by: 0)
             .map { _key, item, verify -> tuple(item, verify) })
 
-    // The two stages that describe the invocation rather than a run. Both emit value
-    // channels, which is what lets one report reach every run's VerifyAll.
-    //
-    // The union is taken over the run list itself rather than by collecting a channel, so the
-    // order is the table's and not the order N tasks happened to finish in. For a single run it
-    // is exactly params.software.values() in the order the config wrote them.
+    // The two stages describing the invocation rather than a run; both emit value channels. The
+    // software union is taken over the run list, in table order.
     CheckInstalledSoftware(context.map { ctx ->
         ctx.runs.collectMany { run -> run.software.values().collect { tool -> "${tool}".toString() } }
             .unique()
             .join(' ') })
     CheckMultiRun(sharing)
 
-    // EVERY CHECK'S VERDICT, HANDED BACK TO THE RUNS IT ANSWERED FOR. CheckData's is needed
-    // twice, so it is named rather than recomputed: the key is a string built from parameter
-    // values, and two spellings of one key match nothing.
+    // Every check's verdict, handed back to the runs it answered for.
     data_by_run = reportPerRun(runs, CheckData.out.report, 'CheckData')
     gff_by_run = reportPerRun(runs.filter { run -> run.annotate }, CheckGFF.out.report, 'CheckGFF')
         .mix(reportPerRun(runs.filter { run -> !run.annotate }, SkipGFFCheck.out.report, 'SkipGFFCheck'))
-    // The two keyed by the analysis rather than by a parameter list, so their keys come from it
-    // too - the step-6 variant a run belongs to, and the results directories it is a member of.
+    // Keyed by the step-6 variant a run belongs to, not by a parameter list.
     metadata_by_run = context
         .flatMap { ctx -> ctx.runs.collect { run -> tuple(variantForRun(ctx.plan, run, 6).variantKey, run) } }
         .combine(CheckMetadataFile.out.report.map { check, report -> tuple(check.checkKey, report) }, by: 0)

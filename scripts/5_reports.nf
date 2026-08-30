@@ -4,11 +4,7 @@ process AlignmentReport {
     input:
     tuple val(run), val(pair_id), path(ready_bam), path(ready_bai)
 
-    // Declared so that finishing is observable. Until 3.0 neither report process declared
-    // any output at all, which made this step invisible to the graph: it could not be
-    // waited on, and Nextflow tracked nothing it produced. The ready BAMs are read by this
-    // step AND by variant calling, so promoting them needs to know when BOTH are done -
-    // and that is impossible for a step that never says it finished.
+    // A completion signal, not data any later step reads.
     output:
     tuple val(run), val(pair_id), path("*_alignment_report.txt"), emit: report
 
@@ -110,17 +106,14 @@ workflow GenerateReports {
     ready_bais
 
     main:
-    // Join on the run AND the sample so each BAM is matched with its own index. Passing the
-    // two channels separately would pair them by emission order, not by sample; keying on
-    // the sample alone would pair one run's BAM with another run's index, because two runs
-    // over the same data have samples of the same name.
+    // On the run AND the sample: on the sample alone, one run's BAM would pair with another
+    // run's index.
     ready_data = ready_bams.join(ready_bais, by: [0, 1])
     AlignmentReport(ready_data)
     CoverageReport(ready_data)
 
-    // Both reports for a sample, joined back to one signal per (run, sample). A caller that
-    // needs "step 5 has finished with this BAM" means both of them, not whichever landed
-    // first.
+    // Both reports for a sample, joined back to one signal per (run, sample): "step 5 has
+    // finished with this BAM" means both, not whichever landed first.
     emit:
     AlignmentReport.out.report
         .join(CoverageReport.out.report, by: [0, 1])

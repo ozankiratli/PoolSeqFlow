@@ -55,39 +55,21 @@ plugins-prod
 .tmp/
 *.bak
 *.bak.*
-# Documentation output. manual/ is the source: dev/scripts/build_docs.py generates the
-# page tree in docs/ from it, and MkDocs builds site/ from that. Both are rebuilt whole
-# and neither is edited, so tracking them would only mean reviewing every sentence twice.
+
 docs/
 site/
 
-# Compiled Python. Regenerated on first use, and it is one machine's bytecode for one
-# interpreter version - bin/__pycache__ was tracked, and shipped inside the release
-# tarball, until 2.3.0.
 __pycache__/
 *.pyc
 
-# Release-preparation logs from dev/scripts/prep-version.sh. Records of one machine's
-# package solve on one day - useful while preparing a release, not history worth keeping.
 dev/logs/
 
-# The test suite is tracked, fixture data included. Everything above stays as it is: the
-# *.fa*/*.fq*/*.gff*/Data/ rules are what stop a real dataset being committed by accident,
-# and they still cover Project/. The fixture is small, synthetic and deliberately checked
-# in, so it is re-included here by explicit path rather than by weakening those rules.
-#
-# Both lines are needed. Git will not descend into a directory an earlier rule excluded, so
-# the directories have to be re-included before their contents can be.
-#
-# The suite is kept out of release downloads by `test/ export-ignore` in .gitattributes,
-# the same arrangement dev/ uses.
+# The test suite is tracked, but not compiled Python underneath it. 
 !test/
 !test/**
-
-# ...but not compiled Python underneath it. The re-inclusion above is broad enough to
-# override the __pycache__ rule further up, which would put bytecode back under version
-# control - the thing untracking bin/__pycache__ was meant to end.
 test/**/__pycache__/
 test/**/*.pyc
 
+# Untracked until the public form of them is decided.
 .claude/
+CLAUDE.md

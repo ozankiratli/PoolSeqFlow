@@ -50,9 +50,7 @@ if [ -z "$COMMITS" ]; then
     exit 1
 fi
 
-# The commit list goes in its own subsection so hand-written notes can be added
-# above it without displacing it. It is the record of what actually landed - keep
-# it, and write the prose around it rather than in place of it.
+# The commit list gets its own subsection.
 ENTRY="## [$NEW] - $(date +%F)
 
 ### Commits
@@ -62,25 +60,18 @@ $COMMITS
 ---
 "
 
-# Insert above the newest existing section.
-#
-# The entry reaches awk through the environment rather than `-v entry=...`: POSIX requires
-# -v assignments to undergo escape-sequence processing, so a commit subject containing \t
-# or \n would be rewritten on its way in - a literal backslash-t becoming a tab, and a
-# backslash-n injecting a bare line into the commit list. ENVIRON does no such processing.
+# Inserted above the newest existing section. The entry reaches awk through ENVIRON, not
+# `-v entry=...`: POSIX makes -v assignments undergo escape-sequence processing, which would
+# rewrite a commit subject containing \t or \n.
 ENTRY="$ENTRY" awk '
     !inserted && /^## \[/ { print ENVIRON["ENTRY"]; inserted = 1 }
     { print }
     END { if (!inserted) print ENVIRON["ENTRY"] }
 ' "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
 
-# The matching reference-link definition at the foot of the file. Every `## [x.y.z]`
-# heading is a Markdown reference link, so without one the heading renders as literal
-# brackets and the release is unreachable from the changelog. This used to be a manual
-# step and was missed: 2.1.1 and 2.2.0 both shipped without a definition.
-#
-# The base URL is taken from the newest existing definition rather than hardcoded, so it
-# follows the repository if it ever moves.
+# The matching reference-link definition at the foot of the file: every `## [x.y.z]` heading is a
+# Markdown reference link, and without one it renders as literal brackets. The base URL comes
+# from the newest existing definition, so it follows the repository.
 LINKBASE="$(sed -n 's|^\[[0-9][0-9.]*\]: \(https://.*\)/v[0-9][0-9.]*$|\1|p' "$LOG" | head -1)"
 [ -n "$LINKBASE" ] || LINKBASE="https://github.com/ozankiratli/PoolSeqFlow/releases/tag"
 LINK="[$NEW]: $LINKBASE/v$NEW"
@@ -97,9 +88,8 @@ fi
 
 sed -i -E "s|^# Version: .*|# Version: $NEW|; s|^VERSION=\".*\"|VERSION=\"$NEW\"|" "$MAIN"
 
-# The version also lives in nextflow.config's manifest, which is what Nextflow reports and
-# what step 0 records alongside a project's outputs. release.yml refuses to publish if it
-# disagrees with $MAIN, so it has to move at the same time.
+# The version also lives in nextflow.config's manifest, and release.yml refuses to publish if it
+# disagrees with $MAIN.
 NFCONFIG="nextflow.config"
 [ -f "$NFCONFIG" ] || { echo "ERROR: $NFCONFIG not found" >&2; exit 1; }
 sed -i -E "s|^(\s*version\s*=\s*)'.*'|\1'$NEW'|" "$NFCONFIG"
