@@ -119,6 +119,19 @@ analysis_ready() {
     return 0
 }
 
+# Install a module into the sandbox's own module store. Takes the name and the manifest body,
+# so a case can write a malformed one on purpose.
+#
+# Nothing ships a module: the release carries the frame and an empty store, and a case that
+# needs one makes it here.
+analysis_install_module() {
+    local name="$1" manifest="$2" dir
+    dir="$ANALYSIS_SB/install/analysis/modules/$name"
+    mkdir -p "$dir"
+    printf '%s\n' "$manifest" > "$dir/manifest.json"
+    printf '%s\n' 'nextflow.enable.dsl=2' 'workflow { println "module ran" }' > "$dir/main.nf"
+}
+
 # Write the project's analysis.config with one run selection in it.
 analysis_select() {
     printf 'params {\n    analysis {\n        runs = %s\n    }\n}\n' "$1" \
@@ -234,12 +247,71 @@ test_an_unknown_module_refuses_before_any_task() {
     analysis_ready single || return
     local status; status=$(run_analysis "$ANALYSIS_SB" mds)
     assert_status 1 "$status" "a module that does not exist must stop the run"
-    assert_contains "$(analysis_output)" "'mds' is not a module of this release" \
+    assert_contains "$(analysis_output)" "'mds' is not installed" \
         "should name what was asked for"
-    assert_contains "$(analysis_output)" "Modules in this release: verify" \
+    assert_contains "$(analysis_output)" "Available here: verify" \
         "and list what there is"
-    assert_no_file "$ANALYSIS_SB/main/Analysis/0_verify_analysis.txt" \
+    assert_no_file "$ANALYSIS_SB/main/Analysis/Results/mds/0_verify_analysis.txt" \
         "nothing should have run"
+}
+
+# A RELEASE SHIPS AN EMPTY STORE. Modules are published on their own timetable, so what is
+# available is whatever has been installed into this release's installation - not a list frozen
+# into the source.
+test_a_module_installed_into_the_store_joins_the_roster() {
+    analysis_ready single || return
+    analysis_install_module mds \
+        '{"name":"mds","version":"1.4.2","contract":"freq-1","summary":"scaling over frequencies"}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" mds)
+    assert_status 0 "$status" "an installed module should be found"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "mds v1.4.2 - scaling over frequencies" \
+        "the report carries the module's OWN version, not the release's"
+    assert_contains "$report" "speaks table contract freq-1" "and the contract it reads"
+}
+
+# The module's version is its own. A module fixed and republished must not need a release of the
+# pipeline, which is the whole reason the two are separate.
+test_a_module_version_is_not_the_release_version() {
+    analysis_ready single || return
+    analysis_install_module mds \
+        '{"name":"mds","version":"9.9.9","contract":"freq-1","summary":"scaling over frequencies"}'
+    run_analysis "$ANALYSIS_SB" mds > /dev/null
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "mds v9.9.9" "the module reports its own version"
+    assert_contains "$report" "PoolSeqFlow ${EXPECTED_VERSION:-2.2.0}" \
+        "while the results still carry the pipeline release"
+}
+
+test_a_manifest_missing_a_field_refuses() {
+    analysis_ready single || return
+    analysis_install_module mds '{"name":"mds","version":"1.0.0"}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" mds)
+    assert_status 1 "$status" "an incomplete manifest must stop the run"
+    assert_contains "$(analysis_output)" "has no 'contract'" "naming the field that is missing"
+}
+
+# The directory is how a module is found and the name is how it is asked for, so the two
+# disagreeing means one of them would never be reachable.
+test_a_manifest_that_disagrees_with_its_directory_refuses() {
+    analysis_ready single || return
+    analysis_install_module mds \
+        '{"name":"pca","version":"1.0.0","contract":"freq-1","summary":"wrong name"}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a mismatched manifest must stop even an unrelated module"
+    assert_contains "$(analysis_output)" "installed in a directory named 'mds'" \
+        "naming both sides of the disagreement"
+}
+
+# Half-finished installs and stray directories are ordinary; only a manifest that exists and
+# cannot be used is an error.
+test_a_directory_without_a_manifest_is_ignored() {
+    analysis_ready single || return
+    mkdir -p "$ANALYSIS_SB/install/analysis/modules/half-installed"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "a directory holding no manifest should be passed over"
+    assert_not_contains "$(analysis_report "$ANALYSIS_SB")" "half-installed" \
+        "and must not appear as a module"
 }
 
 # ---------------------------------------------------------------------------------------

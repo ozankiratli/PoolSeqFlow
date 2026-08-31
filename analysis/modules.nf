@@ -1,27 +1,93 @@
 // What the analysis layer can do, and which results an invocation covers.
 //
 // A module is one analysis: it reads what a pipeline run published and writes a result of its
-// own. The roster below is the only list of them - the wrapper keeps no copy and refuses nothing
-// itself.
+// own. This file is the only list of them - the wrapper keeps no copy and refuses nothing itself.
+//
+// Installed modules are read from the store, one directory each, so adding one is adding a
+// directory. Nothing here includes a module: a module is its own pipeline and imports what it
+// wants from analysis/lib.
 
 nextflow.enable.dsl=2
 
 include { runToken } from '../scripts/variants.nf'
 include { analysisParams } from '../scripts/0_verify_environment.nf'
 
-// Every module this release ships.
-//
-//   summary  one line, printed when the module is named and in the verification report
-//   needs    artifact classes that must be present before it runs; an absent one fails the run
-//   gates    assumptions checked before any compute
-def moduleRoster() {
+// Where installed modules live: inside this release's own installation.
+def moduleStore() {
+    return "${projectDir}/analysis/modules".toString()
+}
+
+// The published-table contract a module declares it speaks. Bumped only when a column's name or
+// meaning changes - which has not happened since the project's first commit.
+def contractVersion() {
+    return 'freq-1'
+}
+
+// The modules the frame itself provides. `verify` runs nothing after the checks, which is what
+// makes it the way to ask whether a project is ready without spending anything.
+def builtinModules() {
     return [
         verify: [
-            summary: 'report what the analysis layer can see, and produce nothing',
-            needs  : [],
-            gates  : [],
+            summary : 'report what the analysis layer can see, and produce nothing',
+            version : "${workflow.manifest.version ?: 'unknown'}".toString(),
+            contract: contractVersion(),
+            needs   : [],
+            gates   : [],
+            builtin : true,
         ],
     ]
+}
+
+// One installed module's manifest, or null when the directory holds nothing usable. A directory
+// without a manifest is skipped in silence; a manifest that cannot be read is not.
+def readManifest(Object dir) {
+    def manifest = file("${dir}/manifest.json")
+    if (!manifest.exists()) return null
+    def parsed
+    try {
+        parsed = new groovy.json.JsonSlurper().parseText(manifest.text)
+    }
+    catch (Exception e) {
+        throw new IllegalStateException(
+            "${manifest} cannot be read: ${e.message}\n" +
+            "A module's manifest is JSON. Reinstall the module, or remove ${dir}.")
+    }
+    ['name', 'version', 'contract', 'summary'].each { field ->
+        if (!parsed.containsKey(field)) {
+            throw new IllegalStateException(
+                "${manifest} has no '${field}'. A module manifest needs name, version, " +
+                "contract and summary.")
+        }
+    }
+    if (parsed.name != "${dir}".tokenize('/').last()) {
+        throw new IllegalStateException(
+            "${manifest} calls the module '${parsed.name}', but it is installed in a directory " +
+            "named '${"${dir}".tokenize('/').last()}'. The two have to agree: the directory is " +
+            "how a module is found and the name is how it is asked for.")
+    }
+    return [ summary : "${parsed.summary}".toString(),
+             version : "${parsed.version}".toString(),
+             contract: "${parsed.contract}".toString(),
+             needs   : parsed.needs ?: [],
+             gates   : parsed.gates ?: [],
+             builtin : false,
+             dir     : "${dir}".toString(),
+             entry   : "${dir}/main.nf".toString() ]
+}
+
+// Every module available to this invocation: the frame's own, plus whatever is installed.
+def moduleRoster() {
+    def roster = builtinModules()
+    def store = file(moduleStore())
+    if (store.exists()) {
+        store.listFiles().findAll { entry -> entry.isDirectory() }
+            .sort { a, b -> "${a}" <=> "${b}" }
+            .each { dir ->
+                def found = readManifest(dir)
+                if (found != null) roster[dir.name] = found
+            }
+    }
+    return roster
 }
 
 def moduleNames() {
@@ -37,12 +103,14 @@ def requireModule(Object name) {
         throw new IllegalArgumentException(
             "no module was named. Run one from your project directory:\n" +
             "    PoolSeqFlow-analysis <module>\n" +
-            "Modules in this release: ${known}")
+            "Available here: ${known}")
     }
     if (!moduleRoster().containsKey(asked)) {
         throw new IllegalArgumentException(
-            "'${asked}' is not a module of this release.\n" +
-            "Modules in this release: ${known}")
+            "'${asked}' is not installed.\n" +
+            "Available here: ${known}\n" +
+            "Modules are installed separately from the pipeline:\n" +
+            "    PoolSeqFlow-analysis modules available")
     }
     return asked
 }
@@ -252,9 +320,18 @@ def configReportLines() {
     return lines
 }
 
-// What the report says about the module, before anything is checked.
+// What the report says about the module, before anything is checked. The version reported is the
+// module's own, not the release's.
 def moduleReportLines(String module) {
-    return ["MODULE:                ${module} - ${moduleEntry(module).summary}".toString()]
+    def entry = moduleEntry(module)
+    def lines = ["MODULE:                ${module} v${entry.version} - ${entry.summary}".toString()]
+    lines << (entry.builtin
+        ? "MODULE:                shipped with the pipeline; speaks table contract ${entry.contract}".toString()
+        : "MODULE:                installed at ${entry.dir}".toString())
+    if (!entry.builtin) {
+        lines << "MODULE:                speaks table contract ${entry.contract}".toString()
+    }
+    return lines
 }
 
 // What the report says about where this invocation writes.
