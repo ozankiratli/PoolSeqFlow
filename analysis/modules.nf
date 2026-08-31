@@ -81,6 +81,68 @@ def analysisSetting(String key) {
     return params.analysis[key]
 }
 
+// Everything the analysis layer writes lives under one root, on the working volume. `complete`
+// moves it to permanent storage.
+def analysisRoot() {
+    return "${params.mainDir}/Analysis".toString()
+}
+
+// The derived files modules share. Built on demand, once, and reused by every module that
+// needs them.
+def intermediatesDir() {
+    return "${analysisRoot()}/Main".toString()
+}
+
+// What this invocation's results folder is called. Empty means the module's own name, so
+// `mds` writes to Results/mds until you say otherwise.
+def resultsFolderName(String module) {
+    def name = "${analysisSetting('folderName') ?: ''}".trim()
+    if (name.isEmpty()) return module
+    checkFolderName(name)
+    return name
+}
+
+// A plain function, not a local closure: the strict parser rejects calling one by name.
+def folderNameRefusal(String name, String why) {
+    return new IllegalArgumentException(
+        "analysis.folderName is '${name}', which ${why}.\n" +
+        "It names a folder under Analysis/Results and may be a path, as 'MDS/SummerPops' is. " +
+        "Use letters, digits, dot, dash, underscore and '/'.")
+}
+
+// A folder name may be a path - 'MDS/SummerPops'. It may not leave Results/.
+def checkFolderName(String name) {
+    if (name.startsWith('/')) throw folderNameRefusal(name, 'is an absolute path')
+    def segments = name.tokenize('/')
+    if (segments.isEmpty()) throw folderNameRefusal(name, 'names nothing')
+    segments.each { segment ->
+        if (segment == '.' || segment == '..') {
+            throw folderNameRefusal(name, "contains a '${segment}' segment")
+        }
+        if (!(segment ==~ /[A-Za-z0-9._-]+/)) {
+            throw folderNameRefusal(name, "has a part that cannot be a folder name: '${segment}'")
+        }
+    }
+}
+
+// This invocation's results folder, holding one analysis.
+def resultsRoot(String module) {
+    return "${analysisRoot()}/Results/${resultsFolderName(module)}".toString()
+}
+
+// Where one results directory's analysis goes inside it. A single run has no name anywhere, so
+// its analysis sits in the folder directly; runs are told apart by the directory they produced.
+def targetResultsDir(String module, String label) {
+    if (!params.multiRun) return resultsRoot(module)
+    return "${resultsRoot(module)}/${label}".toString()
+}
+
+// The verification record, written beside the results it cleared. One per invocation, however
+// many results directories it covers.
+def verificationReportFile(String module) {
+    return "${resultsRoot(module)}/0_verify_analysis.txt".toString()
+}
+
 // A setting as it should read back to the user who wrote it.
 def renderSetting(Object value) {
     if (value instanceof List) return "[${value.collect { v -> "'${v}'" }.join(', ')}]"
@@ -156,12 +218,14 @@ def resultsTargets(Map plan, List selected, String module) {
                           dir     : "${owner.dir.output[spec.subdir]}".toString(),
                           required: needs.contains(name) ] ]
             }
-            return [ label   : directoryLabel(variant),
+            def label = directoryLabel(variant)
+            return [ label   : label,
                      dir     : "${variant.dir.outputs}".toString(),
                      members : variant.members.collect { member -> runToken(member) },
                      selected: variant.members.findAll { member -> wanted.contains(member) }
                                               .collect { member -> runToken(member) },
-                     classes : classes ]
+                     classes : classes,
+                     results : targetResultsDir(module, label) ]
         }
 }
 
@@ -191,6 +255,21 @@ def configReportLines() {
 // What the report says about the module, before anything is checked.
 def moduleReportLines(String module) {
     return ["MODULE:                ${module} - ${moduleEntry(module).summary}".toString()]
+}
+
+// What the report says about where this invocation writes.
+def outputReportLines(String module) {
+    def named = "${analysisSetting('folderName') ?: ''}".trim()
+    def lines = ["ANALYSIS OUTPUT:       results folder".toString(),
+                 "ANALYSIS OUTPUT:           ${resultsRoot(module)}".toString()]
+    lines << (named.isEmpty()
+        ? "ANALYSIS OUTPUT:       named after the module. Set analysis.folderName to keep two"
+        : "ANALYSIS OUTPUT:       from analysis.folderName = '${named}'. Set it again to keep two")
+    lines << "ANALYSIS OUTPUT:       settings of one module side by side; a folder that already holds"
+    lines << "ANALYSIS OUTPUT:       an analysis is refused rather than written over."
+    lines << "ANALYSIS OUTPUT:       shared intermediates".toString()
+    lines << "ANALYSIS OUTPUT:           ${intermediatesDir()}".toString()
+    return lines
 }
 
 // What the report says about the selection: which runs, and which directories they land in.

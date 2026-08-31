@@ -125,6 +125,12 @@ analysis_select() {
         > "$ANALYSIS_SB/main/analysis.config"
 }
 
+# The same for the results folder name.
+analysis_folder_name() {
+    printf 'params {\n    analysis {\n        folderName = %s\n    }\n}\n' "$1" \
+        > "$ANALYSIS_SB/main/analysis.config"
+}
+
 # What the last analysis invocation printed, refusals included. A refusal happens while the
 # DAG is built, so no task runs and no report is written - only this has it.
 analysis_output() {
@@ -375,6 +381,83 @@ test_a_single_run_project_refuses_a_named_run() {
     assert_status 1 "$status" "there are no run names to select"
     assert_contains "$(analysis_output)" "this project is a single run" "should say why"
     assert_contains "$(analysis_output)" "multiRun = false" "and where that is decided"
+}
+
+# ---------------------------------------------------------------------------------------
+# Where an analysis is written.
+
+test_results_go_to_a_folder_named_after_the_module() {
+    analysis_ready single || return
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "the default folder name should verify"
+    assert_file "$ANALYSIS_SB/main/Analysis/Results/verify/0_verify_analysis.txt" \
+        "the verification record goes in the folder it cleared"
+    assert_dir "$ANALYSIS_SB/main/Analysis/Main" \
+        "and the shared intermediates root exists beside Results"
+}
+
+# A folder name may be a path, so two settings of one module sit side by side under a name of
+# their own rather than being told apart by a timestamp.
+test_a_folder_name_may_be_a_path() {
+    analysis_ready single || return
+    analysis_folder_name "'MDS/SummerPops'"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "a path should be accepted"
+    assert_file "$ANALYSIS_SB/main/Analysis/Results/MDS/SummerPops/0_verify_analysis.txt" \
+        "the results folder is the path that was named"
+    assert_contains "$(analysis_report "$ANALYSIS_SB")" "analysis.folderName = 'MDS/SummerPops'" \
+        "and the report says where it came from"
+}
+
+# It names a folder under Results, so anything that would climb out of it is refused before
+# a task starts rather than resolved into somewhere unexpected.
+test_a_folder_name_may_not_leave_the_results_tree() {
+    analysis_ready single || return
+    analysis_folder_name "'../escape'"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "climbing out of Results must stop the run"
+    assert_contains "$(analysis_output)" "contains a '..' segment" "naming what is wrong"
+    assert_no_file "$ANALYSIS_SB/main/Analysis/Results/escape/0_verify_analysis.txt" \
+        "and nothing is written"
+}
+
+# NAMING THE FOLDER IS THE STALENESS MECHANISM. Two settings of one module are told apart by
+# the folder each was written to, so one that already holds an analysis is a collision.
+test_a_populated_results_folder_is_refused() {
+    analysis_ready single || return
+    mkdir -p "$ANALYSIS_SB/main/Analysis/Results/verify"
+    printf 'an earlier analysis\n' > "$ANALYSIS_SB/main/Analysis/Results/verify/mds_plot.pdf"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "writing over an analysis must stop the run"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "HOLDS AN ANALYSIS ALREADY - 1 entry" "counting what is there"
+    assert_contains "$report" "mds_plot.pdf" "and naming it"
+    assert_contains "$report" "analysis.folderName" "with the way out"
+}
+
+# The record the verification itself leaves is not an analysis. A module that failed after the
+# check leaves the folder holding nothing else, and that retry has to be allowed - otherwise
+# the first failure makes the folder name unusable for good.
+test_the_verification_record_does_not_count_as_an_analysis() {
+    analysis_ready single || return
+    run_analysis "$ANALYSIS_SB" verify > /dev/null
+    assert_file "$ANALYSIS_SB/main/Analysis/Results/verify/0_verify_analysis.txt" \
+        "the first run leaves its record"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "a second run into the same folder should be allowed"
+    assert_contains "$(analysis_report "$ANALYSIS_SB")" "holds no analysis" "and say the folder is free"
+}
+
+# One folder per results directory, inside the one the user named - the same rule the pipeline
+# uses for Output, where only divergence gets a name.
+test_each_results_directory_gets_its_own_folder_under_a_multi_run() {
+    analysis_ready multi || return
+    analysis_folder_name "'sweep'"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "a multi-run project should verify"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "Results/sweep/Shared_1" "the shared directory gets its own folder"
+    assert_contains "$report" "Results/sweep/strict" "and so does the one that shares nothing"
 }
 
 # ---------------------------------------------------------------------------------------

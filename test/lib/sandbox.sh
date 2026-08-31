@@ -375,13 +375,16 @@ run_analysis() {
 }
 
 # The analysis layer's verification report, found through the config the case actually wrote.
-# It lands under mainDir, which a case may have repointed.
+# It lands under mainDir, which a case may have repointed, and inside the results folder, which
+# analysis.folderName names - so it is searched for rather than assumed.
 analysis_report() {
-    local sb="$1" main
+    local sb="$1" main report
     main=$(sed -n 's|^    mainDir *= *"\(.*\)"|\1|p' \
         "${SANDBOX_PROJECT_DIR:-$sb/main}/parameters.config" | head -1)
     [ -n "$main" ] || { echo "test harness: could not read mainDir from the sandbox config" >&2; return 1; }
-    cat "$main/Analysis/0_verify_analysis.txt" 2>/dev/null
+    report=$(find "$main/Analysis/Results" -name '0_verify_analysis.txt' 2>/dev/null | head -1)
+    [ -n "$report" ] || return 0
+    cat "$report"
 }
 
 # Shared runner for the generated entry scripts above and for run_pipeline.

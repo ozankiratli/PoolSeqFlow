@@ -155,6 +155,7 @@ nav:
       - analysis/index.md
       - Configuration: analysis/configuration.md
       - Verification: analysis/verification.md
+      - Output: analysis/output.md
   - Pipeline:
       - pipeline/index.md
       - Steps: pipeline/steps.md

@@ -34,5 +34,22 @@ params {
         // module says which directory each selected run landed in, and names any run whose
         // results you are also reading without having asked for them.
         runs = 'all'
+
+        // WHERE THIS ANALYSIS IS WRITTEN, under Analysis/Results.
+        //
+        //     ''                  the module's own name  -  mds writes to Results/mds
+        //     'sweep_strict'      a name of your own
+        //     'MDS/SummerPops'    a path, so related runs group together
+        //
+        // Naming the folder is how two settings of one module are told apart. Nothing is
+        // stamped with a date and nothing is overwritten: a folder that already holds an
+        // analysis is REFUSED, and the way to run the same module again with different
+        // settings is to give the new one a folder of its own.
+        //
+        // Set this in <module>.config rather than here if you want it to apply to one module.
+        //
+        // Under multiRun, each results directory gets its own folder inside this one, named
+        // as the pipeline named it - Results/<folderName>/Shared_1, and so on.
+        folderName = ''
     }
 }

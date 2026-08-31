@@ -2359,6 +2359,13 @@ Only the first is required, and it ships with the release. The other two are you
 
 `parameters.config` is read as well, and is where the pipeline's own settings stay. The analysis layer does not repeat them.
 
+Everything the analysis layer takes:
+
+| Setting | What it does | Documented |
+|---|---|---|
+| `analysis.runs` | Which of your runs this invocation covers | [below](#analysis-runs) |
+| `analysis.folderName` | Which folder under `Analysis/Results` it writes to | [Output Layout](#analysis-folder-name) |
+
 ### Which runs to analyse { #analysis-runs }
 
 `analysis.runs` chooses which of your runs an invocation covers:
@@ -2410,18 +2417,46 @@ The results on disk were produced under a configuration, and the pipeline record
 
 Restoring the values, or `PoolSeqFlow reset` and a fresh run, are the two ways forward. Nothing is deleted for you.
 
-### Where it writes { #analysis-output }
+## Output Layout
+<!--@ page: output | nav: Output -->
 
 Everything the analysis layer produces goes under `mainDir/Analysis/`, and nothing it does touches `Output/`:
 
 | Path | Holds |
 |---|---|
-| `Analysis/0_verify_analysis.txt` | the verification report of the last invocation |
+| `Analysis/Main/` | intermediates derived from your results and shared between modules |
+| `Analysis/Results/<folderName>/` | one analysis, and the verification record that cleared it |
 | `Analysis/Logs/` | one directory per stage, as the pipeline keeps its own |
 | `Analysis/Session/` | this invocation's Nextflow dag, trace, timeline and report |
 | `Analysis/work/` | Nextflow's working directory, removed when a run succeeds |
 
 `Analysis/Session/` exists so that an analysis run does not overwrite the four session files in `Output/Reports`, which are the record of the pipeline run that produced the results being read.
+
+`Analysis/Main` is where a module puts anything it had to derive — a per-position depth file, a frequency matrix, a callable-sites count. It is built on demand and shared, so a second module wanting the same thing finds it already there rather than deriving it again. It can grow large, and `PoolSeqFlow-analysis complete` is what moves it, with your results, to permanent storage.
+
+`Analysis/Results` holds one folder per analysis, named by [`folderName`](#analysis-folder-name).
+
+### Naming an analysis { #analysis-folder-name }
+
+`analysis.folderName` decides where an invocation writes, under `Analysis/Results`:
+
+```groovy
+params {
+    analysis {
+        folderName = ''                  // the module's own name — mds writes to Results/mds
+        // folderName = 'sweep_strict'   // a name of your own
+        // folderName = 'MDS/SummerPops' // a path, so related analyses group together
+    }
+}
+```
+
+Set it in `<module>.config` instead of `analysis.config` to have it apply to one module.
+
+Under `multiRun`, each results directory gets its own folder inside the one you named — `Results/sweep/Shared_1`, `Results/sweep/strict` — using the names the pipeline gave them. A single run has no name anywhere, so its analysis sits in the folder directly.
+
+**Naming the folder is how two settings of one module are told apart.** Nothing is stamped with a date, nothing is versioned, and nothing is overwritten: a folder that already holds an analysis is **refused**, naming what is in it. To run the same module again with different settings, give the new one a folder of its own; to redo an analysis, move the old one out of the way first.
+
+The one thing allowed to be in the folder already is the verification record from a previous attempt. A module that fails after the check leaves the folder holding nothing else, and that retry has to be allowed — otherwise a single failure would make the name unusable.
 
 # Pipeline Overview
 <!--@ section: pipeline | nav: Pipeline -->

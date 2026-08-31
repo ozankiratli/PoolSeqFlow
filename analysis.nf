@@ -12,7 +12,8 @@ include { runDefinitions; resolveParameters } from './scripts/resolve_parameters
 include { variantPlan } from './scripts/variants.nf'
 include { requireModule; selectedRuns; resultsTargets } from './analysis/modules.nf'
 include { recordedManifest; configReportLines } from './analysis/modules.nf'
-include { moduleReportLines; selectionReportLines } from './analysis/modules.nf'
+include { moduleReportLines; outputReportLines; selectionReportLines } from './analysis/modules.nf'
+include { intermediatesDir; verificationReportFile } from './analysis/modules.nf'
 include { VerifyAnalysis } from './analysis/0_verify_analysis.nf'
 
 workflow {
@@ -33,8 +34,11 @@ workflow {
     def targets  = resultsTargets(plan, selected, module)
 
     VerifyAnalysis(channel.value([
-        manifest: recordedManifest().join('\n'),
-        header  : (moduleReportLines(module) + configReportLines() +
-                   selectionReportLines(run_defs, selected, targets)).join('\n'),
-        targets : targets ]))
+        manifest     : recordedManifest().join('\n'),
+        header       : (moduleReportLines(module) + configReportLines() +
+                        outputReportLines(module) +
+                        selectionReportLines(run_defs, selected, targets)).join('\n'),
+        reportFile   : verificationReportFile(module),
+        intermediates: intermediatesDir(),
+        targets      : targets ]))
 }

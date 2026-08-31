@@ -14,8 +14,9 @@ def analysisLogDir() {
     return "${params.mainDir}/Analysis/Logs/0_verify_analysis".toString()
 }
 
-def analysisReportFile() {
-    return "${params.mainDir}/Analysis/0_verify_analysis.txt".toString()
+// The name the verification record carries wherever it is written.
+def analysisReportName() {
+    return '0_verify_analysis.txt'
 }
 
 // A results directory's name as a file name. One task per directory writes its own stage
@@ -223,21 +224,83 @@ process CheckResultsDirectory {
     """
 }
 
+// Where this invocation's results go, and whether anything is there already. A folder that
+// holds an analysis fails the stage.
+//
+// The verification record is excluded from the count: a module that failed after this stage
+// leaves the folder holding nothing else, and that retry has to be allowed.
+process CheckResultsFolder {
+    tag { target.label }
+
+    input:
+    val target
+
+    output:
+    tuple val(target), path("analysis_folder_${targetSlug(target)}.txt"), emit: report
+
+    script:
+    dir_log = analysisLogDir()
+    slug = targetSlug(target)
+    keep = analysisReportName()
+    """
+    REPORTFILE="analysis_folder_${slug}.txt"
+
+    log_message() {
+        echo "\$1" >> \$REPORTFILE
+        echo "\$1"
+    }
+
+    STATUS="PASS"
+
+    log_message "RESULTS FOLDER:        ${target.label}"
+    log_message "RESULTS FOLDER:            ${target.results}"
+
+    if [ ! -d "${target.results}" ]; then
+        log_message "RESULTS FOLDER:            new - nothing is there yet"
+    else
+        HELD=\$(find "${target.results}" -mindepth 1 -maxdepth 1 ! -name '${keep}' | wc -l)
+        if [ "\$HELD" -eq 0 ]; then
+            log_message "RESULTS FOLDER:            holds no analysis - ready to be written"
+        else
+            if [ "\$HELD" -eq 1 ]; then WHAT="entry"; else WHAT="entries"; fi
+            log_message "RESULTS FOLDER:            HOLDS AN ANALYSIS ALREADY - \$HELD \$WHAT"
+            find "${target.results}" -mindepth 1 -maxdepth 1 ! -name '${keep}' \
+                | sed 's|.*/|                                   |' | head -10 | tee -a \$REPORTFILE
+            log_message "RESULTS FOLDER:"
+            log_message "RESULTS FOLDER:            The folder you name is how two settings of one module are"
+            log_message "RESULTS FOLDER:            told apart, so this is a collision rather than something to"
+            log_message "RESULTS FOLDER:            write over. Name another with analysis.folderName, or move"
+            log_message "RESULTS FOLDER:            this one out of the way."
+            STATUS="FAIL"
+        fi
+    fi
+
+    log_message "RESULTS FOLDER:        STATUS=\$STATUS"
+
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/0_VerifyAnalysis_s3_CheckResultsFolder_${slug}_nextflow.log
+    """
+}
+
 // Every stage's verdict in one report, and the run's own fate. Fails on any FAIL, so a module
 // that reaches its own work has had every assumption it declared checked.
 process VerifyAnalysisReport {
     errorStrategy 'finish'
 
     input:
-    val header
+    tuple val(header), val(report_file), val(intermediates)
     path identity_log
+    path folder_logs
     path results_logs
 
     output:
     path '0_verify_analysis.txt'
 
     script:
-    report_file = analysisReportFile()
     dir_log = analysisLogDir()
     """
     REPORTFILE="0_verify_analysis.txt"
@@ -250,7 +313,7 @@ process VerifyAnalysisReport {
     # The report has to leave the task directory, which `cleanup = true` empties on success.
     # Called on both paths, and before the `exit 1`, so a failed verification is archived too.
     archive_logs() {
-        mkdir -p "\$(dirname ${report_file})"
+        mkdir -p "\$(dirname ${report_file})" ${intermediates}
         atomic_mv.sh \$REPORTFILE ${report_file}
         ln -s ${report_file} .
         mkdir -p ${dir_log}
@@ -272,6 +335,8 @@ HEADER
     log_message ""
 
     cat ${identity_log} | tee -a \$REPORTFILE
+    log_message ""
+    cat ${folder_logs} | tee -a \$REPORTFILE
     log_message ""
     cat ${results_logs} | tee -a \$REPORTFILE
     log_message ""
@@ -304,12 +369,15 @@ workflow VerifyAnalysis {
 
     main:
     CheckProjectIdentity(context.map { ctx -> ctx.manifest })
+    CheckResultsFolder(context.flatMap { ctx -> ctx.targets })
     CheckResultsDirectory(context.flatMap { ctx -> ctx.targets })
 
     VerifyAnalysisReport(
-        context.map { ctx -> ctx.header },
+        context.map { ctx -> tuple(ctx.header, ctx.reportFile, ctx.intermediates) },
         CheckProjectIdentity.out.report,
         // Sorted, so the report reads the same way twice over the same project.
+        CheckResultsFolder.out.report.map { _target, report -> report }
+            .toSortedList { a, b -> a.name <=> b.name },
         CheckResultsDirectory.out.report.map { _target, report -> report }
             .toSortedList { a, b -> a.name <=> b.name })
 
