@@ -84,8 +84,8 @@ require_project_config() {
 }
 
 # What an installation consists of. Must match what `git archive` puts in a release tarball.
-PAYLOAD_ITEMS="PoolSeqFlow PoolSeqFlow-analysis poolseqflow.nf dryrun.nf nextflow.config \
-scripts bin lib install parameters.config.template metadata.csv.template \
+PAYLOAD_ITEMS="PoolSeqFlow PoolSeqFlow-analysis poolseqflow.nf dryrun.nf analysis.nf \
+nextflow.config scripts bin lib install parameters.config.template metadata.csv.template \
 multi-run.csv.example manual README.md CHANGELOG.md LICENSE"
 
 # The payload's executables. Each is stamped with its installed location and symlinked into

@@ -65,7 +65,7 @@ test_release_archive_carries_the_runtime() {
     [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
     local needed
     for needed in "poolseqflow.nf" "nextflow.config" "parameters.config.template" \
-                  "PoolSeqFlow" "PoolSeqFlow-analysis" "metadata.csv.template" \
+                  "PoolSeqFlow" "PoolSeqFlow-analysis" "analysis.nf" "metadata.csv.template" \
                   "scripts/" "bin/" "lib/" "install/"; do
         assert_contains "$listing" "$needed" "release tarball must carry $needed"
     done

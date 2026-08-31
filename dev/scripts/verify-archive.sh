@@ -31,7 +31,7 @@ tar -xzf "${OUT}/${name}.tar.gz" -C "$tmp"
 root="${tmp}/${name}"
 
 # Everything a run needs.
-for f in PoolSeqFlow PoolSeqFlow-analysis poolseqflow.nf nextflow.config \
+for f in PoolSeqFlow PoolSeqFlow-analysis poolseqflow.nf analysis.nf nextflow.config \
          parameters.config.template metadata.csv.template \
          install/environment.yml install/environment-analysis.yml \
          install/check_install.sh install/check_analysis_install.sh \
