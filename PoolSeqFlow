@@ -20,7 +20,6 @@
 #                     install    - creates this release's analysis conda environment
 #                     check      - verifies the analysis installation
 #                     <module>   - runs one analysis module and writes its results
-#                     complete   - moves Analysis/ to permanent storage
 #                     version    - prints the version of this copy
 #                     cite       - prints how to cite it, and R and the packages it runs on
 #                     uninstall  - removes this release's analysis conda environment
@@ -49,7 +48,7 @@ usage() {
 
 # The analysis layer's own words, shown when `analysis` arrives without one.
 usage_analysis() {
-    echo "Usage: $0 analysis {install|check|<module>|complete|version|cite|uninstall}"
+    echo "Usage: $0 analysis {install|check|<module>|version|cite|uninstall}"
     exit 1
 }
 
@@ -105,8 +104,8 @@ PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf dryrun.nf analysis.nf \
 nextflow.config scripts bin lib analysis install parameters.config.template \
 metadata.csv.template multi-run.csv.example manual README.md CHANGELOG.md LICENSE"
 
-# The payload's executables. Each is stamped with its installed location and symlinked into
-# $PREFIX/bin twice, once under its own name and once carrying the version.
+# The payload's executables, stamped with their installed location and symlinked into
+# $PREFIX/bin twice, once under the plain name and once carrying the version.
 WRAPPERS="PoolSeqFlow"
 
 # Everything `uninstall` can act on, by the name it is known as: every version present as a
@@ -219,7 +218,7 @@ choose_installation_to_uninstall() {
     printf '%s\n' "$names" | sed -n "${choice}p"
 }
 
-# Removes one version's payload and its wrappers, then re-points each plain wrapper at the
+# Removes one version's payload and the symlinks to it, then re-points the plain name at the
 # newest version that still provides it, or removes it once none does.
 remove_payload() {
     local version="$1" prefix dest bindir item newest
@@ -246,8 +245,7 @@ remove_payload() {
 }
 
 # Copies the runtime to $PREFIX/opt/PoolSeqFlow-<version> and puts two symlinks in
-# $PREFIX/bin per wrapper: one carrying the version, plus a plain one pointing at the
-# newest installed.
+# $PREFIX/bin: one carrying the version, plus a plain one pointing at the newest installed.
 deploy_payload() {
     local prefix dest bindir here item newest
     prefix=$(install_prefix)
@@ -979,9 +977,9 @@ EOF
                 ;;
 
             *)
-                # `complete` is a module name too. analysis.nf holds the list and refuses
-                # anything that is not on it, so this wrapper does not keep a second copy of
-                # it. Only the SHAPE of the word is checked here, because it names a file below.
+                # analysis.nf holds the list of modules and refuses anything that is not on
+                # it, so this wrapper keeps no second copy. Only the SHAPE of the word is
+                # checked here, because it names a file below.
                 case $ANALYSIS_COMMAND in
                     *[!A-Za-z0-9_-]*)
                         echo "ERROR: '$ANALYSIS_COMMAND' is not a module name." >&2
@@ -1172,7 +1170,7 @@ EOF
             echo "and every installed pipeline under $PREFIX/opt:"
             for v in $PAYLOADS; do echo "    v$v"; done
             echo ""
-            echo "including the wrappers in $PREFIX/bin."
+            echo "including the symlinks in $PREFIX/bin."
         fi
         echo ""
         echo "Only the software goes. Your project directories - parameters.config, Data/,"

@@ -1,16 +1,20 @@
 # PoolSeqFlow test suite
 
 ```
-test/run_tests.sh                 everything (about two minutes)
-test/run_tests.sh --fast          skip the suites that run the pipeline (seconds)
+test/run_tests.sh                 everything (about thirteen minutes)
+test/run_tests.sh --fast          skip the suites that run the pipeline (under a minute)
 test/run_tests.sh --suite static  run suites whose name contains "static"
 test/run_tests.sh --list          list the suites
 test/run_tests.sh --keep          leave the working directories behind for inspection
 ```
 
-Run it after finishing a stage. Exit status is 0 only when every case that ran passed;
-skips do not fail the run, so a machine without the conda environment can still check
-everything that does not need it.
+**Run `--fast` constantly, and the full suite only for a release or the end of a major
+feature.** In between, run the suite that covers what you changed — `--suite <name>` takes a
+substring, and the mapping from what you touched to which suite to run is the table in
+`CLAUDE.md` at the repository root.
+
+Exit status is 0 only when every case that ran passed; skips do not fail the run, so a
+machine without the conda environment can still check everything that does not need it.
 
 The suite is kept out of release downloads by `test/ export-ignore` in `.gitattributes`,
 the same arrangement `dev/` uses.
@@ -25,17 +29,23 @@ the same arrangement `dev/` uses.
 | `tools/make_fixture.py` | Generates the fixture. A development tool — its output is committed |
 | `data/base/` | The committed fixture: 6 samples, 20 kb genome, 3 genes, ~80x |
 | `suites/00_static.sh` | Syntax, release packaging, version consistency. No data needed |
+| `suites/10_migrate.sh` | `bin/config_migrate.sh`, against configs written for earlier releases |
 | `suites/20_launcher.sh` | `./PoolSeqFlow` environment handling, against a stub conda |
 | `suites/30_pipeline.sh` | End-to-end runs against the fixture. The slow one |
 | `suites/40_guards.sh` | The step 0 change guards, via step-0-only runs |
 | `suites/50_helpers.sh` | Unit coverage for `bin/`, called directly. No conda, no fixture |
+| `suites/60_dryrun.sh` | The layout preview, and what `dryclean` will and will not delete |
+| `suites/70_analysis.sh` | The analysis layer. Runs **no** pipeline — artifacts are planted |
 
 ## What to run, and when
 
+Counts move with every stage, so read them off the run rather than from here —
+`grep -c '^test_' test/suites/*.sh` is the check. At the time of writing:
+
 | | Cases | Time | |
 |---|---|---|---|
-| `--fast` | 51 | ~8s | static, migrate, launcher, helpers. Run it constantly |
-| everything | 71 | ~4 min | Run it at stage boundaries |
+| `--fast` | 175 of 276 | under a minute | static, migrate, launcher, helpers, and the static half of dryrun and analysis |
+| everything | 276 | ~13 min | A release, or the end of a major feature |
 
 The two slow suites are slow for one reason: a Nextflow run costs about **21 seconds of
 startup**, flat, cached or not. Nothing in the pipeline dominates that at fixture scale, so
@@ -131,12 +141,12 @@ Two details worth knowing when writing assertions against the frequency tables:
 
 ## Known gaps
 
-- No unit coverage of the `bin/` helpers in isolation (`atomic_mv.sh`, `config_migrate.sh`,
-  `depth2freq.awk`, `MajorAlleleToRef.py`). They are exercised end to end only.
+- **`atomic_mv.sh`, `depth2freq.awk` and `MajorAlleleToRef.py` still have no unit coverage**
+  and are exercised end to end only. Most of this gap has closed since it was written —
+  `50_helpers.sh` now covers `classify_manifest.sh`, `find_artifact.sh`, `depth_cutoff.py`,
+  `filterFalsePositives.sh` and both parsers, and `config_migrate.sh` has a suite of its own —
+  but those three are the ones left.
 - No fault injection: the failure paths hardened during the audit — a mid-pipe tool death,
   an interrupted decompress, a failed database copy — have no cases.
-- No case for `filterFalsePositives.sh`'s cross-sample threshold. With six samples
-  `MINSAMPLES` is 1.2, so a single qualifying sample is enough and the threshold never
-  binds; exercising it needs a larger fixture.
 - The `-m` parsing in `ClipReads` is only covered end to end. Finer cases would want that
   logic moved into a `bin/` helper where it can be called directly.

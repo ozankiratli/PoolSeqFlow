@@ -365,7 +365,7 @@ params {
 
 !!! warning "Set these through the file, never the command line"
 
-    PoolSeqFlow rejects command-line parameter overrides, and the wrapper refuses any argument beyond a single subcommand. Nextflow delivers `--param` values as strings, so `--annotate false` sets the string `"false"` — which Groovy evaluates as **true**, leaving annotation switched on with no warning. [Why →](#configuration-is-a-file-never-a-flag)
+    PoolSeqFlow rejects command-line parameter overrides. Nextflow delivers `--param` values as strings, so `--annotate false` sets the string `"false"` — which Groovy evaluates as **true**, leaving annotation switched on with no warning. [Why →](#configuration-is-a-file-never-a-flag)
 
 The two directories cannot be the same path. They are storage tiers, not a preference: the pipeline works on `mainDir` and moves each output to `storageDir` once the last step that needed it has finished, which cannot mean anything if they are one place. On a cluster this is the difference between a node's fast disk and the archive it is backed by; on a laptop, make them two directories and the same reasoning still holds — one is churn, the other is what you keep.
 
@@ -502,7 +502,7 @@ The environment is separate from the pipeline's and is built only when you ask f
 
 `cite` reads R's own citation records, so what it prints is the version of each package actually installed rather than a list kept in the documentation.
 
-The wrapper also accepts an analysis module's name, and `complete`, which moves finished analyses into permanent storage. Those arrive with the analysis modules themselves and are documented alongside them; the commands in the table above are the ones a release ships with today.
+`PoolSeqFlow analysis` also accepts the name of an installed module. Modules are installed separately from the pipeline and each is documented with itself; the commands in the table above are the ones a release ships with.
 
 ## Upgrading
 <!--@ page: upgrading -->
@@ -708,7 +708,7 @@ PoolSeqFlow departs from stock Nextflow practice in several places. Each departu
 
 ### Configuration is a file, never a flag
 
-**The decision.** Every setting lives in `parameters.config`. The wrapper accepts a single subcommand and rejects any further argument. There is no `--poolSize 50`.
+**The decision.** Every setting lives in `parameters.config`. The wrapper takes a subcommand, not settings. There is no `--poolSize 50`.
 
 **Why.** Two reasons, one about reproducibility and one about correctness.
 
@@ -1275,6 +1275,7 @@ Change one of these and your output changes. Step 0 records them and **refuses t
 | `capBAM.maxDepth` | The depth ceiling put on each BAM. Can be set per sample in `metadata.csv` | [Variant Calling](#capping-each-bam) |
 | `variantCall.*` | Pileup and calling behaviour, including a flat depth cap on top of the measured one | [Variant Calling](#variant-calling) |
 | `vcffilter.minDP`, `vcffilter.minQUAL` | Post-call depth and quality filtering | [Filtering & Frequency](#depth-and-quality) |
+| `bwa.minScoreOutput`, `bwa.batchSize`, `bwa.options` | How reads are aligned in the first place, and whether that is reproducible across machines | [Step 3](#step-3-align) |
 | `cleanBAM.filter`, `cleanBAM.required`, `cleanBAM.mapq` | Which alignments reach the pileup | [Alignment & Cleaning](#alignment-cleaning) |
 | `cutadapt.at_gc_error` | Composition tolerance driving the clip points | [Trimming & Clipping](#trimming-clipping) |
 | `trim_galore.quality`, `.autodetect`, `.adapter1/2` | What is trimmed off the reads | [Trimming & Clipping](#trimming-clipping) |
@@ -1306,6 +1307,7 @@ Safe to tune between runs. Step 0 does not track them, precisely because they ca
 | `metadataFile` | Name of the sample table, in `mainDir` |
 | `multiRun`, `multiRunFile` | Whether to read a run table, and what it is called |
 | `vcf.fileName` | Base name for the VCFs and frequency tables. See [Filtering & Frequency](#output-naming) |
+| `dryRunDir` | Where `dryrun` builds its preview and where `dryclean` looks for one. See [Cleaning up](#cleaning-up) |
 
 #### Parameters that change a report, not a result
 
@@ -2341,6 +2343,8 @@ Modules in this release:
 |---|---|
 | `verify` | Reports what the analysis layer can see, and produces nothing |
 
+That is the only one a release ships. Modules are installed separately from the pipeline and published on their own timetable, so what this layer can do grows without the pipeline changing version.
+
 `verify` is also the first thing every other module does. It resolves your configuration, works out which results directories the invocation covers, checks them against the record the pipeline wrote beside them, and refuses before any compute if anything does not line up. Running it on its own is how you check a project is ready without spending anything.
 
 ## Configuring the Analysis Layer
@@ -2433,7 +2437,7 @@ Everything the analysis layer produces goes under `mainDir/Analysis/`, and nothi
 
 `Analysis/Session/` exists so that an analysis run does not overwrite the four session files in `Output/Reports`, which are the record of the pipeline run that produced the results being read.
 
-`Analysis/Main` is where a module puts anything it had to derive — a per-position depth file, a frequency matrix, a callable-sites count. It is built on demand and shared, so a second module wanting the same thing finds it already there rather than deriving it again. It can grow large, and `PoolSeqFlow analysis complete` is what moves it, with your results, to permanent storage.
+`Analysis/Main` is where a module puts anything it had to derive — a per-position depth file, a frequency matrix, a callable-sites count. Derivations are shared: a second module wanting the same thing finds it already there rather than building it again. It stays empty until you install a module that derives something, and it can then grow large — a full per-position depth file is measured in gigabytes.
 
 `Analysis/Results` holds one folder per analysis, named by [`folderName`](#analysis-folder-name).
 
@@ -2626,7 +2630,7 @@ Trimmed reads are deleted once clipping has consumed them. `ClipReads` is the on
 
 ---
 
-### Step 3: Align
+### Step 3: Align {: #step-3-align }
 
 `scripts/3_align.nf`
 
@@ -2641,6 +2645,16 @@ bwa mem -K 10000000 -T 30 -t <threads> reference R1_clipped R2_clipped \
 | `-K 10000000` | `bwa.batchSize` | Fixed bases per batch — makes output **deterministic** regardless of thread count |
 
 `-K` is worth knowing about. Without it, BWA processes a batch sized by thread count, so the same input aligned with different `threads` can produce slightly different output. Fixing the batch size makes a run reproducible across machines.
+
+`bwa.options` is the whole flag string, and it ships commented out **because the pipeline builds it for you** from the two values above. There is nothing to set: change `minScoreOutput` or `batchSize` and the string follows.
+
+```groovy
+// options      = "-K ${params.bwa.batchSize} -T ${params.bwa.minScoreOutput}"
+```
+
+Uncomment it only when you want flags those two cannot express — a different `-A`/`-B` scoring, say. From then on the string is used exactly as you write it and the two values above stop being read, so **`-K` is gone unless you put it back yourself**, and the run quietly loses the determinism the section above is about. `-t` is the exception: it is not in the string at either end, so the thread count still comes from the [`cores` ladder](#resources) whatever you pin here.
+
+Like the values it replaces, it is analysis-affecting — step 0 refuses a run whose string differs from the one recorded beside your existing alignments.
 
 Output goes to `Output/Aligned/` as unsorted BAM.
 
@@ -2834,6 +2848,10 @@ That gap is closed by the consistency guards at the start of a run, which record
 
 `clean` is safe at any time and does not affect resume — nothing in `work/` is consulted by the skip logic. `reset` deletes results.
 
+The preview itself is built in `dryRunDir`, which is `dryrun/` in the directory you launch from, beside `parameters.config`, unless you point it somewhere else. It is outside the `Output/` tree on both roots, so a preview is never mixed in among results. `dryclean` asks the same parameter where to look, and both commands check what they are about to delete first: a directory holding anything other than empty folders, a `README.txt` and a `members.txt` is not a preview, so they list what is in it and remove nothing. `dryrun` replaces a preview that passes that check without asking, because there is nothing in one to lose.
+
+`dryRun` is the other half, and it is the pipeline's own flag rather than a setting for you to make: the `dryrun` command sets it, and it is what stops step 0 writing. Every check still runs and every comparison is still made — the report says *would record* where a real run says *recording*. That is what keeps a preview from leaving a baseline behind for results that are never produced, and it is why `dryRun` and `dryRunDir` are among the handful of parameters kept out of the recorded manifest: a preview must not be able to look like a run.
+
 !!! danger "Do not delete either directory's contents while a run is in flight"
 
     Task working directories contain symlinks into the volume the output was moved to. Removing the target breaks links that are actively in use, and the failure will not be obvious. That applies to the working volume as well as to permanent storage — an artifact waiting to be promoted is being read from where it is.
@@ -2863,7 +2881,7 @@ There are three directories, and keeping them apart is most of understanding the
 │   └── write_citations.py        # Writes CITATIONS.md and references.bib per run
 ├── lib/                          # Sourced by another script, never run; not on PATH
 │   ├── tool_version.sh           # Asks each tool its version, one way per tool
-│   └── wrapper_lib.sh            # Machinery shared by the wrappers
+│   └── wrapper_lib.sh            # Machinery shared by the wrapper and the install checks
 ├── install/
 │   ├── environment.yml           # Pinned conda environment
 │   ├── environment-analysis.yml  # Pinned conda environment for the analysis layer

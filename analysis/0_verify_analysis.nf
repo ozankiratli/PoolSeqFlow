@@ -9,7 +9,7 @@
 
 nextflow.enable.dsl=2
 
-// Where the analysis layer keeps its own record. Under mainDir until `complete` moves it.
+// Where the analysis layer keeps its own record, under mainDir.
 def analysisLogDir() {
     return "${params.mainDir}/Analysis/Logs/0_verify_analysis".toString()
 }

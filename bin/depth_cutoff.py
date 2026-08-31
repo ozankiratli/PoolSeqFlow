@@ -99,7 +99,9 @@ def anchor_depth(counts):
     """The depth the search starts from: the deeper of two medians.
 
     The first weights every covered position equally, the second weights each by its depth and
-    so counts reads.
+    so counts reads. They fail on opposite cases, and the deeper of the two is the safe one:
+    too deep can only miss an anomaly and leave the sample uncapped, while too shallow cuts
+    into real coverage. Not reducible to one median.
     """
     return max(weighted_median(counts, lambda _d, n: n),
                weighted_median(counts, lambda d, n: d * n))

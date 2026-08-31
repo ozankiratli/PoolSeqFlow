@@ -14,9 +14,9 @@
 
 set -uo pipefail
 
-# Two directories: the installation holds the entry point and the environment file, the
-# directory this was invoked from is the project. Captured before the cd.
-PROJECT_DIR="$PWD"
+# The installation, which holds the entry point and the environment file. Unlike the pipeline's
+# checker this one never reads the project: its tool list is fixed and its package list comes from
+# the environment file, so there is no parameters.config to resolve anything through.
 cd "$(dirname "$0")/.." || exit 1
 INSTALL_DIR="$PWD"
 
@@ -41,8 +41,8 @@ fi
 missing=0
 checked=0
 
-# The commands an analysis module runs. R and Rscript are the layer itself; the rest derive
-# per-position depth from the BAMs a run produced.
+# The commands an analysis module runs. R and Rscript are the layer itself; the rest are what a
+# module needs to read a run's BAMs and VCFs for itself.
 CANONICAL="R Rscript nextflow samtools bcftools tabix bgzip python3"
 
 # Checked first: this runs without `set -e`, so a missing library would leave the functions

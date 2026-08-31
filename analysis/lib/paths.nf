@@ -22,9 +22,9 @@ def analysisSetting(String key) {
     return params.analysis[key]
 }
 
-// The installation this invocation was launched from, and the only way anything in a run can
-// find bin/, the library or the module store: a module is its own pipeline, so ${projectDir} is
-// the module's own directory.
+// The installation this invocation was launched from, and a refusal when it cannot be found. A
+// module is its own pipeline, so ${projectDir} is the module's own directory and nothing
+// Nextflow computes points at the installation.
 def installDir() {
     def dir = "${analysisSetting('installDir') ?: ''}".trim()
     if (dir.isEmpty() || !file("${dir}/analysis/lib/paths.nf").exists()) {
@@ -45,14 +45,12 @@ def renderSetting(Object value) {
     return "'${value}'"
 }
 
-// Everything the analysis layer writes lives under one root, on the working volume. `complete`
-// moves it to permanent storage.
+// Everything the analysis layer writes lives under one root, under mainDir.
 def analysisRoot() {
     return "${params.mainDir}/Analysis".toString()
 }
 
-// The derived files modules share. Built on demand, once, and reused by every module that
-// needs them.
+// Where modules put anything they derive. One directory for the project, shared by all of them.
 def intermediatesDir() {
     return "${analysisRoot()}/Main".toString()
 }

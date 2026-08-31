@@ -47,6 +47,8 @@ BEGIN {
     # Unmapped, or a CIGAR that consumes no reference: nothing to count, and nothing to cap.
     if (pos == 0 || span <= 0) { kept++; print; next }
 
+    # Trimmed from behind: the stream is sorted, so nothing can add to a position it has passed.
+    # This is what keeps the array to one read's span instead of a chromosome's.
     while (low < pos) { delete depth[low]; low++ }
 
     end = pos + span - 1

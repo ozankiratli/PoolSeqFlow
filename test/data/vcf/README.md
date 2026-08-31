@@ -5,7 +5,7 @@ has already cost this project one false bug report. `bcftools call -m` emits an 
 and indel as **two records at the same position**, never as one mixed multiallelic record — a
 structure that is easy to get wrong by hand and that makes `norm -m -` / `norm -m+` look broken
 when it is not. Anything testing `bin/filterFalsePositives.sh`, `bin/createDepthFile.sh`,
-`bin/depth2freq.sh` or `bin/MajorAlleleToRef.py` should start from this file.
+`bin/depth2freq.awk` or `bin/MajorAlleleToRef.py` should start from this file.
 
 **Where it came from.** A full pipeline run over `test/data/base/` — the same six samples, the
 same 20 kb synthetic reference, aligned with bwa and called with the pipeline's own

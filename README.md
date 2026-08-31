@@ -41,10 +41,10 @@ Raw FASTQ reads
 [Step 4] BAM cleanup (name-sort → fixmate → coord-sort → markdup → addRG → filter → index)
       │
       ▼
-[Step 5] Alignment & coverage reports (BAMtools, SAMtools)
+[Step 5] Alignment, coverage & depth reports; each sample's depth ceiling
       │
       ▼
-[Step 6] Variant calling (BCFtools mpileup + call)
+[Step 6] Depth capping, then variant calling (BCFtools mpileup + call)
       │
       ├────────────────────────────────────────────┐
       ▼                                            ▼
@@ -63,22 +63,24 @@ curl -LO https://github.com/ozankiratli/PoolSeqFlow/releases/latest/download/Poo
 tar -xzf PoolSeqFlow.tar.gz
 cd PoolSeqFlow-*/
 
-# 2. Create your configuration
-cp parameters.config.template parameters.config
-#    then edit it: mainDir, projectDir, readPattern, referenceFile, poolSize, diploidy
-
-# 3. Build and verify the environment
+# 2. Build and verify the environment
 ./PoolSeqFlow install
+
+# 3. Populate a project directory
+mkdir -p /path/to/project && cd /path/to/project
+./PoolSeqFlow init
+#    then edit parameters.config: mainDir, storageDir, readPattern,
+#    referenceFile, poolSize, diploidy
 
 # 4. Run — this is also the resume command
 ./PoolSeqFlow run
 ```
 
-Your project directory needs a `Data/` folder of FASTQs, a gzipped reference, and an `RGTags.csv`. Copy `RGTags.csv.template` and fill it in — it is not only metadata, it decides which FASTQ pairs count as one sample and the order your result columns come out in.
+Your project directory needs a `Data/` folder of FASTQs, a reference genome (gzipped or not), and a `metadata.csv`. `init` writes `metadata.csv.example` for you to start from — the file is not only metadata, it decides which FASTQ pairs count as one pool, the order your result columns come out in, and each pool's detection limit.
 
 Full walkthrough: [Install](https://ozankiratli.github.io/PoolSeqFlow/getting-started/install/) and [Quick Start](https://ozankiratli.github.io/PoolSeqFlow/getting-started/quick-start/).
 
-> **Configure through `parameters.config` only.** PoolSeqFlow does not accept command-line parameter overrides, and `./PoolSeqFlow` deliberately rejects any argument beyond a single subcommand. A run is therefore fully described by a file you can version, diff and publish. It also avoids a silent failure: Nextflow delivers `--param` values as **strings**, so `--annotate false` sets the string `"false"`, which Groovy evaluates as *true*.
+> **Configure through `parameters.config` only.** PoolSeqFlow does not accept command-line parameter overrides. A run is therefore fully described by a file you can version, diff and publish. It also avoids a silent failure: Nextflow delivers `--param` values as **strings**, so `--annotate false` sets the string `"false"`, which Groovy evaluates as *true*.
 
 ---
 
@@ -87,17 +89,23 @@ Full walkthrough: [Install](https://ozankiratli.github.io/PoolSeqFlow/getting-st
 | Command | Description |
 |---|---|
 | `./PoolSeqFlow install` | Create the conda environment, install the pipeline, then verify both |
+| `./PoolSeqFlow init` | Populate the current directory as a project |
+| `./PoolSeqFlow init_multi` | The same, for a project running several parameter sets over one set of reads |
 | `./PoolSeqFlow check` | Verify an existing installation — tools, helpers, config |
 | `./PoolSeqFlow run` | Start — or resume — the pipeline |
+| `./PoolSeqFlow dryrun` | Create the directory tree a run would write, empty, before any compute is spent |
+| `./PoolSeqFlow dryclean` | Remove that preview |
 | `./PoolSeqFlow migrate_config` | Carry an older `parameters.config` onto the current template |
 | `./PoolSeqFlow clean` | Remove Nextflow work directories |
 | `./PoolSeqFlow reset` | Remove all progress and start fresh (typed confirmation required) |
+| `./PoolSeqFlow analysis <command>` | The analysis layer — see below |
 | `./PoolSeqFlow version` | Print the installed version |
 | `./PoolSeqFlow cite` | Print how to cite this copy, and which DOI to use |
-| `./PoolSeqFlow analysis <command>` | The analysis layer — see below |
+| `./PoolSeqFlow list` | List the pipelines and conda environments installed on this machine |
 | `./PoolSeqFlow uninstall` | Remove one installed version — environment and pipeline together, after confirmation |
+| `./PoolSeqFlow uninstall_all` | Remove every PoolSeqFlow environment and installation, after confirmation |
 
-`analysis` is the one subcommand that carries a word of its own: `install`, `check`, `version`, `cite`, `uninstall`, or the name of a module to run. The analysis layer ships with the pipeline and is enabled separately with `./PoolSeqFlow analysis install`, which creates the conda environment that carries R.
+`analysis` takes `install`, `check`, `version`, `cite`, `uninstall`, or the name of a module to run. The analysis layer ships with the pipeline and is enabled separately with `./PoolSeqFlow analysis install`, which creates the conda environment that carries R.
 
 There is no `-resume` flag. Every step checks whether its outputs already exist in permanent storage and skips itself if they do, so `run` both starts and resumes — and that survives job timeouts, reboots and `work/` cleanups. [Why →](https://ozankiratli.github.io/PoolSeqFlow/pipeline/resume/)
 
@@ -109,10 +117,10 @@ There is no `-resume` flag. Every step checks whether its outputs already exist 
 |---|---|
 | [When to use it](https://ozankiratli.github.io/PoolSeqFlow/concepts/) | What pooling buys and costs, and what the pipeline assumes about your design |
 | [Design decisions](https://ozankiratli.github.io/PoolSeqFlow/concepts/design-decisions/) | Why configuration is a file, why resume is filesystem-based, what each choice costs |
-| [The filter chain](https://ozankiratli.github.io/PoolSeqFlow/concepts/filter-chain/) | All eight filters in order, what each removes, and how to tune them |
+| [The filter chain](https://ozankiratli.github.io/PoolSeqFlow/concepts/filter-chain/) | All nine filters in order, what each removes, and how to tune them |
 | [Interpreting results](https://ozankiratli.github.io/PoolSeqFlow/concepts/interpreting-results/) | The frequency table format, and the mistakes that are easy to make reading it |
 | [Configuration](https://ozankiratli.github.io/PoolSeqFlow/configuration/) | Every parameter, sorted by whether it changes your results |
-| [Read groups](https://ozankiratli.github.io/PoolSeqFlow/configuration/read-groups/) | `RGTags.csv`, and why `SM` decides what counts as a sample |
+| [Metadata](https://ozankiratli.github.io/PoolSeqFlow/configuration/metadata/) | `metadata.csv`, and why `RG_Sample` decides what counts as a pool |
 | [Pipeline steps](https://ozankiratli.github.io/PoolSeqFlow/pipeline/steps/) | Steps 0–8 in detail |
 | [Upgrading](https://ozankiratli.github.io/PoolSeqFlow/getting-started/upgrading/) | Your `parameters.config` is never touched by an update — read this first |
 | [Troubleshooting](https://ozankiratli.github.io/PoolSeqFlow/reference/troubleshooting/) | Errors by symptom |
@@ -127,7 +135,7 @@ Your installed copy prints its own citation, with the version filled in:
 ./PoolSeqFlow cite
 ```
 
-**Cite the version you actually ran, not the newest one.** Zenodo issues a separate DOI for every release, and results depend on which release produced them — filters, defaults and parameter names have all changed between versions. Step 0 records the versions that have run in a project in `.poolseqflow_versions`, mirrored into `Output/run_parameters.txt`.
+**Cite the version you actually ran, not the newest one.** Zenodo issues a separate DOI for every release, and results depend on which release produced them — filters, defaults and parameter names have all changed between versions. Step 0 records the release that produced a project's results in `.poolseqflow_version`, named again in the header of the readable `Output/run_parameters.txt`, and refuses to run under a different one — so a project belongs to one release and there is never a question of which to cite.
 
 [10.5281/zenodo.19245611](https://doi.org/10.5281/zenodo.19245611) is the **all-versions** DOI: it always resolves to the newest release. Use it to refer to the software in general, and a version DOI when reporting results. [Details →](https://ozankiratli.github.io/PoolSeqFlow/reference/citation/)
 

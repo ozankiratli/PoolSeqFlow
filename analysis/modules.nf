@@ -5,8 +5,7 @@
 //
 // Installed modules are read from the store, one directory each, so adding one is adding a
 // directory. Nothing here includes a module: a module is its own pipeline and imports what it
-// wants from analysis/lib. This file belongs to the frame and a module has no reason to import
-// it; the layout and the run selection are in the library, where both can reach them.
+// wants from analysis/lib, which is also where the layout and the run selection live.
 
 nextflow.enable.dsl=2
 
@@ -111,8 +110,8 @@ def requireModule(Object name) {
         throw new IllegalArgumentException(
             "'${asked}' is not installed.\n" +
             "Available here: ${known}\n" +
-            "Modules are installed separately from the pipeline:\n" +
-            "    PoolSeqFlow analysis modules available")
+            "Modules are installed separately from the pipeline, one directory each, into\n" +
+            "    ${moduleStore()}")
     }
     return asked
 }

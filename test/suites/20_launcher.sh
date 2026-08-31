@@ -102,7 +102,7 @@ test_uninstall_removes_the_pipeline_as_well_as_the_environment() {
     assert_count 0 "$(find "$LAUNCHER_PREFIX/opt" -maxdepth 1 -name 'PoolSeqFlow-*' | wc -l)" \
         "the payload should be gone"
     assert_count 0 "$(find "$LAUNCHER_PREFIX/bin" -maxdepth 1 -name 'PoolSeqFlow*' | wc -l)" \
-        "and so should both wrappers, rather than dangling"
+        "and so should every symlink to it, rather than dangling"
 }
 
 # Removing one version must leave the others alone, and must leave the plain wrapper pointing
@@ -459,15 +459,14 @@ test_the_analysis_subcommand_takes_exactly_one_word() {
 }
 
 # Every subcommand the analysis usage line advertises must have an arm, and every arm must be
-# advertised. Two entries have no arm of their own and are excluded by name: `<module>` is a
-# placeholder, and `complete` is a module name that analysis.nf owns.
+# advertised. `<module>` is the one exclusion: it is a placeholder, not a word. Anything else
+# excluded here is a command advertised to users that does nothing.
 #
 # The arms sit in the nested case, indented eight spaces further than the pipeline's own.
 test_analysis_usage_and_implementation_agree() {
     local wrapper="$REPO_ROOT/PoolSeqFlow" usage_line advertised implemented cmd
     usage_line=$(sed -n 's/.*Usage: \$0 analysis {\(.*\)}.*/\1/p' "$wrapper" | head -1)
-    advertised=$(printf '%s' "$usage_line" | tr '|' '\n' \
-                 | grep -vx -e '<module>' -e 'complete' | sort)
+    advertised=$(printf '%s' "$usage_line" | tr '|' '\n' | grep -vx '<module>' | sort)
     implemented=$(sed -n 's/^            \([a-z_|]*\))$/\1/p' "$wrapper" | tr '|' '\n' | sort)
     # Both sides going empty together would pass vacuously, and a changed usage line or a
     # re-indented case is exactly how that happens.
@@ -507,7 +506,7 @@ test_analysis_install_verifies_what_it_built() {
         "install should finish by verifying itself"
 }
 
-# The DOI and the citation text live in lib/wrapper_lib.sh so the two wrappers cannot drift.
+# The DOI and the citation text live in lib/wrapper_lib.sh so the two `cite` arms cannot drift.
 # Both must print the same software citation for the same version.
 test_both_citations_carry_the_same_software_citation() {
     local pipeline_cite analysis_cite

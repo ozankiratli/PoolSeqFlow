@@ -429,7 +429,7 @@ _run_entry() {
         export JAVA_HOME="$TEST_CONDA_ENV" JAVA_CMD="$TEST_CONDA_ENV/bin/java"
         export PATH="$TEST_CONDA_ENV/bin:$PATH"
         export NXF_HOME="$sb/nxfhome" NXF_VER="${TEST_NXF_VER:-26.04.6}"
-        # What both wrappers export: a module is launched as its own entry script, so nothing
+        # What the wrapper exports: a module is launched as its own entry script, so nothing
         # Nextflow computes points at the installation. SANDBOX_INSTALL_OVERRIDE is for the case
         # that launches without one, and is honoured when set to an empty string.
         export POOLSEQFLOW_HOME="${SANDBOX_INSTALL_OVERRIDE-$sb/install}"

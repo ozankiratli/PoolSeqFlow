@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Machinery shared by the PoolSeqFlow wrappers and the installation checks.
+# Machinery shared by the PoolSeqFlow wrapper and the installation checks.
 #
-# SOURCED, never run. Both wrappers read it once INSTALL is resolved, which nf_config_value
+# SOURCED, never run. The wrapper reads it once INSTALL is resolved, which nf_config_value
 # needs.
 #
 # Reads four things the caller sets: INSTALL, POOLSEQFLOW_INSTALLED_HOME and POOLSEQFLOW_PREFIX
@@ -55,7 +55,7 @@ nf_config_value() {
 # install/citations.json, which the per-run CITATIONS.md is built from.
 CONCEPT_DOI="10.5281/zenodo.19245611"
 
-# How to cite this release. Takes the version to name. Both wrappers print it; the analysis
+# How to cite this release. Takes the version to name. Both `cite` arms print it; the analysis
 # one follows it with R and the packages a module ran on.
 poolseqflow_citation() {
     local version="$1"
