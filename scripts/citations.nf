@@ -17,7 +17,7 @@ process WriteCitations {
     probes = (run.software.collect { name, cmd -> "${name}=${cmd}" } +
               ["nextflow=nextflow", "python=python3"]).join(' ')
     """
-    . ${run.dir.bin}/tool_version.sh
+    . ${run.dir.lib}/tool_version.sh
 
     versions=""
     for pair in ${probes}; do

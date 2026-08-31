@@ -18,6 +18,7 @@
 #   COMPUTED  the pipeline now derives it; your value was ignored
 #   REFORMAT  its format changed this release, so the template value was used
 #   NEW       the template has a parameter your config did not - review the default
+#   KNOB      the pipeline computes it now, and the new config carries it commented out
 #   DROPPED   your config had a parameter this release no longer uses
 
 set -euo pipefail
@@ -70,8 +71,12 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
     }
 
     # Parameters whose meaning or format changed in this release: the template value must
-    # win even though both sides look like plain literals.
-    function reformatted(k) { return (k == "fastqc.memory") }
+    # win even though both sides look like plain literals. variantCall.maxDepth was the only
+    # depth ceiling there was; from 3.0 capBAM caps each BAM before the call and this is a
+    # second ceiling over it, shipped as 0, which mpileup reads as no limit at all.
+    function reformatted(k) {
+        return (k == "fastqc.memory" || k == "variantCall.maxDepth")
+    }
 
     # Parameters renamed in this release, keyed by their CURRENT name and returning the name
     # they had before. Needs a line per rename: without one, a rename reads as one DROPPED plus
@@ -108,6 +113,16 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
             stack[++depth] = name
             if (pass == 2) print
             next
+        }
+
+        # A commented-out assignment in the template is a knob: the pipeline computes the
+        # value now, and uncommenting the line takes it back. Recorded so a parameter that
+        # became one is not reported as simply gone.
+        if (pass == 2 && line ~ /^\/\/[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*=/) {
+            ckey = line
+            sub(/^\/\/[ \t]*/, "", ckey)
+            sub(/[ \t]*=.*$/, "", ckey)
+            knob[qualify(ckey)] = 1
         }
 
         # assignment:  key = value      (ignore comments)
@@ -159,9 +174,26 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
         if (pass == 2) print
     }
 
+    # An old key under the CURRENT scope names, for looking it up among the knobs. renamed()
+    # runs the other way, from the new name to the old. No apostrophes in here: this awk
+    # program is single-quoted, and one would end it.
+    function forward(k,   nw) {
+        nw = k
+        if (sub(/^samtools\./, "cleanBAM.", nw))    return nw
+        if (sub(/^bcftools\./, "variantCall.", nw)) return nw
+        return k
+    }
+
     END {
         if (pass == 2)
-            for (k in seen) if (!(k in used)) printf "DROPPED\t%s\t%s\t\n", k, oldval[k] >> REPORT
+            for (k in seen) if (!(k in used)) {
+                if (forward(k) in knob) {
+                    nk = forward(k)
+                    printf "KNOB\t%s\t%s\t%s\n", k, oldval[k], \
+                        (nk == k ? "" : "   (now " nk ")") >> REPORT
+                } else
+                    printf "DROPPED\t%s\t%s\t\n", k, oldval[k] >> REPORT
+            }
     }
 ' "$OLD" "$TPL" > "$TMP"
 
@@ -185,6 +217,8 @@ show RENAMED  "Renamed this release - your value followed"   "  %-30s %s (was %s
 show COMPUTED "Now computed by the pipeline - your value ignored" "  %-30s now %s (was %s)\n"
 show REFORMAT "Format changed this release - template value used"  "  %-30s now %s (was %s)\n"
 show NEW      "New in this release - review these defaults"   "  %-30s %s%s\n"
+show KNOB     "Still yours to set - commented out in the new config, uncomment to use it" \
+                                                             "  %-30s was %s%s\n"
 show DROPPED  "No longer used - dropped"                      "  %-30s was %s%s\n"
 
 # --- inputs that have to move ---------------------------------------------------------
@@ -275,5 +309,50 @@ if [ "${#GUARD_MOVES[@]}" -ne 0 ]; then
     echo "  produced under the old ones. It would report PASS and have stopped checking."
 fi
 echo
+
+# Changes a one-line report entry cannot carry on its own. Each is printed only when the old
+# config shows this project is affected by it.
+NOTES=0
+note_heading() {
+    [ "$NOTES" -eq 0 ] || return 0
+    echo "Read these before your next run"
+    echo
+    NOTES=1
+}
+
+# Read back from the report, so this fires exactly when the reformat did.
+OLD_MAXDEPTH=$(awk -F'\t' '$1 == "REFORMAT" && $2 == "variantCall.maxDepth" { print $4 }' "$REPORT")
+if [ -n "$OLD_MAXDEPTH" ]; then
+    note_heading
+    echo "  THE DEPTH CEILING MOVED, and your $OLD_MAXDEPTH was not carried across."
+    echo
+    echo "  It was the only depth control there was: every pileup capped at $OLD_MAXDEPTH reads."
+    echo "  From 3.0 step 5 measures a ceiling for each sample from its own depth histogram and"
+    echo "  step 6 applies it to the BAM before calling, so a sample is capped where its own"
+    echo "  coverage says to rather than at one number for the whole run. variantCall.maxDepth"
+    echo "  is now a second ceiling on top of that and ships as 0, which mpileup reads as no"
+    echo "  limit at all."
+    echo
+    echo "  Automatic capping is capBAM.maxDepth = -1, which is what you now have. A positive"
+    echo "  number there caps every sample at it instead; 0 caps nothing."
+    echo "  To keep exactly what you had: variantCall.maxDepth = $OLD_MAXDEPTH and capBAM.maxDepth = 0."
+    echo
+fi
+
+if [ -n "$RGFILE" ]; then
+    note_heading
+    echo "  $RGFILE IS REPLACED BY metadata.csv, and it is not the same file renamed."
+    echo
+    echo "  $RGFILE carried read-group tags. metadata.csv describes the experiment: it still"
+    echo "  names each sample and its read groups, it decides which rows merge into one pool,"
+    echo "  and it can set the pool size and the detection sensitivity per sample."
+    echo
+    echo "  Nothing converts it for you, and the run refuses at step 0 until metadata.csv"
+    echo "  exists. Start from the template, which documents every column, and carry your"
+    echo "  RG_ values across:"
+    echo
+    echo "      cp \$POOLSEQFLOW_HOME/metadata.csv.template metadata.csv"
+    echo
+fi
 
 echo "Review $OUT before running the pipeline."

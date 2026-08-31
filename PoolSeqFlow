@@ -19,7 +19,8 @@
 #  version        - prints the version of this copy
 #  cite           - prints how to cite this copy
 #  list           - lists what is installed on this machine
-#  uninstall      - removes one installed version, asking which when several exist
+#  uninstall      - removes one installed version, asking which when several exist, and
+#                   always confirming before anything goes
 #  uninstall_all  - removes every PoolSeqFlow environment and installation
 #
 # Each subcommand takes no arguments. POOLSEQFLOW_PREFIX and POOLSEQFLOW_HOME adjust it.
@@ -28,9 +29,6 @@ set -e
 eval "$(conda shell.bash hook)"
 
 VERSION="2.2.0"
-
-# Zenodo all-versions DOI. A release's own DOI is reached through it.
-CONCEPT_DOI="10.5281/zenodo.19245611"
 
 usage() {
     echo "Usage: $0 {install|init|init_multi|check|run|dryrun|dryclean|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}"
@@ -51,6 +49,15 @@ else
     INSTALL=$(cd "$(dirname "$(readlink -f "$0")")" && pwd -P)
 fi
 export POOLSEQFLOW_HOME="$INSTALL"
+
+# Shared with the analysis wrapper, and sourced after INSTALL resolves: nf_config_value
+# reads it.
+if [ ! -f "$INSTALL/lib/wrapper_lib.sh" ]; then
+    echo "ERROR: $INSTALL/lib/wrapper_lib.sh is missing." >&2
+    echo "  This copy of PoolSeqFlow is incomplete." >&2
+    exit 1
+fi
+. "$INSTALL/lib/wrapper_lib.sh"
 
 # Confirms the payload is there, for the subcommands that need it.
 require_install() {
@@ -77,74 +84,97 @@ require_project_config() {
 }
 
 # What an installation consists of. Must match what `git archive` puts in a release tarball.
-PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf dryrun.nf nextflow.config scripts bin install \
-parameters.config.template metadata.csv.template multi-run.csv.example manual \
-README.md CHANGELOG.md LICENSE"
+PAYLOAD_ITEMS="PoolSeqFlow PoolSeqFlow-analysis poolseqflow.nf dryrun.nf nextflow.config \
+scripts bin lib install parameters.config.template metadata.csv.template \
+multi-run.csv.example manual README.md CHANGELOG.md LICENSE"
 
-# Where installations live: POOLSEQFLOW_PREFIX, else an installed wrapper's own location,
-# else ~/.local.
-install_prefix() {
-    if [ -n "${POOLSEQFLOW_PREFIX:-}" ]; then
-        printf '%s' "$POOLSEQFLOW_PREFIX"
-    elif [ -n "$POOLSEQFLOW_INSTALLED_HOME" ]; then
-        printf '%s' "$(dirname "$(dirname "$POOLSEQFLOW_INSTALLED_HOME")")"
-    else
-        printf '%s' "$HOME/.local"
-    fi
-}
+# The payload's executables. Each is stamped with its installed location and symlinked into
+# $PREFIX/bin twice, once under its own name and once carrying the version.
+WRAPPERS="PoolSeqFlow PoolSeqFlow-analysis"
 
-# Every version installed under a prefix, sorted by version, oldest first.
-installed_payload_versions() {
-    local prefix="$1" d
-    for d in "$prefix"/opt/PoolSeqFlow-*; do
-        [ -d "$d" ] || continue
-        printf '%s\n' "${d##*/PoolSeqFlow-}"
-    done | sort -V
-}
-
-newest_installed_version() {
-    installed_payload_versions "$1" | tail -1
-}
-
-# Every version present as a payload, an environment, or both.
-installed_versions() {
+# Everything `uninstall` can act on, by the name it is known as: every version present as a
+# payload or an environment, plus the legacy unversioned environment when it is there. An
+# analysis environment is not one of these - `PoolSeqFlow-2.2.0-analysis` belongs to 2.2.0 and
+# is removed with it, so listing it separately would offer it for removal on its own and make
+# one installed version look like two.
+installed_installations() {
     {
-        installed_payload_versions "$1"
-        poolseqflow_envs | sed -n 's/^PoolSeqFlow-//p'
+        installed_payload_versions "$1" | sed 's/^/PoolSeqFlow-/'
+        poolseqflow_envs | grep -v -- '-analysis$'
     } | sort -V -u
 }
 
-# Which version `uninstall` acts on: the only one installed, the one a versioned wrapper
-# names, or the one chosen at the prompt. Refuses with nothing attached to ask.
-choose_version_to_uninstall() {
-    local prefix="$1" versions count v i choice
+# What to say about one installation beyond its name: whether it is the legacy environment,
+# whether this wrapper belongs to it, and whether its analysis layer is installed too.
+installation_note() {
+    local name="$1" notes=""
+    if [ "$name" = "$LEGACY_ENV" ]; then
+        notes="unversioned - predates per-version environments"
+    elif [ "$name" = "PoolSeqFlow-$VERSION" ]; then
+        notes="this wrapper"
+    fi
+    if env_exists "${name}-analysis"; then
+        notes="${notes:+$notes, }analysis installed"
+    fi
+    printf '%s' "$notes"
+}
+
+# The installed list, as both the prompt and the refusal print it. Numbered when asked, so the
+# two cannot drift into describing the same installations differently.
+list_installations() {
+    local names="$1" indent="$2" numbered="$3" v note line i=0
+    while IFS= read -r v; do
+        [ -n "$v" ] || continue
+        i=$((i + 1))
+        note=$(installation_note "$v")
+        if [ "$numbered" = "numbered" ]; then
+            line=$(printf '%s%d) %s' "$indent" "$i" "$v")
+        else
+            line=$(printf '%s%s' "$indent" "$v")
+        fi
+        if [ -n "$note" ]; then
+            printf '%-34s (%s)\n' "$line" "$note" >&2
+        else
+            printf '%s\n' "$line" >&2
+        fi
+    done <<EOF
+$names
+EOF
+    return 0
+}
+
+# Which installation `uninstall` acts on: the only one present, the one a versioned wrapper
+# names, or the one chosen at the prompt. Returns the name it is known as - `PoolSeqFlow-2.2.0`,
+# or `PoolSeqFlow` for the legacy environment. Refuses with nothing attached to ask.
+choose_installation_to_uninstall() {
+    local prefix="$1" names count choice
 
     # A versioned wrapper - `PoolSeqFlow-2.1.0 uninstall` - names the version already.
     case "$(basename "$0")" in
-        PoolSeqFlow-*) printf '%s' "$VERSION"; return 0 ;;
+        PoolSeqFlow-*) printf 'PoolSeqFlow-%s' "$VERSION"; return 0 ;;
     esac
 
-    versions=$(installed_versions "$prefix")
-    count=$(printf '%s\n' "$versions" | grep -c . || true)
+    names=$(installed_installations "$prefix")
+    count=$(printf '%s\n' "$names" | grep -c . || true)
 
     # Empty: the caller reports it, having more context about this prefix.
     [ "$count" -eq 0 ] && { printf ''; return 0; }
 
-    if [ "$count" -eq 1 ] && [ "$versions" = "$VERSION" ]; then
-        printf '%s' "$VERSION"
+    if [ "$count" -eq 1 ] && [ "$names" = "PoolSeqFlow-$VERSION" ]; then
+        printf 'PoolSeqFlow-%s' "$VERSION"
         return 0
     fi
 
     if [ ! -t 0 ]; then
-        if ! printf '%s\n' "$versions" | grep -qxF "$VERSION"; then
+        if ! printf '%s\n' "$names" | grep -qxF "PoolSeqFlow-$VERSION"; then
             echo "ERROR: environment 'PoolSeqFlow-$VERSION' is not installed, and neither is" >&2
             echo "v$VERSION of the pipeline under $prefix/opt." >&2
         else
-            echo "ERROR: $count versions of PoolSeqFlow are installed under $prefix." >&2
+            echo "ERROR: $count PoolSeqFlow installations are present under $prefix." >&2
         fi
         echo "" >&2
         echo "Installed:" >&2
-        printf '%s\n' "$versions" | sed 's/^/    PoolSeqFlow-/' >&2
+        list_installations "$names" "    " plain
         echo "" >&2
         echo "Nothing is attached to ask which one to remove, and removing the wrong" >&2
         echo "installation is not a thing to guess at. Name the one you mean:" >&2
@@ -154,57 +184,53 @@ choose_version_to_uninstall() {
     fi
 
     echo "Installed under $prefix:" >&2
-    i=0
-    while IFS= read -r v; do
-        [ -n "$v" ] || continue
-        i=$((i + 1))
-        if [ "$v" = "$VERSION" ]; then
-            printf '  %d) PoolSeqFlow-%s   (this wrapper)\n' "$i" "$v" >&2
-        else
-            printf '  %d) PoolSeqFlow-%s\n' "$i" "$v" >&2
-        fi
-    done <<EOF
-$versions
-EOF
+    list_installations "$names" "  " numbered
     echo "" >&2
-    printf 'Which one should be removed? [1-%d, or q to cancel] ' "$i" >&2
+    echo "An installation is removed whole: its environment, its pipeline, and its analysis" >&2
+    echo "environment where one is installed." >&2
+    echo "" >&2
+    printf 'Which one should be removed? [1-%d, or q to cancel] ' "$count" >&2
     read -r choice
     case "$choice" in
         q|Q|"") echo "Cancelled. Nothing was removed." >&2; return 1 ;;
-        *[!0-9]*|"") echo "Not a number: $choice. Nothing was removed." >&2; return 1 ;;
+        *[!0-9]*) echo "Not a number: $choice. Nothing was removed." >&2; return 1 ;;
     esac
-    if [ "$choice" -lt 1 ] || [ "$choice" -gt "$i" ]; then
+    if [ "$choice" -lt 1 ] || [ "$choice" -gt "$count" ]; then
         echo "There is no $choice on that list. Nothing was removed." >&2
         return 1
     fi
-    printf '%s\n' "$versions" | sed -n "${choice}p"
+    printf '%s\n' "$names" | sed -n "${choice}p"
 }
 
-# Removes one version's payload and its wrapper, then re-points the plain wrapper at the
-# newest that remains, or removes it once nothing does.
+# Removes one version's payload and its wrappers, then re-points each plain wrapper at the
+# newest version that still provides it, or removes it once none does.
 remove_payload() {
-    local version="$1" prefix dest bindir newest
+    local version="$1" prefix dest bindir item newest
     prefix=$(install_prefix)
     dest="$prefix/opt/PoolSeqFlow-${version}"
     bindir="$prefix/bin"
     [ -d "$dest" ] || return 1
 
     rm -rf "$dest"
-    rm -f "$bindir/PoolSeqFlow-${version}"
     echo "Removed $dest"
     newest=$(newest_installed_version "$prefix")
-    if [ -n "$newest" ]; then
-        ln -sfn "$prefix/opt/PoolSeqFlow-${newest}/PoolSeqFlow" "$bindir/PoolSeqFlow"
-        echo "  $bindir/PoolSeqFlow now points at v$newest"
-    else
-        rm -f "$bindir/PoolSeqFlow"
-        echo "  $bindir/PoolSeqFlow removed - no installed versions remain"
-    fi
+    for item in $WRAPPERS; do
+        rm -f "$bindir/${item}-${version}"
+        # A version installed from an older release has no analysis wrapper to point at.
+        if [ -n "$newest" ] && [ -e "$prefix/opt/PoolSeqFlow-${newest}/$item" ]; then
+            ln -sfn "$prefix/opt/PoolSeqFlow-${newest}/$item" "$bindir/$item"
+            echo "  $bindir/$item now points at v$newest"
+        elif [ -L "$bindir/$item" ]; then
+            rm -f "$bindir/$item"
+            echo "  $bindir/$item removed - no installed version provides it"
+        fi
+    done
     return 0
 }
 
 # Copies the runtime to $PREFIX/opt/PoolSeqFlow-<version> and puts two symlinks in
-# $PREFIX/bin: one per version, plus a plain `PoolSeqFlow` pointing at the newest installed.
+# $PREFIX/bin per wrapper: one carrying the version, plus a plain one pointing at the
+# newest installed.
 deploy_payload() {
     local prefix dest bindir here item newest
     prefix=$(install_prefix)
@@ -228,34 +254,40 @@ deploy_payload() {
         for item in $PAYLOAD_ITEMS; do
             cp -r "$INSTALL/$item" "$dest"/
         done
-        # Stamps the copy with its own location.
-        sed -i "s|^POOLSEQFLOW_INSTALLED_HOME=\"\"$|POOLSEQFLOW_INSTALLED_HOME=\"$dest\"|" \
-            "$dest/PoolSeqFlow"
-        grep -q "^POOLSEQFLOW_INSTALLED_HOME=\"$dest\"$" "$dest/PoolSeqFlow" || {
-            echo "ERROR: could not stamp the installed wrapper with its location." >&2
-            echo "  The placeholder line in PoolSeqFlow has probably changed." >&2
-            exit 1
-        }
-        chmod +x "$dest/PoolSeqFlow"
+        # Stamps each copy with its own location.
+        for item in $WRAPPERS; do
+            sed -i "s|^POOLSEQFLOW_INSTALLED_HOME=\"\"$|POOLSEQFLOW_INSTALLED_HOME=\"$dest\"|" \
+                "$dest/$item"
+            grep -q "^POOLSEQFLOW_INSTALLED_HOME=\"$dest\"$" "$dest/$item" || {
+                echo "ERROR: could not stamp $item with its location." >&2
+                echo "  The placeholder line in $item has probably changed." >&2
+                exit 1
+            }
+            chmod +x "$dest/$item"
+        done
     fi
 
     mkdir -p "$bindir"
-    ln -sfn "$dest/PoolSeqFlow" "$bindir/PoolSeqFlow-${VERSION}"
     newest=$(newest_installed_version "$prefix")
-    ln -sfn "$prefix/opt/PoolSeqFlow-${newest}/PoolSeqFlow" "$bindir/PoolSeqFlow"
-
     echo ""
     echo "Installed:"
     echo "    $dest"
-    echo "    $bindir/PoolSeqFlow-${VERSION}"
-    printf '    %-40s -> v%s, the newest installed\n' "$bindir/PoolSeqFlow" "$newest"
+    for item in $WRAPPERS; do
+        ln -sfn "$dest/$item" "$bindir/${item}-${VERSION}"
+        echo "    $bindir/${item}-${VERSION}"
+        # A version installed from an older release has no analysis wrapper to point at.
+        if [ -e "$prefix/opt/PoolSeqFlow-${newest}/$item" ]; then
+            ln -sfn "$prefix/opt/PoolSeqFlow-${newest}/$item" "$bindir/$item"
+            printf '    %-40s -> v%s, the newest installed\n' "$bindir/$item" "$newest"
+        fi
+    done
     echo ""
     case ":$PATH:" in
         *":$bindir:"*)
-            echo "$bindir is on your PATH, so both commands work from anywhere."
+            echo "$bindir is on your PATH, so those commands work from anywhere."
             ;;
         *)
-            echo "$bindir is NOT on your PATH, so neither command will be found by name yet."
+            echo "$bindir is NOT on your PATH, so none of them will be found by name yet."
             echo "Add it - in ~/.bashrc, ~/.zshrc or wherever your shell reads:"
             echo ""
             echo "    export PATH=\"$bindir:\$PATH\""
@@ -264,18 +296,6 @@ deploy_payload() {
             ;;
     esac
     echo ""
-}
-
-# Whether an environment of this exact name exists. `conda env list` prints the path too,
-# so only the name column is compared, whole and literally.
-env_exists() {
-    conda env list | awk '{print $1}' | grep -qxF "$1"
-}
-
-# Every PoolSeqFlow environment on this machine, versioned or legacy. `|| true` because
-# grep exits 1 on no match and this runs under `set -e`.
-poolseqflow_envs() {
-    conda env list | awk '{print $1}' | grep -E '^PoolSeqFlow(-.+)?$' | sort || true
 }
 
 # Every PoolSeqFlow environment except this version's own and the legacy unversioned one.
@@ -328,12 +348,6 @@ report_other_envs() {
     printf '    %-32s %s\n' "conda env remove -n <name>" "one environment"
     printf '    %-32s %s\n' "./$(basename "$0") uninstall_all" "every PoolSeqFlow environment"
     echo ""
-}
-
-# Resolves one setting through Nextflow, which interpolates it. Needs the environment active,
-# and the installation named, because nextflow.config lives there.
-nf_config_value() {
-    nextflow config -flat "$INSTALL" 2>/dev/null | sed -n "s|^$1 = ||p" | head -1 | tr -d "'\""
 }
 
 # Lists each run's and each shared group's directory in the results tree, read from the disk.
@@ -500,6 +514,10 @@ case $COMMAND in
         conda activate "$ENV_NAME"
         bash "$(install_prefix)/opt/PoolSeqFlow-${VERSION}/install/check_install.sh"
         echo "Installation complete."
+        echo ""
+        echo "The analysis layer is deployed but not enabled: it carries R in an environment"
+        echo "of its own, which nothing here installs. Add it with:"
+        echo "    PoolSeqFlow-analysis install"
         ;;
 
     init)
@@ -795,53 +813,13 @@ EOF
         ;;
 
     cite)
-        cat <<EOF
-PoolSeqFlow v$VERSION
-Ozan L. Z. Kiratli
-
-Cite the version you actually ran, not the newest one.
---------------------------------------------------------------------
-Zenodo mints a separate DOI for every release, and results depend on
-which release produced them - filters, defaults and parameter names
-have all changed between versions. A paper that cites the current
-release for numbers produced by an older one is describing a method
-it did not use.
-
-This copy is v$VERSION. To get its DOI, open the all-versions record
-below and pick v$VERSION from the "Versions" list:
-
-    https://doi.org/$CONCEPT_DOI
-
-Then replace the DOI in the entries below with that one.
-
-Reference
---------------------------------------------------------------------
-Kiratli, O. L. Z. (2026). PoolSeqFlow: A Nextflow pipeline for allele
-frequency analysis from pooled Illumina sequencing data (Version
-v$VERSION) [Computer software]. https://doi.org/$CONCEPT_DOI
-
-BibTeX
---------------------------------------------------------------------
-@software{kiratli_poolseqflow,
-  author  = {Kiratli, Ozan L. Z.},
-  title   = {PoolSeqFlow: A Nextflow pipeline for allele frequency
-             analysis from pooled Illumina sequencing data},
-  version = {v$VERSION},
-  year    = {2026},
-  doi     = {$CONCEPT_DOI},
-  url     = {https://github.com/ozankiratli/PoolSeqFlow}
-}
-
-$CONCEPT_DOI is the all-versions DOI: it always resolves to the
-newest release. Use it when referring to the software in general, and
-a version DOI when reporting results.
-EOF
+        poolseqflow_citation "$VERSION"
         ;;
     uninstall)
         PREFIX=$(install_prefix)
-        # Decided first, and may be a version other than this wrapper's. Cancelling, or
-        # having no way to ask, stops here.
-        TARGET=$(choose_version_to_uninstall "$PREFIX") || exit 1
+        # Decided first, and may be an installation other than this wrapper's. Cancelling,
+        # or having no way to ask, stops here.
+        TARGET=$(choose_installation_to_uninstall "$PREFIX") || exit 1
 
         if [ -z "$TARGET" ]; then
             echo "Environment '$ENV_NAME' is not installed, and neither is v$VERSION of the" >&2
@@ -852,25 +830,80 @@ EOF
             exit 1
         fi
 
-        TARGET_ENV="PoolSeqFlow-${TARGET}"
+        # TARGET is the installation's name. The legacy environment carries no version and
+        # has no payload; every other name yields the version its payload sits under.
+        TARGET_ENV="$TARGET"
+        TARGET_VERSION=""
+        case "$TARGET" in
+            "$LEGACY_ENV") ;;
+            *) TARGET_VERSION="${TARGET#PoolSeqFlow-}" ;;
+        esac
+        # The analysis layer's environment belongs to the same version and goes with it.
+        # Leaving it behind would strand an environment whose pipeline no longer exists.
+        TARGET_ANALYSIS_ENV="${TARGET}-analysis"
         HAVE_ENV=0
         if env_exists "$TARGET_ENV"; then HAVE_ENV=1; fi
+        HAVE_ANALYSIS_ENV=0
+        if env_exists "$TARGET_ANALYSIS_ENV"; then HAVE_ANALYSIS_ENV=1; fi
         HAVE_PAYLOAD=0
-        if [ -d "$PREFIX/opt/PoolSeqFlow-${TARGET}" ]; then HAVE_PAYLOAD=1; fi
+        if [ -n "$TARGET_VERSION" ] && [ -d "$PREFIX/opt/PoolSeqFlow-${TARGET_VERSION}" ]; then
+            HAVE_PAYLOAD=1
+        fi
 
-        # Installed together, but either half can be missing on its own, so each is checked
+        if [ "$HAVE_ENV" -eq 0 ] && [ "$HAVE_ANALYSIS_ENV" -eq 0 ] && [ "$HAVE_PAYLOAD" -eq 0 ]; then
+            echo "Nothing of $TARGET is installed under $PREFIX - nothing to remove."
+            exit 0
+        fi
+
+        # Confirmed however the installation was arrived at: chosen from a list, named by a
+        # versioned wrapper, or the only one present.
+        echo ""
+        echo "This removes:"
+        if [ "$HAVE_ENV" -eq 1 ]; then
+            echo "    the conda environment $TARGET_ENV"
+        fi
+        if [ "$HAVE_ANALYSIS_ENV" -eq 1 ]; then
+            echo "    the analysis environment $TARGET_ANALYSIS_ENV"
+        fi
+        if [ "$HAVE_PAYLOAD" -eq 1 ]; then
+            echo "    the pipeline at $PREFIX/opt/PoolSeqFlow-${TARGET_VERSION}"
+        fi
+        echo ""
+        echo "Your project directories - parameters.config, Data/, Reference/ - and everything"
+        echo "in storageDir are untouched: none of them live inside an installation."
+        echo ""
+        echo "Removing an environment means results produced with that version can no"
+        echo "longer be reproduced without reinstalling it."
+        echo ""
+        printf 'Remove them? [y/N]: '
+        if ! read -r CONFIRM; then
+            echo ""
+            echo "Aborted - no confirmation received. Nothing was removed." >&2
+            exit 1
+        fi
+        case "$CONFIRM" in
+            y|Y|yes|YES|Yes) ;;
+            *) echo "Aborted - nothing was removed."; exit 1 ;;
+        esac
+
+        # Installed together, but any part can be missing on its own, so each is checked
         # before it is removed.
         if [ "$HAVE_ENV" -eq 1 ]; then
             echo "Uninstalling conda environment '$TARGET_ENV'..."
             conda deactivate
-            conda env remove -n "$TARGET_ENV"
+            conda env remove -n "$TARGET_ENV" -y
         else
             echo "Conda environment '$TARGET_ENV' is already absent."
         fi
+        if [ "$HAVE_ANALYSIS_ENV" -eq 1 ]; then
+            echo "Uninstalling conda environment '$TARGET_ANALYSIS_ENV'..."
+            conda deactivate
+            conda env remove -n "$TARGET_ANALYSIS_ENV" -y
+        fi
         if [ "$HAVE_PAYLOAD" -eq 1 ]; then
-            remove_payload "$TARGET"
-        else
-            echo "No pipeline installed at $PREFIX/opt/PoolSeqFlow-${TARGET}."
+            remove_payload "$TARGET_VERSION"
+        elif [ -n "$TARGET_VERSION" ]; then
+            echo "No pipeline installed at $PREFIX/opt/PoolSeqFlow-${TARGET_VERSION}."
         fi
         ;;
 

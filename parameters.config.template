@@ -175,6 +175,8 @@ params {
         // The installation's own, under neither storage root. `projectDir` is Nextflow's
         // variable, not a parameter of ours.
         bin             = "${projectDir}/bin"
+        // Sourced by another script, never run, so it is not on PATH.
+        lib             = "${projectDir}/lib"
         logs            = "${params.storageDir}/Logs"
         snpEff          = "${params.dir.dictionaries}/snpEff"
 

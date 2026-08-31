@@ -45,6 +45,16 @@ jobs:
             exit 1
           fi
 
+          # The analysis wrapper ships beside it and carries the version in the same
+          # two places.
+          avar=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' PoolSeqFlow-analysis)
+          ahdr=$(sed -n 's/^# Version: \(.*\)$/\1/p' PoolSeqFlow-analysis)
+          if [ "$avar" != "$declared" ] || [ "$ahdr" != "$declared" ]; then
+            echo "./PoolSeqFlow-analysis says VERSION=\"$avar\" and its header says" >&2
+            echo "  \"$ahdr\", but ./PoolSeqFlow says \"$declared\"" >&2
+            exit 1
+          fi
+
           # And in nextflow.config's manifest, which is what step 0 records.
           nfversion=$(sed -n "s/^[[:space:]]*version[[:space:]]*=[[:space:]]*'\(.*\)'.*/\1/p" nextflow.config)
           if [ "$nfversion" != "$declared" ]; then

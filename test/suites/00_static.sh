@@ -18,9 +18,12 @@ test_shell_scripts_parse() {
     while read -r script; do
         bash -n "$script" 2>/dev/null || { fail_case "bash -n failed: ${script#"$REPO_ROOT"/}"; bad=1; }
     done < <(
-        find "$REPO_ROOT/bin" "$REPO_ROOT/install" "$REPO_ROOT/dev" "$REPO_ROOT/test" \
-             -name '*.sh' -type f 2>/dev/null
-        echo "$REPO_ROOT/PoolSeqFlow"
+        find "$REPO_ROOT/bin" "$REPO_ROOT/lib" "$REPO_ROOT/install" "$REPO_ROOT/dev" \
+             "$REPO_ROOT/test" -name '*.sh' -type f 2>/dev/null
+        # The wrappers carry no .sh suffix, so the find above cannot reach them. Read from
+        # the same list the installer deploys them by.
+        eval "$(sed -n '/^WRAPPERS=/p' "$REPO_ROOT/PoolSeqFlow")"
+        for w in $WRAPPERS; do echo "$REPO_ROOT/$w"; done
     )
     [ "$bad" -eq 0 ]
 }
@@ -62,7 +65,8 @@ test_release_archive_carries_the_runtime() {
     [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
     local needed
     for needed in "poolseqflow.nf" "nextflow.config" "parameters.config.template" \
-                  "PoolSeqFlow" "metadata.csv.template" "scripts/" "bin/" "install/"; do
+                  "PoolSeqFlow" "PoolSeqFlow-analysis" "metadata.csv.template" \
+                  "scripts/" "bin/" "lib/" "install/"; do
         assert_contains "$listing" "$needed" "release tarball must carry $needed"
     done
 }
@@ -95,15 +99,19 @@ test_manual_is_valid_and_the_nav_is_current() {
     assert_eq "0" "$status" "the manual does not generate cleanly:"$'\n'"$out"
 }
 
-# The version is written in three places and they have to agree, or release.yml refuses to
-# publish. Cheaper to catch here than in CI.
-test_version_is_consistent_across_all_three_places() {
-    local launcher_var launcher_hdr manifest
+# The version is written in five places - twice in each wrapper and once in the manifest -
+# and they have to agree, or release.yml refuses to publish. Cheaper to catch here than in CI.
+test_version_is_consistent_everywhere_it_is_written() {
+    local launcher_var launcher_hdr manifest analysis_var analysis_hdr
     launcher_var=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/PoolSeqFlow" | head -1)
     launcher_hdr=$(sed -n 's/^# Version: *//p' "$REPO_ROOT/PoolSeqFlow" | head -1)
     manifest=$(sed -n "s/.*version *= *'\([0-9][0-9.]*\)'.*/\1/p" "$REPO_ROOT/nextflow.config" | head -1)
+    analysis_var=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/PoolSeqFlow-analysis" | head -1)
+    analysis_hdr=$(sed -n 's/^# Version: *//p' "$REPO_ROOT/PoolSeqFlow-analysis" | head -1)
     assert_eq "$launcher_var" "$launcher_hdr" "launcher VERSION vs its # Version: header"
     assert_eq "$launcher_var" "$manifest" "launcher VERSION vs nextflow.config manifest"
+    assert_eq "$launcher_var" "$analysis_var" "launcher VERSION vs the analysis wrapper's"
+    assert_eq "$launcher_var" "$analysis_hdr" "launcher VERSION vs the analysis # Version: header"
 }
 
 # Every `## [x.y.z]` section needs a matching link definition, or the rendered changelog has
@@ -120,19 +128,24 @@ test_changelog_sections_all_have_link_definitions() {
 # environment.yml shipped `prefix: /home/<maintainer>/...` inside the release tarball for
 # several versions. Nothing should carry an absolute home path into a user's download.
 test_environment_yml_carries_no_absolute_home_path() {
-    local hits
-    hits=$(grep -n "/home/\|/Users/" "$REPO_ROOT/install/environment.yml" || true)
-    assert_eq "" "$hits" "environment.yml should not contain an absolute home path"
+    local f hits
+    for f in environment.yml environment-analysis.yml; do
+        hits=$(grep -n "/home/\|/Users/" "$REPO_ROOT/install/$f" || true)
+        assert_eq "" "$hits" "$f should not contain an absolute home path"
+    done
 }
 
 # Without a name: key, `conda env create -f` refuses unless given -n. That is deliberate:
 # environments are named after the release, and a fixed name in the file is an invitation
 # to build an unversioned one that the launcher then declines to use.
 test_environment_yml_has_no_name_or_prefix_key() {
-    assert_eq "" "$(grep -c '^name:' "$REPO_ROOT/install/environment.yml" | grep -v '^0$')" \
-        "environment.yml should have no name: key"
-    assert_eq "" "$(grep -c '^prefix:' "$REPO_ROOT/install/environment.yml" | grep -v '^0$')" \
-        "environment.yml should have no prefix: key"
+    local f
+    for f in environment.yml environment-analysis.yml; do
+        assert_eq "" "$(grep -c '^name:' "$REPO_ROOT/install/$f" | grep -v '^0$')" \
+            "$f should have no name: key"
+        assert_eq "" "$(grep -c '^prefix:' "$REPO_ROOT/install/$f" | grep -v '^0$')" \
+            "$f should have no prefix: key"
+    done
 }
 
 # The tool list a user is told to expect and the one that is pinned have to agree, and the

@@ -97,7 +97,7 @@ test_uninstall_removes_the_pipeline_as_well_as_the_environment() {
     run_launcher_with_envs "base $VERSIONED_ENV" install
     local sb; sb=$(dirname "$LAUNCHER_PREFIX")
     local out; out=$( cd "$sb" && PATH="$sb/stub/bin:$PATH" \
-        POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow uninstall 2>&1 )
+        POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow uninstall 2>&1 <<< y )
     assert_contains "$out" "Removed" "should say the pipeline was removed"
     assert_count 0 "$(find "$LAUNCHER_PREFIX/opt" -maxdepth 1 -name 'PoolSeqFlow-*' | wc -l)" \
         "the payload should be gone"
@@ -124,7 +124,7 @@ test_uninstall_leaves_the_other_installed_versions_alone() {
     # Called by its versioned name, which names the version and so needs no prompt.
     local out; out=$( cd "$sb" && PATH="$sb/stub/bin:$PATH" \
         POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" \
-        "$LAUNCHER_PREFIX/bin/PoolSeqFlow-$PSF_VERSION" uninstall 2>&1 )
+        "$LAUNCHER_PREFIX/bin/PoolSeqFlow-$PSF_VERSION" uninstall 2>&1 <<< y )
     assert_contains "$out" "Removed" "should remove the version its wrapper belongs to"
     assert_no_file "$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION/PoolSeqFlow" \
         "its own payload should be gone"
@@ -270,6 +270,11 @@ test_init_refuses_to_populate_inside_the_installation() {
     cp "$REPO_ROOT/PoolSeqFlow" "$REPO_ROOT/parameters.config.template" \
        "$REPO_ROOT/metadata.csv.template" "$inst/"
     : > "$inst/poolseqflow.nf"
+    # The wrapper sources lib/wrapper_lib.sh before it does anything else, so even a fake
+    # installation needs it - without it the run fails on an incomplete copy rather than
+    # reaching the check this case is about.
+    mkdir -p "$inst/lib"
+    cp "$REPO_ROOT/lib/wrapper_lib.sh" "$inst/lib/"
 
     out=$(cd "$inst" && POOLSEQFLOW_HOME="$inst" bash "$inst/PoolSeqFlow" init 2>&1) && status=0 || status=$?
     assert_status 1 "$status" "init inside the installation should be refused"
@@ -299,4 +304,445 @@ test_usage_and_implementation_agree() {
         printf '%s\n' "$advertised" | grep -qx "$cmd" \
             || fail_case "'$cmd' is implemented but not advertised in usage"
     done < <(printf '%s\n' "$implemented")
+}
+
+# A VERSION'S ANALYSIS ENVIRONMENT GOES WITH IT.
+#
+# The analysis layer installs `PoolSeqFlow-<version>-analysis` beside the pipeline environment
+# of the same version. Uninstalling the version has to take both, or it strands an environment
+# whose pipeline no longer exists - and one that `list` will keep reporting, because
+# poolseqflow_envs() matches the whole family.
+test_uninstall_takes_the_analysis_environment_of_that_version() {
+    run_launcher_with_envs "base $VERSIONED_ENV ${VERSIONED_ENV}-analysis PoolSeqFlow-0.1.0" install
+    local sb; sb=$(dirname "$LAUNCHER_PREFIX")
+    local out; out=$( cd "$sb" && PATH="$sb/stub/bin:$PATH" \
+        POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" \
+        "$LAUNCHER_PREFIX/bin/PoolSeqFlow-$PSF_VERSION" uninstall 2>&1 <<< y )
+
+    assert_contains "$out" "$VERSIONED_ENV'" "the pipeline environment should be named"
+    assert_contains "$out" "${VERSIONED_ENV}-analysis'" "and the analysis one beside it"
+
+    local removed; removed=$(grep -c "env remove -n ${VERSIONED_ENV}-analysis" "$LAUNCHER_CONDA_LOG" || true)
+    assert_eq "1" "$removed" "conda should have been asked to remove the analysis environment"
+
+    # Another version's environment is not this version's business.
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env remove -n PoolSeqFlow-0.1.0" \
+        "a different version's environment must survive"
+}
+
+# The absence of an analysis environment is the ordinary case and must stay silent - most
+# projects never install the analysis layer at all.
+test_uninstall_says_nothing_about_an_analysis_environment_that_is_absent() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    local sb; sb=$(dirname "$LAUNCHER_PREFIX")
+    local out; out=$( cd "$sb" && PATH="$sb/stub/bin:$PATH" \
+        POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" \
+        "$LAUNCHER_PREFIX/bin/PoolSeqFlow-$PSF_VERSION" uninstall 2>&1 <<< y )
+    # The wrapper's own symlink is reported going, which is a different thing from the
+    # environment and says nothing about whether one was installed.
+    assert_not_contains "$out" "conda environment '${VERSIONED_ENV}-analysis'" \
+        "with no analysis environment installed, uninstall should not mention one"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env remove -n ${VERSIONED_ENV}-analysis" \
+        "and conda should not be asked to remove one"
+}
+
+# THE SECOND WRAPPER.
+#
+# PoolSeqFlow-analysis ships inside the same payload and is deployed by the same `install`,
+# so the payload has one owner. What it manages on its own is the analysis conda
+# environment, which is opt-in and which `install` deliberately does not create.
+test_install_deploys_the_analysis_wrapper_beside_the_pipeline() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    local dest="$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION"
+    assert_status 0 "$LAUNCHER_STATUS" "install should succeed"
+    assert_file "$dest/PoolSeqFlow-analysis" "the analysis wrapper belongs in the payload"
+    assert_file "$LAUNCHER_PREFIX/bin/PoolSeqFlow-analysis" "and on PATH under its own name"
+    assert_file "$LAUNCHER_PREFIX/bin/PoolSeqFlow-analysis-$PSF_VERSION" "and carrying the version"
+    [ -x "$dest/PoolSeqFlow-analysis" ] || fail_case "the deployed analysis wrapper should be executable"
+
+    # Stamped like the pipeline wrapper: without it install_prefix() would read an
+    # installed copy as a source checkout and look for installations under ~/.local.
+    assert_contains "$(grep '^POOLSEQFLOW_INSTALLED_HOME=' "$dest/PoolSeqFlow-analysis")" "$dest" \
+        "the analysis wrapper should be stamped with its installed location"
+}
+
+# Deployed is not enabled. Installing the pipeline must not build the R environment, which
+# is large and which most projects never want.
+test_install_does_not_create_the_analysis_environment() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env create -n ${VERSIONED_ENV}-analysis" \
+        "installing the pipeline must not build the analysis environment"
+    assert_contains "$LAUNCHER_OUTPUT" "PoolSeqFlow-analysis install" \
+        "but it should say how to add it"
+}
+
+# Removing a version takes its analysis wrapper off PATH with it. A symlink left pointing
+# into a deleted payload is worse than no command at all.
+test_uninstall_takes_the_analysis_wrapper_off_the_path() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    local sb; sb=$(dirname "$LAUNCHER_PREFIX")
+    ( cd "$sb" && PATH="$sb/stub/bin:$PATH" POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" \
+        "$LAUNCHER_PREFIX/bin/PoolSeqFlow-$PSF_VERSION" uninstall >/dev/null 2>&1 <<< y )
+    assert_no_file "$LAUNCHER_PREFIX/bin/PoolSeqFlow-analysis-$PSF_VERSION" \
+        "the versioned analysis wrapper should go with its version"
+    if [ -L "$LAUNCHER_PREFIX/bin/PoolSeqFlow-analysis" ]; then
+        fail_case "the plain analysis wrapper should not survive as a dangling symlink"
+    fi
+}
+
+test_analysis_install_creates_only_the_analysis_environment() {
+    run_analysis_launcher_with_envs "base $VERSIONED_ENV" install
+    assert_status 0 "$LAUNCHER_STATUS" "install should succeed"
+    assert_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env create -n ${VERSIONED_ENV}-analysis" \
+        "should create this version's analysis environment"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env create -n $VERSIONED_ENV " \
+        "and must not touch the pipeline environment"
+}
+
+test_analysis_install_is_a_no_op_when_the_environment_is_there() {
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" install
+    assert_status 0 "$LAUNCHER_STATUS" "a second install should succeed"
+    assert_contains "$LAUNCHER_OUTPUT" "already exists" "should say it is already there"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env create" \
+        "and must not rebuild it"
+}
+
+# The layer is opt-in on a machine that may never run the pipeline, so a missing pipeline
+# environment is a note rather than a refusal.
+test_analysis_install_notes_a_missing_pipeline_environment_without_refusing() {
+    run_analysis_launcher_with_envs "base" install
+    assert_status 0 "$LAUNCHER_STATUS" "install should not need the pipeline environment"
+    assert_contains "$LAUNCHER_OUTPUT" "$VERSIONED_ENV" "should name the pipeline environment"
+    assert_contains "$LAUNCHER_OUTPUT" "cannot produce them" "and say what is missing without it"
+}
+
+test_analysis_uninstall_leaves_the_pipeline_environment_alone() {
+    run_analysis_launcher_with_envs "base $VERSIONED_ENV ${VERSIONED_ENV}-analysis" uninstall <<< y
+    assert_status 0 "$LAUNCHER_STATUS" "uninstall should succeed"
+    local log; log=$(cat "$LAUNCHER_CONDA_LOG")
+    assert_contains "$log" "env remove -n ${VERSIONED_ENV}-analysis" \
+        "should remove the analysis environment"
+    assert_not_contains "$log" "env remove -n $VERSIONED_ENV " \
+        "and nothing else"
+}
+
+test_analysis_uninstall_is_quiet_when_there_is_nothing_to_remove() {
+    run_analysis_launcher_with_envs "base $VERSIONED_ENV" uninstall
+    assert_status 0 "$LAUNCHER_STATUS" "removing an absent environment is not an error"
+    assert_contains "$LAUNCHER_OUTPUT" "already absent" "should say so"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env remove" \
+        "and ask conda for nothing"
+}
+
+# The same rule as the pipeline wrapper's: a versioned environment is never substituted.
+# Borrowing the pipeline's would run R that is not there and pin nothing.
+test_a_module_refuses_to_borrow_the_pipeline_environment() {
+    run_analysis_launcher_with_envs "base $VERSIONED_ENV" mds
+    assert_status 1 "$LAUNCHER_STATUS" "a module should refuse without its own environment"
+    assert_contains "$LAUNCHER_OUTPUT" "${VERSIONED_ENV}-analysis" "should name the environment it wanted"
+    assert_contains "$LAUNCHER_OUTPUT" "PoolSeqFlow-analysis install" "and say how to get it"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "activate" \
+        "and activate nothing at all"
+}
+
+# Analysis runs where the pipeline ran, and reads what it produced. Built by hand rather
+# than through the harness, whose sandbox is a project.
+test_a_module_refuses_outside_a_project() {
+    local dir stub out status
+    dir=$(guard_path "$TEST_TMPDIR/analysis-no-project")
+    rm -rf "$dir"; mkdir -p "$dir/lib" "$dir/install"
+    cp "$REPO_ROOT/PoolSeqFlow-analysis" "$dir/"
+    cp "$REPO_ROOT/lib/wrapper_lib.sh" "$dir/lib/"
+    : > "$dir/analysis.nf"
+    stub="$dir/stub"
+    make_stub_conda "$stub" base "${VERSIONED_ENV}-analysis"
+
+    out=$(cd "$dir" && PATH="$stub/bin:$PATH" POOLSEQFLOW_HOME="$dir" \
+          bash "$dir/PoolSeqFlow-analysis" mds 2>&1) && status=0 || status=$?
+    assert_status 1 "$status" "a module outside a project should be refused"
+    assert_contains "$out" "parameters.config" "should say what is missing"
+    assert_not_contains "$(cat "$stub/conda.log")" "activate" \
+        "and should refuse before activating anything"
+}
+
+test_analysis_wrapper_takes_exactly_one_argument() {
+    run_analysis_launcher_with_envs "base" install extra
+    assert_status 1 "$LAUNCHER_STATUS" "two arguments should be refused"
+    run_analysis_launcher_with_envs "base"
+    assert_status 1 "$LAUNCHER_STATUS" "no argument should be refused"
+    run_analysis_launcher_with_envs "base" --nonsense
+    assert_status 1 "$LAUNCHER_STATUS" "an unknown option should be refused"
+}
+
+# Every subcommand the usage line advertises must have an arm, and every arm must be
+# advertised. Two entries have no arm of their own and are excluded by name: `<module>` is a
+# placeholder, and `complete` is a module name that analysis.nf owns.
+test_analysis_usage_and_implementation_agree() {
+    local wrapper="$REPO_ROOT/PoolSeqFlow-analysis" usage_line advertised implemented cmd
+    usage_line=$(sed -n 's/.*Usage: \$0 {\(.*\)}.*/\1/p' "$wrapper" | head -1)
+    advertised=$(printf '%s' "$usage_line" | tr '|' '\n' \
+                 | grep -vx -e '<module>' -e 'complete' | sort)
+    implemented=$(sed -n 's/^    \([a-z_|]*\))$/\1/p' "$wrapper" | tr '|' '\n' | sort)
+    # Both sides going empty together would pass vacuously, and a changed usage line or a
+    # re-indented case is exactly how that happens.
+    [ -n "$advertised" ] || fail_case "could not read the usage line out of the wrapper"
+    [ -n "$implemented" ] || fail_case "could not read any case arm out of the wrapper"
+    assert_eq "$advertised" "$implemented" "the advertised subcommands and the implemented arms"
+    while read -r cmd; do
+        [ -n "$cmd" ] || continue
+        # `y` for `uninstall`, which confirms before it removes anything; the rest ignore it.
+        run_analysis_launcher_with_envs "base $VERSIONED_ENV ${VERSIONED_ENV}-analysis" "$cmd" <<< y
+        assert_status 0 "$LAUNCHER_STATUS" "$cmd should be implemented"
+    done < <(printf '%s\n' "$advertised")
+}
+
+# `check` is the analysis half of `PoolSeqFlow check`: it activates this version's analysis
+# environment and hands off to the checker, never borrowing the pipeline's.
+test_analysis_check_activates_the_analysis_environment() {
+    run_analysis_launcher_with_envs "base $VERSIONED_ENV ${VERSIONED_ENV}-analysis" check
+    assert_status 0 "$LAUNCHER_STATUS" "check should succeed"
+    assert_contains "$(cat "$LAUNCHER_CONDA_LOG")" "activate ${VERSIONED_ENV}-analysis" \
+        "should activate the analysis environment"
+    assert_contains "$LAUNCHER_OUTPUT" "STUB check_analysis_install ran" \
+        "should go on to verify the install"
+}
+
+test_analysis_check_refuses_without_its_environment() {
+    run_analysis_launcher_with_envs "base $VERSIONED_ENV" check
+    assert_status 1 "$LAUNCHER_STATUS" "check should fail when the analysis env is absent"
+    assert_not_contains "$LAUNCHER_OUTPUT" "STUB check_analysis_install ran" \
+        "and must not run the checker against no environment"
+}
+
+# `install` verifies what it just built, the way `PoolSeqFlow install` does.
+test_analysis_install_verifies_what_it_built() {
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" install
+    assert_contains "$LAUNCHER_OUTPUT" "STUB check_analysis_install ran" \
+        "install should finish by verifying itself"
+}
+
+# The DOI and the citation text live in lib/wrapper_lib.sh so the two wrappers cannot drift.
+# Both must print the same software citation for the same version.
+test_both_wrappers_print_the_same_software_citation() {
+    local pipeline_cite analysis_cite
+    pipeline_cite=$(cd "$REPO_ROOT" && POOLSEQFLOW_HOME="$REPO_ROOT" bash ./PoolSeqFlow cite)
+    run_analysis_launcher_with_envs "base" cite
+    analysis_cite="$LAUNCHER_OUTPUT"
+    assert_contains "$analysis_cite" "PoolSeqFlow v$PSF_VERSION" "should name this version"
+    assert_contains "$pipeline_cite" "10.5281/zenodo" "the pipeline should print a DOI"
+    # Every line of the pipeline's citation must appear in the analysis one, which then adds
+    # R and its packages.
+    local missing=0 line
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        case "$analysis_cite" in *"$line"*) ;; *) missing=$((missing + 1)) ;; esac
+    done <<EOF
+$pipeline_cite
+EOF
+    assert_eq "0" "$missing" "the analysis wrapper should print the whole software citation"
+}
+
+# Without the environment there is no R to ask, so it says so rather than printing nothing
+# or failing.
+test_cite_explains_itself_when_r_is_not_installed() {
+    run_analysis_launcher_with_envs "base" cite
+    assert_status 0 "$LAUNCHER_STATUS" "cite should not need the environment"
+    assert_contains "$LAUNCHER_OUTPUT" "is not installed" "should say why R is not reported"
+}
+
+# AN ANALYSIS ENVIRONMENT IS NOT A VERSION.
+#
+# installed_versions() reads versions out of environment names, and `PoolSeqFlow-2.2.0-analysis`
+# parses as a version called "2.2.0-analysis". That made ONE installed version look like two:
+# the single-version fast path was skipped, so `uninstall` refused outright with nothing
+# attached to ask, and interactively offered a version that does not exist.
+test_an_analysis_environment_is_not_counted_as_a_version() {
+    run_launcher_with_envs "base $VERSIONED_ENV ${VERSIONED_ENV}-analysis" uninstall <<< y
+    assert_status 0 "$LAUNCHER_STATUS" \
+        "one version plus its analysis environment should not be asked WHICH to remove"
+    assert_not_contains "$LAUNCHER_OUTPUT" "installations are present" \
+        "it must not report two installations when only one is installed"
+    local log; log=$(cat "$LAUNCHER_CONDA_LOG")
+    assert_contains "$log" "env remove -n $VERSIONED_ENV" "the pipeline environment should go"
+    assert_contains "$log" "env remove -n ${VERSIONED_ENV}-analysis" "and the analysis one with it"
+}
+
+# The chooser must still engage for genuinely different versions.
+test_a_second_real_version_still_forces_a_choice() {
+    run_launcher_with_envs "base $VERSIONED_ENV ${VERSIONED_ENV}-analysis PoolSeqFlow-0.1.0" \
+        uninstall < /dev/null
+    assert_status 1 "$LAUNCHER_STATUS" "two real versions with nothing to ask should refuse"
+    assert_contains "$LAUNCHER_OUTPUT" "PoolSeqFlow-0.1.0" "should list the other real version"
+    assert_not_contains "$LAUNCHER_OUTPUT" "${VERSIONED_ENV}-analysis" \
+        "but must not offer an analysis environment as a version to remove"
+}
+
+# WHAT BARE WORDS COST, pinned so it is a decision and not a surprise.
+#
+# Under flags, `--uninstal` hit the `-*)` arm and was refused instantly. As a bare word it is
+# indistinguishable from a module name, so it goes the module route: analysis.nf owns the list
+# and is the only thing that can say the word is not on it. A leading dash is still refused
+# outright, which is what keeps a mistyped FLAG cheap.
+test_a_mistyped_subcommand_is_treated_as_a_module_name() {
+    run_analysis_launcher_with_envs "base $VERSIONED_ENV" uninstal
+    assert_status 1 "$LAUNCHER_STATUS" "an unknown bare word should not succeed"
+    # It got as far as needing the analysis environment, which is the module route: the
+    # machinery arms never ask for one.
+    assert_contains "$LAUNCHER_OUTPUT" "${VERSIONED_ENV}-analysis" \
+        "an unknown bare word should be routed to analysis.nf, not to usage"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env remove" \
+        "and a near-miss of uninstall must never remove anything"
+}
+
+# The machinery verbs are reserved out of the module namespace by the case arms preceding
+# `*)`. A module may not be called any of them, and this is what says so.
+test_the_machinery_verbs_are_reserved_from_the_module_namespace() {
+    local wrapper="$REPO_ROOT/PoolSeqFlow-analysis" reserved word
+    reserved=$(sed -n 's/^    \([a-z_|]*\))$/\1/p' "$wrapper" | tr '|' '\n')
+    [ -n "$reserved" ] || fail_case "could not read the reserved words out of the wrapper"
+    for word in $reserved; do
+        # Each reserved word must be handled without ever reaching the analysis environment.
+        run_analysis_launcher_with_envs "base" "$word"
+        assert_not_contains "$LAUNCHER_OUTPUT" "analysis.nf" \
+            "'$word' is reserved and must not be dispatched as a module"
+    done
+}
+
+# WHAT `uninstall` OFFERS, and what removing one takes with it (Z, 2026-08-30):
+# the legacy unversioned environment is listed beside the versioned ones, each version says
+# whether its analysis layer is installed, and choosing one removes that installation whole.
+test_uninstall_lists_the_legacy_environment_beside_the_versions() {
+    run_launcher_with_envs "base PoolSeqFlow $VERSIONED_ENV PoolSeqFlow-0.1.0" uninstall < /dev/null
+    assert_status 1 "$LAUNCHER_STATUS" "several installations with nothing to ask should refuse"
+    assert_contains "$LAUNCHER_OUTPUT" "unversioned - predates per-version environments" \
+        "the legacy environment should be offered, and labelled for what it is"
+    assert_contains "$LAUNCHER_OUTPUT" "PoolSeqFlow-0.1.0" "beside the other versions"
+    assert_contains "$LAUNCHER_OUTPUT" "3 PoolSeqFlow installations" \
+        "and counted with them"
+}
+
+test_uninstall_says_which_installations_have_an_analysis_layer() {
+    run_launcher_with_envs "base $VERSIONED_ENV ${VERSIONED_ENV}-analysis PoolSeqFlow-0.1.0" \
+        uninstall < /dev/null
+    assert_contains "$LAUNCHER_OUTPUT" "analysis installed" \
+        "a version whose analysis layer is installed should say so"
+    # The one without it must not be annotated, or the marker means nothing.
+    local plain
+    plain=$(printf '%s\n' "$LAUNCHER_OUTPUT" | grep 'PoolSeqFlow-0.1.0')
+    assert_not_contains "$plain" "analysis installed" \
+        "a version without an analysis layer should not claim one"
+}
+
+# The whole point of the marker: picking that entry takes both environments.
+test_choosing_an_installation_removes_its_analysis_environment_with_it() {
+    have_a_pty_runner || { skip_case "no python3 for a pty"; return; }
+    run_launcher_with_envs "base PoolSeqFlow $VERSIONED_ENV ${VERSIONED_ENV}-analysis" version
+    : > "$LAUNCHER_CONDA_LOG"
+    # 1 is the legacy environment, 2 is this version - the list is sorted by version.
+    run_launcher_on_a_tty $'2\ny' uninstall
+    local log; log=$(cat "$LAUNCHER_CONDA_LOG")
+    assert_contains "$log" "env remove -n $VERSIONED_ENV" "the chosen version's environment"
+    assert_contains "$log" "env remove -n ${VERSIONED_ENV}-analysis" "and its analysis layer"
+    assert_not_contains "$log" "env remove -n PoolSeqFlow " \
+        "but not the legacy environment, which was not chosen"
+}
+
+# And the legacy entry is removable on its own, without reaching for a payload it never had.
+test_choosing_the_legacy_environment_removes_only_that() {
+    have_a_pty_runner || { skip_case "no python3 for a pty"; return; }
+    run_launcher_with_envs "base PoolSeqFlow $VERSIONED_ENV ${VERSIONED_ENV}-analysis" install
+    : > "$LAUNCHER_CONDA_LOG"
+    run_launcher_on_a_tty $'1\ny' uninstall
+    local log; log=$(cat "$LAUNCHER_CONDA_LOG")
+    assert_contains "$log" "env remove -n PoolSeqFlow" "the legacy environment should go"
+    assert_not_contains "$log" "env remove -n $VERSIONED_ENV" \
+        "this version's environment must survive"
+    assert_dir "$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION" \
+        "and so must its payload"
+    # The legacy environment never had a payload, so there is no path to report on.
+    assert_not_contains "$LAUNCHER_OUTPUT" "No pipeline installed at" \
+        "and it must not report a missing payload it never had"
+}
+
+# UNINSTALL ALWAYS CONFIRMS (Z, 2026-08-30), whether the installation was chosen from a list,
+# named by a versioned wrapper, or the only one present. Choosing WHICH is not consenting to
+# the removal, and the single-installation path never asked anything at all before this.
+test_uninstall_aborts_on_a_negative_answer() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    local sb; sb=$(dirname "$LAUNCHER_PREFIX")
+    : > "$LAUNCHER_CONDA_LOG"
+    local out; out=$( cd "$sb" && PATH="$sb/stub/bin:$PATH" \
+        POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow uninstall 2>&1 <<< n )
+    assert_contains "$out" "Aborted" "should say it aborted"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env remove" "and remove no environment"
+    assert_dir "$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION" "and leave the pipeline in place"
+}
+
+# The same shape as uninstall_all: no terminal means no consent, so nothing goes.
+test_uninstall_aborts_without_a_terminal() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    local sb; sb=$(dirname "$LAUNCHER_PREFIX")
+    : > "$LAUNCHER_CONDA_LOG"
+    local out status
+    out=$( cd "$sb" && PATH="$sb/stub/bin:$PATH" \
+        POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow uninstall < /dev/null 2>&1 ) \
+        && status=0 || status=$?
+    assert_status 1 "$status" "with nothing to confirm with, it should refuse"
+    assert_contains "$out" "no confirmation received" "should say why it stopped"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env remove" "and remove no environment"
+    assert_dir "$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION" "and leave the pipeline in place"
+}
+
+# What it is about to remove has to be on screen before the question, or the answer means
+# nothing. A version with an analysis layer lists both environments and the pipeline.
+test_uninstall_names_everything_it_is_about_to_remove() {
+    run_launcher_with_envs "base $VERSIONED_ENV ${VERSIONED_ENV}-analysis" install
+    local sb; sb=$(dirname "$LAUNCHER_PREFIX")
+    local out; out=$( cd "$sb" && PATH="$sb/stub/bin:$PATH" \
+        POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow uninstall 2>&1 <<< n )
+    assert_contains "$out" "This removes:" "should list what goes before asking"
+    assert_contains "$out" "$VERSIONED_ENV" "the pipeline environment"
+    assert_contains "$out" "${VERSIONED_ENV}-analysis" "the analysis environment"
+    assert_contains "$out" "opt/PoolSeqFlow-$PSF_VERSION" "and the pipeline itself"
+    assert_contains "$out" "storageDir are untouched" "and say what is NOT removed"
+}
+
+# Nothing to remove is not a question worth asking. A versioned wrapper names its version
+# without checking anything, so it is the one path that can reach the confirmation with
+# nothing of that version actually present - here, a wrapper pointed at an empty prefix.
+test_uninstall_does_not_ask_when_there_is_nothing_installed() {
+    local dir stub out status
+    dir=$(guard_path "$TEST_TMPDIR/uninstall-nothing")
+    rm -rf "$dir"; mkdir -p "$dir/lib" "$dir/prefix"
+    cp "$REPO_ROOT/PoolSeqFlow" "$dir/PoolSeqFlow-$PSF_VERSION"
+    cp "$REPO_ROOT/lib/wrapper_lib.sh" "$dir/lib/"
+    : > "$dir/poolseqflow.nf"
+    stub="$dir/stub"
+    make_stub_conda "$stub" base
+
+    out=$(cd "$dir" && PATH="$stub/bin:$PATH" POOLSEQFLOW_HOME="$dir" \
+          POOLSEQFLOW_PREFIX="$dir/prefix" \
+          bash "$dir/PoolSeqFlow-$PSF_VERSION" uninstall 2>&1 <<< y) && status=0 || status=$?
+    assert_status 0 "$status" "with nothing installed there is nothing to fail at"
+    assert_contains "$out" "nothing to remove" "should say so plainly"
+    assert_not_contains "$out" "This removes:" "and must not ask about removing nothing"
+    assert_not_contains "$(cat "$stub/conda.log")" "env remove" "and ask conda for nothing"
+}
+
+# The analysis wrapper confirms too, and says what it is NOT touching.
+test_analysis_uninstall_confirms_and_can_be_refused() {
+    run_analysis_launcher_with_envs "base $VERSIONED_ENV ${VERSIONED_ENV}-analysis" uninstall <<< n
+    assert_contains "$LAUNCHER_OUTPUT" "This removes:" "should say what goes"
+    assert_contains "$LAUNCHER_OUTPUT" "${VERSIONED_ENV}-analysis" "naming the analysis environment"
+    assert_contains "$LAUNCHER_OUTPUT" "Aborted" "and abort on no"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env remove" "removing nothing"
+}
+
+# conda's own prompt is answered by -y. Without it a user who says no to conda leaves the
+# wrapper reporting success over an environment that is still there.
+test_every_environment_removal_passes_minus_y() {
+    local without
+    without=$(grep -n 'conda env remove -n "' "$REPO_ROOT/PoolSeqFlow" \
+                   "$REPO_ROOT/PoolSeqFlow-analysis" | grep -v -- '-y' || true)
+    assert_eq "" "$without" "every conda env remove should pass -y"
 }

@@ -41,8 +41,15 @@ checked=0
 # are not in that block but are needed all the same.
 CANONICAL="java cutadapt fastqc trim_galore samtools bamtools bwa bcftools vcftools snpEff unzip"
 
-# Shared with the citation writer, so the two report the same versions.
-. "$INSTALL_DIR/bin/tool_version.sh"
+# Shared with the citation writer, so the two report the same versions. Checked first: this
+# runs without `set -e`, so a missing library would leave tool_version undefined and every
+# tool would report as present with no version.
+[ -f "$INSTALL_DIR/lib/tool_version.sh" ] || {
+    echo "ERROR: $INSTALL_DIR/lib/tool_version.sh is missing." >&2
+    echo "  This installation is incomplete; reinstall it." >&2
+    exit 1
+}
+. "$INSTALL_DIR/lib/tool_version.sh"
 
 check_tool() {
     local name="$1" cmd="$2" resolved version
@@ -116,13 +123,10 @@ echo
 echo "Pipeline helpers"
 echo
 
-# Enumerated, not hand-listed. SOURCED holds the libraries that are read by another script
-# rather than run, and so need no executable bit.
-SOURCED="tool_version.sh"
-
+# Enumerated, not hand-listed. Everything in bin/ is run and needs its executable bit;
+# anything sourced lives in lib/ instead.
 for path in bin/*; do
     f=$(basename "$path")
-    case " $SOURCED " in *" $f "*) continue ;; esac
     [ -d "$path" ] && continue
 
     checked=$((checked + 1))

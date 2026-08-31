@@ -1,0 +1,35 @@
+# PoolSeqFlow analysis-layer conda environment.
+#
+# NOT YET PINNED. This is the hand-written specification the first solve starts from.
+# dev/scripts/export-environment.sh replaces it with an exact-build export, which is the
+# form install/environment.yml is already in and the only form a release may ship.
+#
+# There is no 'name:' key. Environments are named after the release
+# (PoolSeqFlow-<version>-analysis), which is what ./PoolSeqFlow-analysis install
+# supplies with -n.
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  # The analysis layer is a Nextflow pipeline of its own and runs in this environment
+  # alone, so it carries its own copy at the pipeline environment's version.
+  - nextflow=26.04.6
+  # Reading BAMs into per-position depth, and indexing the result for random access.
+  - samtools=1.24
+  - bcftools=1.24
+  - htslib=1.24
+  - python
+  # GNU behaviour for the shell helpers, which is not what macOS provides.
+  - bash
+  - coreutils
+  - r-base
+  # Reading the frequency and depth tables, which run to millions of rows.
+  - r-data.table
+  # Every figure.
+  - r-ggplot2
+  - r-pheatmap
+  # Argument parsing for the module scripts, and the provenance sidecars.
+  - r-optparse
+  - r-jsonlite
+  - r-matrix

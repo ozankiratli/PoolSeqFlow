@@ -31,9 +31,10 @@ tar -xzf "${OUT}/${name}.tar.gz" -C "$tmp"
 root="${tmp}/${name}"
 
 # Everything a run needs.
-for f in PoolSeqFlow poolseqflow.nf nextflow.config \
+for f in PoolSeqFlow PoolSeqFlow-analysis poolseqflow.nf nextflow.config \
          parameters.config.template metadata.csv.template \
-         install/environment.yml install/check_install.sh \
+         install/environment.yml install/environment-analysis.yml \
+         install/check_install.sh install/check_analysis_install.sh \
          LICENSE README.md CHANGELOG.md; do
     [ -f "$root/$f" ] || fail "missing from archive: $f"
 done
@@ -62,21 +63,25 @@ if find "$root" \( -name '__pycache__' -o -name '*.pyc' \) -print -quit | grep -
     fail "compiled Python found in the archive"
 fi
 
-# The executable bit, which the extracted copy must carry. SOURCED holds the libraries read by
-# another script rather than run, as install/check_install.sh spells it.
-SOURCED="tool_version.sh"
-[ -x "$root/PoolSeqFlow" ] || fail "./PoolSeqFlow is not executable"
+# The executable bit, which the extracted copy must carry. Everything in bin/ is run; the
+# libraries another script sources live in lib/ and need no such bit.
+for w in PoolSeqFlow PoolSeqFlow-analysis; do
+    [ -x "$root/$w" ] || fail "./$w is not executable"
+done
 for s in "$root"/bin/*; do
-    b=$(basename "$s")
-    case " $SOURCED " in *" $b "*) continue ;; esac
-    [ -x "$s" ] || fail "$b is not executable"
+    [ -x "$s" ] || fail "$(basename "$s") is not executable"
+done
+for s in tool_version.sh wrapper_lib.sh; do
+    [ -f "$root/lib/$s" ] || fail "missing from archive: lib/$s"
 done
 
-# The version the extracted copy would report, in all three places it lives.
-grep -q "^VERSION=\"${version}\"$" "$root/PoolSeqFlow" \
-    || fail "extracted wrapper does not report ${version}"
-grep -q "^# Version: ${version}$" "$root/PoolSeqFlow" \
-    || fail "extracted wrapper's header comment does not say ${version}"
+# The version the extracted copy would report, in every place it lives.
+for w in PoolSeqFlow PoolSeqFlow-analysis; do
+    grep -q "^VERSION=\"${version}\"$" "$root/$w" \
+        || fail "extracted $w does not report ${version}"
+    grep -q "^# Version: ${version}$" "$root/$w" \
+        || fail "extracted $w header comment does not say ${version}"
+done
 grep -q "version *= *'${version}'" "$root/nextflow.config" \
     || fail "extracted nextflow.config manifest does not say ${version}"
 

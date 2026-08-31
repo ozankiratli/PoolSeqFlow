@@ -215,7 +215,9 @@ Check the [requirements](#getting-started) first if you have not — in particul
 
 This does two things at once, because they belong together: it creates a conda environment named `PoolSeqFlow-<version>`, and it copies the pipeline itself to `~/.local/opt/PoolSeqFlow-<version>`. The pinned tools are part of what produced a result, so code without its matching environment cannot reproduce anything.
 
-Two commands are then linked into `~/.local/bin`: `PoolSeqFlow-<version>`, which always means that exact release, and plain `PoolSeqFlow`, which points at the **newest version you have installed**. Releases install alongside each other rather than over each other, so an old project can keep running under the version that produced its results. `PoolSeqFlow list` shows what is installed; `PoolSeqFlow uninstall` removes one.
+Commands are then linked into `~/.local/bin`, each under two names: `PoolSeqFlow-<version>`, which always means that exact release, and plain `PoolSeqFlow`, which points at the **newest version you have installed**. Releases install alongside each other rather than over each other, so an old project can keep running under the version that produced its results. `PoolSeqFlow list` shows what is installed; `PoolSeqFlow uninstall` removes one.
+
+`PoolSeqFlow-analysis` is linked the same way. It is the analysis layer, which reads finished results and is **not enabled by this install**: it carries R in an environment of its own, which `PoolSeqFlow-analysis install` builds and `PoolSeqFlow-analysis uninstall` removes. Uninstalling a version removes its analysis environment along with everything else of that version's.
 
 Install somewhere else by setting `POOLSEQFLOW_PREFIX` — a shared location for a group, for instance:
 
@@ -301,7 +303,7 @@ It covers three things:
 
 **Every command the pipeline invokes**, with the version each reports. Once you have a `parameters.config`, the list is read from `params.software` through `nextflow config` rather than assumed — so a command [repointed at a system binary](#using-system-tools) is checked as *you* configured it. That override is the setting most likely to be wrong and least likely to announce itself.
 
-**Every helper in `bin/`**, present and executable. `nextflow.config` puts that directory on `PATH` and the process scripts call the helpers by bare name, so a lost executable bit fails mid-run rather than at startup.
+**Every helper in `bin/`**, present and executable. `nextflow.config` puts that directory on `PATH` and the process scripts call the helpers by bare name, so a lost executable bit fails mid-run rather than at startup. `lib/` is checked for presence only — what is in there is sourced by another script rather than run, which is the whole reason the two directories are separate.
 
 **That `parameters.config` parses**, once it exists.
 
@@ -461,16 +463,45 @@ How to read the tables: [Interpreting Results](#interpreting-results).
 | `PoolSeqFlow version` | Print the version of this copy |
 | `PoolSeqFlow cite` | Print how to cite this copy, and which DOI to use ([why it matters](#which-doi-to-use)) |
 | `PoolSeqFlow list` | List the pipelines and conda environments installed on this machine |
-| `PoolSeqFlow uninstall` | Remove one installed version, environment and pipeline together |
+| `PoolSeqFlow uninstall` | Remove one installed version, environment and pipeline together, after confirmation |
 | `PoolSeqFlow uninstall_all` | Remove every PoolSeqFlow environment and installation, after confirmation |
 
 Before anything is installed there is no `PoolSeqFlow` on your `PATH`, so the first command is `./PoolSeqFlow install`, run from the folder you downloaded. Everything after that uses the installed command.
 
 **Each subcommand takes no arguments of its own** — the wrapper accepts exactly one word and rejects anything else. Two environment variables adjust it instead: `POOLSEQFLOW_PREFIX`, where `install` puts things and where `list` and `uninstall` look, and `POOLSEQFLOW_HOME`, to run a checkout without installing it.
 
-**Naming a version.** Every installed release is also on your `PATH` under its own name, so `PoolSeqFlow-2.1.0 run` uses that release and plain `PoolSeqFlow` uses the newest. This matters most for `uninstall`: with several versions installed it lists them and asks which to remove, and if nothing is attached to ask — a script, a CI job — it refuses and tells you to name one, rather than guessing at which installation to delete. `PoolSeqFlow-2.1.0 uninstall` names it and is never asked.
+**Naming a version.** Every installed release is also on your `PATH` under its own name, so `PoolSeqFlow-2.1.0 run` uses that release and plain `PoolSeqFlow` uses the newest. This matters most for `uninstall`: with several installations present it lists them and asks which to remove, and if nothing is attached to ask — a script, a CI job — it refuses and tells you to name one, rather than guessing at which installation to delete. `PoolSeqFlow-2.1.0 uninstall` names it and is never asked.
+
+**What that list contains, and what removing one takes with it.** Every installed version, plus the unversioned `PoolSeqFlow` environment if a release from before per-version environments left one behind. A version whose analysis layer is installed is marked, because **an installation is removed whole** — its environment, its pipeline, and its analysis environment together:
+
+```text
+Installed under /home/you/.local:
+  1) PoolSeqFlow                   (unversioned - predates per-version environments)
+  2) PoolSeqFlow-2.1.0
+  3) PoolSeqFlow-3.0.0             (this wrapper, analysis installed)
+```
+
+Choosing 3 removes `PoolSeqFlow-3.0.0` and `PoolSeqFlow-3.0.0-analysis`. To remove only an analysis layer and keep the pipeline that produced your results, use `PoolSeqFlow-analysis uninstall`, which never touches anything else.
+
+**Both then list exactly what will go and ask before removing any of it**, every time — including when there is only one installation and nothing to choose between. Choosing *which* is not the same as agreeing to the removal. Answering anything but `y` removes nothing, and with no terminal attached to ask — a script, a CI job — the command refuses rather than proceeding unasked. That is the same rule `uninstall_all` has always followed.
 
 `PoolSeqFlow resume` still works as a deprecated alias for `run` and prints a notice.
+
+**The analysis layer is a second command**, `PoolSeqFlow-analysis`, installed by the same `PoolSeqFlow install` and versioned with it. It takes exactly one word, the same way:
+
+| Command | Description |
+|---|---|
+| `PoolSeqFlow-analysis install` | Create this release's analysis conda environment, which carries R, then verify it |
+| `PoolSeqFlow-analysis check` | Verify an existing analysis installation — tools, R packages, entry point |
+| `PoolSeqFlow-analysis version` | Print the version of this copy |
+| `PoolSeqFlow-analysis cite` | Print how to cite this copy, plus R and every package a module runs on |
+| `PoolSeqFlow-analysis uninstall` | Remove the analysis environment, after confirmation. The pipeline, its environment, and your results are untouched |
+
+The environment is separate from the pipeline's and is built only when you ask for it. `PoolSeqFlow uninstall` removes both environments of the version it is removing.
+
+`cite` reads R's own citation records, so what it prints is the version of each package actually installed rather than a list kept in the documentation.
+
+The wrapper also accepts an analysis module's name, and `complete`, which moves finished analyses into permanent storage. Those arrive with the analysis modules themselves and are documented alongside them; the commands in the table above are the ones a release ships with today.
 
 ## Upgrading
 <!--@ page: upgrading -->
@@ -522,7 +553,10 @@ Run it in your project directory. It backs your file up, rebuilds it from the cu
 | `Now computed by the pipeline` | This release derives the value; yours was ignored |
 | `Format changed this release` | The value's meaning or format changed, so the template's wins |
 | `New in this release` | The template has a parameter your file did not — review the default |
+| `Still yours to set` | The pipeline works the value out itself now, and your new config carries the parameter **commented out** — uncomment it to take it back |
 | `No longer used` | Your file had a parameter this release does not use |
+
+`Still yours to set` is the one people mistake for a loss. Coming from 2.2.0 it covers thirteen parameters — the whole `cores` block and every `options` string — none of which is gone. They are computed by default and sit commented out in your new config, so setting one is a matter of removing a `//`. It is distinct from `Now computed by the pipeline`, where the value is derived from other parameters and there is no line to uncomment.
 
 It also ends with a list of **files to move yourself**, and moves none of them. If you are upgrading from 2.2.0 or older, there will be several, because the layout changed: your reads, reference and sample table used to live under the storage directory and now belong on `mainDir`. It prints the exact `mv` commands, having checked which files are actually there — read them before running them.
 
@@ -550,11 +584,15 @@ diff parameters.config.bak parameters.config          # see what changed, then r
 
 **`projectDir` is now `storageDir`.** A straight rename, and your value is carried over — note that `projectDir` is also a name Nextflow defines for itself, which is why it could not stay.
 
-**`RGTags.csv` is replaced by `metadata.csv`.** This one is not a rename and cannot be migrated: the old file held raw SAM read-group tags and nothing else, while the new one has three kinds of column and carries your pool sizes as well. `migrate_config` reports `rgTagsFile` as no longer used and tells you to move the file, but rewriting it into the new schema is yours to do. Start from `metadata.csv.example` and read [Metadata](#metadata). It is the change that buys the most: the experiment itself — populations, timepoints, replicates — finally has somewhere to live.
+**`RGTags.csv` is replaced by `metadata.csv`.** This one is not a rename and cannot be migrated: the old file held raw SAM read-group tags and nothing else, while the new one has three kinds of column and carries your pool sizes as well. `migrate_config` reports `rgTagsFile` as no longer used, tells you to move the file, and prints a note saying plainly that the two are not the same file under a new name — but rewriting it into the new schema is yours to do. Start from `$POOLSEQFLOW_HOME/metadata.csv.template`, which documents every column, and read [Metadata](#metadata). **Until `metadata.csv` exists the run stops at step 0**, so this is not a step you can defer. It is also the change that buys the most: the experiment itself — populations, timepoints, replicates — finally has somewhere to live.
+
+**The depth ceiling moved, and your old value is deliberately not carried.** In 2.2.0 `bcftools.maxDepth = 2000` was the only depth control there was: one number for every pileup in the run. From 3.0, step 5 measures a ceiling for each sample from its own depth histogram and step 6 applies it to the BAM before calling, so a sample is capped where its own coverage says to rather than at one number for the whole cohort — see [Depth capping](#depth-capping). `variantCall.maxDepth` is now a second ceiling on top of that one and ships as `0`, which `mpileup` reads as no limit at all.
+
+Carrying `2000` across would leave you capped at a number this release never chose, on top of a per-sample cap that cannot see it. So `migrate_config` reports it under `Format changed this release` and explains the change in full. Automatic capping is `capBAM.maxDepth = -1`, which is what you now have. **To reproduce results from 2.2.0 exactly, set `variantCall.maxDepth` back to your old value and `capBAM.maxDepth = 0`.**
 
 **The installation is separate from your project now.** Earlier releases were run from the folder you unpacked, with `parameters.config` beside the pipeline. From 3.0 you install once, releases sit side by side, and you run the installed command from your own project directory. If your project *is* the old unpacked folder, move it out — the pipeline refuses to run inside its own installation.
 
-**Some parameters are gone**: `params.gff`, `params.dir.scripts`, and the temporary-directory subpaths. `migrate_config` reports each as no longer used.
+**Some parameters are gone**: `params.gff`, `params.dir.scripts`, and the temporary-directory subpaths. `migrate_config` reports each as no longer used. The `cores` block and the `options` strings look gone too and are not — they are computed now and ship commented out, which the report says under `Computed for you now`.
 
 **Multi-run is new**, and off by default — `multiRun = false` changes nothing about how an existing project behaves.
 
@@ -839,7 +877,7 @@ The MAPQ floor is easy to miss because it is not part of either flag word. At `3
 
 Duplicate removal happens just upstream (`samtools markdup -r`) and matters more here than in individual sequencing: a PCR duplicate is a second vote from a molecule that should only vote once, and in a frequency estimate every vote counts directly.
 
-Full flag reference: [Alignment Filters](#alignment-filters).
+Full flag reference: [Alignment & Cleaning](#alignment-cleaning).
 
 ### 2. Depth capping (steps 5 and 6) { #depth-capping }
 
@@ -1085,8 +1123,11 @@ Two files are written to `Output/Frequencies/`, named after `vcf.fileName`:
 |---|---|
 | `<name>_snp_freq.tsv` | Every surviving SNP site |
 | `<name>_indel_freq.tsv` | Every surviving insertion or deletion site |
+| `<name>_snp_depth.tsv` | The read counts those SNP frequencies were computed from |
+| `<name>_indel_depth.tsv` | The same, for indels |
 
-With the default `vcf.fileName = 'Test'` those are `Test_snp_freq.tsv` and `Test_indel_freq.tsv`.
+With the default `vcf.fileName = 'Test'` those are `Test_snp_freq.tsv`, `Test_indel_freq.tsv`
+and their two `_depth.tsv` counterparts.
 
 #### Columns
 
@@ -1134,6 +1175,21 @@ chr1   1000  A    T       0.05      0        0.1
 ```
 
 Every column within one site sums to 1. A zero means the allele was not observed in that sample, not that the site was missing there.
+
+#### The depth tables { #depth-tables }
+
+`<name>_snp_depth.tsv` and `<name>_indel_depth.tsv` are the input that conversion was applied to: the same sites, holding **read counts instead of frequencies**. They are what the worked example above calls the AD columns, exactly as they came out of the VCF.
+
+**They are not the same shape as the frequency tables, and reading them as if they were is the mistake to avoid.** A depth table has **one row per site**, and each cell holds a comma-separated list of counts in `REF`-then-`ALT` order. The frequency table expands that into **one row per allele**. The worked example's site is a single row here:
+
+```text
+CHROM  POS   REF  ALT  TOTAL_AD     sample1    sample2
+chr1   1000  A    G,T  800,150,50   400,100,0  400,50,50
+```
+
+Two consequences. A depth table has fewer rows than its frequency table — one per site rather than one per allele. And its fourth column is headed `ALT`, listing only the alternates, where the frequency table's is `ALLELE` and names one allele per row including `REF`.
+
+Use these when a frequency alone is not enough: a frequency of 0.5 from 400 reads and one from 2 reads are the same number and very different evidence. They are also what the analysis layer reads to compute each site's effective sample size.
 
 ### Reading the tables correctly
 
@@ -1212,16 +1268,16 @@ Change one of these and your output changes. Step 0 records them and **refuses t
 
 | Parameter | Effect | Page |
 |---|---|---|
-| `poolSize` | Individuals per pool; sets the minimum credible allele frequency. Can be set per pool in `metadata.csv` | [Variant Calling](#poolsize-and-diploidy) |
-| `diploidy` | Ploidy; same threshold. Can be set per run | [Variant Calling](#poolsize-and-diploidy) |
-| `filterFalsePositives.sampleThreshold` | Fraction of samples that must support an allele | [Variant Calling](#samplethreshold) |
-| `capBAM.maxDepth` | The depth ceiling put on each BAM. Can be set per sample in `metadata.csv` | [Filter Chain](#depth-capping) |
+| `poolSize` | Individuals per pool; sets the minimum credible allele frequency. Can be set per pool in `metadata.csv` | [Filtering & Frequency](#poolsize-and-diploidy) |
+| `diploidy` | Ploidy; same threshold. Can be set per run | [Filtering & Frequency](#poolsize-and-diploidy) |
+| `filterFalsePositives.sampleThreshold` | Fraction of samples that must support an allele | [Filtering & Frequency](#samplethreshold) |
+| `capBAM.maxDepth` | The depth ceiling put on each BAM. Can be set per sample in `metadata.csv` | [Variant Calling](#capping-each-bam) |
 | `variantCall.*` | Pileup and calling behaviour, including a flat depth cap on top of the measured one | [Variant Calling](#variant-calling) |
-| `vcffilter.minDP`, `vcffilter.minQUAL` | Post-call depth and quality filtering | [Variant Calling](#depth-and-quality) |
-| `cleanBAM.filter`, `cleanBAM.required`, `cleanBAM.mapq` | Which alignments reach the pileup | [Alignment Filters](#alignment-filters) |
+| `vcffilter.minDP`, `vcffilter.minQUAL` | Post-call depth and quality filtering | [Filtering & Frequency](#depth-and-quality) |
+| `cleanBAM.filter`, `cleanBAM.required`, `cleanBAM.mapq` | Which alignments reach the pileup | [Alignment & Cleaning](#alignment-cleaning) |
 | `cutadapt.at_gc_error` | Composition tolerance driving the clip points | [Trimming & Clipping](#trimming-clipping) |
 | `trim_galore.quality`, `.autodetect`, `.adapter1/2` | What is trimmed off the reads | [Trimming & Clipping](#trimming-clipping) |
-| `annotate`, `gffFile` | Whether step 8 runs and against what | [Pipeline Steps](#step-8-annotate-variants) |
+| `annotate`, `gffFile`, `snpEff.*` | Whether step 8 runs, against what, and with which SnpEff options | [Annotations](#annotations) |
 | `metadata.csv` | Which FASTQ pairs are one pool, each pool's size and depth ceiling, and column order — the `RG_*` and `param_*` columns only | [Metadata](#metadata) |
 | The run table | Whatever it varies, per run. Every column in it is a parameter | [Multi-run](#multi-run) |
 
@@ -1248,11 +1304,36 @@ Safe to tune between runs. Step 0 does not track them, precisely because they ca
 | `referenceFile`, `gffFile` | Input filenames within `mainDir/Reference` |
 | `metadataFile` | Name of the sample table, in `mainDir` |
 | `multiRun`, `multiRunFile` | Whether to read a run table, and what it is called |
-| `vcf.fileName` | Base name for the VCFs and frequency tables |
+| `vcf.fileName` | Base name for the VCFs and frequency tables. See [Filtering & Frequency](#output-naming) |
+
+#### Parameters that change a report, not a result
+
+One parameter changes only what a published *report* contains, and nothing that flows onward:
+
+| Parameter | Effect | Page |
+|---|---|---|
+| `fastqc.options` | What FastQC reports on the clipped reads | [Trimming & Clipping](#trimming-clipping) |
+
+Step 0 does not refuse a change to these, because your results do not depend on them. It *does* refuse two runs of a table that **share a step and disagree** about one — only one of the values can have produced the single report sitting in the shared directory, so the run stops rather than publishing an ambiguous file.
 
 #### Do not edit: derived values
 
 A large part of `parameters.config` is computed. The `cores` block derives every tool's thread count from `threads`; the `dir` block builds every path from `mainDir` and `storageDir`; `filterFalsePositives.sensitivity` is computed from `poolSize` and `diploidy`; `snpEff.db` is derived from `gffFile`.
+
+Beyond those, eight named values are assembled from the filenames and roots you set. They appear in the config as ordinary assignments, so they can be overridden — but each has an input that is the thing you actually mean to change:
+
+| Parameter | What it is | Set instead |
+|---|---|---|
+| `referenceFa` | Your reference filename with `.gz` removed — the decompressed name step 1 works with | `referenceFile` |
+| `referencePath` | Full path to the reference, under `mainDir/Reference` | `referenceFile`, `dir.references` |
+| `gffPath` | Full path to the annotation file, alongside it | `gffFile` |
+| `metadataPath` | Full path to the sample table, in `mainDir` | `metadataFile` |
+| `multiRunPath` | Full path to the run table, in `mainDir` | `multiRunFile` |
+| `dir.allOutputs` | Results root for things belonging to the whole invocation rather than one run. `storageDir/Output`, or `storageDir/Output/All_Runs` when `multiRun` is on | `storageDir`, `multiRun` |
+| `dir.allLogs` | The same for logs: `storageDir/Logs`, or `storageDir/Logs/All_Runs` | `storageDir`, `multiRun` |
+| `dir.sessionReports` | Where the four Nextflow session reports go — `PoolSeqFlow_pipeline_report.html`, `_timeline.html`, `_trace.txt` and `_dag.html`, named in `nextflow.config` | `storageDir`, `dir.subpath.reports` |
+
+The three `All_Runs` values are why a multi-run project does not scatter session-level output through the individual run directories: a report describing the whole invocation has one home, and it is chosen by `multiRun` rather than by each step guessing.
 
 Editing these by hand breaks the invariant that makes the pipeline predictable — that one number sizes the run, and one pair of paths places everything. Change the input, not the derivation.
 
@@ -1301,7 +1382,7 @@ In rough order of how expensive it is to get wrong:
 1. **`metadata.csv`** — which FASTQ pairs share an `RG_Sample`. Wrong here means valid results that answer a different question, and fixing it invalidates every BAM. [→](#rg_sample-decides-what-counts-as-a-sample)
 2. **`poolSize` and `diploidy`** — these set the frequency floor. `poolSize` can be given per pool in `metadata.csv`, and `diploidy` applies to a whole run. [→](#poolsize-and-diploidy)
 3. **`filterFalsePositives.sampleThreshold`** — decides whether alleles seen in few pools survive. The default removes them. [→](#samplethreshold)
-4. **`capBAM.maxDepth`** — leave it at `-1` unless you know your libraries need otherwise. It is the one item here you can safely decide *after* the first run, because the depth reports tell you what it did. [→](#depth-capping)
+4. **`capBAM.maxDepth`** — leave it at `-1` unless you know your libraries need otherwise. It is the one item here you can safely decide *after* the first run, because the depth reports tell you what it did. [→](#capping-each-bam)
 5. **`threads`** — must fit the machine, or the run fails at submission. [→](#resources)
 
 Changing any of items 1–4 after outputs exist means deleting those outputs. That is enforced, not advisory.
@@ -1319,284 +1400,6 @@ software {
 ```
 
 Replacing a command with an absolute path makes the pipeline use a system installation instead of the conda environment. This is supported but not recommended: the environment pins exact builds because Pool-seq results depend on the precise behaviour of the pileup and filtering tools, and a version mismatch will not announce itself. Use it to work around a genuine packaging problem, not as a default.
-
-## Resources
-<!--@ page: resources -->
-
-Two values size an entire run:
-
-```groovy
-threads = 8          // cores a single task may use
-memory  = '24 GB'    // memory ceiling for a single task
-```
-
-Every tool's thread count is derived from `threads`. **Do not set the per-tool counts by hand** — they live in the `cores` block, which exists to be computed, not edited.
-
-### The ladder
-
-| `threads` | Trim Galore `--cores` | actual threads | BWA `-t` | cutadapt | FastQC `-t` | SAMtools `-@` | Java GC |
-|---|---|---|---|---|---|---|---|
-| 1 | 1 | 1 | 1 | 1 | 1 | 0 | 1 |
-| 2 | 1 | 1 | 2 | 2 | 2 | 1 | 2 |
-| 4 | 1 | 1 | 4 | 4 | 2 | 1 | 2 |
-| 6 | 2 | 6 | 4 | 4 | 2 | 1 | 2 |
-| 8 | 4 | 8 | 8 | 8 | 2 | 1 | 2 |
-| 12+ | 8 | 12 | 8 | 8 | 2 | 1 | 2 |
-
-Three details explain the shape of that table.
-
-**Tools are quantised to where their scaling flattens.** BWA and cutadapt take the largest power of two at or below `threads`, capped at 8. Past that point the published scaling for these tools returns very little, so the cores are better spent on another task. FastQC is given two because step 2 only ever hands it a pair of files, and one thread per file is all it can use.
-
-**Trim Galore's `--cores N` really runs N+4 threads** — N workers, two decompressors, a batcher and a writer. The ladder picks the largest N whose *full footprint* still fits in `threads`, which is why 4 cores yields `--cores 1` rather than `--cores 4`. The `--cores 1` case is the exception: it bypasses the worker pool entirely and is genuinely single-threaded.
-
-**SAMtools' `-@` counts additional threads**, so `0` means one core and `1` means two.
-
-### How the numbers reach the tools
-
-Each process declares what it needs with the `cpus` directive and passes that same number to its tool as `task.cpus`, so there is exactly one value per task and nothing can drift:
-
-```groovy
-process Align {
-    cpus { params.cores.bwa }
-    script:
-    """
-    bwa mem -t ${task.cpus} ...
-    """
-}
-```
-
-| Process | Reserves | At `threads = 8` |
-|---|---|---|
-| `TrimReads` | `params.cores.trimTotal` | 8 |
-| `ClipReads` | `params.cores.cutadapt` | 8 |
-| `Align` | `params.cores.bwa` | 8 |
-| `SortCleanBam` | `params.cores.samtools + 1` | 2 |
-| `BuildSnpEffDb`, `AnnotateVariants` | `params.cores.javaGc` | 2 |
-| every other step | *(single-threaded)* | 1 |
-
-!!! note "`fixmate` is a deliberate exception"
-
-    Inside `SortCleanBam`, every stage of the streamed pipeline is given `task.cpus - 1` except `samtools fixmate`, which gets the run's `threads - 1`. That is intentional: fixmate's algorithm scales further than the sort and markdup stages around it, so it is allowed more of the machine than the task reserves.
-
-This is more than bookkeeping. **Nextflow decides how many tasks to run at once by comparing `cpus` against the resources available**, so an under-declared task leads to oversubscription — the machine runs more work than it thinks it is. Overriding `cpus` in a profile automatically changes what the tool is told, because both come from `task.cpus`.
-
-`TrimReads` is the one place the number is not passed through unchanged. Its reservation is Trim Galore's *footprint*, so the script maps back to the worker count:
-
-```groovy
-cpus { params.cores.trimTotal }                  // 8 at threads = 8
-trim_cores = task.cpus > 4 ? task.cpus - 4 : 1   // -> --cores 4
-```
-
-Reserving the worker count instead would understate the task by four threads. The guard covers `--cores 1`, which is genuinely single-threaded.
-
-### `threads` must fit the machine
-
-Because tasks reserve what they really use, a request larger than the available cores fails immediately rather than quietly oversubscribing:
-
-```text
-Process requirement exceeds available CPUs -- req: 12; avail: 8
-```
-
-Set `threads` to the cores you actually have — on HPC, the size of one node.
-
-Note the consequence on a small machine. At `threads = 8`, a single `TrimReads` task reserves all eight, so samples are trimmed one at a time instead of three at once. That is slower in wall-clock than running three concurrently at twelve threads each on eight cores — and it is also the only version of that arrangement which respects the machine. See [Threads are budgeted, not divided](#threads-are-budgeted-not-divided).
-
-### `resourceLimits` is a ceiling, not an allocation
-
-`nextflow.config` caps requests using the same two parameters:
-
-```groovy
-process {
-    resourceLimits = [ memory: params.memory, cpus: params.threads ]
-}
-```
-
-If a task requests more than this, Nextflow reduces the request before submitting it, which prevents a job that no node can satisfy from queueing forever. It does **not** reserve anything and does **not** limit concurrency on its own — that is what `cpus` does. Set `threads` and `memory` to match the node you are running on.
-
-### Java {: #java }
-
-Two settings govern the JVM tools (FastQC, SnpEff):
-
-```groovy
-java {
-    heapSize = '-Xmx8g'    // passed via _JAVA_OPTIONS
-}
-
-fastqc {
-    memory = 2048          // megabytes, as a plain number
-}
-```
-
-`fastqc.memory` must be a bare number — FastQC rejects `2G`.
-
-`-XX:ParallelGCThreads` is **not** set here. It is applied per process from `task.cpus`, so the JVM always gets the cores that task actually reserved rather than a figure fixed in the config.
-
-### Choosing values
-
-| Situation | `threads` | `memory` |
-|---|---|---|
-| Laptop or workstation | Physical cores, minus one or two if you want the machine usable | Comfortably under total RAM — one task can use all of it |
-| HPC node, exclusive | Cores on one node | Node memory |
-| HPC node, shared | Cores your allocation guarantees | Memory your allocation guarantees |
-| Debugging a failure | `1` | Generous |
-
-`threads = 1` forces every tool to a single core, which makes a failing run reproducible and its logs readable. It is slow, but it removes concurrency as a variable.
-
-Neither value can change your results, which is exactly why the change guard does not track them. Tune them freely between runs — you will not be asked to delete anything.
-
-## Trimming & Clipping
-<!--@ page: trimming -->
-
-Step 2 runs in two stages: Trim Galore removes adapters and low-quality tails, then a second pass clips a fixed number of cycles from both ends based on what FastQC measured about base composition. The second stage is unusual and worth understanding before you change its one tunable.
-
-### Stage 1 — Trim Galore
-
-```groovy
-trim_galore {
-    quality    = 25
-    autodetect = true
-    adapter1   = ''
-    adapter2   = ''
-}
-```
-
-The assembled command is `--fastqc --paired --retain_unpaired -q 25`, plus adapters and `--cores`.
-
-| Setting | Meaning |
-|---|---|
-| `quality` | Phred score below which bases are trimmed from the 3′ end |
-| `autodetect` | `true` — no adapter is passed and Trim Galore detects it (Illumina, Nextera or smallRNA) |
-| `adapter1`, `adapter2` | Used only when `autodetect = false`, and then **both** are required |
-
-`--retain_unpaired` keeps reads whose mate was discarded, in `Output/Unpaired/`. They are not used downstream — step 4 requires properly-paired alignments — but they are kept so you can see what was lost rather than having it disappear.
-
-#### When to turn autodetect off
-
-Autodetection samples the first reads of a file and matches against known adapter sequences. Set `autodetect = false` and supply both sequences when:
-
-- your library used a custom or non-standard adapter that will not be recognised;
-- the trimming reports in `Output/Reports/Trimming/` disagree between samples of the same library, which means detection is not landing on a consistent answer;
-- you need the run to be exactly reproducible against a specific adapter regardless of what the first reads happen to contain.
-
-Setting only one of `adapter1`/`adapter2` is not valid — the option string is built from both.
-
-#### Per-sample adapters
-
-Those settings apply to the whole run. One library prepared with a different adapter does not need a project of its own: `param_adapter1` and `param_adapter2` in `metadata.csv` can override them for a single row.
-
-```csv
-SampleID,RG_Sample,param_adapter1,param_adapter2
-Sample1T1Rep1,Sample1T1,,
-Sample1T1Rep2,Sample1T1,AGATCGGAAGAGC,AGATCGGAAGAGC
-```
-
-A row that sets both replaces the run's adapter setting for that sample, whatever `autodetect` is set to — the adapters you name are used. A row that leaves both blank uses the run's settings, which is the ordinary case.
-
-Give both or neither. One adapter on its own is a setting that cannot be acted on, so it is refused rather than half-applied.
-
-There is one combination the pipeline cannot honour, and it stops rather than guessing: if you have pinned `trim_galore.options` by hand, that string is used exactly as written and a per-sample adapter has nowhere to go. The run stops, names the samples that set adapter columns, and asks you to remove either the pin or the columns.
-
-### Stage 2 — Composition-aware clipping {: #composition-aware-clipping }
-
-```groovy
-cutadapt {
-    at_gc_error = 0.025
-    min_length  = 50     # see the note below - not currently applied
-    options     = ""
-}
-```
-
-Rather than clipping a fixed number of bases, the pipeline reads what FastQC measured and derives the clip points per sample.
-
-#### What it measures
-
-In an unbiased library, each cycle should show roughly equal A and T, and roughly equal G and C. Departures at the read ends are a well-known artefact — residual adapter, priming bias, and end-of-read quality decay all show up as a composition skew before they show up as a base-quality failure.
-
-For Pool-seq that matters more than usual. Allele frequencies are read counts, so a systematic bias in which base gets called at a given cycle propagates directly into the frequency estimate. Cycles where composition has not settled are cycles you cannot trust to count alleles.
-
-#### The algorithm
-
-For each read file, step 2 parses the `>>Per base sequence content` block of `fastqc_data.txt` and keeps the cycles where **both** ratios sit inside the tolerance:
-
-$$1 - \varepsilon \;\le\; \frac{A}{T} \;\le\; 1 + \varepsilon
-\qquad
-1 - \varepsilon \;\le\; \frac{G}{C} \;\le\; 1 + \varepsilon$$
-
-with $\varepsilon$ = `at_gc_error`. At the default of `0.025` that is a ratio between 0.975 and 1.025. The first and last qualifying cycle give a usable range per read — `Min1`–`Max1` for R1 and `Min2`–`Max2` for R2 — and the two are combined:
-
-```text
-Clip5           = max(Min1, Min2)
-readLengthLimit = max(Max1 - Clip5, Max2 - Clip5)
-```
-
-then applied symmetrically:
-
-```bash
-cutadapt -u Clip5 -U Clip5 -l readLengthLimit -o R1_clipped.fq.gz -p R2_clipped.fq.gz
-```
-
-`-u`/`-U` remove `Clip5` bases from the 5′ end of R1 and R2; `-l` truncates both to the same length. FastQC then runs again on the result, so you can check the clipping did what it was supposed to.
-
-#### Two deliberate asymmetries
-
-**Both mates get the same treatment.** `Clip5` is the *larger* of the two 5′ bounds and the length limit applies to both files, so R1 and R2 come out the same length. The alternative — clipping each mate to its own measured range — would leave mates of different lengths for no downstream benefit.
-
-**The length limit is the more permissive of the two.** Because `readLengthLimit` takes the `max`, a read whose own usable range ended earlier is kept to the longer mate's length, retaining a few cycles past its own bound. This favours read length over strict adherence to the tolerance. If that trade is wrong for your data, tighten `at_gc_error` — which pulls both bounds in — rather than trying to change the rule.
-
-#### When it refuses to run
-
-The clip range calculation fails loudly rather than guessing:
-
-| Exit | Cause |
-|---|---|
-| `3` | The FastQC table did not have the expected `A`/`T`/`G`/`C` header columns |
-| `4` | **No cycle** fell inside `at_gc_error` |
-
-Both produce:
-
-```text
-CLIPPING READS <sample>: ERROR: no usable clip range in <file>
-CLIPPING READS <sample>: exit 3 = unexpected FastQC header; 4 = no cycle within at_gc_error (0.025)
-```
-
-Cycles where T or C is zero are skipped rather than divided by — that division would abort awk mid-pipeline, which plain `set -e` does not catch, and the bounds would be silently derived from a truncated table.
-
-#### Tuning `at_gc_error`
-
-This is the only value here you would normally change, and it trades data volume against composition purity.
-
-| Direction | Effect | Risk |
-|---|---|---|
-| **Tighter** (e.g. `0.01`) | Fewer cycles qualify, so more is clipped from both ends | Exit 4 — no cycle qualifies and the run stops. Shorter reads map less uniquely |
-| **Looser** (e.g. `0.05`) | More cycles qualify, so reads stay longer | Retains cycles with real composition bias, which feeds into your frequencies |
-
-Exit 4 on a library that is otherwise fine usually means the tolerance is too tight for its natural composition — GC-skewed genomes will not produce a G/C ratio near 1 anywhere. In that case raising `at_gc_error` is the correct response, not a workaround.
-
-Check the before/after FastQC reports in `Output/Reports/Fastqc/<sample>/` after changing it. The clipped-read report is the one that tells you whether the value you chose did what you wanted.
-
-!!! note "`min_length` is off by default"
-
-    `cutadapt.options` is empty, so no minimum read length is enforced at this stage and changing `min_length` on its own has no effect. The template carries the line ready to uncomment:
-
-    ```groovy
-    options        = ""
-    // options     = "-m ${params.cutadapt.min_length}"
-    ```
-
-    Swap the two and reads shorter than `min_length` are discarded after clipping. This is an analysis-affecting change — existing trimmed output has to be removed before it takes effect.
-
-    Mind the order the two settings apply in. Cutadapt truncates to the computed read length limit **first**, and only then drops reads shorter than `min_length` — so a `min_length` above that limit discards every pair, and cutadapt still exits 0. That would leave empty FASTQ files which the existence checks would happily treat as a finished step, for good. The pipeline checks for it and stops with the two numbers in the message rather than letting it happen. The limit is computed per sample from its own FastQC report, so the value that is safe for one library is not automatically safe for another.
-
-### What this step writes
-
-| Path | Contents |
-|---|---|
-| `Output/Trimmed/<sample>/` | `*_val_1.fq.gz`, `*_val_2.fq.gz` (Trim Galore) and `*_clipped.fq.gz` (cutadapt) |
-| `Output/Unpaired/<sample>/` | Reads whose mate was discarded |
-| `Output/Reports/Fastqc/<sample>/` | FastQC on trimmed and on clipped reads |
-| `Output/Reports/Trimming/<sample>/` | Trim Galore reports (`.txt` and, on 2.x, `.json`) |
-
-The trimmed reads are **deleted** once clipping has consumed them ([why](#steps-delete-their-own-inputs)); the clipped reads are what step 3 aligns.
 
 ## Metadata
 <!--@ page: metadata | nav: Metadata -->
@@ -1838,197 +1641,305 @@ The table is read and validated at the start of the run, and an unusable one sto
 
 `PoolSeqFlow dryrun` goes further and creates the directory tree the run would write, empty, so the layout can be looked at and approved before anything is computed. `PoolSeqFlow dryclean` removes the preview.
 
-## Variant Calling
-<!--@ page: variant-calling -->
+## Resources
+<!--@ page: resources -->
 
-These are the parameters that decide which variants exist in your output and at what frequency. Every one of them is analysis-affecting: change one and the next run stops rather than letting old and new results share a folder.
-
-For how these fit together end to end, read [The Filter Chain](#the-filter-chain).
-
-### `poolSize` and `diploidy`
+Two values size an entire run:
 
 ```groovy
-poolSize = 50    // individuals in one pool
-diploidy = 2     // ploidy of the organism
+threads = 8          // cores a single task may use
+memory  = '24 GB'    // memory ceiling for a single task
 ```
 
-These two are the pipeline's most consequential settings. They are not used to model anything — they set the **minimum credible allele frequency**:
+Every tool's thread count is derived from `threads`. **Do not set the per-tool counts by hand** — they live in the `cores` block, which exists to be computed, not edited.
 
-$$S = \frac{1}{2 \times \text{diploidy} \times \text{poolSize}}$$
+### The ladder
 
-An alternate allele must reach `S` in a sample for that sample to count as supporting it.
+| `threads` | Trim Galore `--cores` | actual threads | BWA `-t` | cutadapt | FastQC `-t` | SAMtools `-@` | Java GC |
+|---|---|---|---|---|---|---|---|
+| 1 | 1 | 1 | 1 | 1 | 1 | 0 | 1 |
+| 2 | 1 | 1 | 2 | 2 | 2 | 1 | 2 |
+| 4 | 1 | 1 | 4 | 4 | 2 | 1 | 2 |
+| 6 | 2 | 6 | 4 | 4 | 2 | 1 | 2 |
+| 8 | 4 | 8 | 8 | 8 | 2 | 1 | 2 |
+| 12+ | 8 | 12 | 8 | 8 | 2 | 1 | 2 |
 
-**`poolSize` is per pool, not per run.** With eight pools of 50 individuals each, it is `50`, not `400`.
+Three details explain the shape of that table.
 
-**The factor of two is deliberate.** A pool of 50 diploids holds 100 chromosomes, so one chromosome is frequency 0.01. `S` comes out at 0.005 — half of that — so a genuine singleton clears the threshold with margin rather than sitting exactly on it. The observed fraction of a singleton is itself noisy, and a threshold placed exactly at the expected value would reject half of them.
+**Tools are quantised to where their scaling flattens.** BWA and cutadapt take the largest power of two at or below `threads`, capped at 8. Past that point the published scaling for these tools returns very little, so the cores are better spent on another task. FastQC is given two because step 2 only ever hands it a pair of files, and one thread per file is all it can use.
 
-| `poolSize` | `diploidy` | One chromosome is | `S` |
-|---|---|---|---|
-| 10 | 2 | 0.0500 | 0.0250 |
-| 25 | 2 | 0.0200 | 0.0100 |
-| 50 | 2 | 0.0100 | 0.0050 |
-| 100 | 2 | 0.0050 | 0.0025 |
-| 200 | 2 | 0.0025 | 0.00125 |
-| 50 | 1 | 0.0200 | 0.0100 |
-| 50 | 4 | 0.0050 | 0.0025 |
+**Trim Galore's `--cores N` really runs N+4 threads** — N workers, two decompressors, a batcher and a writer. The ladder picks the largest N whose *full footprint* still fits in `threads`, which is why 4 cores yields `--cores 1` rather than `--cores 4`. The `--cores 1` case is the exception: it bypasses the worker pool entirely and is genuinely single-threaded.
 
-**If your pools differ in size**, give each one its own `param_poolSize` in `metadata.csv` and every column is judged at its own threshold. The global `poolSize` here stays as the default for pools that do not state one. See [Pool size belongs to the pool](#pool-size-belongs-to-the-pool).
+**SAMtools' `-@` counts additional threads**, so `0` means one core and `1` means two.
 
-**`diploidy` applies to a whole run.** It describes the sequence rather than the sample, so a diploid animal's haploid mitochondrial genome belongs in a separate run with its own value — see [Sequences with a different ploidy](#sequences-with-a-different-ploidy).
+### How the numbers reach the tools
 
-### `sampleThreshold`
+Each process declares what it needs with the `cpus` directive and passes that same number to its tool as `task.cpus`, so there is exactly one value per task and nothing can drift:
 
 ```groovy
-filterFalsePositives {
-    sampleThreshold = 0.2
+process Align {
+    cpus { params.cores.bwa }
+    script:
+    """
+    bwa mem -t ${task.cpus} ...
+    """
 }
 ```
 
-The fraction of samples that must independently support an allele at frequency `S` or above for it to be kept. This is what makes the filter a **corroboration** test rather than a frequency cutoff, and it is what allows `S` to be set so low without drowning in sequencing error: errors do not recur at the same position across independent libraries.
-
-The comparison is `count >= n_samples × sampleThreshold`, so the effective requirement is the next whole number up:
-
-| Samples | `M` at 0.2 | Must support |
+| Process | Reserves | At `threads = 8` |
 |---|---|---|
-| 1 | 0.2 | 1 |
-| 4 | 0.8 | 1 |
-| 5 | 1.0 | 1 |
-| 6 | 1.2 | 2 |
-| 8 | 1.6 | 2 |
-| 10 | 2.0 | 2 |
-| 12 | 2.4 | 3 |
-| 20 | 4.0 | 4 |
+| `TrimReads` | `params.cores.trimTotal` | 8 |
+| `ClipReads` | `params.cores.cutadapt` | 8 |
+| `Align` | `params.cores.bwa` | 8 |
+| `SortCleanBam` | `params.cores.samtools + 1` | 2 |
+| `BuildSnpEffDb`, `AnnotateVariants` | `params.cores.javaGc` | 2 |
+| every other step | *(single-threaded)* | 1 |
 
-!!! danger "The default removes population-private alleles"
+!!! note "`fixmate` is a deliberate exception"
 
-    With eight samples, an allele found in **one** pool is discarded regardless of how frequent it is there — one does not reach two. If private or population-specific variation is the subject of your study, this default is wrong for you.
+    Inside `SortCleanBam`, every stage of the streamed pipeline is given `task.cpus - 1` except `samtools fixmate`, which gets the run's `threads - 1`. That is intentional: fixmate's algorithm scales further than the sort and markdup stages around it, so it is allowed more of the machine than the task reserves.
 
-| Value | Behaviour | Suits |
-|---|---|---|
-| `0.2` (default) | Needs roughly a fifth of samples | Shared, evolving variation across comparable pools |
-| Low enough to require 1 sample | Any single pool can carry an allele | Private variants, small sample counts, discovery runs |
-| Higher, e.g. `0.5` | Needs half the samples | Conservative core-variant sets; high-noise data |
+This is more than bookkeeping. **Nextflow decides how many tasks to run at once by comparing `cpus` against the resources available**, so an under-declared task leads to oversubscription — the machine runs more work than it thinks it is. Overriding `cpus` in a profile automatically changes what the tool is told, because both come from `task.cpus`.
 
-Remember that the denominator is the number of **VCF columns**, which is the number of distinct `RG_Sample` values — not the number of FASTQ pairs. Merging replicates by sharing an `RG_Sample` changes this threshold as a side effect ([see Metadata](#rg_sample-decides-what-counts-as-a-sample)).
-
-### Pileup settings
+`TrimReads` is the one place the number is not passed through unchanged. Its reservation is Trim Galore's *footprint*, so the script maps back to the worker count:
 
 ```groovy
-variantCall {
-    scaleMapQ   = 50     // -C  downgrade coefficient for mismatch-heavy reads
-    varQualMin  = 30     // -q  minimum mapping quality
-    baseQualMin = 30     // -Q  minimum base quality
-    maxDepth    = 0      // -d  a flat depth cap on top of capBAM; 0 is no limit
+cpus { params.cores.trimTotal }                  // 8 at threads = 8
+trim_cores = task.cpus > 4 ? task.cpus - 4 : 1   // -> --cores 4
+```
+
+Reserving the worker count instead would understate the task by four threads. The guard covers `--cores 1`, which is genuinely single-threaded.
+
+### `threads` must fit the machine
+
+Because tasks reserve what they really use, a request larger than the available cores fails immediately rather than quietly oversubscribing:
+
+```text
+Process requirement exceeds available CPUs -- req: 12; avail: 8
+```
+
+Set `threads` to the cores you actually have — on HPC, the size of one node.
+
+Note the consequence on a small machine. At `threads = 8`, a single `TrimReads` task reserves all eight, so samples are trimmed one at a time instead of three at once. That is slower in wall-clock than running three concurrently at twelve threads each on eight cores — and it is also the only version of that arrangement which respects the machine. See [Threads are budgeted, not divided](#threads-are-budgeted-not-divided).
+
+### `resourceLimits` is a ceiling, not an allocation
+
+`nextflow.config` caps requests using the same two parameters:
+
+```groovy
+process {
+    resourceLimits = [ memory: params.memory, cpus: params.threads ]
 }
 ```
 
-`-C 50` (`scaleMapQ`)
-: Downgrades mapping quality for reads carrying excessive mismatches. Reads that align poorly are more likely to be misplaced, and a misplaced read contributes its bases to the wrong position — which in a frequency estimate is a direct error, not just noise.
+If a task requests more than this, Nextflow reduces the request before submitting it, which prevents a job that no node can satisfy from queueing forever. It does **not** reserve anything and does **not** limit concurrency on its own — that is what `cpus` does. Set `threads` and `memory` to match the node you are running on.
 
-`-B` (fixed, not configurable)
-: Disables BAQ recalculation. BAQ downweights bases near indels to suppress misalignment artefacts under a single-genome model. In a pool, the same signal may be a genuine low-frequency indel, so the raw evidence is kept and the decision is left to the cross-sample filter.
+### Java {: #java }
 
-#### `maxDepth`
-
-`-d` caps the reads considered **per file per position**, and it ships as `0`, which to `bcftools mpileup` means *no limit*. The BAMs reaching this point have already been capped per sample by [stage 2 of the filter chain](#depth-capping), from each sample's own coverage — a second flat number on top of a measured one is what that stage exists to remove.
-
-**This is not `capBAM.maxDepth`.** That one is measured per sample and applied to the BAM; this one is a single number applied to every sample of every run, after capping. They take different sentinels, and only `capBAM.maxDepth` accepts `-1`:
-
-| Value | `capBAM.maxDepth` | `variantCall.maxDepth` |
-|---|---|---|
-| `-1` | Measure a ceiling per sample | Not valid |
-| `0` | Do not cap | No limit |
-| positive `N` | Cap every sample at `N` | Cap the pileup at `N` |
-
-**When to set it.** Leave it at `0` unless you have a reason to want a hard backstop under the measured ceiling — a memory ceiling on a shared machine is the usual one, since a very deep pile-up costs mpileup memory whether or not it was capped. If you do set it, size it against your data rather than guessing. After a run, the depth reports say what each sample actually looked like:
-
-```bash
-grep -H 'ceiling applied' Output/Reports/Depth/*_depth_report.txt
-```
-
-A cap that bites truncates the read counts your frequencies are computed from, and nothing downstream flags it — which was the whole problem with the fixed `2000` this replaced.
-
-**Coming from 2.2.0 or earlier**, migration carries your `bcftools.maxDepth` across as `variantCall.maxDepth` and adds `capBAM.maxDepth = -1` beside it, reported as a new parameter. Your runs then do **both**: they cap per sample from the data *and* keep your old flat ceiling underneath. That is deliberate — nothing silently loosens a limit you set — but it is probably not what you want long term. Set `variantCall.maxDepth = 0` to keep only the measured ceiling, or `capBAM.maxDepth = 0` to keep only the old behaviour.
-
-### Calling
+Two settings govern the JVM tools (FastQC, SnpEff):
 
 ```groovy
-callOptions = "-m -A -v -Ov"
+java {
+    heapSize = '-Xmx8g'    // passed via _JAVA_OPTIONS
+}
+
+fastqc {
+    memory = 2048          // megabytes, as a plain number
+}
 ```
 
-| Flag | Effect |
+`fastqc.memory` must be a bare number — FastQC rejects `2G`.
+
+`-XX:ParallelGCThreads` is **not** set here. It is applied per process from `task.cpus`, so the JVM always gets the cores that task actually reserved rather than a figure fixed in the config.
+
+### Choosing values
+
+| Situation | `threads` | `memory` |
+|---|---|---|
+| Laptop or workstation | Physical cores, minus one or two if you want the machine usable | Comfortably under total RAM — one task can use all of it |
+| HPC node, exclusive | Cores on one node | Node memory |
+| HPC node, shared | Cores your allocation guarantees | Memory your allocation guarantees |
+| Debugging a failure | `1` | Generous |
+
+`threads = 1` forces every tool to a single core, which makes a failing run reproducible and its logs readable. It is slow, but it removes concurrency as a variable.
+
+Neither value can change your results, which is exactly why the change guard does not track them. Tune them freely between runs — you will not be asked to delete anything.
+
+## Trimming & Clipping
+<!--@ page: trimming -->
+
+Step 2 runs in two stages: Trim Galore removes adapters and low-quality tails, then a second pass clips a fixed number of cycles from both ends based on what FastQC measured about base composition. The second stage is unusual and worth understanding before you change its one tunable.
+
+### Stage 1 — Trim Galore
+
+```groovy
+trim_galore {
+    quality    = 25
+    autodetect = true
+    adapter1   = ''
+    adapter2   = ''
+}
+```
+
+The assembled command is `--fastqc --paired --retain_unpaired -q 25`, plus adapters and `--cores`.
+
+| Setting | Meaning |
 |---|---|
-| `-m` | Multiallelic caller — required for sites with more than one alternate allele |
-| `-A` | Keep **all** alternate alleles from the pileup |
-| `-v` | Output variant sites only |
-| `-Ov` | Uncompressed VCF |
+| `quality` | Phred score below which bases are trimmed from the 3′ end |
+| `autodetect` | `true` — no adapter is passed and Trim Galore detects it (Illumina, Nextera or smallRNA) |
+| `adapter1`, `adapter2` | Used only when `autodetect = false`, and then **both** are required |
 
-**`-A` is what makes this a Pool-seq caller.** Without it, bcftools prunes alternate alleles that no plausible genotype supports — sound for an individual, and wrong for a pool, where a true allele at frequency 0.01 supports no genotype at all. If you edit `callOptions`, keep `-A` and `-m`.
+`--retain_unpaired` keeps reads whose mate was discarded, in `Output/Unpaired/`. They are not used downstream — step 4 requires properly-paired alignments — but they are kept so you can see what was lost rather than having it disappear.
 
-Variant calling is a **single joint task** over all BAMs, not one task per sample. That is what produces a multi-sample VCF with comparable columns, and it is why every sample must share a reference.
+#### When to turn autodetect off
 
-### Depth and quality
+Autodetection samples the first reads of a file and matches against known adapter sequences. Set `autodetect = false` and supply both sequences when:
+
+- your library used a custom or non-standard adapter that will not be recognised;
+- the trimming reports in `Output/Reports/Trimming/` disagree between samples of the same library, which means detection is not landing on a consistent answer;
+- you need the run to be exactly reproducible against a specific adapter regardless of what the first reads happen to contain.
+
+Setting only one of `adapter1`/`adapter2` is not valid — the option string is built from both.
+
+#### `adapterOptions`, if the three settings above are not enough
+
+`autodetect`, `adapter1` and `adapter2` exist to build one string, and the template carries that string commented out:
 
 ```groovy
-vcffilter {
-    minDP   = 20
-    minQUAL = 30
+// adapterOptions = autodetect ? '' : "-a ${params.trim_galore.adapter1} -a2 ${params.trim_galore.adapter2}"
+```
+
+Uncomment it and what you write is passed to Trim Galore verbatim; `autodetect`, `adapter1` and `adapter2` then set nothing at all. That is the way to reach adapter handling the three settings cannot express — `--nextera` by name, a three-prime clip, more than one `-a`:
+
+```groovy
+trim_galore {
+    adapterOptions = "--nextera"
 }
 ```
 
-Both are **site**-level filters, applied as two commands in sequence:
+**Per-sample adapters still work over a pinned `adapterOptions`.** A row setting both `param_adapter1` and `param_adapter2` replaces the adapter fragment for that sample, whatever you pinned here. That is not true of the *other* knob in the same block: pinning `trim_galore.options` replaces the whole command line, leaving nowhere for a per-sample adapter to go, and step 0 **fails the run** rather than ignoring the metadata — naming the samples and telling you to remove one or the other.
 
-```bash
-bcftools view -e "FMT/DP<20" -Ov -o <name>_dp.vcf <input>
-vcftools --vcf <name>_dp.vcf --minQ 30 --recode --recode-INFO-all --out <name>_dq
+So of the two, `adapterOptions` is the one to reach for: it takes over adapter handling and leaves quality trimming, FastQC and the per-sample overrides working.
+
+#### Per-sample adapters
+
+Those settings apply to the whole run. One library prepared with a different adapter does not need a project of its own: `param_adapter1` and `param_adapter2` in `metadata.csv` can override them for a single row.
+
+```csv
+SampleID,RG_Sample,param_adapter1,param_adapter2
+Sample1T1Rep1,Sample1T1,,
+Sample1T1Rep2,Sample1T1,AGATCGGAAGAGC,AGATCGGAAGAGC
 ```
 
-`minDP` → `bcftools view -e "FMT/DP<N"`
-: Removes a site if **any** sample falls below the depth. Read the negation carefully: the site survives only when *every* sample meets the floor.
+A row that sets both replaces the run's adapter setting for that sample, whatever `autodetect` is set to — the adapters you name are used. A row that leaves both blank uses the run's settings, which is the ordinary case.
 
-`minQUAL` → `vcftools --minQ`
-: Removes sites whose `QUAL` falls below the value.
+Give both or neither. One adapter on its own is a setting that cannot be acted on, so it is refused rather than half-applied.
 
-!!! danger "The weakest library sets the threshold for every site"
+There is one combination the pipeline cannot honour, and it stops rather than guessing: if you have pinned `trim_galore.options` by hand, that string is used exactly as written and a per-sample adapter has nowhere to go. The run stops, names the samples that set adapter columns, and asks you to remove either the pin or the columns.
 
-    Because the test is "any sample below `minDP`", one under-sequenced pool removes sites for all of them. Three pools at depths 50/15/55, 60/12/28 and 10/12/20, with `minDP = 20`:
+### Stage 2 — Composition-aware clipping {: #composition-aware-clipping }
 
-    ```text
-    minDP = 20  ->  0 of 3 sites kept   (poolB is 15/12/12, so it fails everywhere)
-    minDP = 12  ->  2 of 3 sites kept
+```groovy
+cutadapt {
+    at_gc_error = 0.025
+    min_length  = 50     # see the note below - not currently applied
+    options     = ""
+}
+```
+
+Rather than clipping a fixed number of bases, the pipeline reads what FastQC measured and derives the clip points per sample.
+
+#### What it measures
+
+In an unbiased library, each cycle should show roughly equal A and T, and roughly equal G and C. Departures at the read ends are a well-known artefact — residual adapter, priming bias, and end-of-read quality decay all show up as a composition skew before they show up as a base-quality failure.
+
+For Pool-seq that matters more than usual. Allele frequencies are read counts, so a systematic bias in which base gets called at a given cycle propagates directly into the frequency estimate. Cycles where composition has not settled are cycles you cannot trust to count alleles.
+
+#### The algorithm
+
+For each read file, step 2 parses the `>>Per base sequence content` block of `fastqc_data.txt` and keeps the cycles where **both** ratios sit inside the tolerance:
+
+$$1 - \varepsilon \;\le\; \frac{A}{T} \;\le\; 1 + \varepsilon
+\qquad
+1 - \varepsilon \;\le\; \frac{G}{C} \;\le\; 1 + \varepsilon$$
+
+with $\varepsilon$ = `at_gc_error`. At the default of `0.025` that is a ratio between 0.975 and 1.025. The first and last qualifying cycle give a usable range per read — `Min1`–`Max1` for R1 and `Min2`–`Max2` for R2 — and the two are combined:
+
+```text
+Clip5           = max(Min1, Min2)
+readLengthLimit = max(Max1 - Clip5, Max2 - Clip5)
+```
+
+then applied symmetrically:
+
+```bash
+cutadapt -u Clip5 -U Clip5 -l readLengthLimit -o R1_clipped.fq.gz -p R2_clipped.fq.gz
+```
+
+`-u`/`-U` remove `Clip5` bases from the 5′ end of R1 and R2; `-l` truncates both to the same length. FastQC then runs again on the result, so you can check the clipping did what it was supposed to.
+
+#### Two deliberate asymmetries
+
+**Both mates get the same treatment.** `Clip5` is the *larger* of the two 5′ bounds and the length limit applies to both files, so R1 and R2 come out the same length. The alternative — clipping each mate to its own measured range — would leave mates of different lengths for no downstream benefit.
+
+**The length limit is the more permissive of the two.** Because `readLengthLimit` takes the `max`, a read whose own usable range ended earlier is kept to the longer mate's length, retaining a few cycles past its own bound. This favours read length over strict adherence to the tolerance. If that trade is wrong for your data, tighten `at_gc_error` — which pulls both bounds in — rather than trying to change the rule.
+
+#### When it refuses to run
+
+The clip range calculation fails loudly rather than guessing:
+
+| Exit | Cause |
+|---|---|
+| `3` | The FastQC table did not have the expected `A`/`T`/`G`/`C` header columns |
+| `4` | **No cycle** fell inside `at_gc_error` |
+
+Both produce:
+
+```text
+CLIPPING READS <sample>: ERROR: no usable clip range in <file>
+CLIPPING READS <sample>: exit 3 = unexpected FastQC header; 4 = no cycle within at_gc_error (0.025)
+```
+
+Cycles where T or C is zero are skipped rather than divided by — that division would abort awk mid-pipeline, which plain `set -e` does not catch, and the bounds would be silently derived from a truncated table.
+
+#### Tuning `at_gc_error`
+
+This is the only value here you would normally change, and it trades data volume against composition purity.
+
+| Direction | Effect | Risk |
+|---|---|---|
+| **Tighter** (e.g. `0.01`) | Fewer cycles qualify, so more is clipped from both ends | Exit 4 — no cycle qualifies and the run stops. Shorter reads map less uniquely |
+| **Looser** (e.g. `0.05`) | More cycles qualify, so reads stay longer | Retains cycles with real composition bias, which feeds into your frequencies |
+
+Exit 4 on a library that is otherwise fine usually means the tolerance is too tight for its natural composition — GC-skewed genomes will not produce a G/C ratio near 1 anywhere. In that case raising `at_gc_error` is the correct response, not a workaround.
+
+Check the before/after FastQC reports in `Output/Reports/Fastqc/<sample>/` after changing it. The clipped-read report is the one that tells you whether the value you chose did what you wanted.
+
+!!! note "`min_length` is off by default"
+
+    `cutadapt.options` is empty, so no minimum read length is enforced at this stage and changing `min_length` on its own has no effect. The template carries the line ready to uncomment:
+
+    ```groovy
+    options        = ""
+    // options     = "-m ${params.cutadapt.min_length}"
     ```
 
-    Check `Output/Reports/Coverage/` for your weakest sample before choosing a value, and after the first run compare the site count in `<name>.vcf` against the distinct positions that reached the frequency tables. A near-total wipeout is this filter, not a broken pipeline.
+    Swap the two and reads shorter than `min_length` are discarded after clipping. This is an analysis-affecting change — existing trimmed output has to be removed before it takes effect.
 
-If "every sample" is too strict for your design, the alternatives are one-line swaps in [`7_vcf2freq.nf`](https://github.com/ozankiratli/PoolSeqFlow/blob/main/scripts/7_vcf2freq.nf). Tested against the depths above at `minDP = 20`:
+    Mind the order the two settings apply in. Cutadapt truncates to the computed read length limit **first**, and only then drops reads shorter than `min_length` — so a `min_length` above that limit discards every pair, and cutadapt still exits 0. That would leave empty FASTQ files which the existence checks would happily treat as a finished step, for good. The pipeline checks for it and stops with the two numbers in the message rather than letting it happen. The limit is computed per sample from its own FastQC report, so the value that is safe for one library is not automatically safe for another.
 
-| Expression | Semantics | Sites kept |
-|---|---|---|
-| `-e "FMT/DP<20"` *(current)* | Every sample must pass | 0 of 3 |
-| `-i "COUNT(FMT/DP>=20)>=2"` | At least 2 samples pass | 2 of 3 |
-| `-i "MEAN(FMT/DP)>=20"` | Mean depth across samples | 2 of 3 |
-| `-i "INFO/DP>=20"` | Cohort total depth | 3 of 3 |
-| `-i "FMT/DP>=20"` | **Any one** sample passes — not a depth floor | 3 of 3 |
+### What this step writes
 
-The last row is worth noting as a trap: `-i "FMT/DP>=20"` reads like the obvious inverse of the current expression and is not, because bcftools evaluates a `FORMAT` condition per sample and keeps the site if it holds for any of them.
+| Path | Contents |
+|---|---|
+| `Output/Trimmed/<sample>/` | `*_val_1.fq.gz`, `*_val_2.fq.gz` (Trim Galore) and `*_clipped.fq.gz` (cutadapt) |
+| `Output/Unpaired/<sample>/` | Reads whose mate was discarded |
+| `Output/Reports/Fastqc/<sample>/` | FastQC on trimmed and on clipped reads |
+| `Output/Reports/Trimming/<sample>/` | Trim Galore reports (`.txt` and, on 2.x, `.json`) |
 
-!!! note "Genotype-level filtering is not available here"
+The trimmed reads are **deleted** once clipping has consumed them ([why](#steps-delete-their-own-inputs)); the clipped reads are what step 3 aligns.
 
-    A per-sample depth floor — blanking one pool's frequency while keeping the row — cannot be done in the VCF, because vcftools and bcftools both express a genotype-level verdict by rewriting `GT`, and `GT` is set to `./.` throughout by major-allele normalisation ([why](#5-major-allele-normalisation-step-7)). Frequency conversion reads `AD`. If you need per-sample blanking rather than whole-site removal, it has to happen in `bin/depth2freq.awk`, which already computes each sample's depth as the denominator.
-
-### Output naming
-
-```groovy
-vcf {
-    fileName = 'Test'
-}
-```
-
-Base name for every VCF and frequency table. With the default, a finished run leaves `Test.vcf`, `Test_snp_freq.tsv`, `Test_indel_freq.tsv`, and `Test_annotated.vcf` if annotation ran. Worth setting to something descriptive — it is the name your results carry from here on.
-
-Changing it after a run does not rename anything; it makes the resume checks look for files that do not exist, and the whole VCF and frequency branch runs again alongside the old files.
-
-## Alignment Filters
+## Alignment & Cleaning
 <!--@ page: filters -->
 
 Step 4 turns a raw BWA alignment into the BAM that variant calling reads. The last stage of that is a filter, and it is the first place a variant can be lost — nothing later in the pipeline can recover a read discarded here.
@@ -2122,6 +2033,281 @@ samtools view -c Output/Ready/<sample>_ready.bam
 ```
 
 The difference is duplicates plus everything the flag and MAPQ filters removed. The step 5 alignment report (`bamtools stats`) breaks the same numbers down by category.
+
+## Variant Calling
+<!--@ page: variant-calling -->
+
+**Step 6 is two things in order.** First each ready BAM is capped at a depth ceiling; then the capped BAMs go into one joint pileup and bcftools calls across all of them at once. Both halves have parameters and they are easy to confuse, because both have one called `maxDepth`.
+
+| | Parameter | Applies to |
+|---|---|---|
+| First | `capBAM.maxDepth` | Each BAM separately, at a ceiling measured from that sample |
+| Then | `variantCall.maxDepth` | The joint pileup, as one flat number for every sample |
+
+Everything here is analysis-affecting: change one and the next run stops rather than letting old and new results share a folder. What happens to the call set afterwards is [Filtering & Frequency Calculations](#filtering-frequency-calculations); for how the whole chain fits together, read [The Filter Chain](#the-filter-chain).
+
+### Capping each BAM
+
+```groovy
+capBAM {
+    maxDepth = -1
+}
+```
+
+| Value | What happens |
+|---|---|
+| `-1` *(default)* | Step 5 measures a ceiling for each sample from its own depth histogram; step 6 truncates that sample's BAM to it. A sample with nothing worth cutting is left uncapped |
+| positive `N` | Every sample is capped at `N`, measured or not |
+| `0` | No capping at all — the BAMs reach the pileup as step 4 left them |
+
+`param_capMaxDepth` in `metadata.csv` overrides this for a single sample and takes the same three values, which is the way to handle one library that needs a different answer from the rest — see [Metadata](#the-four-kinds-of-column).
+
+**Nothing is deleted.** A position deeper than the ceiling is truncated to it on the way into the pileup, and the sample's ready BAM is untouched on disk. Reads are dropped whole rather than trimmed, so a pair may lose one mate.
+
+**Why the ceiling is measured rather than set.** Pooled coverage is uneven by design, so no single depth is "too deep" in the abstract. What is worth truncating is a *second population* of positions — a collapsed repeat, or a PCR hill — carrying read counts no single locus produced. A hand-set number cannot find those: it cuts legitimate coverage in a deep sample and lets the pile-up through in a shallow one. [The Filter Chain](#depth-capping) shows the histograms this is read off, including the two cases where the detector deliberately declines.
+
+**Every sample's decision is published**, capped or not, beside its histogram in `Output/Reports/Depth/` — "nothing was done" is the outcome you cannot otherwise see:
+
+```bash
+grep -H 'ceiling applied' Output/Reports/Depth/*_depth_report.txt
+```
+
+### Pileup settings
+
+```groovy
+variantCall {
+    scaleMapQ   = 50     // -C  downgrade coefficient for mismatch-heavy reads
+    varQualMin  = 30     // -q  minimum mapping quality
+    baseQualMin = 30     // -Q  minimum base quality
+    maxDepth    = 0      // -d  a flat depth cap on top of capBAM; 0 is no limit
+}
+```
+
+`-C 50` (`scaleMapQ`)
+: Downgrades mapping quality for reads carrying excessive mismatches. Reads that align poorly are more likely to be misplaced, and a misplaced read contributes its bases to the wrong position — which in a frequency estimate is a direct error, not just noise.
+
+`-B` (fixed, not configurable)
+: Disables BAQ recalculation. BAQ downweights bases near indels to suppress misalignment artefacts under a single-genome model. In a pool, the same signal may be a genuine low-frequency indel, so the raw evidence is kept and the decision is left to the cross-sample filter.
+
+#### `maxDepth`
+
+`-d` caps the reads considered **per file per position**, and it ships as `0`, which to `bcftools mpileup` means *no limit*. The BAMs reaching this point were already capped above, from each sample's own coverage — a second flat number on top of a measured one is what that stage exists to remove.
+
+**The two are not the same knob**, and they do not even take the same values:
+
+| Value | `capBAM.maxDepth` | `variantCall.maxDepth` |
+|---|---|---|
+| `-1` | Measure a ceiling per sample | Not valid |
+| `0` | Do not cap | No limit |
+| positive `N` | Cap every sample at `N` | Cap the pileup at `N` |
+
+**When to set it.** Leave it at `0` unless you want a hard backstop under the measured ceiling — a memory limit on a shared machine is the usual reason, since a very deep pile-up costs mpileup memory whether or not it was capped. If you do set it, size it against your data rather than guessing: the depth reports named above say what each sample actually looked like.
+
+A cap that bites truncates the read counts your frequencies are computed from, and nothing downstream flags it — which was the whole problem with the fixed `2000` this replaced.
+
+**Coming from 2.2.0 or earlier**, your old `bcftools.maxDepth` is **not** carried across. It was the only depth control there was, and here it would sit as a flat ceiling under a measured one; `migrate_config` reports it under `Format changed this release` and explains the change. You get `capBAM.maxDepth = -1` and `variantCall.maxDepth = 0` — measured capping, no flat backstop. To reproduce older results exactly, put your old number back in `variantCall.maxDepth` and set `capBAM.maxDepth = 0`.
+
+### Calling
+
+```groovy
+callOptions = "-m -A -v -Ov"
+```
+
+| Flag | Effect |
+|---|---|
+| `-m` | Multiallelic caller — required for sites with more than one alternate allele |
+| `-A` | Keep **all** alternate alleles from the pileup |
+| `-v` | Output variant sites only |
+| `-Ov` | Uncompressed VCF |
+
+**`-A` is what makes this a Pool-seq caller.** Without it, bcftools prunes alternate alleles that no plausible genotype supports — sound for an individual, and wrong for a pool, where a true allele at frequency 0.01 supports no genotype at all. If you edit `callOptions`, keep `-A` and `-m`.
+
+Variant calling is a **single joint task** over all BAMs, not one task per sample. That is what produces a multi-sample VCF with comparable columns, and it is why every sample must share a reference.
+
+## Filtering & Frequency Calculations
+<!--@ page: filtering -->
+
+Step 7 takes the joint VCF that step 6 produced and turns it into the frequency tables you actually read. Between the two sit the filters that decide which of the called sites survive.
+
+The order is fixed — stages 5 to 9 of [The Filter Chain](#the-chain-at-a-glance): normalise to the major allele, drop alleles too few samples support, drop sites too thin or too poorly called, split SNPs from indels, then convert allelic depths to frequencies. Only two of those stages have parameters, and both are analysis-affecting.
+
+| Parameter | What it does |
+|---|---|
+| `poolSize`, `diploidy` | Set the smallest allele frequency worth believing, which is what the false-positive filter tests against. Both can be set per sample or per run |
+| `filterFalsePositives.sampleThreshold` | Removes alternate alleles without support across enough samples. The filter that makes the pipeline pool-aware, and the one most worth understanding before changing anything |
+| `vcffilter.minDP`, `vcffilter.minQUAL` | Remove whole sites that are too shallow in any one sample, or too poorly called |
+| `vcf.fileName` | Removes nothing — it names the files this step writes |
+
+`filterFalsePositives.sensitivity` is **computed** from `poolSize` and `diploidy` rather than set, and can be overridden per sample in `metadata.csv` — see [Metadata](#metadata) for the per-sample form.
+
+For the stage-by-stage account with counts, read [The Filter Chain](#the-filter-chain).
+
+### `poolSize` and `diploidy`
+
+```groovy
+poolSize = 50    // individuals in one pool
+diploidy = 2     // ploidy of the organism
+```
+
+These two are the pipeline's most consequential settings. They are not used to model anything — they set the **minimum credible allele frequency**:
+
+$$S = \frac{1}{2 \times \text{diploidy} \times \text{poolSize}}$$
+
+An alternate allele must reach `S` in a sample for that sample to count as supporting it.
+
+**`poolSize` is per pool, not per run.** With eight pools of 50 individuals each, it is `50`, not `400`.
+
+**The factor of two is deliberate.** A pool of 50 diploids holds 100 chromosomes, so one chromosome is frequency 0.01. `S` comes out at 0.005 — half of that — so a genuine singleton clears the threshold with margin rather than sitting exactly on it. The observed fraction of a singleton is itself noisy, and a threshold placed exactly at the expected value would reject half of them.
+
+| `poolSize` | `diploidy` | One chromosome is | `S` |
+|---|---|---|---|
+| 10 | 2 | 0.0500 | 0.0250 |
+| 25 | 2 | 0.0200 | 0.0100 |
+| 50 | 2 | 0.0100 | 0.0050 |
+| 100 | 2 | 0.0050 | 0.0025 |
+| 200 | 2 | 0.0025 | 0.00125 |
+| 50 | 1 | 0.0200 | 0.0100 |
+| 50 | 4 | 0.0050 | 0.0025 |
+
+**If your pools differ in size**, give each one its own `param_poolSize` in `metadata.csv` and every column is judged at its own threshold. The global `poolSize` here stays as the default for pools that do not state one. See [Pool size belongs to the pool](#pool-size-belongs-to-the-pool).
+
+**`diploidy` applies to a whole run.** It describes the sequence rather than the sample, so a diploid animal's haploid mitochondrial genome belongs in a separate run with its own value — see [Sequences with a different ploidy](#sequences-with-a-different-ploidy).
+
+### `sampleThreshold`
+
+```groovy
+filterFalsePositives {
+    sampleThreshold = 0.2
+}
+```
+
+The fraction of samples that must independently support an allele at frequency `S` or above for it to be kept. This is what makes the filter a **corroboration** test rather than a frequency cutoff, and it is what allows `S` to be set so low without drowning in sequencing error: errors do not recur at the same position across independent libraries.
+
+The comparison is `count >= n_samples × sampleThreshold`, so the effective requirement is the next whole number up:
+
+| Samples | `M` at 0.2 | Must support |
+|---|---|---|
+| 1 | 0.2 | 1 |
+| 4 | 0.8 | 1 |
+| 5 | 1.0 | 1 |
+| 6 | 1.2 | 2 |
+| 8 | 1.6 | 2 |
+| 10 | 2.0 | 2 |
+| 12 | 2.4 | 3 |
+| 20 | 4.0 | 4 |
+
+!!! danger "The default removes population-private alleles"
+
+    With eight samples, an allele found in **one** pool is discarded regardless of how frequent it is there — one does not reach two. If private or population-specific variation is the subject of your study, this default is wrong for you.
+
+| Value | Behaviour | Suits |
+|---|---|---|
+| `0.2` (default) | Needs roughly a fifth of samples | Shared, evolving variation across comparable pools |
+| Low enough to require 1 sample | Any single pool can carry an allele | Private variants, small sample counts, discovery runs |
+| Higher, e.g. `0.5` | Needs half the samples | Conservative core-variant sets; high-noise data |
+
+Remember that the denominator is the number of **VCF columns**, which is the number of distinct `RG_Sample` values — not the number of FASTQ pairs. Merging replicates by sharing an `RG_Sample` changes this threshold as a side effect ([see Metadata](#rg_sample-decides-what-counts-as-a-sample)).
+
+### Depth and quality
+
+```groovy
+vcffilter {
+    minDP   = 20
+    minQUAL = 30
+}
+```
+
+Both are **site**-level filters, applied as two commands in sequence:
+
+```bash
+bcftools view -e "FMT/DP<20" -Ov -o <name>_dp.vcf <input>
+vcftools --vcf <name>_dp.vcf --minQ 30 --recode --recode-INFO-all --out <name>_dq
+```
+
+`minDP` → `bcftools view -e "FMT/DP<N"`
+: Removes a site if **any** sample falls below the depth. Read the negation carefully: the site survives only when *every* sample meets the floor.
+
+`minQUAL` → `vcftools --minQ`
+: Removes sites whose `QUAL` falls below the value.
+
+!!! danger "The weakest library sets the threshold for every site"
+
+    Because the test is "any sample below `minDP`", one under-sequenced pool removes sites for all of them. Three pools at depths 50/15/55, 60/12/28 and 10/12/20, with `minDP = 20`:
+
+    ```text
+    minDP = 20  ->  0 of 3 sites kept   (poolB is 15/12/12, so it fails everywhere)
+    minDP = 12  ->  2 of 3 sites kept
+    ```
+
+    Check `Output/Reports/Coverage/` for your weakest sample before choosing a value, and after the first run compare the site count in `<name>.vcf` against the distinct positions that reached the frequency tables. A near-total wipeout is this filter, not a broken pipeline.
+
+If "every sample" is too strict for your design, the alternatives are one-line swaps in [`7_vcf2freq.nf`](https://github.com/ozankiratli/PoolSeqFlow/blob/main/scripts/7_vcf2freq.nf). Tested against the depths above at `minDP = 20`:
+
+| Expression | Semantics | Sites kept |
+|---|---|---|
+| `-e "FMT/DP<20"` *(current)* | Every sample must pass | 0 of 3 |
+| `-i "COUNT(FMT/DP>=20)>=2"` | At least 2 samples pass | 2 of 3 |
+| `-i "MEAN(FMT/DP)>=20"` | Mean depth across samples | 2 of 3 |
+| `-i "INFO/DP>=20"` | Cohort total depth | 3 of 3 |
+| `-i "FMT/DP>=20"` | **Any one** sample passes — not a depth floor | 3 of 3 |
+
+The last row is worth noting as a trap: `-i "FMT/DP>=20"` reads like the obvious inverse of the current expression and is not, because bcftools evaluates a `FORMAT` condition per sample and keeps the site if it holds for any of them.
+
+!!! note "Genotype-level filtering is not available here"
+
+    A per-sample depth floor — blanking one pool's frequency while keeping the row — cannot be done in the VCF, because vcftools and bcftools both express a genotype-level verdict by rewriting `GT`, and `GT` is set to `./.` throughout by major-allele normalisation ([why](#5-major-allele-normalisation-step-7)). Frequency conversion reads `AD`. If you need per-sample blanking rather than whole-site removal, it has to happen in `bin/depth2freq.awk`, which already computes each sample's depth as the denominator.
+
+### Output naming
+
+```groovy
+vcf {
+    fileName = 'Test'
+}
+```
+
+Base name for every VCF and frequency table. With the default, a finished run leaves `Test.vcf`, `Test_snp_freq.tsv`, `Test_indel_freq.tsv`, and `Test_annotated.vcf` if annotation ran. Worth setting to something descriptive — it is the name your results carry from here on.
+
+Changing it after a run does not rename anything; it makes the resume checks look for files that do not exist, and the whole VCF and frequency branch runs again alongside the old files.
+
+## Annotations
+<!--@ page: annotations -->
+
+Step 8 annotates the called variants with what they do to genes — missense, synonymous, intergenic — using SnpEff against a database built from your GFF back in step 1. The annotation is a **parallel branch**, not a filter: it never changes the frequency tables, and nothing downstream depends on it.
+
+| Parameter | Default | What it is |
+|---|---|---|
+| `annotate` | `true` | Whether step 8 runs. `false` also stops step 1 building the database, and makes `gffFile` unnecessary |
+| `gffFile` | `'reference.gff.gz'` | Your annotation file, in `mainDir/Reference` beside the reference. Gzipped is accepted |
+| `snpEff.config` | `"snpEff.config"` | Name of the SnpEff configuration file the build writes and the run reads |
+| `snpEff.buildOptions` | `-gff3 -noCheckCds -noCheckProtein -v` | Passed to `snpEff build` in step 1 |
+| `snpEff.runOptions` | `-v` | Passed to `snpEff` in step 8 |
+
+`snpEff.db` is **computed** from `gffFile` — the same name with `.gz` removed — and names the database SnpEff builds and then annotates against. Change `gffFile`, not this.
+
+`annotate` is a **per-run** parameter, so a run table may switch annotation on for some runs and off for others; step 1 builds the database only for the runs that asked for it.
+
+### The two option strings
+
+The `snpEff` defaults are not arbitrary, and the build ones in particular are worth understanding before you change them.
+
+`buildOptions` says the annotation file is GFF3 and turns off two consistency checks SnpEff runs by default: that every CDS translates to the protein SnpEff expects, and that protein sequences match. Non-model references routinely fail both — a GFF with slightly different coordinates, a genome with a non-standard genetic code — and the failure aborts the build rather than degrading it. They are off so that a usable database is built from an imperfect annotation, which is the normal case here. Turn them back on by removing the flags if you want the check.
+
+`runOptions` is verbosity only. Both are plain strings passed straight through, so anything `snpEff` accepts can go in them:
+
+```groovy
+snpEff {
+    buildOptions = "-gff3 -v"          // put the CDS and protein checks back
+    runOptions   = "-v -no-downstream" // drop downstream-gene annotations
+}
+```
+
+Changing either changes what step 8 writes, so step 0 tracks them and refuses a run that disagrees with existing results.
+
+### What you get, and what it is not joined to
+
+Output is `Output/VCF/<name>_annotated.vcf` and `Output/Reports/snpeff_summary.html`.
+
+**The annotated VCF is not your frequency tables with a column added.** Step 8 reads step 6's output, so it carries sites the step 7 filters removed and encodes them against the original reference rather than the major allele. Joining the two is yours to do, on `CHROM`/`POS`, expecting unmatched rows on the annotation side — see [Step 8](#step-8-annotate-variants).
 
 # Pipeline Overview
 <!--@ section: pipeline | nav: Pipeline -->
@@ -2316,7 +2502,7 @@ Output goes to `Output/Aligned/` as unsorted BAM.
 
 A single streamed pipeline of seven operations: name-sort, fixmate, coordinate-sort, mark and remove duplicates, add read groups, filter, index. The `@RG` string is assembled per sample from that sample's row in `metadata.csv`, skipping empty fields.
 
-Full detail, including why duplicates are removed rather than marked and what the MAPQ floor costs you: [Alignment Filters](#alignment-filters).
+Full detail, including why duplicates are removed rather than marked and what the MAPQ floor costs you: [Alignment & Cleaning](#alignment-cleaning).
 
 Output: `Output/Ready/<sample>_ready.bam` and `.bai`.
 
@@ -2371,7 +2557,7 @@ Five sub-steps in a serial chain, each deleting its input once its output is saf
 | 2 | `FilterPotentialFalsePositives` | Splits multiallelics, applies the cross-sample support test, rejoins, re-normalises |
 | 3 | `DepthAndQualityFilter` | `bcftools view -e "FMT/DP<20"` then `vcftools --minQ 30` |
 | 4 | `SplitSNPsAndINDELs` | Two vcftools passes into a SNP VCF and an INDEL VCF |
-| 5 | `CalculateFrequencies` | Extracts `AD` and divides to frequencies; runs once per split file |
+| 5 | `CalculateFrequencies` | Extracts `AD`, publishes it as the depth table, then divides to frequencies; runs once per split file |
 
 Sub-step 2 is the pool-aware core of the pipeline and is documented in full in [The Filter Chain](#6-false-positive-filter-step-7). The minimum credible frequency it enforces is
 
@@ -2379,7 +2565,7 @@ $$f_{\min} = \frac{1}{2 \times \text{diploidy} \times \text{poolSize}}$$
 
 but the test is not a plain cutoff in either direction. An allele must reach that frequency in a *fraction of samples*, which is what lets the threshold sit so low — and each sample is judged against **its own** pool's threshold, taken from `param_poolSize`, rather than against one number for the whole run.
 
-Output: `Output/Frequencies/<name>_snp_freq.tsv` and `<name>_indel_freq.tsv`. Format: [Interpreting Results](#the-frequency-tables).
+Output: `Output/Frequencies/<name>_snp_freq.tsv` and `<name>_indel_freq.tsv`, each beside a `_depth.tsv` holding the read counts it was computed from. Formats: [Interpreting Results](#the-frequency-tables) and [The depth tables](#depth-tables).
 
 ---
 
@@ -2400,6 +2586,8 @@ Splits multiallelic sites onto separate lines — SnpEff annotates one alternate
 Output: `Output/VCF/<name>_annotated.vcf` and `Output/Reports/snpeff_summary.html`.
 
 Setting `annotate = false` skips this step and makes `gffFile` unnecessary — step 1 also stops building the SnpEff database.
+
+The parameters that control it — `annotate`, `gffFile` and the `snpEff` block — are in [Annotations](#annotations).
 
 ---
 
@@ -2509,20 +2697,28 @@ There are three directories, and keeping them apart is most of understanding the
 
 ```text
 ~/.local/opt/PoolSeqFlow-<version>/
-├── bin/
+├── bin/                          # Run by the pipeline; all executable, all on PATH
 │   ├── atomic_mv.sh              # Cross-filesystem moves, staged and renamed
+│   ├── cap_depth.awk             # Truncate a BAM to a depth ceiling
 │   ├── classify_manifest.sh      # Sorts a parameter change into added/changed/removed
 │   ├── config_migrate.sh         # Backs migrate_config
 │   ├── createDepthFile.sh        # Extract AD/DP columns from a VCF
 │   ├── depth2freq.awk            # Convert allelic depths to frequencies
+│   ├── depth_cutoff.py           # Choose a sample's depth ceiling from its histogram
 │   ├── filterFalsePositives.sh   # Cross-sample support filter
 │   ├── find_artifact.sh          # Locate an output across the storage tiers
 │   ├── MajorAlleleToRef.py       # Re-encode VCF with the major allele as REF
 │   ├── parse_metadata.py         # Read and validate metadata.csv
-│   └── parse_multirun.py         # Read and validate the run table
+│   ├── parse_multirun.py         # Read and validate the run table
+│   └── write_citations.py        # Writes CITATIONS.md and references.bib per run
+├── lib/                          # Sourced by another script, never run; not on PATH
+│   ├── tool_version.sh           # Asks each tool its version, one way per tool
+│   └── wrapper_lib.sh            # Machinery shared by the wrappers
 ├── install/
 │   ├── environment.yml           # Pinned conda environment
-│   └── check_install.sh          # Verifies an installation (PoolSeqFlow check)
+│   ├── environment-analysis.yml  # Pinned conda environment for the analysis layer
+│   ├── check_install.sh          # Verifies an installation (PoolSeqFlow check)
+│   └── check_analysis_install.sh # The same for the analysis layer, R packages included
 ├── scripts/
 │   ├── 0_verify_environment.nf   # The nine checks that gate everything else
 │   ├── 1_build_dictionaries.nf   # BWA, SAMtools and SnpEff indices from your reference
@@ -2534,6 +2730,7 @@ There are three directories, and keeping them apart is most of understanding the
 │   ├── 7_vcf2freq.nf             # Normalise, filter, split, convert to frequencies
 │   ├── 8_annotate_variants.nf    # SnpEff, optional
 │   ├── 9_completion.nf           # Promotion: moving finished artifacts to storageDir
+│   ├── citations.nf              # Writes CITATIONS.md and references.bib for the run
 │   ├── metadata.nf               # Reading metadata.csv, and the projections from it
 │   ├── resolve_parameters.nf     # Computed parameters, and one parameter set per run
 │   └── variants.nf               # Which runs share which work, and where it goes
@@ -2544,7 +2741,8 @@ There are three directories, and keeping them apart is most of understanding the
 ├── multi-run.csv.example
 ├── poolseqflow.nf                # Workflow entry point
 ├── dryrun.nf                     # Entry point for the layout preview
-└── PoolSeqFlow                   # CLI wrapper
+├── PoolSeqFlow                   # CLI wrapper
+└── PoolSeqFlow-analysis          # CLI wrapper for the analysis layer
 ```
 
 One copy serves any number of projects, and it is replaced wholesale when you upgrade — which is why nothing of yours belongs in it. `bin/` is prepended to `PATH` by `nextflow.config`, which is how the helper scripts are callable by bare name inside process scripts.

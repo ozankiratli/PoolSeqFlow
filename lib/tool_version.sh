@@ -1,7 +1,7 @@
 #!/bin/bash
 # Asks a tool for the version it reports. Sourced, not executed:
 #
-#     . "$(dirname "$0")/../bin/tool_version.sh"
+#     . "$(dirname "$0")/../lib/tool_version.sh"
 #     v=$(tool_version bwa bwa)
 
 # Each tool is handled by name: they answer differently, and several report on stderr or exit

@@ -86,7 +86,7 @@ Full walkthrough: [Install](https://ozankiratli.github.io/PoolSeqFlow/getting-st
 
 | Command | Description |
 |---|---|
-| `./PoolSeqFlow install` | Create the conda environment, then verify it |
+| `./PoolSeqFlow install` | Create the conda environment, install the pipeline, then verify both |
 | `./PoolSeqFlow check` | Verify an existing installation — tools, helpers, config |
 | `./PoolSeqFlow run` | Start — or resume — the pipeline |
 | `./PoolSeqFlow migrate_config` | Carry an older `parameters.config` onto the current template |
@@ -94,7 +94,9 @@ Full walkthrough: [Install](https://ozankiratli.github.io/PoolSeqFlow/getting-st
 | `./PoolSeqFlow reset` | Remove all progress and start fresh (typed confirmation required) |
 | `./PoolSeqFlow version` | Print the installed version |
 | `./PoolSeqFlow cite` | Print how to cite this copy, and which DOI to use |
-| `./PoolSeqFlow uninstall` | Remove the conda environment |
+| `./PoolSeqFlow uninstall` | Remove one installed version — environment and pipeline together, after confirmation |
+
+The analysis layer is a second command, `PoolSeqFlow-analysis`, installed alongside the pipeline and enabled separately with `PoolSeqFlow-analysis install`. It takes one word in the same way: `install`, `check`, `version`, `cite`, `uninstall`.
 
 There is no `-resume` flag. Every step checks whether its outputs already exist in permanent storage and skips itself if they do, so `run` both starts and resumes — and that survives job timeouts, reboots and `work/` cleanups. [Why →](https://ozankiratli.github.io/PoolSeqFlow/pipeline/resume/)
 

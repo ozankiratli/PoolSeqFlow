@@ -73,3 +73,6 @@ test/**/*.pyc
 # Untracked until the public form of them is decided.
 .claude/
 CLAUDE.md
+
+# Build output from dev/scripts/verify-archive.sh.
+dist/

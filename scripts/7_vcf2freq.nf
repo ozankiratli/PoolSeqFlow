@@ -429,13 +429,17 @@ process CalculateFrequencies {
     freq_base = "${vcf.baseName.replace('_sort_fp_dq', '')}"
     freq_file = "${freq_base}_freq.tsv"
     target_freq_file = "${run.dir.output.freq}/${freq_file}"
+    // The read counts the frequencies are computed from. Published by absolute path, like step
+    // 5's reports: nothing in this pipeline consumes it.
+    depth_file = "${freq_base}_depth.tsv"
+    target_depth_file = "${run.dir.output.freq}/${depth_file}"
     dir_log = "${run.dir.logs}/7_vcf2freq"
 
     """
     set -eo pipefail
 
     echo "CALCULATE FREQUENCIES ${vcf}: Calculating Frequencies"
-    if [ -f ${target_freq_file} ]; then
+    if [ -f ${target_freq_file} ] && [ -f ${target_depth_file} ]; then
         echo "CALCULATE FREQUENCIES ${vcf}: Found existing frequency file."
         echo "CALCULATE FREQUENCIES ${vcf}: Found: ${target_freq_file}"
         echo "CALCULATE FREQUENCIES ${vcf}: Creating symbolic link..."
@@ -443,10 +447,12 @@ process CalculateFrequencies {
         echo "CALCULATE FREQUENCIES ${vcf}: COMPLETED"
     else
         echo "CALCULATE FREQUENCIES ${vcf}: Calculating frequencies for ${freq_file}..."
-        createDepthFile.sh -v ${vcf} -b ${run.software.bcftools} | depth2freq.awk > ${freq_file}
-        
+        createDepthFile.sh -v ${vcf} -b ${run.software.bcftools} > ${depth_file}
+        depth2freq.awk < ${depth_file} > ${freq_file}
+
         echo "CALCULATE FREQUENCIES ${vcf}: Moving ${freq_file} to ${target_folder_freq}..."
         mkdir -p ${target_folder_freq}
+        atomic_mv.sh ${depth_file} ${target_depth_file}
         atomic_mv.sh ${freq_file} ${target_freq_file}
         echo "CALCULATE FREQUENCIES ${vcf}: Creating symbolic link..."
         ln -s ${target_freq_file} .

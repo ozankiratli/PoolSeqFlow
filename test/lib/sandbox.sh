@@ -51,7 +51,7 @@ make_pipeline_sandbox() {
     mkdir -p "$sb/install" "$sb/main" "$sb/store"
     # install/ too: it carries citations.json, which a run reads at the end. Copied whole
     # rather than by file, so the next thing added there is present without a change here.
-    cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$REPO_ROOT"/install "$sb/install"/
+    cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$REPO_ROOT"/lib "$REPO_ROOT"/install "$sb/install"/
     cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/dryrun.nf "$REPO_ROOT"/nextflow.config "$sb/install"/
     # The wrapper too, so cases can exercise clean/reset against a real project instead of
     # reimplementing what they do.
@@ -536,11 +536,12 @@ run_launcher_with_envs() {
     sb=$(guard_path "$TEST_TMPDIR/launcher")
     rm -rf "$sb"
     mkdir -p "$sb/install" "$sb/bin" "$sb/scripts"
-    cp "$REPO_ROOT/PoolSeqFlow" "$sb/"
+    cp "$REPO_ROOT/PoolSeqFlow" "$REPO_ROOT/PoolSeqFlow-analysis" "$sb/"
     # check_install.sh does real work against a real environment; these tests are about
     # environment selection, so it is stubbed to a success.
     printf '#!/bin/bash\necho "STUB check_install ran"\n' > "$sb/install/check_install.sh"
     printf 'name: stub\n' > "$sb/install/environment.yml"
+    printf 'name: stub\n' > "$sb/install/environment-analysis.yml"
     chmod +x "$sb/install/check_install.sh"
     # A complete payload, because `install` refuses to deploy an incomplete copy - it would
     # otherwise produce an installation missing a file, which is worse than failing. Empty
@@ -553,9 +554,15 @@ run_launcher_with_envs() {
     # when multi-run.csv.example was added.
     local f
     for f in $(payload_items); do
-        [ "$f" = "PoolSeqFlow" ] && continue   # copied above, and it must be the real one
+        # Both wrappers are copied above and have to be the real ones: `install` stamps each
+        # with its installed location and refuses when the stamp does not take.
+        case "$f" in PoolSeqFlow|PoolSeqFlow-analysis) continue ;; esac
         if [ -d "$REPO_ROOT/$f" ]; then mkdir -p "$sb/$f"; else : > "$sb/$f"; fi
     done
+    # The one payload file that is not placeholder-able: the wrapper SOURCES it, so an empty
+    # lib/ makes every launcher case fail before it reaches what it is testing.
+    cp "$REPO_ROOT/lib/wrapper_lib.sh" "$sb/lib/"
+
     # The stub conda goes in its own directory rather than $sb/bin, which belongs to the
     # pipeline and is part of what `install` deploys - a fake conda inside the payload would
     # be copied into every test installation.
@@ -567,5 +574,64 @@ run_launcher_with_envs() {
     LAUNCHER_PREFIX="$sb/prefix"
     LAUNCHER_OUTPUT=$(cd "$sb" && PATH="$sb/stub/bin:$PATH" \
                       POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow "$@" 2>&1)
+    LAUNCHER_STATUS=$?
+}
+
+# Whether a command can be given a pty here. Python's pty module is what does it; the
+# environment carries python3, but the suite is also runnable without it.
+have_a_pty_runner() {
+    command -v python3 >/dev/null 2>&1
+}
+
+# Run ./PoolSeqFlow in the sandbox a previous run_launcher_with_envs built, ON A PTY, feeding
+# it the answers. `uninstall` asks two questions - which installation, then whether to remove
+# it - so the answer may carry newlines: `run_launcher_on_a_tty $'2\ny' uninstall`.
+#
+# The uninstall chooser takes a different branch when `[ -t 0 ]` is false, so the prompt is
+# unreachable from a herestring and was untested until this existed.
+#
+# test/tools/on_a_tty.py rather than `script(1)`: script reads its caller's stdin as well as
+# its own, which inside run_tests.sh drains the loop feeding it test names. The run then stops
+# after the first case that used a terminal and reports no error at all.
+run_launcher_on_a_tty() {
+    local answer="$1" command="$2" sb
+    sb=$(dirname "$LAUNCHER_PREFIX")
+    LAUNCHER_OUTPUT=$( cd "$sb" && PATH="$sb/stub/bin:$PATH" \
+        POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" \
+        python3 "$REPO_ROOT/test/tools/on_a_tty.py" "$answer" ./PoolSeqFlow $command 2>&1 )
+    LAUNCHER_STATUS=$?
+}
+
+# The same for ./PoolSeqFlow-analysis, which manages an environment rather than a payload
+# and so needs far less around it: the wrapper, what it sources, the entry point it looks
+# for, and the environment file it would install from. Results land in the same
+# LAUNCHER_* variables.
+#
+# The sandbox is also a project, because a module arm checks for one before it checks
+# anything else and would otherwise never reach what a case is testing. A case about
+# standing outside a project builds its own bare directory instead.
+run_analysis_launcher_with_envs() {
+    local envs_spec="$1"; shift
+    local sb
+    sb=$(guard_path "$TEST_TMPDIR/analysis-launcher")
+    rm -rf "$sb"
+    mkdir -p "$sb/install" "$sb/lib"
+    cp "$REPO_ROOT/PoolSeqFlow-analysis" "$sb/"
+    cp "$REPO_ROOT/lib/wrapper_lib.sh" "$sb/lib/"
+    : > "$sb/analysis.nf"
+    printf '// stub project marker\n' > "$sb/parameters.config"
+    printf 'name: stub\n' > "$sb/install/environment-analysis.yml"
+    # Stubbed for the same reason install/check_install.sh is: it needs a real R environment,
+    # and these tests are about which environment is chosen.
+    printf '#!/bin/bash\necho "STUB check_analysis_install ran"\n' \
+        > "$sb/install/check_analysis_install.sh"
+    chmod +x "$sb/install/check_analysis_install.sh"
+
+    # shellcheck disable=SC2086
+    make_stub_conda "$sb/stub" $envs_spec
+    LAUNCHER_CONDA_LOG="$sb/stub/conda.log"
+    LAUNCHER_PREFIX="$sb/prefix"
+    LAUNCHER_OUTPUT=$(cd "$sb" && PATH="$sb/stub/bin:$PATH" \
+                      POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow-analysis "$@" 2>&1)
     LAUNCHER_STATUS=$?
 }

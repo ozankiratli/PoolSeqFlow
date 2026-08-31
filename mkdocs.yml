@@ -141,12 +141,14 @@ nav:
       - Interpreting Results: concepts/interpreting-results.md
   - Configuration:
       - configuration/index.md
-      - Resources: configuration/resources.md
-      - Trimming & Clipping: configuration/trimming.md
       - Metadata: configuration/metadata.md
       - Multi-run: configuration/multi-run.md
+      - Resources: configuration/resources.md
+      - Trimming & Clipping: configuration/trimming.md
+      - Alignment & Cleaning: configuration/filters.md
       - Variant Calling: configuration/variant-calling.md
-      - Alignment Filters: configuration/filters.md
+      - Filtering & Frequency Calculations: configuration/filtering.md
+      - Annotations: configuration/annotations.md
   - Pipeline:
       - pipeline/index.md
       - Steps: pipeline/steps.md

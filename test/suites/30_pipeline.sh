@@ -1129,3 +1129,45 @@ test_a_fixed_ceiling_caps_every_sample() {
         fail_case "a capped BAM reached a storage root; it is meant to live and die inside step 6"
     fi
 }
+
+# THE COUNTS BEHIND EVERY PUBLISHED FREQUENCY. Until E4a the depth table existed only inside a
+# pipe and was thrown away, so nothing anywhere said how many reads a frequency was computed
+# from. The analysis layer needs it for n_eff, and a reader needs it to judge a frequency at all.
+test_the_depth_table_is_published_beside_the_frequencies() {
+    needs_run || return
+    local f="$PIPELINE_SB/store/Output/Frequencies"
+    assert_file "$f/Test_snp_depth.tsv"   "the SNP depth table should be published"
+    assert_file "$f/Test_indel_depth.tsv" "the INDEL depth table should be published"
+
+    # THE TWO TABLES ARE NOT THE SAME SHAPE, and reading them as if they were is the mistake
+    # this case exists to stop. The depth table is one row per SITE, each cell holding
+    # comma-separated read counts in REF-then-ALT order; depth2freq.awk expands that into one
+    # row per ALLELE. Same columns, different granularity.
+    assert_eq "$(head -1 "$f/Test_snp_freq.tsv" | tr '\t' '\n' | wc -l)" \
+              "$(head -1 "$f/Test_snp_depth.tsv" | tr '\t' '\n' | wc -l)" \
+              "depth and frequency tables should have the same column count"
+    assert_contains "$(head -1 "$f/Test_snp_depth.tsv")" "TOTAL_AD" "and the same header"
+
+    # Cells are counts, not frequencies: the first sample column of the first row is a list of
+    # whole numbers. A frequency here would mean the tee landed after the conversion.
+    local cell; cell=$(sed -n '2p' "$f/Test_snp_depth.tsv" | cut -f6)
+    printf '%s' "$cell" | grep -qE '^[0-9]+(,[0-9]+)*$' \
+        || fail_case "depth cells should be comma-separated read counts, got '$cell'"
+
+    # Every allele of every site reached the frequency table: one frequency row per allele,
+    # where a site's allele count is REF plus its comma-separated ALTs.
+    local alleles freq_rows
+    alleles=$(awk -F'\t' 'NR > 1 { n = split($4, a, ","); total += n + 1 } END { print total }' \
+              "$f/Test_snp_depth.tsv")
+    freq_rows=$(( $(wc -l < "$f/Test_snp_freq.tsv") - 1 ))
+    assert_eq "$alleles" "$freq_rows" \
+        "the two tables should describe the same sites and the same alleles"
+}
+
+# The depth table rides along with the frequency table rather than costing a task of its own.
+test_the_depth_table_costs_no_extra_task() {
+    needs_run || return
+    # Two tables, SNP and INDEL, from the two CalculateFrequencies tasks.
+    assert_eq "2" "$(task_count "$PIPELINE_SB" "VCF2Frequencies:CalculateFrequencies")" \
+        "one task per split file, writing both its depth table and its frequency table"
+}
