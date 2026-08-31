@@ -32,7 +32,7 @@ case "$ENV_NAME" in
         DEFAULT_OUTPUT="$REPO_ROOT/install/environment-analysis.yml"
         DESCRIBED_AS="PoolSeqFlow analysis-layer conda environment"
         NAMED_AFTER="PoolSeqFlow-<version>-analysis"
-        INSTALL_CMD="./PoolSeqFlow-analysis install"
+        INSTALL_CMD="./PoolSeqFlow analysis install"
         ;;
     *)
         DEFAULT_OUTPUT="$REPO_ROOT/install/environment.yml"

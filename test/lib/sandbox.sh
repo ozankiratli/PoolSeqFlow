@@ -55,9 +55,9 @@ make_pipeline_sandbox() {
           "$REPO_ROOT"/install "$sb/install"/
     cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/dryrun.nf "$REPO_ROOT"/analysis.nf \
        "$REPO_ROOT"/nextflow.config "$sb/install"/
-    # Both wrappers, so cases can exercise clean/reset against a real project instead of
+    # The wrapper, so cases can exercise clean/reset against a real project instead of
     # reimplementing what they do.
-    cp "$REPO_ROOT/PoolSeqFlow" "$REPO_ROOT/PoolSeqFlow-analysis" "$sb/install"/
+    cp "$REPO_ROOT/PoolSeqFlow" "$sb/install"/
     cp -r "$REPO_ROOT/test/data/$fixture/." "$sb/main"/
     # A fingerprint of the installation as deployed. One installation serves any number of
     # projects, so a run that wrote inside it would corrupt every other project on the
@@ -355,7 +355,7 @@ ENTRY
     _run_entry "$sb" verify_only.nf
 }
 
-# The three configuration layers ./PoolSeqFlow-analysis assembles, into ANALYSIS_CFG: the
+# The three configuration layers ./PoolSeqFlow analysis assembles, into ANALYSIS_CFG: the
 # installation's defaults, then the project's analysis.config, then the module's own
 # <module>.config, each optional after the first and each winning over the one before. A case
 # that writes one of those files into the project gets it read.
@@ -590,7 +590,7 @@ run_launcher_with_envs() {
     sb=$(guard_path "$TEST_TMPDIR/launcher")
     rm -rf "$sb"
     mkdir -p "$sb/install" "$sb/bin" "$sb/scripts"
-    cp "$REPO_ROOT/PoolSeqFlow" "$REPO_ROOT/PoolSeqFlow-analysis" "$sb/"
+    cp "$REPO_ROOT/PoolSeqFlow" "$sb/"
     # check_install.sh does real work against a real environment; these tests are about
     # environment selection, so it is stubbed to a success.
     printf '#!/bin/bash\necho "STUB check_install ran"\n' > "$sb/install/check_install.sh"
@@ -608,9 +608,9 @@ run_launcher_with_envs() {
     # when multi-run.csv.example was added.
     local f
     for f in $(payload_items); do
-        # Both wrappers are copied above and have to be the real ones: `install` stamps each
+        # The wrapper is copied above and has to be the real one: `install` stamps it
         # with its installed location and refuses when the stamp does not take.
-        case "$f" in PoolSeqFlow|PoolSeqFlow-analysis) continue ;; esac
+        case "$f" in PoolSeqFlow) continue ;; esac
         if [ -d "$REPO_ROOT/$f" ]; then mkdir -p "$sb/$f"; else : > "$sb/$f"; fi
     done
     # The one payload file that is not placeholder-able: the wrapper SOURCES it, so an empty
@@ -656,7 +656,7 @@ run_launcher_on_a_tty() {
     LAUNCHER_STATUS=$?
 }
 
-# The same for ./PoolSeqFlow-analysis, which manages an environment rather than a payload
+# The same for `./PoolSeqFlow analysis`, which manages an environment rather than a payload
 # and so needs far less around it: the wrapper, what it sources, the entry point it looks
 # for, and the environment file it would install from. Results land in the same
 # LAUNCHER_* variables.
@@ -670,7 +670,7 @@ run_analysis_launcher_with_envs() {
     sb=$(guard_path "$TEST_TMPDIR/analysis-launcher")
     rm -rf "$sb"
     mkdir -p "$sb/install" "$sb/lib"
-    cp "$REPO_ROOT/PoolSeqFlow-analysis" "$sb/"
+    cp "$REPO_ROOT/PoolSeqFlow" "$sb/"
     cp "$REPO_ROOT/lib/wrapper_lib.sh" "$sb/lib/"
     : > "$sb/analysis.nf"
     printf '// stub project marker\n' > "$sb/parameters.config"
@@ -686,6 +686,6 @@ run_analysis_launcher_with_envs() {
     LAUNCHER_CONDA_LOG="$sb/stub/conda.log"
     LAUNCHER_PREFIX="$sb/prefix"
     LAUNCHER_OUTPUT=$(cd "$sb" && PATH="$sb/stub/bin:$PATH" \
-                      POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow-analysis "$@" 2>&1)
+                      POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow analysis "$@" 2>&1)
     LAUNCHER_STATUS=$?
 }

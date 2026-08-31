@@ -104,7 +104,7 @@ def requireModule(Object name) {
     if (asked.isEmpty()) {
         throw new IllegalArgumentException(
             "no module was named. Run one from your project directory:\n" +
-            "    PoolSeqFlow-analysis <module>\n" +
+            "    PoolSeqFlow analysis <module>\n" +
             "Available here: ${known}")
     }
     if (!moduleRoster().containsKey(asked)) {
@@ -112,7 +112,7 @@ def requireModule(Object name) {
             "'${asked}' is not installed.\n" +
             "Available here: ${known}\n" +
             "Modules are installed separately from the pipeline:\n" +
-            "    PoolSeqFlow-analysis modules available")
+            "    PoolSeqFlow analysis modules available")
     }
     return asked
 }

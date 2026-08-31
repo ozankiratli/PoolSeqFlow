@@ -28,7 +28,7 @@ workflow {
 
 `analysisPlan` takes the module's own name and the artifact classes it cannot run without, and returns one target per results directory the invocation covers. It recomputes the pipeline's own partition of the runs, so two runs that produced the same tables are one target and are analysed once.
 
-A module ships no configuration. `PoolSeqFlow-analysis` assembles it — the installation's `analysis/defaults.config`, then the project's `analysis.config`, then `<module>.config` — and `defaults.config` carries what the pipeline gets from `nextflow.config`, which Nextflow does not read for a module: `bin/` on the task PATH, conda, and the resource ceiling.
+A module ships no configuration. `PoolSeqFlow analysis` assembles it — the installation's `analysis/defaults.config`, then the project's `analysis.config`, then `<module>.config` — and `defaults.config` carries what the pipeline gets from `nextflow.config`, which Nextflow does not read for a module: `bin/` on the task PATH, conda, and the resource ceiling.
 
 ## Where they come from
 

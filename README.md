@@ -94,9 +94,10 @@ Full walkthrough: [Install](https://ozankiratli.github.io/PoolSeqFlow/getting-st
 | `./PoolSeqFlow reset` | Remove all progress and start fresh (typed confirmation required) |
 | `./PoolSeqFlow version` | Print the installed version |
 | `./PoolSeqFlow cite` | Print how to cite this copy, and which DOI to use |
+| `./PoolSeqFlow analysis <command>` | The analysis layer — see below |
 | `./PoolSeqFlow uninstall` | Remove one installed version — environment and pipeline together, after confirmation |
 
-The analysis layer is a second command, `PoolSeqFlow-analysis`, installed alongside the pipeline and enabled separately with `PoolSeqFlow-analysis install`. It takes one word in the same way: `install`, `check`, `version`, `cite`, `uninstall`.
+`analysis` is the one subcommand that carries a word of its own: `install`, `check`, `version`, `cite`, `uninstall`, or the name of a module to run. The analysis layer ships with the pipeline and is enabled separately with `./PoolSeqFlow analysis install`, which creates the conda environment that carries R.
 
 There is no `-resume` flag. Every step checks whether its outputs already exist in permanent storage and skips itself if they do, so `run` both starts and resumes — and that survives job timeouts, reboots and `work/` cleanups. [Why →](https://ozankiratli.github.io/PoolSeqFlow/pipeline/resume/)
 

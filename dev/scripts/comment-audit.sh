@@ -40,7 +40,7 @@ for arg in "$@"; do
 done
 
 if [ "${#PATHS[@]}" -eq 0 ]; then
-    PATHS=("$REPO_ROOT/PoolSeqFlow" "$REPO_ROOT/PoolSeqFlow-analysis"
+    PATHS=("$REPO_ROOT/PoolSeqFlow" "$REPO_ROOT/analysis" "$REPO_ROOT/analysis.nf"
            "$REPO_ROOT/poolseqflow.nf" "$REPO_ROOT/dryrun.nf"
            "$REPO_ROOT/nextflow.config" "$REPO_ROOT/scripts" "$REPO_ROOT/bin"
            "$REPO_ROOT/lib" "$REPO_ROOT/install" "$REPO_ROOT/dev/scripts"

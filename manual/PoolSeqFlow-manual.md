@@ -217,7 +217,7 @@ This does two things at once, because they belong together: it creates a conda e
 
 Commands are then linked into `~/.local/bin`, each under two names: `PoolSeqFlow-<version>`, which always means that exact release, and plain `PoolSeqFlow`, which points at the **newest version you have installed**. Releases install alongside each other rather than over each other, so an old project can keep running under the version that produced its results. `PoolSeqFlow list` shows what is installed; `PoolSeqFlow uninstall` removes one.
 
-`PoolSeqFlow-analysis` is linked the same way. It is the analysis layer, which reads finished results and is **not enabled by this install**: it carries R in an environment of its own, which `PoolSeqFlow-analysis install` builds and `PoolSeqFlow-analysis uninstall` removes. Uninstalling a version removes its analysis environment along with everything else of that version's.
+The analysis layer is reached through the same command, as `PoolSeqFlow analysis <command>`. It reads finished results and is **not enabled by this install**: it carries R in an environment of its own, which `PoolSeqFlow analysis install` builds and `PoolSeqFlow analysis uninstall` removes. Uninstalling a version removes its analysis environment along with everything else of that version's.
 
 Install somewhere else by setting `POOLSEQFLOW_PREFIX` — a shared location for a group, for instance:
 
@@ -460,6 +460,7 @@ How to read the tables: [Interpreting Results](#interpreting-results).
 | `PoolSeqFlow migrate_config` | Carry an older `parameters.config` onto the current template ([details](#upgrading)) |
 | `PoolSeqFlow clean` | Remove Nextflow work directories |
 | `PoolSeqFlow reset` | Remove all progress and start fresh (requires typed confirmation) |
+| `PoolSeqFlow analysis <command>` | The analysis layer, which carries a word of its own — listed below |
 | `PoolSeqFlow version` | Print the version of this copy |
 | `PoolSeqFlow cite` | Print how to cite this copy, and which DOI to use ([why it matters](#which-doi-to-use)) |
 | `PoolSeqFlow list` | List the pipelines and conda environments installed on this machine |
@@ -468,7 +469,7 @@ How to read the tables: [Interpreting Results](#interpreting-results).
 
 Before anything is installed there is no `PoolSeqFlow` on your `PATH`, so the first command is `./PoolSeqFlow install`, run from the folder you downloaded. Everything after that uses the installed command.
 
-**Each subcommand takes no arguments of its own** — the wrapper accepts exactly one word and rejects anything else. Two environment variables adjust it instead: `POOLSEQFLOW_PREFIX`, where `install` puts things and where `list` and `uninstall` look, and `POOLSEQFLOW_HOME`, to run a checkout without installing it.
+**Each subcommand takes no arguments of its own**, with one exception: `analysis` carries exactly one word, the analysis command or the module to run. Anything else is rejected. Two environment variables adjust the wrapper instead: `POOLSEQFLOW_PREFIX`, where `install` puts things and where `list` and `uninstall` look, and `POOLSEQFLOW_HOME`, to run a checkout without installing it.
 
 **Naming a version.** Every installed release is also on your `PATH` under its own name, so `PoolSeqFlow-2.1.0 run` uses that release and plain `PoolSeqFlow` uses the newest. This matters most for `uninstall`: with several installations present it lists them and asks which to remove, and if nothing is attached to ask — a script, a CI job — it refuses and tells you to name one, rather than guessing at which installation to delete. `PoolSeqFlow-2.1.0 uninstall` names it and is never asked.
 
@@ -481,21 +482,21 @@ Installed under /home/you/.local:
   3) PoolSeqFlow-3.0.0             (this wrapper, analysis installed)
 ```
 
-Choosing 3 removes `PoolSeqFlow-3.0.0` and `PoolSeqFlow-3.0.0-analysis`. To remove only an analysis layer and keep the pipeline that produced your results, use `PoolSeqFlow-analysis uninstall`, which never touches anything else.
+Choosing 3 removes `PoolSeqFlow-3.0.0` and `PoolSeqFlow-3.0.0-analysis`. To remove only an analysis layer and keep the pipeline that produced your results, use `PoolSeqFlow analysis uninstall`, which never touches anything else.
 
 **Both then list exactly what will go and ask before removing any of it**, every time — including when there is only one installation and nothing to choose between. Choosing *which* is not the same as agreeing to the removal. Answering anything but `y` removes nothing, and with no terminal attached to ask — a script, a CI job — the command refuses rather than proceeding unasked. That is the same rule `uninstall_all` has always followed.
 
 `PoolSeqFlow resume` still works as a deprecated alias for `run` and prints a notice.
 
-**The analysis layer is a second command**, `PoolSeqFlow-analysis`, installed by the same `PoolSeqFlow install` and versioned with it. It takes exactly one word, the same way:
+**The analysis layer hangs off `analysis`**, the one subcommand that carries a word of its own. It ships with the same `PoolSeqFlow install` and is versioned with it:
 
 | Command | Description |
 |---|---|
-| `PoolSeqFlow-analysis install` | Create this release's analysis conda environment, which carries R, then verify it |
-| `PoolSeqFlow-analysis check` | Verify an existing analysis installation — tools, R packages, entry point |
-| `PoolSeqFlow-analysis version` | Print the version of this copy |
-| `PoolSeqFlow-analysis cite` | Print how to cite this copy, plus R and every package a module runs on |
-| `PoolSeqFlow-analysis uninstall` | Remove the analysis environment, after confirmation. The pipeline, its environment, and your results are untouched |
+| `PoolSeqFlow analysis install` | Create this release's analysis conda environment, which carries R, then verify it |
+| `PoolSeqFlow analysis check` | Verify an existing analysis installation — tools, R packages, entry point |
+| `PoolSeqFlow analysis version` | Print the version of this copy |
+| `PoolSeqFlow analysis cite` | Print how to cite this copy, plus R and every package a module runs on |
+| `PoolSeqFlow analysis uninstall` | Remove the analysis environment, after confirmation. The pipeline, its environment, and your results are untouched |
 
 The environment is separate from the pipeline's and is built only when you ask for it. `PoolSeqFlow uninstall` removes both environments of the version it is removing.
 
@@ -2312,15 +2313,15 @@ Output is `Output/VCF/<name>_annotated.vcf` and `Output/Reports/snpeff_summary.h
 # Analysis Layer
 <!--@ section: analysis | nav: Analysis -->
 
-The pipeline stops at `Output/Frequencies`. The analysis layer is a second, **optional** layer that reads what the pipeline published and produces analyses from it. It has its own wrapper, `PoolSeqFlow-analysis`, its own conda environment carrying R, and its own entry point — it is not steps 9 and up, and running it never changes, moves or re-runs anything the pipeline made.
+The pipeline stops at `Output/Frequencies`. The analysis layer is a second, **optional** layer that reads what the pipeline published and produces analyses from it. It is reached as `PoolSeqFlow analysis <command>`, and it has a conda environment carrying R and an entry point of its own — it is not steps 9 and up, and running it never changes, moves or re-runs anything the pipeline made.
 
 ### Installing it { #installing-the-analysis-layer }
 
-`PoolSeqFlow install` puts `PoolSeqFlow-analysis` on your PATH along with everything else. **That is not an installation.** The scripts weigh nothing and travel with the release so they can never be a version out of step with the pipeline; the weight is the environment, which carries R and which the pipeline install does not create. Until you create it, every module refuses and says so:
+`PoolSeqFlow install` copies the analysis layer with everything else, so `PoolSeqFlow analysis` answers as soon as the pipeline is installed. **That is not an installation.** The scripts weigh nothing and travel with the release so they can never be a version out of step with the pipeline; the weight is the environment, which carries R and which the pipeline install does not create. Until you create it, every module refuses and says so:
 
 ```bash
-PoolSeqFlow-analysis install     # builds this release's analysis environment
-PoolSeqFlow-analysis check       # what it found: R, the packages, the tools
+PoolSeqFlow analysis install     # builds this release's analysis environment
+PoolSeqFlow analysis check       # what it found: R, the packages, the tools
 ```
 
 The pipeline is complete without it, and a machine that only ever analyses results copied from elsewhere can install this layer and not the pipeline.
@@ -2331,7 +2332,7 @@ A **module** is one analysis. You run one at a time, from your project directory
 
 ```bash
 cd /path/to/project
-PoolSeqFlow-analysis verify
+PoolSeqFlow analysis verify
 ```
 
 Modules in this release:
@@ -2432,7 +2433,7 @@ Everything the analysis layer produces goes under `mainDir/Analysis/`, and nothi
 
 `Analysis/Session/` exists so that an analysis run does not overwrite the four session files in `Output/Reports`, which are the record of the pipeline run that produced the results being read.
 
-`Analysis/Main` is where a module puts anything it had to derive — a per-position depth file, a frequency matrix, a callable-sites count. It is built on demand and shared, so a second module wanting the same thing finds it already there rather than deriving it again. It can grow large, and `PoolSeqFlow-analysis complete` is what moves it, with your results, to permanent storage.
+`Analysis/Main` is where a module puts anything it had to derive — a per-position depth file, a frequency matrix, a callable-sites count. It is built on demand and shared, so a second module wanting the same thing finds it already there rather than deriving it again. It can grow large, and `PoolSeqFlow analysis complete` is what moves it, with your results, to permanent storage.
 
 `Analysis/Results` holds one folder per analysis, named by [`folderName`](#analysis-folder-name).
 
@@ -2890,8 +2891,7 @@ There are three directories, and keeping them apart is most of understanding the
 ├── multi-run.csv.example
 ├── poolseqflow.nf                # Workflow entry point
 ├── dryrun.nf                     # Entry point for the layout preview
-├── PoolSeqFlow                   # CLI wrapper
-└── PoolSeqFlow-analysis          # CLI wrapper for the analysis layer
+└── PoolSeqFlow                   # CLI wrapper, pipeline and analysis layer alike
 ```
 
 One copy serves any number of projects, and it is replaced wholesale when you upgrade — which is why nothing of yours belongs in it. `bin/` is prepended to `PATH` by `nextflow.config`, which is how the helper scripts are callable by bare name inside process scripts.

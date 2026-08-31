@@ -5,7 +5,7 @@
 # form install/environment.yml is already in and the only form a release may ship.
 #
 # There is no 'name:' key. Environments are named after the release
-# (PoolSeqFlow-<version>-analysis), which is what ./PoolSeqFlow-analysis install
+# (PoolSeqFlow-<version>-analysis), which is what ./PoolSeqFlow analysis install
 # supplies with -n.
 channels:
   - conda-forge

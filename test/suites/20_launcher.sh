@@ -288,7 +288,8 @@ test_init_refuses_to_populate_inside_the_installation() {
 test_usage_and_implementation_agree() {
     local usage_line advertised implemented
     usage_line=$(sed -n 's/.*Usage: \$0 {\(.*\)}.*/\1/p' "$REPO_ROOT/PoolSeqFlow" | head -1)
-    advertised=$(printf '%s' "$usage_line" | tr '|' '\n' | sort)
+    # `analysis <command>` is advertised with the word it carries; the arm is `analysis`.
+    advertised=$(printf '%s' "$usage_line" | tr '|' '\n' | sed 's/ .*$//' | sort)
     implemented=$(sed -n 's/^    \([a-z_|]*\))$/\1/p' "$REPO_ROOT/PoolSeqFlow" \
                   | tr '|' '\n' | grep -v '^\*$' | sort)
     local cmd
@@ -346,48 +347,29 @@ test_uninstall_says_nothing_about_an_analysis_environment_that_is_absent() {
         "and conda should not be asked to remove one"
 }
 
-# THE SECOND WRAPPER.
+# ONE COMMAND, NOT TWO.
 #
-# PoolSeqFlow-analysis ships inside the same payload and is deployed by the same `install`,
-# so the payload has one owner. What it manages on its own is the analysis conda
-# environment, which is opt-in and which `install` deliberately does not create.
-test_install_deploys_the_analysis_wrapper_beside_the_pipeline() {
+# The analysis layer hangs off `PoolSeqFlow analysis` and ships in the same payload. A second
+# executable would be a second thing to version, symlink, stamp and remove.
+test_install_puts_one_command_on_the_path() {
     run_launcher_with_envs "base $VERSIONED_ENV" install
-    local dest="$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION"
     assert_status 0 "$LAUNCHER_STATUS" "install should succeed"
-    assert_file "$dest/PoolSeqFlow-analysis" "the analysis wrapper belongs in the payload"
-    assert_file "$LAUNCHER_PREFIX/bin/PoolSeqFlow-analysis" "and on PATH under its own name"
-    assert_file "$LAUNCHER_PREFIX/bin/PoolSeqFlow-analysis-$PSF_VERSION" "and carrying the version"
-    [ -x "$dest/PoolSeqFlow-analysis" ] || fail_case "the deployed analysis wrapper should be executable"
-
-    # Stamped like the pipeline wrapper: without it install_prefix() would read an
-    # installed copy as a source checkout and look for installations under ~/.local.
-    assert_contains "$(grep '^POOLSEQFLOW_INSTALLED_HOME=' "$dest/PoolSeqFlow-analysis")" "$dest" \
-        "the analysis wrapper should be stamped with its installed location"
+    local dest="$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION"
+    assert_file "$dest/analysis.nf" "the analysis entry point belongs in the payload"
+    assert_dir "$dest/analysis" "and the analysis directory with it"
+    local extra
+    extra=$(find "$LAUNCHER_PREFIX/bin" -name 'PoolSeqFlow-analysis*' 2>/dev/null)
+    assert_eq "" "$extra" "no second command should be linked:"$'\n'"$extra"
 }
 
-# Deployed is not enabled. Installing the pipeline must not build the R environment, which
+# Shipped is not enabled. Installing the pipeline must not build the R environment, which
 # is large and which most projects never want.
 test_install_does_not_create_the_analysis_environment() {
     run_launcher_with_envs "base $VERSIONED_ENV" install
     assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env create -n ${VERSIONED_ENV}-analysis" \
         "installing the pipeline must not build the analysis environment"
-    assert_contains "$LAUNCHER_OUTPUT" "PoolSeqFlow-analysis install" \
+    assert_contains "$LAUNCHER_OUTPUT" "analysis install" \
         "but it should say how to add it"
-}
-
-# Removing a version takes its analysis wrapper off PATH with it. A symlink left pointing
-# into a deleted payload is worse than no command at all.
-test_uninstall_takes_the_analysis_wrapper_off_the_path() {
-    run_launcher_with_envs "base $VERSIONED_ENV" install
-    local sb; sb=$(dirname "$LAUNCHER_PREFIX")
-    ( cd "$sb" && PATH="$sb/stub/bin:$PATH" POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" \
-        "$LAUNCHER_PREFIX/bin/PoolSeqFlow-$PSF_VERSION" uninstall >/dev/null 2>&1 <<< y )
-    assert_no_file "$LAUNCHER_PREFIX/bin/PoolSeqFlow-analysis-$PSF_VERSION" \
-        "the versioned analysis wrapper should go with its version"
-    if [ -L "$LAUNCHER_PREFIX/bin/PoolSeqFlow-analysis" ]; then
-        fail_case "the plain analysis wrapper should not survive as a dangling symlink"
-    fi
 }
 
 test_analysis_install_creates_only_the_analysis_environment() {
@@ -440,7 +422,7 @@ test_a_module_refuses_to_borrow_the_pipeline_environment() {
     run_analysis_launcher_with_envs "base $VERSIONED_ENV" mds
     assert_status 1 "$LAUNCHER_STATUS" "a module should refuse without its own environment"
     assert_contains "$LAUNCHER_OUTPUT" "${VERSIONED_ENV}-analysis" "should name the environment it wanted"
-    assert_contains "$LAUNCHER_OUTPUT" "PoolSeqFlow-analysis install" "and say how to get it"
+    assert_contains "$LAUNCHER_OUTPUT" "analysis install" "and say how to get it"
     assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "activate" \
         "and activate nothing at all"
 }
@@ -451,38 +433,42 @@ test_a_module_refuses_outside_a_project() {
     local dir stub out status
     dir=$(guard_path "$TEST_TMPDIR/analysis-no-project")
     rm -rf "$dir"; mkdir -p "$dir/lib" "$dir/install"
-    cp "$REPO_ROOT/PoolSeqFlow-analysis" "$dir/"
+    cp "$REPO_ROOT/PoolSeqFlow" "$dir/"
     cp "$REPO_ROOT/lib/wrapper_lib.sh" "$dir/lib/"
     : > "$dir/analysis.nf"
     stub="$dir/stub"
     make_stub_conda "$stub" base "${VERSIONED_ENV}-analysis"
 
     out=$(cd "$dir" && PATH="$stub/bin:$PATH" POOLSEQFLOW_HOME="$dir" \
-          bash "$dir/PoolSeqFlow-analysis" mds 2>&1) && status=0 || status=$?
+          bash "$dir/PoolSeqFlow" analysis mds 2>&1) && status=0 || status=$?
     assert_status 1 "$status" "a module outside a project should be refused"
     assert_contains "$out" "parameters.config" "should say what is missing"
     assert_not_contains "$(cat "$stub/conda.log")" "activate" \
         "and should refuse before activating anything"
 }
 
-test_analysis_wrapper_takes_exactly_one_argument() {
+# `analysis` is the one subcommand carrying a word of its own - exactly one, no more and
+# not none.
+test_the_analysis_subcommand_takes_exactly_one_word() {
     run_analysis_launcher_with_envs "base" install extra
-    assert_status 1 "$LAUNCHER_STATUS" "two arguments should be refused"
+    assert_status 1 "$LAUNCHER_STATUS" "two words after analysis should be refused"
     run_analysis_launcher_with_envs "base"
-    assert_status 1 "$LAUNCHER_STATUS" "no argument should be refused"
+    assert_status 1 "$LAUNCHER_STATUS" "no word after analysis should be refused"
     run_analysis_launcher_with_envs "base" --nonsense
     assert_status 1 "$LAUNCHER_STATUS" "an unknown option should be refused"
 }
 
-# Every subcommand the usage line advertises must have an arm, and every arm must be
+# Every subcommand the analysis usage line advertises must have an arm, and every arm must be
 # advertised. Two entries have no arm of their own and are excluded by name: `<module>` is a
 # placeholder, and `complete` is a module name that analysis.nf owns.
+#
+# The arms sit in the nested case, indented eight spaces further than the pipeline's own.
 test_analysis_usage_and_implementation_agree() {
-    local wrapper="$REPO_ROOT/PoolSeqFlow-analysis" usage_line advertised implemented cmd
-    usage_line=$(sed -n 's/.*Usage: \$0 {\(.*\)}.*/\1/p' "$wrapper" | head -1)
+    local wrapper="$REPO_ROOT/PoolSeqFlow" usage_line advertised implemented cmd
+    usage_line=$(sed -n 's/.*Usage: \$0 analysis {\(.*\)}.*/\1/p' "$wrapper" | head -1)
     advertised=$(printf '%s' "$usage_line" | tr '|' '\n' \
                  | grep -vx -e '<module>' -e 'complete' | sort)
-    implemented=$(sed -n 's/^    \([a-z_|]*\))$/\1/p' "$wrapper" | tr '|' '\n' | sort)
+    implemented=$(sed -n 's/^            \([a-z_|]*\))$/\1/p' "$wrapper" | tr '|' '\n' | sort)
     # Both sides going empty together would pass vacuously, and a changed usage line or a
     # re-indented case is exactly how that happens.
     [ -n "$advertised" ] || fail_case "could not read the usage line out of the wrapper"
@@ -523,7 +509,7 @@ test_analysis_install_verifies_what_it_built() {
 
 # The DOI and the citation text live in lib/wrapper_lib.sh so the two wrappers cannot drift.
 # Both must print the same software citation for the same version.
-test_both_wrappers_print_the_same_software_citation() {
+test_both_citations_carry_the_same_software_citation() {
     local pipeline_cite analysis_cite
     pipeline_cite=$(cd "$REPO_ROOT" && POOLSEQFLOW_HOME="$REPO_ROOT" bash ./PoolSeqFlow cite)
     run_analysis_launcher_with_envs "base" cite
@@ -597,8 +583,8 @@ test_a_mistyped_subcommand_is_treated_as_a_module_name() {
 # The machinery verbs are reserved out of the module namespace by the case arms preceding
 # `*)`. A module may not be called any of them, and this is what says so.
 test_the_machinery_verbs_are_reserved_from_the_module_namespace() {
-    local wrapper="$REPO_ROOT/PoolSeqFlow-analysis" reserved word
-    reserved=$(sed -n 's/^    \([a-z_|]*\))$/\1/p' "$wrapper" | tr '|' '\n')
+    local wrapper="$REPO_ROOT/PoolSeqFlow" reserved word
+    reserved=$(sed -n 's/^            \([a-z_|]*\))$/\1/p' "$wrapper" | tr '|' '\n')
     [ -n "$reserved" ] || fail_case "could not read the reserved words out of the wrapper"
     for word in $reserved; do
         # Each reserved word must be handled without ever reaching the analysis environment.
@@ -742,7 +728,6 @@ test_analysis_uninstall_confirms_and_can_be_refused() {
 # wrapper reporting success over an environment that is still there.
 test_every_environment_removal_passes_minus_y() {
     local without
-    without=$(grep -n 'conda env remove -n "' "$REPO_ROOT/PoolSeqFlow" \
-                   "$REPO_ROOT/PoolSeqFlow-analysis" | grep -v -- '-y' || true)
+    without=$(grep -n 'conda env remove -n "' "$REPO_ROOT/PoolSeqFlow" | grep -v -- '-y' || true)
     assert_eq "" "$without" "every conda env remove should pass -y"
 }

@@ -10,7 +10,7 @@ def analysisSetting(String key) {
     if (!params.containsKey('analysis') || !(params.analysis instanceof Map)) {
         throw new IllegalStateException(
             "the analysis layer's own settings are missing. Modules are run through\n" +
-            "    PoolSeqFlow-analysis <module>\n" +
+            "    PoolSeqFlow analysis <module>\n" +
             "which loads analysis/defaults.config from the installation before anything in your\n" +
             "project; started any other way there are no defaults to start from.")
     }
@@ -32,7 +32,7 @@ def installDir() {
             "the installation this analysis belongs to could not be found" +
             (dir.isEmpty() ? ': POOLSEQFLOW_HOME is not set' : " at ${dir}") + ".\n" +
             "Analyses are run through\n" +
-            "    PoolSeqFlow-analysis <module>\n" +
+            "    PoolSeqFlow analysis <module>\n" +
             "which puts the installation in the environment for the run. Started any other way,\n" +
             "nothing in the run can reach the helpers in bin/.")
     }

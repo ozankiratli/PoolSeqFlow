@@ -5,7 +5,7 @@
 # email  : ozankiratli@protonmail.com
 #
 # Wrapper script for PoolSeqFlow
-# Usage: ./PoolSeqFlow {install|init|init_multi|check|run|dryrun|dryclean|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}
+# Usage: ./PoolSeqFlow {install|init|init_multi|check|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}
 #  install        - creates this release's conda environment and installs the pipeline
 #  init           - populates the current directory as a project
 #  init_multi     - the same, plus multiRun on
@@ -16,6 +16,14 @@
 #  migrate_config - carries an older parameters.config onto the current template
 #  clean          - cleans the Nextflow work directory
 #  reset          - deletes all output files as well. (Use with caution!)
+#  analysis       - the analysis layer, which takes one word of its own:
+#                     install    - creates this release's analysis conda environment
+#                     check      - verifies the analysis installation
+#                     <module>   - runs one analysis module and writes its results
+#                     complete   - moves Analysis/ to permanent storage
+#                     version    - prints the version of this copy
+#                     cite       - prints how to cite it, and R and the packages it runs on
+#                     uninstall  - removes this release's analysis conda environment
 #  version        - prints the version of this copy
 #  cite           - prints how to cite this copy
 #  list           - lists what is installed on this machine
@@ -23,7 +31,11 @@
 #                   always confirming before anything goes
 #  uninstall_all  - removes every PoolSeqFlow environment and installation
 #
-# Each subcommand takes no arguments. POOLSEQFLOW_PREFIX and POOLSEQFLOW_HOME adjust it.
+# Each subcommand takes no arguments, except `analysis`, which takes exactly one.
+# POOLSEQFLOW_PREFIX and POOLSEQFLOW_HOME adjust it.
+#
+# The analysis layer ships with the pipeline and is enabled separately: `analysis install`
+# creates the conda environment that carries R, which nothing else here creates.
 
 set -e
 eval "$(conda shell.bash hook)"
@@ -31,7 +43,13 @@ eval "$(conda shell.bash hook)"
 VERSION="2.2.0"
 
 usage() {
-    echo "Usage: $0 {install|init|init_multi|check|run|dryrun|dryclean|migrate_config|clean|reset|version|cite|list|uninstall|uninstall_all}"
+    echo "Usage: $0 {install|init|init_multi|check|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}"
+    exit 1
+}
+
+# The analysis layer's own words, shown when `analysis` arrives without one.
+usage_analysis() {
+    echo "Usage: $0 analysis {install|check|<module>|complete|version|cite|uninstall}"
     exit 1
 }
 
@@ -50,8 +68,7 @@ else
 fi
 export POOLSEQFLOW_HOME="$INSTALL"
 
-# Shared with the analysis wrapper, and sourced after INSTALL resolves: nf_config_value
-# reads it.
+# Sourced after INSTALL resolves: nf_config_value reads it.
 if [ ! -f "$INSTALL/lib/wrapper_lib.sh" ]; then
     echo "ERROR: $INSTALL/lib/wrapper_lib.sh is missing." >&2
     echo "  This copy of PoolSeqFlow is incomplete." >&2
@@ -79,18 +96,18 @@ require_project_config() {
     echo "    mkdir -p /path/to/project" >&2
     echo "    cd /path/to/project" >&2
     echo "    $(basename "$0") init" >&2
-    echo "    $(basename "$0") $COMMAND" >&2
+    echo "    $(basename "$0") $INVOCATION" >&2
     exit 1
 }
 
 # What an installation consists of. Must match what `git archive` puts in a release tarball.
-PAYLOAD_ITEMS="PoolSeqFlow PoolSeqFlow-analysis poolseqflow.nf dryrun.nf analysis.nf \
+PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf dryrun.nf analysis.nf \
 nextflow.config scripts bin lib analysis install parameters.config.template \
 metadata.csv.template multi-run.csv.example manual README.md CHANGELOG.md LICENSE"
 
 # The payload's executables. Each is stamped with its installed location and symlinked into
 # $PREFIX/bin twice, once under its own name and once carrying the version.
-WRAPPERS="PoolSeqFlow PoolSeqFlow-analysis"
+WRAPPERS="PoolSeqFlow"
 
 # Everything `uninstall` can act on, by the name it is known as: every version present as a
 # payload or an environment, plus the legacy unversioned environment when it is there. An
@@ -216,7 +233,7 @@ remove_payload() {
     newest=$(newest_installed_version "$prefix")
     for item in $WRAPPERS; do
         rm -f "$bindir/${item}-${version}"
-        # A version installed from an older release has no analysis wrapper to point at.
+        # A version installed from an older release may not provide this executable.
         if [ -n "$newest" ] && [ -e "$prefix/opt/PoolSeqFlow-${newest}/$item" ]; then
             ln -sfn "$prefix/opt/PoolSeqFlow-${newest}/$item" "$bindir/$item"
             echo "  $bindir/$item now points at v$newest"
@@ -275,7 +292,7 @@ deploy_payload() {
     for item in $WRAPPERS; do
         ln -sfn "$dest/$item" "$bindir/${item}-${VERSION}"
         echo "    $bindir/${item}-${VERSION}"
-        # A version installed from an older release has no analysis wrapper to point at.
+        # A version installed from an older release may not provide this executable.
         if [ -e "$prefix/opt/PoolSeqFlow-${newest}/$item" ]; then
             ln -sfn "$prefix/opt/PoolSeqFlow-${newest}/$item" "$bindir/$item"
             printf '    %-40s -> v%s, the newest installed\n' "$bindir/$item" "$newest"
@@ -327,6 +344,45 @@ require_env() {
     fi
     echo "Install this version's environment with:" >&2
     echo "    ./$(basename "$0") install" >&2
+    exit 1
+}
+
+# Confirms the analysis entry point is there, for the analysis commands that need it.
+require_analysis_install() {
+    [ -f "$INSTALL/analysis.nf" ] && return 0
+    echo "ERROR: cannot find the PoolSeqFlow analysis layer." >&2
+    echo "  Looked in: $INSTALL" >&2
+    echo "  Expected to find analysis.nf there, alongside poolseqflow.nf." >&2
+    echo "  Set POOLSEQFLOW_HOME to the directory holding it." >&2
+    exit 1
+}
+
+# Every analysis environment on this machine, of any version.
+analysis_envs() {
+    poolseqflow_envs | grep -E '^PoolSeqFlow-.+-analysis$' || true
+}
+
+# Activates this version's analysis environment, or explains its absence. Never falls back
+# to the pipeline's environment or to another version's.
+require_analysis_env() {
+    if env_exists "$ANALYSIS_ENV"; then
+        conda activate "$ANALYSIS_ENV"
+        return 0
+    fi
+
+    echo "ERROR: conda environment '$ANALYSIS_ENV' not found." >&2
+    echo "" >&2
+    echo "The analysis layer is opt-in: it carries R and is installed separately from the" >&2
+    echo "pipeline, so a working pipeline install does not bring it." >&2
+    OTHERS=$(analysis_envs | grep -vxF "$ANALYSIS_ENV" || true)
+    if [ -n "$OTHERS" ]; then
+        echo "" >&2
+        echo "Analysis environments for other versions are installed:" >&2
+        echo "$OTHERS" | sed 's/^/    /' >&2
+    fi
+    echo "" >&2
+    echo "Install this version's with:" >&2
+    echo "    $(basename "$0") analysis install" >&2
     exit 1
 }
 
@@ -402,21 +458,42 @@ EOF
     return 1
 }
 
-if [ "$#" -ne 1 ]; then
+if [ "$#" -lt 1 ]; then
     usage
 fi
 
 COMMAND=$1
 
+# `analysis` is the one subcommand that carries a word of its own - the analysis command, or
+# the module to run. Every other subcommand still takes none.
+ANALYSIS_COMMAND=""
+if [ "$COMMAND" = "analysis" ]; then
+    [ "$#" -eq 2 ] || usage_analysis
+    ANALYSIS_COMMAND=$2
+elif [ "$#" -ne 1 ]; then
+    usage
+fi
+
+# What the user typed, for the messages that tell them to type it again somewhere else.
+INVOCATION="$COMMAND${ANALYSIS_COMMAND:+ $ANALYSIS_COMMAND}"
+
 # One environment per release, named from VERSION above so a bump carries it.
 ENV_NAME="PoolSeqFlow-${VERSION}"
+
+# One analysis environment per release, beside the pipeline's own.
+ANALYSIS_ENV="PoolSeqFlow-${VERSION}-analysis"
+
+ANALYSIS_ENV_FILE="$INSTALL/install/environment-analysis.yml"
 
 # What releases before per-version environments called theirs. Detected so the error
 # messages can say so; never activated.
 LEGACY_ENV="PoolSeqFlow"
 
-# check_install.sh names the environment in its epilogue.
+# check_install.sh names the environment in its epilogue, and check_analysis_install.sh names
+# the analysis one. Two variables: a single ENV_NAME would give the analysis check the
+# pipeline's environment.
 export ENV_NAME
+export ANALYSIS_ENV_NAME="$ANALYSIS_ENV"
 
 ENV_FILE="$INSTALL/install/environment.yml"
 
@@ -515,15 +592,15 @@ case $COMMAND in
         bash "$(install_prefix)/opt/PoolSeqFlow-${VERSION}/install/check_install.sh"
         echo "Installation complete."
         echo ""
-        echo "PoolSeqFlow-analysis was copied and symlinked with everything else, so it is on"
-        echo "your PATH now. THAT DOES NOT MEAN THE ANALYSIS LAYER IS INSTALLED. The scripts"
+        echo "The analysis layer was copied with everything else, so 'PoolSeqFlow analysis'"
+        echo "answers now. THAT DOES NOT MEAN THE ANALYSIS LAYER IS INSTALLED. The scripts"
         echo "weigh nothing and travel with the release so that they can never be a version out"
         echo "of step with the pipeline; the weight is the environment, which carries R and"
         echo "which nothing here creates. Until you create it, every module refuses and says so."
         echo ""
         echo "The pipeline is complete without it. Add the analysis layer whenever you want it,"
         echo "or never:"
-        echo "    PoolSeqFlow-analysis install"
+        echo "    $(basename "$0") analysis install"
         ;;
 
     init)
@@ -776,6 +853,164 @@ EOF
               "$STORAGE"/.poolseqflow_versions "$STORAGE"/.poolseqflow_version
         echo "Reset complete."
         ;;
+
+    # The analysis layer. It ships with the pipeline and shares this wrapper; what it installs
+    # and removes here is its own conda environment, never the pipeline's.
+    analysis)
+        case $ANALYSIS_COMMAND in
+            install)
+                require_analysis_install
+                [ -f "$ANALYSIS_ENV_FILE" ] || {
+                    echo "ERROR: $ANALYSIS_ENV_FILE is missing." >&2
+                    echo "  This copy of PoolSeqFlow is incomplete." >&2
+                    exit 1
+                }
+                echo "Installing conda environment '$ANALYSIS_ENV'..."
+                if env_exists "$ANALYSIS_ENV"; then
+                    echo "Environment '$ANALYSIS_ENV' already exists."
+                else
+                    # -n overrides the `name:` key inside environment-analysis.yml.
+                    conda env create -n "$ANALYSIS_ENV" -f "$ANALYSIS_ENV_FILE"
+                fi
+                echo ""
+                echo "The analysis layer is installed. Run a module from your project directory:"
+                echo "    $(basename "$0") analysis <module>"
+                if ! env_exists "$ENV_NAME"; then
+                    echo ""
+                    echo "Note: the pipeline environment '$ENV_NAME' is not installed. The analysis"
+                    echo "layer reads results a pipeline run produced, so this machine can analyse"
+                    echo "results copied from elsewhere but cannot produce them."
+                fi
+                echo ""
+                # Just created, so it is activated without the existence check the other arms make.
+                conda activate "$ANALYSIS_ENV"
+                bash "$INSTALL/install/check_analysis_install.sh"
+                ;;
+
+            check)
+                require_analysis_install
+                require_analysis_env
+                bash "$INSTALL/install/check_analysis_install.sh"
+                ;;
+
+            uninstall)
+                if ! env_exists "$ANALYSIS_ENV"; then
+                    echo "Conda environment '$ANALYSIS_ENV' is already absent."
+                    echo "The pipeline and its own environment are untouched by this command."
+                    exit 0
+                fi
+                # Confirmed, as `uninstall` is.
+                echo ""
+                echo "This removes:"
+                echo "    the analysis environment $ANALYSIS_ENV"
+                echo ""
+                echo "The pipeline, its own environment, and everything under Analysis/ stay where"
+                echo "they are. Rebuilding this environment takes as long as it did the first time."
+                echo ""
+                printf 'Remove it? [y/N]: '
+                if ! read -r CONFIRM; then
+                    echo ""
+                    echo "Aborted - no confirmation received. Nothing was removed." >&2
+                    exit 1
+                fi
+                case "$CONFIRM" in
+                    y|Y|yes|YES|Yes) ;;
+                    *) echo "Aborted - nothing was removed."; exit 1 ;;
+                esac
+                echo "Uninstalling conda environment '$ANALYSIS_ENV'..."
+                conda deactivate
+                conda env remove -n "$ANALYSIS_ENV" -y
+                echo ""
+                echo "Only the analysis environment goes. The pipeline, its environment, and"
+                echo "everything under Analysis/ are untouched."
+                echo "Reinstall it with:"
+                echo "    $(basename "$0") analysis install"
+                ;;
+
+            version)
+                echo "PoolSeqFlow analysis layer"
+                echo "v$VERSION"
+                ;;
+
+            cite)
+                # The software citation is the pipeline's: the analysis layer is part of the
+                # same release and carries the same DOI.
+                poolseqflow_citation "$VERSION"
+                echo ""
+                echo "The analysis layer also runs on R"
+                echo "--------------------------------------------------------------------"
+                if env_exists "$ANALYSIS_ENV"; then
+                    echo "Results produced by an analysis module depend on R and on the packages"
+                    echo "below, at the versions this release pins. Cite them alongside PoolSeqFlow."
+                    echo ""
+                    conda activate "$ANALYSIS_ENV"
+                    if command -v Rscript >/dev/null 2>&1; then
+                        # Each package's own citation, asked of R, so the version reported is
+                        # the one installed. Failure is not fatal: the software citation above
+                        # is the part a paper cannot do without.
+                        # shellcheck disable=SC2046
+                        Rscript --vanilla -e '
+                            want <- commandArgs(trailingOnly = TRUE)
+                            have <- rownames(installed.packages())
+                            cat(format(citation(), style = "text"), sep = "\n\n")
+                            for (w in want) {
+                                m <- have[tolower(have) == tolower(w)]
+                                if (length(m)) cat("\n", format(citation(m[1]), style = "text"), "\n", sep = "")
+                            }
+                        ' $(analysis_r_packages) 2>/dev/null || {
+                            echo "R could not be asked for its citations. Check the environment with:"
+                            echo "    $(basename "$0") analysis check"
+                        }
+                    else
+                        echo "Rscript is not on PATH in '$ANALYSIS_ENV', so the R citations cannot be"
+                        echo "read from it. Check the environment with:"
+                        echo "    $(basename "$0") analysis check"
+                    fi
+                    conda deactivate
+                else
+                    echo "Environment '$ANALYSIS_ENV' is not installed, so the R and package citations"
+                    echo "cannot be read from it. Install it and run this again:"
+                    echo "    $(basename "$0") analysis install"
+                fi
+                ;;
+
+            -*)
+                usage_analysis
+                ;;
+
+            *)
+                # `complete` is a module name too. analysis.nf holds the list and refuses
+                # anything that is not on it, so this wrapper does not keep a second copy of
+                # it. Only the SHAPE of the word is checked here, because it names a file below.
+                case $ANALYSIS_COMMAND in
+                    *[!A-Za-z0-9_-]*)
+                        echo "ERROR: '$ANALYSIS_COMMAND' is not a module name." >&2
+                        usage_analysis
+                        ;;
+                esac
+                require_analysis_install
+                require_project_config
+                require_analysis_env
+                # Three layers, each winning over the one before it: the installation's
+                # defaults, the project's own analysis.config, and this module's
+                # <module>.config. The last two are optional and are read from the directory
+                # you are standing in.
+                CONFIGS=(-c "$INSTALL/analysis/defaults.config")
+                if [ -f analysis.config ]; then
+                    CONFIGS+=(-c analysis.config)
+                fi
+                if [ -f "${ANALYSIS_COMMAND}.config" ]; then
+                    CONFIGS+=(-c "${ANALYSIS_COMMAND}.config")
+                fi
+                # Absolute: the pipeline lives with the installation, the project is where we
+                # stand.
+                nextflow run "$INSTALL/analysis.nf" "${CONFIGS[@]}" --module "$ANALYSIS_COMMAND"
+                wait
+                conda deactivate
+                ;;
+        esac
+        ;;
+
     list)
         # Payloads and environments together: they are installed as a pair.
         PREFIX=$(install_prefix)

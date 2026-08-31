@@ -31,7 +31,7 @@ tar -xzf "${OUT}/${name}.tar.gz" -C "$tmp"
 root="${tmp}/${name}"
 
 # Everything a run needs.
-for f in PoolSeqFlow PoolSeqFlow-analysis poolseqflow.nf analysis.nf nextflow.config \
+for f in PoolSeqFlow poolseqflow.nf analysis.nf nextflow.config \
          parameters.config.template metadata.csv.template \
          analysis/modules.nf analysis/0_verify_analysis.nf analysis/defaults.config \
          analysis/analysis.config.template \
@@ -67,9 +67,7 @@ fi
 
 # The executable bit, which the extracted copy must carry. Everything in bin/ is run; the
 # libraries another script sources live in lib/ and need no such bit.
-for w in PoolSeqFlow PoolSeqFlow-analysis; do
-    [ -x "$root/$w" ] || fail "./$w is not executable"
-done
+[ -x "$root/PoolSeqFlow" ] || fail "./PoolSeqFlow is not executable"
 for s in "$root"/bin/*; do
     [ -x "$s" ] || fail "$(basename "$s") is not executable"
 done
@@ -78,12 +76,10 @@ for s in tool_version.sh wrapper_lib.sh; do
 done
 
 # The version the extracted copy would report, in every place it lives.
-for w in PoolSeqFlow PoolSeqFlow-analysis; do
-    grep -q "^VERSION=\"${version}\"$" "$root/$w" \
-        || fail "extracted $w does not report ${version}"
-    grep -q "^# Version: ${version}$" "$root/$w" \
-        || fail "extracted $w header comment does not say ${version}"
-done
+grep -q "^VERSION=\"${version}\"$" "$root/PoolSeqFlow" \
+    || fail "extracted PoolSeqFlow does not report ${version}"
+grep -q "^# Version: ${version}$" "$root/PoolSeqFlow" \
+    || fail "extracted PoolSeqFlow header comment does not say ${version}"
 grep -q "version *= *'${version}'" "$root/nextflow.config" \
     || fail "extracted nextflow.config manifest does not say ${version}"
 

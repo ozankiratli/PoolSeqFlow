@@ -86,7 +86,7 @@ test_release_archive_carries_the_runtime() {
     [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
     local needed
     for needed in "poolseqflow.nf" "nextflow.config" "parameters.config.template" \
-                  "PoolSeqFlow" "PoolSeqFlow-analysis" "analysis.nf" "metadata.csv.template" \
+                  "PoolSeqFlow" "analysis.nf" "metadata.csv.template" \
                   "scripts/" "bin/" "lib/" "analysis/" "install/"; do
         assert_contains "$listing" "$needed" "release tarball must carry $needed"
     done
@@ -118,19 +118,15 @@ test_manual_is_valid_and_the_nav_is_current() {
     assert_eq "0" "$status" "the manual does not generate cleanly:"$'\n'"$out"
 }
 
-# The version is written in five places - twice in each wrapper and once in the manifest -
+# The version is written in three places - twice in the wrapper and once in the manifest -
 # and they have to agree, or release.yml refuses to publish. Cheaper to catch here than in CI.
 test_version_is_consistent_everywhere_it_is_written() {
-    local launcher_var launcher_hdr manifest analysis_var analysis_hdr
+    local launcher_var launcher_hdr manifest
     launcher_var=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/PoolSeqFlow" | head -1)
     launcher_hdr=$(sed -n 's/^# Version: *//p' "$REPO_ROOT/PoolSeqFlow" | head -1)
     manifest=$(sed -n "s/.*version *= *'\([0-9][0-9.]*\)'.*/\1/p" "$REPO_ROOT/nextflow.config" | head -1)
-    analysis_var=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/PoolSeqFlow-analysis" | head -1)
-    analysis_hdr=$(sed -n 's/^# Version: *//p' "$REPO_ROOT/PoolSeqFlow-analysis" | head -1)
     assert_eq "$launcher_var" "$launcher_hdr" "launcher VERSION vs its # Version: header"
     assert_eq "$launcher_var" "$manifest" "launcher VERSION vs nextflow.config manifest"
-    assert_eq "$launcher_var" "$analysis_var" "launcher VERSION vs the analysis wrapper's"
-    assert_eq "$launcher_var" "$analysis_hdr" "launcher VERSION vs the analysis # Version: header"
 }
 
 # Every `## [x.y.z]` section needs a matching link definition, or the rendered changelog has

@@ -200,13 +200,13 @@ test_the_analysis_layer_ships_with_the_release() {
         "the payload must carry the analysis directory"
 }
 
-# Being on PATH is not being installed, and the install has to say so: the wrapper is
-# symlinked with everything else while the environment it needs is never created here.
-test_install_says_the_analysis_wrapper_is_not_the_analysis_layer() {
+# Answering to `PoolSeqFlow analysis` is not being installed, and the install has to say so:
+# the layer is copied with everything else while the environment it needs is never created.
+test_install_says_the_analysis_command_is_not_the_analysis_layer() {
     local wrapper; wrapper=$(cat "$REPO_ROOT/PoolSeqFlow")
     assert_contains "$wrapper" "THAT DOES NOT MEAN THE ANALYSIS LAYER IS INSTALLED" \
-        "install must say the symlink is not an installation"
-    assert_contains "$wrapper" "PoolSeqFlow-analysis install" \
+        "install must say that answering is not an installation"
+    assert_contains "$wrapper" 'analysis install' \
         "and say how to install it"
 }
 
@@ -217,17 +217,17 @@ test_the_module_roster_lives_in_one_place() {
     hits=$(cd "$REPO_ROOT" && grep -rln "moduleRoster" . --exclude-dir=.git --exclude-dir=test \
         --exclude-dir=docs --exclude-dir=site --exclude-dir=.claude 2>/dev/null | sort)
     assert_eq "./analysis/modules.nf" "$hits" "the roster must exist in exactly one file"
-    assert_contains "$(cat "$REPO_ROOT/PoolSeqFlow-analysis")" '--module "$COMMAND"' \
+    assert_contains "$(cat "$REPO_ROOT/PoolSeqFlow")" '--module "$ANALYSIS_COMMAND"' \
         "the wrapper passes the word through rather than judging it"
 }
 
 # The three layers, in order. Losing one silently drops either the defaults or the user's
 # settings, and both look like the module simply ignoring the config.
 test_the_wrapper_layers_three_configurations() {
-    local wrapper; wrapper=$(cat "$REPO_ROOT/PoolSeqFlow-analysis")
+    local wrapper; wrapper=$(cat "$REPO_ROOT/PoolSeqFlow")
     assert_contains "$wrapper" 'analysis/defaults.config' "the installation's defaults"
     assert_contains "$wrapper" '-f analysis.config' "then the project's"
-    assert_contains "$wrapper" '-f "${COMMAND}.config"' "then the module's"
+    assert_contains "$wrapper" '-f "${ANALYSIS_COMMAND}.config"' "then the module's"
     # analysis/defaults.config reads this back. It is the run's only way to the installation,
     # a module having become the entry script.
     assert_contains "$wrapper" 'export POOLSEQFLOW_HOME="$INSTALL"' \
@@ -273,7 +273,7 @@ test_a_run_that_cannot_find_its_installation_refuses() {
     assert_status 1 "$status" "an installation that is not there must stop the run"
     assert_contains "$(analysis_output)" "POOLSEQFLOW_HOME is not set" \
         "naming what was missing"
-    assert_contains "$(analysis_output)" "PoolSeqFlow-analysis <module>" \
+    assert_contains "$(analysis_output)" "PoolSeqFlow analysis <module>" \
         "and how a run is started"
 }
 

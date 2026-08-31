@@ -2,7 +2,7 @@
 
 // The analysis layer's entry point, beside poolseqflow.nf and dryrun.nf.
 //
-// One module per invocation: `--module <name>`, which ./PoolSeqFlow-analysis supplies. It reads
+// One module per invocation: `--module <name>`, which ./PoolSeqFlow analysis supplies. It reads
 // results a pipeline run published and writes an analysis of its own; it never produces, moves
 // or removes anything the pipeline made.
 

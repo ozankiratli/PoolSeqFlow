@@ -25,9 +25,9 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 MAIN="PoolSeqFlow"
-# Every wrapper carries the release twice, in its header comment and in VERSION=. release.yml
+# The wrapper carries the release twice, in its header comment and in VERSION=. release.yml
 # and 00_static both refuse a disagreement between any of them.
-WRAPPERS="PoolSeqFlow PoolSeqFlow-analysis"
+WRAPPERS="PoolSeqFlow"
 LOG="CHANGELOG.md"
 for f in $WRAPPERS "$LOG"; do
     [ -f "$f" ] || { echo "ERROR: $f not found in $ROOT" >&2; exit 1; }

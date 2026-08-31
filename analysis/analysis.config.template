@@ -12,7 +12,7 @@
 //     one module                         <module>.config          e.g. mds.config
 //
 // So a value here applies to every module in this project, and the same key in mds.config
-// applies to `PoolSeqFlow-analysis mds` alone. parameters.config is read as well and is not
+// applies to `PoolSeqFlow analysis mds` alone. parameters.config is read as well and is not
 // repeated here: the analysis layer reads the pipeline's settings from it.
 
 params {
