@@ -66,6 +66,14 @@ def readManifest(Object dir) {
             "named '${"${dir}".tokenize('/').last()}'. The two have to agree: the directory is " +
             "how a module is found and the name is how it is asked for.")
     }
+    // main.nf is what the wrapper runs second, and the wrapper cannot look for it until this
+    // verification has already cleared the results folder.
+    def entry = file("${dir}/main.nf")
+    if (!entry.exists()) {
+        throw new IllegalStateException(
+            "${dir} has a manifest but no main.nf. A module is a pipeline of its own and " +
+            "main.nf is that pipeline. Install the module again, or remove the directory.")
+    }
     return [ summary : "${parsed.summary}".toString(),
              version : "${parsed.version}".toString(),
              contract: "${parsed.contract}".toString(),
@@ -73,7 +81,7 @@ def readManifest(Object dir) {
              gates   : parsed.gates ?: [],
              builtin : false,
              dir     : "${dir}".toString(),
-             entry   : "${dir}/main.nf".toString() ]
+             entry   : "${entry}".toString() ]
 }
 
 // Every module available to this invocation: the frame's own, plus whatever is installed.

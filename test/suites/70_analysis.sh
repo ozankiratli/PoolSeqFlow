@@ -354,6 +354,22 @@ test_a_manifest_that_disagrees_with_its_directory_refuses() {
         "naming both sides of the disagreement"
 }
 
+# A module is a pipeline of its own, so a manifest with no pipeline behind it is a broken
+# install. Caught while the DAG is built, which is before the verification clears the results
+# folder - the wrapper's own check happens after, when the folder is already gone.
+test_a_module_with_a_manifest_but_no_pipeline_refuses() {
+    analysis_ready single || return
+    analysis_install_module mds \
+        '{"name":"mds","version":"1.4.2","contract":"freq-1","summary":"scaling over frequencies"}'
+    rm "$ANALYSIS_SB/install/analysis/modules/mds/main.nf"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a module with no main.nf must stop even an unrelated module"
+    assert_contains "$(analysis_output)" "has a manifest but no main.nf" \
+        "naming what is missing"
+    assert_no_file "$ANALYSIS_SB/main/Analysis/Results/verify" \
+        "and refusing before anything is cleared or written"
+}
+
 # Half-finished installs and stray directories are ordinary; only a manifest that exists and
 # cannot be used is an error.
 test_a_directory_without_a_manifest_is_ignored() {
