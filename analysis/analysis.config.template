@@ -1,0 +1,38 @@
+// PoolSeqFlow analysis layer — project settings. The manual explains every setting in this file:
+//     https://ozankiratli.github.io/PoolSeqFlow/
+//
+// OPTIONAL. Without it every module uses the values below, which are the installation's own
+// defaults. Copy it into your project as  analysis.config , beside parameters.config, and change
+// only what you need. Until you do, every module's verification report prints the path to copy.
+//
+// Three files are read, in this order, each winning over the one before it:
+//
+//     the installation's defaults        analysis/defaults.config
+//     your project                       analysis.config          <- this file
+//     one module                         <module>.config          e.g. mds.config
+//
+// So a value here applies to every module in this project, and the same key in mds.config
+// applies to `PoolSeqFlow-analysis mds` alone. parameters.config is read as well and is not
+// repeated here: the analysis layer reads the pipeline's settings from it.
+
+params {
+    analysis {
+        // WHICH RUNS TO ANALYSE.
+        //
+        //     'all'                       every run in the project            (the default)
+        //     'reference_a'               one run, by the RunID you gave it
+        //     ['reference_a', 'pool_50']  several
+        //
+        // Ignored by a single-run project - there are no run names to select, and setting
+        // anything but 'all' is refused rather than ignored quietly.
+        //
+        // `all` is a keyword and a list is always run names, so a run you have actually named
+        // `all` is selected by writing ['all'].
+        //
+        // Runs that produced the SAME tables share one results directory, and it is analysed
+        // once however many of them you name. The verification report at the start of every
+        // module says which directory each selected run landed in, and names any run whose
+        // results you are also reading without having asked for them.
+        runs = 'all'
+    }
+}

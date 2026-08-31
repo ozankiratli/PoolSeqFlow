@@ -85,8 +85,8 @@ require_project_config() {
 
 # What an installation consists of. Must match what `git archive` puts in a release tarball.
 PAYLOAD_ITEMS="PoolSeqFlow PoolSeqFlow-analysis poolseqflow.nf dryrun.nf analysis.nf \
-nextflow.config scripts bin lib install parameters.config.template metadata.csv.template \
-multi-run.csv.example manual README.md CHANGELOG.md LICENSE"
+nextflow.config scripts bin lib analysis install parameters.config.template \
+metadata.csv.template multi-run.csv.example manual README.md CHANGELOG.md LICENSE"
 
 # The payload's executables. Each is stamped with its installed location and symlinked into
 # $PREFIX/bin twice, once under its own name and once carrying the version.
@@ -515,8 +515,14 @@ case $COMMAND in
         bash "$(install_prefix)/opt/PoolSeqFlow-${VERSION}/install/check_install.sh"
         echo "Installation complete."
         echo ""
-        echo "The analysis layer is deployed but not enabled: it carries R in an environment"
-        echo "of its own, which nothing here installs. Add it with:"
+        echo "PoolSeqFlow-analysis was copied and symlinked with everything else, so it is on"
+        echo "your PATH now. THAT DOES NOT MEAN THE ANALYSIS LAYER IS INSTALLED. The scripts"
+        echo "weigh nothing and travel with the release so that they can never be a version out"
+        echo "of step with the pipeline; the weight is the environment, which carries R and"
+        echo "which nothing here creates. Until you create it, every module refuses and says so."
+        echo ""
+        echo "The pipeline is complete without it. Add the analysis layer whenever you want it,"
+        echo "or never:"
         echo "    PoolSeqFlow-analysis install"
         ;;
 

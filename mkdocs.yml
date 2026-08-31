@@ -44,7 +44,9 @@ theme:
     code: JetBrains Mono
 
   features:
-    - navigation.sections      # top-level nav renders as labelled groups
+    # No navigation.sections: with it every section is a permanently open group, so the
+    # whole manual sits in the sidebar at once. Collapsed, a section opens when it is the
+    # one being read and stays shut otherwise.
     - navigation.indexes       # a section can have its own landing page
     - navigation.tracking      # URL follows the anchor being read
     - navigation.top
@@ -149,6 +151,10 @@ nav:
       - Variant Calling: configuration/variant-calling.md
       - Filtering & Frequency Calculations: configuration/filtering.md
       - Annotations: configuration/annotations.md
+  - Analysis:
+      - analysis/index.md
+      - Configuration: analysis/configuration.md
+      - Verification: analysis/verification.md
   - Pipeline:
       - pipeline/index.md
       - Steps: pipeline/steps.md

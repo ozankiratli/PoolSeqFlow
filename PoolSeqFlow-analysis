@@ -242,12 +242,29 @@ case $COMMAND in
 
     *)
         # `complete` is a module name too. analysis.nf holds the list and refuses anything
-        # that is not on it, so this wrapper does not keep a second copy of it.
+        # that is not on it, so this wrapper does not keep a second copy of it. Only the
+        # SHAPE of the word is checked here, because it names a file below.
+        case $COMMAND in
+            *[!A-Za-z0-9_-]*)
+                echo "ERROR: '$COMMAND' is not a module name." >&2
+                usage
+                ;;
+        esac
         require_install
         require_project_config
         require_env
+        # Three layers, each winning over the one before it: the installation's defaults, the
+        # project's own analysis.config, and this module's <module>.config. The last two are
+        # optional and are read from the directory you are standing in.
+        CONFIGS=(-c "$INSTALL/analysis/defaults.config")
+        if [ -f analysis.config ]; then
+            CONFIGS+=(-c analysis.config)
+        fi
+        if [ -f "${COMMAND}.config" ]; then
+            CONFIGS+=(-c "${COMMAND}.config")
+        fi
         # Absolute: the pipeline lives with the installation, the project is where we stand.
-        nextflow run "$INSTALL/analysis.nf" --module "$COMMAND"
+        nextflow run "$INSTALL/analysis.nf" "${CONFIGS[@]}" --module "$COMMAND"
         wait
         conda deactivate
         ;;

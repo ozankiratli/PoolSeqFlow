@@ -47,11 +47,32 @@ test_no_compiled_python_is_tracked() {
     assert_eq "" "$tracked" "compiled Python should not be tracked"
 }
 
+# What `git archive` would put in a release built from the tree as it stands, rather than from
+# HEAD. A payload item is added to the working tree first and committed afterwards, so reading
+# HEAD reports every such addition as missing - red for exactly as long as the change is being
+# reviewed, and green once it is committed and nobody is looking.
+#
+# The index is a throwaway under TEST_TMPDIR: `git add` here must never stage anything in the
+# repository the suite is testing.
+working_tree_archive() {
+    local idx tree
+    idx=$(guard_path "$TEST_TMPDIR/archive-index")
+    rm -f "$idx"
+    (
+        cd "$REPO_ROOT" || exit 1
+        export GIT_INDEX_FILE="$idx"
+        git read-tree HEAD && git add -A .
+    ) >/dev/null 2>&1 || return 1
+    tree=$(cd "$REPO_ROOT" && GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null) || return 1
+    [ -n "$tree" ] || return 1
+    (cd "$REPO_ROOT" && git archive "$tree" 2>/dev/null | tar -t 2>/dev/null)
+}
+
 # The release tarball is built with `git archive`, and .gitattributes decides what it holds.
 # Development material must stay out of it; anything a run needs must stay in.
 test_release_archive_excludes_development_material() {
     local listing
-    listing=$(cd "$REPO_ROOT" && git archive HEAD 2>/dev/null | tar -t 2>/dev/null)
+    listing=$(working_tree_archive)
     [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
     local unwanted
     for unwanted in "test/" "dev/" "docs/" ".github/" "mkdocs.yml" "__pycache__"; do
@@ -61,20 +82,19 @@ test_release_archive_excludes_development_material() {
 
 test_release_archive_carries_the_runtime() {
     local listing
-    listing=$(cd "$REPO_ROOT" && git archive HEAD 2>/dev/null | tar -t 2>/dev/null)
+    listing=$(working_tree_archive)
     [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
     local needed
     for needed in "poolseqflow.nf" "nextflow.config" "parameters.config.template" \
                   "PoolSeqFlow" "PoolSeqFlow-analysis" "analysis.nf" "metadata.csv.template" \
-                  "scripts/" "bin/" "lib/" "install/"; do
+                  "scripts/" "bin/" "lib/" "analysis/" "install/"; do
         assert_contains "$listing" "$needed" "release tarball must carry $needed"
     done
 }
 
 # The built site is development material and stays out; the manual it is generated from
 # ships, so a download carries its own documentation with no network and no site visit.
-# The attribute is checked directly because it is the rule that has to hold, and it holds
-# before the manual is first committed; the archive is checked too once it is tracked.
+# The attribute is checked directly as well as the listing: it is the rule that has to hold.
 test_release_archive_carries_the_manual() {
     local manual="manual/PoolSeqFlow-manual.md"
     [ -f "$REPO_ROOT/$manual" ] || { fail_case "$manual is missing"; return; }
@@ -82,9 +102,8 @@ test_release_archive_carries_the_manual() {
     attr=$(cd "$REPO_ROOT" && git check-attr export-ignore -- "$manual")
     assert_contains "$attr" "unspecified" "the manual must not be export-ignore'd out of a release"
 
-    (cd "$REPO_ROOT" && git ls-files --error-unmatch "$manual" >/dev/null 2>&1) || return 0
     local listing
-    listing=$(cd "$REPO_ROOT" && git archive HEAD 2>/dev/null | tar -t 2>/dev/null)
+    listing=$(working_tree_archive)
     [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
     assert_contains "$listing" "$manual" "release tarball must carry the manual"
 }
@@ -192,7 +211,7 @@ test_release_prep_logs_are_not_tracked() {
 # installation; one added the other way makes `install` refuse a downloaded copy as incomplete.
 test_install_payload_matches_the_release_archive() {
     local archive payload
-    archive=$(cd "$REPO_ROOT" && git archive HEAD | tar -t | sed 's|/.*||' | sort -u)
+    archive=$(working_tree_archive | sed 's|/.*||' | sort -u)
     # Evaluated rather than parsed: the assignment spans a line continuation, and letting the
     # shell join it is exact where a regex would be approximate.
     payload=$(eval "$(sed -n '/^PAYLOAD_ITEMS=/,/[^\\]$/p' "$REPO_ROOT/PoolSeqFlow")"

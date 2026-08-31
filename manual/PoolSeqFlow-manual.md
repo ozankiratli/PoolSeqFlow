@@ -1256,7 +1256,7 @@ After a run finishes, four checks catch most problems:
 # Configuration
 <!--@ section: configuration -->
 
-Everything is set in `parameters.config`. There are no command-line overrides ([why](#configuration-is-a-file-never-a-flag)).
+Everything the pipeline does is set in `parameters.config`. There are no command-line overrides ([why](#configuration-is-a-file-never-a-flag)). The optional analysis layer has settings of its own, in a file of its own — see [Analysis Layer](#analysis-configuration).
 
 This page sorts the parameters by what they actually affect, which is the distinction that matters most: some change your numbers, some change only where files land or how fast the run goes, and some are computed for you and should not be edited at all.
 
@@ -2308,6 +2308,120 @@ Changing either changes what step 8 writes, so step 0 tracks them and refuses a 
 Output is `Output/VCF/<name>_annotated.vcf` and `Output/Reports/snpeff_summary.html`.
 
 **The annotated VCF is not your frequency tables with a column added.** Step 8 reads step 6's output, so it carries sites the step 7 filters removed and encodes them against the original reference rather than the major allele. Joining the two is yours to do, on `CHROM`/`POS`, expecting unmatched rows on the annotation side — see [Step 8](#step-8-annotate-variants).
+
+# Analysis Layer
+<!--@ section: analysis | nav: Analysis -->
+
+The pipeline stops at `Output/Frequencies`. The analysis layer is a second, **optional** layer that reads what the pipeline published and produces analyses from it. It has its own wrapper, `PoolSeqFlow-analysis`, its own conda environment carrying R, and its own entry point — it is not steps 9 and up, and running it never changes, moves or re-runs anything the pipeline made.
+
+### Installing it { #installing-the-analysis-layer }
+
+`PoolSeqFlow install` puts `PoolSeqFlow-analysis` on your PATH along with everything else. **That is not an installation.** The scripts weigh nothing and travel with the release so they can never be a version out of step with the pipeline; the weight is the environment, which carries R and which the pipeline install does not create. Until you create it, every module refuses and says so:
+
+```bash
+PoolSeqFlow-analysis install     # builds this release's analysis environment
+PoolSeqFlow-analysis check       # what it found: R, the packages, the tools
+```
+
+The pipeline is complete without it, and a machine that only ever analyses results copied from elsewhere can install this layer and not the pipeline.
+
+### Running a module
+
+A **module** is one analysis. You run one at a time, from your project directory — the same one you run the pipeline from:
+
+```bash
+cd /path/to/project
+PoolSeqFlow-analysis verify
+```
+
+Modules in this release:
+
+| Module | What it does |
+|---|---|
+| `verify` | Reports what the analysis layer can see, and produces nothing |
+
+`verify` is also the first thing every other module does. It resolves your configuration, works out which results directories the invocation covers, checks them against the record the pipeline wrote beside them, and refuses before any compute if anything does not line up. Running it on its own is how you check a project is ready without spending anything.
+
+## Configuring the Analysis Layer
+<!--@ page: configuration | nav: Configuration -->
+
+### The three files { #analysis-configuration }
+
+Three files are read, each winning over the one before it:
+
+| File | Where | Applies to |
+|---|---|---|
+| `analysis/defaults.config` | the installation | every project on the machine |
+| `analysis.config` | your project, beside `parameters.config` | every module in this project |
+| `<module>.config` | your project | that one module — `mds.config` for `mds` |
+
+Only the first is required, and it ships with the release. The other two are yours and are optional; without them every setting is the installation default. Copy `analysis/analysis.config.template` out of the installation to start one — until you do, the report at the top of every module prints the path.
+
+`parameters.config` is read as well, and is where the pipeline's own settings stay. The analysis layer does not repeat them.
+
+### Which runs to analyse { #analysis-runs }
+
+`analysis.runs` chooses which of your runs an invocation covers:
+
+```groovy
+params {
+    analysis {
+        runs = 'all'                         // every run in the project — the default
+        // runs = 'lenient'                  // one, by the RunID you gave it
+        // runs = ['lenient', 'strict']      // several
+    }
+}
+```
+
+`all` is a keyword and a list is always run names, so a run you have actually named `all` is selected by writing `['all']`.
+
+A single-run project has no run names — there is no run table — so `analysis.runs` must be left at `'all'`. Setting anything else is refused rather than ignored, because a name that selects nothing would otherwise look like it had worked.
+
+#### A run selects a directory, not a run
+
+This is the part worth reading twice. **Runs that produced the same tables share one results directory** ([Multi-run](#multi-run)), and the analysis is of the directory. So naming one run can reach results that belong to several:
+
+```text
+RUN SELECTION:         analysis.runs = 'lenient_a'
+RUN SELECTION:         1 of 3 runs, in 1 results directory
+RUN SELECTION:             Shared_1
+RUN SELECTION:                 selected: lenient_a
+RUN SELECTION:                 also the results of lenient_b - those runs
+RUN SELECTION:                 produced the same tables, so there is one directory
+RUN SELECTION:                 here and one analysis of it
+```
+
+Nothing is wrong there: `lenient_a` and `lenient_b` differ only in something neither the tables nor the filters depend on, so the pipeline produced one set and both runs own it. Naming both would produce the same single analysis. The report says so every time rather than leaving you to infer it from the directory name.
+
+Which directory a run's results are in is not guessed from directory names — the analysis layer rebuilds the pipeline's own division of the runs and reads the answer off it, so the two can never disagree.
+
+## Verification
+<!--@ page: verification | nav: Verification -->
+
+Every module begins by checking the project against the record the pipeline left beside the results, and refuses before any compute if the two disagree.
+
+### What it refuses
+
+The results on disk were produced under a configuration, and the pipeline recorded that configuration beside them. A module reads the tables and the settings **together** — pool sizes, ploidy and the filter thresholds all decide what a frequency means — so a project that has moved on since is refused, naming what moved:
+
+- **`parameters.config` has changed.** The report lists each parameter, what was recorded and what it says now, and points at `run_parameters.txt` beside your results for the values that produced them. Paths and resources are not compared; they cannot change a number.
+- **The run table has changed.** Which runs share a directory is decided by that table, so an edit can move a run onto results belonging to somebody else.
+- **The results came from another release.** What a table holds and what its columns mean belong to the release that wrote it. Install that release's analysis layer, or produce the results again.
+
+Restoring the values, or `PoolSeqFlow reset` and a fresh run, are the two ways forward. Nothing is deleted for you.
+
+### Where it writes { #analysis-output }
+
+Everything the analysis layer produces goes under `mainDir/Analysis/`, and nothing it does touches `Output/`:
+
+| Path | Holds |
+|---|---|
+| `Analysis/0_verify_analysis.txt` | the verification report of the last invocation |
+| `Analysis/Logs/` | one directory per stage, as the pipeline keeps its own |
+| `Analysis/Session/` | this invocation's Nextflow dag, trace, timeline and report |
+| `Analysis/work/` | Nextflow's working directory, removed when a run succeeds |
+
+`Analysis/Session/` exists so that an analysis run does not overwrite the four session files in `Output/Reports`, which are the record of the pipeline run that produced the results being read.
 
 # Pipeline Overview
 <!--@ section: pipeline | nav: Pipeline -->

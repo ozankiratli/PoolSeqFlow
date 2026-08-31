@@ -51,11 +51,13 @@ make_pipeline_sandbox() {
     mkdir -p "$sb/install" "$sb/main" "$sb/store"
     # install/ too: it carries citations.json, which a run reads at the end. Copied whole
     # rather than by file, so the next thing added there is present without a change here.
-    cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$REPO_ROOT"/lib "$REPO_ROOT"/install "$sb/install"/
-    cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/dryrun.nf "$REPO_ROOT"/nextflow.config "$sb/install"/
-    # The wrapper too, so cases can exercise clean/reset against a real project instead of
+    cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$REPO_ROOT"/lib "$REPO_ROOT"/analysis \
+          "$REPO_ROOT"/install "$sb/install"/
+    cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/dryrun.nf "$REPO_ROOT"/analysis.nf \
+       "$REPO_ROOT"/nextflow.config "$sb/install"/
+    # Both wrappers, so cases can exercise clean/reset against a real project instead of
     # reimplementing what they do.
-    cp "$REPO_ROOT/PoolSeqFlow" "$sb/install"/
+    cp "$REPO_ROOT/PoolSeqFlow" "$REPO_ROOT/PoolSeqFlow-analysis" "$sb/install"/
     cp -r "$REPO_ROOT/test/data/$fixture/." "$sb/main"/
     # A fingerprint of the installation as deployed. One installation serves any number of
     # projects, so a run that wrote inside it would corrupt every other project on the
@@ -351,6 +353,35 @@ workflow {
 }
 ENTRY
     _run_entry "$sb" verify_only.nf
+}
+
+# Run one analysis module against a sandbox. Output and status behave as run_pipeline's do.
+#
+# The three configuration layers are assembled exactly as ./PoolSeqFlow-analysis assembles
+# them: the installation's defaults, then the project's analysis.config, then the module's
+# own <module>.config, each optional after the first and each winning over the one before.
+# A case that writes one of those files into the project gets it read.
+run_analysis() {
+    local sb="$1" module="$2"; shift 2
+    local proj="${SANDBOX_PROJECT_DIR:-$sb/main}"
+    local -a cfg=(-c "$sb/install/analysis/defaults.config")
+    if [ -f "$proj/analysis.config" ]; then
+        cfg+=(-c "$proj/analysis.config")
+    fi
+    if [ -f "$proj/${module}.config" ]; then
+        cfg+=(-c "$proj/${module}.config")
+    fi
+    _run_entry "$sb" analysis.nf "${cfg[@]}" --module "$module" "$@"
+}
+
+# The analysis layer's verification report, found through the config the case actually wrote.
+# It lands under mainDir, which a case may have repointed.
+analysis_report() {
+    local sb="$1" main
+    main=$(sed -n 's|^    mainDir *= *"\(.*\)"|\1|p' \
+        "${SANDBOX_PROJECT_DIR:-$sb/main}/parameters.config" | head -1)
+    [ -n "$main" ] || { echo "test harness: could not read mainDir from the sandbox config" >&2; return 1; }
+    cat "$main/Analysis/0_verify_analysis.txt" 2>/dev/null
 }
 
 # Shared runner for the generated entry scripts above and for run_pipeline.
