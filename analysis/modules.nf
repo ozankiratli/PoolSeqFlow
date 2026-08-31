@@ -1,16 +1,18 @@
-// What the analysis layer can do, and which results an invocation covers.
+// What the analysis layer can do, and what it says for itself before it runs.
 //
 // A module is one analysis: it reads what a pipeline run published and writes a result of its
 // own. This file is the only list of them - the wrapper keeps no copy and refuses nothing itself.
 //
 // Installed modules are read from the store, one directory each, so adding one is adding a
 // directory. Nothing here includes a module: a module is its own pipeline and imports what it
-// wants from analysis/lib.
+// wants from analysis/lib. This file belongs to the frame and a module has no reason to import
+// it; the layout and the run selection are in the library, where both can reach them.
 
 nextflow.enable.dsl=2
 
-include { runToken } from '../scripts/variants.nf'
 include { analysisParams } from '../scripts/0_verify_environment.nf'
+include { analysisSetting; renderSetting } from './lib/paths.nf'
+include { intermediatesDir; resultsRoot } from './lib/paths.nf'
 
 // Where installed modules live: inside this release's own installation.
 def moduleStore() {
@@ -119,182 +121,9 @@ def moduleEntry(String name) {
     return moduleRoster()[requireModule(name)]
 }
 
-// The published files a module can read. `step` is the step that produced the class, and
-// therefore whose variant owns the directory it was promoted into; `subdir` is the key under
-// dir.output naming that directory.
-def artifactClasses() {
-    return [
-        frequencies: [ step: 7, subdir: 'freq',  pattern: '*_freq.tsv',  label: 'frequency tables' ],
-        depths     : [ step: 7, subdir: 'freq',  pattern: '*_depth.tsv', label: 'depth tables' ],
-        vcf        : [ step: 6, subdir: 'vcf',   pattern: '*.vcf',       label: 'called VCF' ],
-        bams       : [ step: 4, subdir: 'ready', pattern: '*_ready.bam', label: 'ready BAMs' ],
-    ]
-}
-
-// One of the analysis layer's own settings, from analysis/defaults.config and whatever the
-// project put over it.
-def analysisSetting(String key) {
-    if (!params.containsKey('analysis') || !(params.analysis instanceof Map)) {
-        throw new IllegalStateException(
-            "the analysis layer's own settings are missing. Modules are run through\n" +
-            "    PoolSeqFlow-analysis <module>\n" +
-            "which loads analysis/defaults.config from the installation before anything in your\n" +
-            "project; started any other way there are no defaults to start from.")
-    }
-    if (!params.analysis.containsKey(key)) {
-        throw new IllegalStateException(
-            "analysis.${key} is not set, and analysis/defaults.config in the installation is " +
-            "where it comes from. This copy of PoolSeqFlow is incomplete.")
-    }
-    return params.analysis[key]
-}
-
-// Everything the analysis layer writes lives under one root, on the working volume. `complete`
-// moves it to permanent storage.
-def analysisRoot() {
-    return "${params.mainDir}/Analysis".toString()
-}
-
-// The derived files modules share. Built on demand, once, and reused by every module that
-// needs them.
-def intermediatesDir() {
-    return "${analysisRoot()}/Main".toString()
-}
-
-// What this invocation's results folder is called. Empty means the module's own name, so
-// `mds` writes to Results/mds until you say otherwise.
-def resultsFolderName(String module) {
-    def name = "${analysisSetting('folderName') ?: ''}".trim()
-    if (name.isEmpty()) return module
-    checkFolderName(name)
-    return name
-}
-
-// A plain function, not a local closure: the strict parser rejects calling one by name.
-def folderNameRefusal(String name, String why) {
-    return new IllegalArgumentException(
-        "analysis.folderName is '${name}', which ${why}.\n" +
-        "It names a folder under Analysis/Results and may be a path, as 'MDS/SummerPops' is. " +
-        "Use letters, digits, dot, dash, underscore and '/'.")
-}
-
-// A folder name may be a path - 'MDS/SummerPops'. It may not leave Results/.
-def checkFolderName(String name) {
-    if (name.startsWith('/')) throw folderNameRefusal(name, 'is an absolute path')
-    def segments = name.tokenize('/')
-    if (segments.isEmpty()) throw folderNameRefusal(name, 'names nothing')
-    segments.each { segment ->
-        if (segment == '.' || segment == '..') {
-            throw folderNameRefusal(name, "contains a '${segment}' segment")
-        }
-        if (!(segment ==~ /[A-Za-z0-9._-]+/)) {
-            throw folderNameRefusal(name, "has a part that cannot be a folder name: '${segment}'")
-        }
-    }
-}
-
-// This invocation's results folder, holding one analysis.
-def resultsRoot(String module) {
-    return "${analysisRoot()}/Results/${resultsFolderName(module)}".toString()
-}
-
-// Where one results directory's analysis goes inside it. A single run has no name anywhere, so
-// its analysis sits in the folder directly; runs are told apart by the directory they produced.
-def targetResultsDir(String module, String label) {
-    if (!params.multiRun) return resultsRoot(module)
-    return "${resultsRoot(module)}/${label}".toString()
-}
-
-// The verification record, written beside the results it cleared. One per invocation, however
-// many results directories it covers.
-def verificationReportFile(String module) {
-    return "${resultsRoot(module)}/0_verify_analysis.txt".toString()
-}
-
-// A setting as it should read back to the user who wrote it.
-def renderSetting(Object value) {
-    if (value instanceof List) return "[${value.collect { v -> "'${v}'" }.join(', ')}]"
-    return "'${value}'"
-}
-
-// The runs this invocation covers, from analysis.runs.
-//
-// `all` is a keyword and a list is always run names, so a run named all is still reachable by
-// writing ['all'].
-def selectedRuns(List runDefs) {
-    def wanted = analysisSetting('runs')
-    def asList = (wanted instanceof List)
-
-    if (!asList && "${wanted}" == 'all') return runDefs
-
-    if (!params.multiRun) {
-        throw new IllegalArgumentException(
-            "analysis.runs is ${renderSetting(wanted)}, but this project is a single run:\n" +
-            "parameters.config has multiRun = false, so no run has a name to select. Leave\n" +
-            "analysis.runs at 'all', which is the one results directory this project has.")
-    }
-
-    def names = (asList ? wanted.collect { n -> "${n}".toString() } : ["${wanted}".toString()]).unique()
-    if (names.isEmpty()) {
-        throw new IllegalArgumentException(
-            "analysis.runs is an empty list, so it selects nothing. Name the runs to analyse, " +
-            "or set it to 'all'.")
-    }
-
-    def known = runDefs.collect { run -> "${run.runId}".toString() }
-    def unknown = names.findAll { n -> !known.contains(n) }
-    if (!unknown.isEmpty()) {
-        throw new IllegalArgumentException(
-            "analysis.runs names ${unknown.size() == 1 ? 'a run' : 'runs'} that ${params.multiRunFile} " +
-            "does not: ${unknown.join(', ')}\n" +
-            "The runs in that table are: ${known.join(', ')}")
-    }
-    return runDefs.findAll { run -> names.contains("${run.runId}".toString()) }
-}
-
-// The variant at `step` whose members cover these runs. Runs sharing a directory at one step
-// share one ancestor at every earlier step, so there is exactly one.
-def ancestorAt(Map plan, List members, int step) {
-    def found = plan.variants[step].find { cand -> cand.members.containsAll(members) }
-    if (found == null) {
-        throw new IllegalStateException(
-            "no step ${step} variant covers ${members.collect { m -> runToken(m) }.join(', ')}. " +
-            "The plan and the run table disagree about which runs share work.")
-    }
-    return found
-}
-
-// What a results directory is called. A single run's has no name, as the pipeline leaves it.
-def directoryLabel(Map variant) {
-    if (variant.runId == null) return 'Output'
-    return "${variant.dir.outputs}".tokenize('/').last()
-}
-
-// One entry per results directory the selected runs produced, and where each artifact class sits
-// inside it. Two runs whose tables are the same file share a directory and are covered once.
-def resultsTargets(Map plan, List selected, String module) {
-    def wanted = selected.collect { run -> run.runId }
-    def needs = moduleEntry(module).needs
-    return plan.variants[7]
-        .findAll { variant -> variant.members.any { member -> wanted.contains(member) } }
-        .sort { a, b -> "${a.dir.outputs}" <=> "${b.dir.outputs}" }
-        .collect { variant ->
-            def classes = artifactClasses().collectEntries { name, spec ->
-                def owner = ancestorAt(plan, variant.members, spec.step)
-                [ name, [ label   : spec.label,
-                          pattern : spec.pattern,
-                          dir     : "${owner.dir.output[spec.subdir]}".toString(),
-                          required: needs.contains(name) ] ]
-            }
-            def label = directoryLabel(variant)
-            return [ label   : label,
-                     dir     : "${variant.dir.outputs}".toString(),
-                     members : variant.members.collect { member -> runToken(member) },
-                     selected: variant.members.findAll { member -> wanted.contains(member) }
-                                              .collect { member -> runToken(member) },
-                     classes : classes,
-                     results : targetResultsDir(module, label) ]
-        }
+// The artifact classes the named module cannot run without, from its manifest.
+def moduleNeeds(String name) {
+    return moduleEntry(name).needs
 }
 
 // The configuration the pipeline recorded beside the results, recomputed from the project as it

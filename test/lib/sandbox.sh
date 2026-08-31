@@ -355,23 +355,39 @@ ENTRY
     _run_entry "$sb" verify_only.nf
 }
 
-# Run one analysis module against a sandbox. Output and status behave as run_pipeline's do.
+# The three configuration layers ./PoolSeqFlow-analysis assembles, into ANALYSIS_CFG: the
+# installation's defaults, then the project's analysis.config, then the module's own
+# <module>.config, each optional after the first and each winning over the one before. A case
+# that writes one of those files into the project gets it read.
 #
-# The three configuration layers are assembled exactly as ./PoolSeqFlow-analysis assembles
-# them: the installation's defaults, then the project's analysis.config, then the module's
-# own <module>.config, each optional after the first and each winning over the one before.
-# A case that writes one of those files into the project gets it read.
-run_analysis() {
-    local sb="$1" module="$2"; shift 2
-    local proj="${SANDBOX_PROJECT_DIR:-$sb/main}"
-    local -a cfg=(-c "$sb/install/analysis/defaults.config")
+# `proj` reads $1 rather than $sb: the two are declared in one `local`, and the second would
+# see the first as unset.
+_analysis_configs() {
+    local sb="$1" module="$2" proj="${SANDBOX_PROJECT_DIR:-$1/main}"
+    ANALYSIS_CFG=(-c "$sb/install/analysis/defaults.config")
     if [ -f "$proj/analysis.config" ]; then
-        cfg+=(-c "$proj/analysis.config")
+        ANALYSIS_CFG+=(-c "$proj/analysis.config")
     fi
     if [ -f "$proj/${module}.config" ]; then
-        cfg+=(-c "$proj/${module}.config")
+        ANALYSIS_CFG+=(-c "$proj/${module}.config")
     fi
-    _run_entry "$sb" analysis.nf "${cfg[@]}" --module "$module" "$@"
+    return 0
+}
+
+# Run the analysis layer's verification for one module. Output and status behave as
+# run_pipeline's do.
+run_analysis() {
+    local sb="$1" module="$2"; shift 2
+    _analysis_configs "$sb" "$module"
+    _run_entry "$sb" analysis.nf "${ANALYSIS_CFG[@]}" --module "$module" "$@"
+}
+
+# Run an installed module's own pipeline, the second of the two invocations: the same
+# configuration, but the entry script is the module's main.nf inside the store.
+run_module() {
+    local sb="$1" module="$2"; shift 2
+    _analysis_configs "$sb" "$module"
+    _run_entry "$sb" "analysis/modules/$module/main.nf" "${ANALYSIS_CFG[@]}" "$@"
 }
 
 # The analysis layer's verification report, found through the config the case actually wrote.
@@ -413,6 +429,10 @@ _run_entry() {
         export JAVA_HOME="$TEST_CONDA_ENV" JAVA_CMD="$TEST_CONDA_ENV/bin/java"
         export PATH="$TEST_CONDA_ENV/bin:$PATH"
         export NXF_HOME="$sb/nxfhome" NXF_VER="${TEST_NXF_VER:-26.04.6}"
+        # What both wrappers export: a module is launched as its own entry script, so nothing
+        # Nextflow computes points at the installation. SANDBOX_INSTALL_OVERRIDE is for the case
+        # that launches without one, and is honoured when set to an empty string.
+        export POOLSEQFLOW_HOME="${SANDBOX_INSTALL_OVERRIDE-$sb/install}"
         nextflow -q run "$sb/install/$entry" "$@" > "$out" 2>&1
     )
     printf '%s' "$?"

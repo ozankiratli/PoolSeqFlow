@@ -120,7 +120,8 @@ analysis_ready() {
 }
 
 # Install a module into the sandbox's own module store. Takes the name and the manifest body,
-# so a case can write a malformed one on purpose.
+# so a case can write a malformed one on purpose, and optionally the main.nf a case needs the
+# module to be.
 #
 # Nothing ships a module: the release carries the frame and an empty store, and a case that
 # needs one makes it here.
@@ -129,7 +130,11 @@ analysis_install_module() {
     dir="$ANALYSIS_SB/install/analysis/modules/$name"
     mkdir -p "$dir"
     printf '%s\n' "$manifest" > "$dir/manifest.json"
-    printf '%s\n' 'nextflow.enable.dsl=2' 'workflow { println "module ran" }' > "$dir/main.nf"
+    if [ -n "${3:-}" ]; then
+        printf '%s\n' "$3" > "$dir/main.nf"
+    else
+        printf '%s\n' 'nextflow.enable.dsl=2' 'workflow { println "module ran" }' > "$dir/main.nf"
+    fi
 }
 
 # Write the project's analysis.config with one run selection in it.
@@ -166,17 +171,29 @@ test_the_pipeline_does_not_read_the_analysis_layer() {
 
 # The analysis layer reads the pipeline, which is the direction that is allowed.
 test_the_analysis_layer_reads_the_pipeline_partition() {
-    local entry; entry=$(cat "$REPO_ROOT/analysis.nf")
-    assert_contains "$entry" "from './scripts/variants.nf'" \
+    local lib; lib=$(cat "$REPO_ROOT/analysis/lib/plan.nf")
+    assert_contains "$lib" "from '../../scripts/variants.nf'" \
         "the results directory of a run comes from the pipeline's own plan"
-    assert_contains "$entry" "from './scripts/resolve_parameters.nf'" \
+    assert_contains "$lib" "from '../../scripts/resolve_parameters.nf'" \
         "and so do the run definitions"
+}
+
+# The frame and a module ask one function where the results are, so a module can never be
+# reading a directory the verification did not clear.
+test_the_frame_and_a_module_share_one_answer() {
+    assert_contains "$(cat "$REPO_ROOT/analysis.nf")" "analysisPlan(module, moduleNeeds(module))" \
+        "the entry point takes its targets from the library"
+    local hits
+    hits=$(cd "$REPO_ROOT" && grep -rln "def analysisPlan" . --exclude-dir=.git --exclude-dir=test \
+        --exclude-dir=docs --exclude-dir=site --exclude-dir=.claude 2>/dev/null | sort)
+    assert_eq "./analysis/lib/plan.nf" "$hits" "and there is one definition of it"
 }
 
 test_the_analysis_layer_ships_with_the_release() {
     local f
     for f in analysis.nf analysis/modules.nf analysis/0_verify_analysis.nf \
-             analysis/defaults.config analysis/analysis.config.template; do
+             analysis/defaults.config analysis/analysis.config.template \
+             analysis/lib/paths.nf analysis/lib/plan.nf; do
         assert_file "$REPO_ROOT/$f" "$f must ship"
     done
     assert_contains "$(cat "$REPO_ROOT/PoolSeqFlow")" "lib analysis install" \
@@ -211,6 +228,10 @@ test_the_wrapper_layers_three_configurations() {
     assert_contains "$wrapper" 'analysis/defaults.config' "the installation's defaults"
     assert_contains "$wrapper" '-f analysis.config' "then the project's"
     assert_contains "$wrapper" '-f "${COMMAND}.config"' "then the module's"
+    # analysis/defaults.config reads this back. It is the run's only way to the installation,
+    # a module having become the entry script.
+    assert_contains "$wrapper" 'export POOLSEQFLOW_HOME="$INSTALL"' \
+        "and the installation goes into the environment"
 }
 
 # An analysis run must not overwrite the pipeline's dag, trace, timeline and report, which
@@ -219,11 +240,41 @@ test_the_defaults_keep_the_session_files_out_of_the_pipeline_reports() {
     local cfg; cfg=$(cat "$REPO_ROOT/analysis/defaults.config")
     local key
     for key in trace report timeline dag; do
-        assert_contains "$cfg" "${key}.file" "${key}.file must be redirected"
+        assert_contains "$cfg" "PoolSeqFlow_analysis_${key}" "the ${key} must be redirected"
     done
     assert_contains "$cfg" 'Analysis/Session' "into Analysis/Session"
     assert_contains "$cfg" 'workDir = "${params.mainDir}/Analysis/work"' \
         "and the work directory into Analysis/work"
+}
+
+# A module is launched as its own entry script, so Nextflow reads a nextflow.config beside the
+# module and in the project - never the installation's. Anything the pipeline gets from
+# nextflow.config a module gets from here or not at all, and the ones below are silent when
+# absent: no conda for a task that asks for it, no bin/ on PATH, and a null `cores` scope that
+# fails inside pipeline code with nothing pointing back here.
+test_the_defaults_carry_what_a_module_run_has_no_other_source_for() {
+    local cfg; cfg=$(cat "$REPO_ROOT/analysis/defaults.config")
+    assert_contains "$cfg" 'params.cores = params.containsKey' "the cores scope"
+    assert_contains "$cfg" 'params.dir.bin = "${params.analysis.installDir}/bin"' \
+        "bin/ in the installation rather than beside the module"
+    assert_contains "$cfg" 'PATH="${params.dir.bin}:\$PATH"' "and on the task PATH"
+    assert_contains "$cfg" 'conda.enabled = true' "conda, which every analysis module needs"
+    assert_contains "$cfg" 'resourceLimits' "and the ceiling on what a task may ask for"
+}
+
+# The installation is what the environment variable says, and a run that cannot find it stops
+# with that sentence rather than with a helper missing from a path nobody recognises.
+test_a_run_that_cannot_find_its_installation_refuses() {
+    analysis_ready single || return
+    local status
+    export SANDBOX_INSTALL_OVERRIDE=""
+    status=$(run_analysis "$ANALYSIS_SB" verify)
+    unset SANDBOX_INSTALL_OVERRIDE
+    assert_status 1 "$status" "an installation that is not there must stop the run"
+    assert_contains "$(analysis_output)" "POOLSEQFLOW_HOME is not set" \
+        "naming what was missing"
+    assert_contains "$(analysis_output)" "PoolSeqFlow-analysis <module>" \
+        "and how a run is started"
 }
 
 test_the_template_documents_the_run_selection() {
@@ -563,4 +614,75 @@ test_an_analysis_run_leaves_the_pipeline_session_reports_alone() {
     assert_eq "$before" "$after" "the pipeline's session reports must be untouched"
     assert_file "$ANALYSIS_SB/main/Analysis/Session/PoolSeqFlow_analysis_trace.txt" \
         "the analysis run keeps its own trace under Analysis/Session"
+}
+
+# ---------------------------------------------------------------------------------------
+# The library a module imports.
+#
+# A module is its own pipeline, launched directly, and analysis/lib is what it reads the
+# project through. These cases run a module for real - the second of the two invocations -
+# against a store the case populates itself.
+
+# The probe module: it computes what it would read and where it would write, and prints both.
+# Nothing statistical, so the case measures the library and not an analysis.
+ANALYSIS_PROBE_MAIN='nextflow.enable.dsl=2
+
+include { analysisPlan } from '"'"'../../lib/plan.nf'"'"'
+
+workflow {
+    analysisPlan('"'"'probe'"'"', ['"'"'frequencies'"'"']).targets.each { target ->
+        println "PROBE reads ${target.classes.frequencies.dir}"
+        println "PROBE writes ${target.results}"
+    }
+}'
+
+ANALYSIS_PROBE_MANIFEST='{ "name": "probe", "version": "0.1.0", "contract": "freq-1",
+  "summary": "print what the library says this project holds", "needs": ["frequencies"] }'
+
+# THE ARCHITECTURE, IN ONE CASE. The module is the entry script and the library sits at a
+# fixed place relative to it, so it resolves the same in a checkout and in an installation.
+test_a_module_reads_the_library_from_its_own_directory() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    analysis_install_module probe "$ANALYSIS_PROBE_MANIFEST" "$ANALYSIS_PROBE_MAIN"
+    local status; status=$(run_module "$ANALYSIS_SB" probe)
+    assert_status 0 "$status" "a module importing the library should run"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "PROBE reads $ANALYSIS_SB/store/Output/Frequencies" \
+        "the module is told where the published tables are"
+    assert_contains "$out" "PROBE writes $ANALYSIS_SB/main/Analysis/Results/probe" \
+        "and where its own results go"
+}
+
+# The verification and the module compute the same partition from the same function, so a
+# module can never write into a folder the verification did not clear.
+test_a_module_covers_exactly_what_the_verification_cleared() {
+    analysis_ready multi || return
+    analysis_install_module probe "$ANALYSIS_PROBE_MANIFEST" "$ANALYSIS_PROBE_MAIN"
+    run_analysis "$ANALYSIS_SB" probe > /dev/null
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    local status; status=$(run_module "$ANALYSIS_SB" probe)
+    assert_status 0 "$status" "the module should run over both directories"
+
+    local out written
+    out=$(analysis_output)
+    assert_count 2 "$(printf '%s\n' "$out" | grep -c '^PROBE writes ')" \
+        "two results directories, two analyses"
+    written=$(printf '%s\n' "$out" | sed -n 's|^PROBE writes ||p' | sort)
+    local expected
+    expected=$(printf '%s\n' "$ANALYSIS_SB/main/Analysis/Results/probe/Shared_1" \
+                              "$ANALYSIS_SB/main/Analysis/Results/probe/strict" | sort)
+    assert_eq "$expected" "$written" "one folder per results directory, named as the pipeline named it"
+    assert_contains "$report" "3 of 3 runs, in 2 results directories" \
+        "and the verification cleared the same two"
+}
+
+# The frame never includes a module. If it did, an absent module would be a compile error in
+# every other one, which is what the store exists to avoid.
+test_the_library_does_not_reach_into_the_module_store() {
+    local hits
+    hits=$(cd "$REPO_ROOT" && grep -rn "modules/" analysis/lib 2>/dev/null)
+    assert_eq "" "$hits" "analysis/lib must not name the store:"$'\n'"$hits"
+    hits=$(cd "$REPO_ROOT" && grep -rn "from '\./lib/\|from '\.\./lib/" analysis/modules.nf 2>/dev/null)
+    assert_contains "$hits" "lib/paths.nf" "the frame reads the library, which is the allowed direction"
 }

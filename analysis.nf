@@ -8,12 +8,11 @@
 
 nextflow.enable.dsl=2
 
-include { runDefinitions; resolveParameters } from './scripts/resolve_parameters.nf'
-include { variantPlan } from './scripts/variants.nf'
-include { requireModule; selectedRuns; resultsTargets } from './analysis/modules.nf'
+include { requireModule; moduleNeeds } from './analysis/modules.nf'
 include { recordedManifest; configReportLines } from './analysis/modules.nf'
 include { moduleReportLines; outputReportLines; selectionReportLines } from './analysis/modules.nf'
-include { intermediatesDir; verificationReportFile } from './analysis/modules.nf'
+include { intermediatesDir; verificationReportFile } from './analysis/lib/paths.nf'
+include { analysisPlan } from './analysis/lib/plan.nf'
 include { VerifyAnalysis } from './analysis/0_verify_analysis.nf'
 
 workflow {
@@ -21,24 +20,15 @@ workflow {
     // nothing.
     def module = requireModule(params.containsKey('module') ? params.module : null)
 
-    // In this order, as poolseqflow.nf calls them: runDefinitions() must copy each run's
-    // parameters before resolveParameters() fills the computed ones in.
-    def run_defs = runDefinitions()
-    resolveParameters()
-
-    // The pipeline's own partition of the runs, which is what decides the results directory
-    // each one wrote to.
-    def plan = variantPlan(run_defs)
-
-    def selected = selectedRuns(run_defs)
-    def targets  = resultsTargets(plan, selected, module)
+    // The same call a module makes, so the results this checks are the results it reads.
+    def plan = analysisPlan(module, moduleNeeds(module))
 
     VerifyAnalysis(channel.value([
         manifest     : recordedManifest().join('\n'),
         header       : (moduleReportLines(module) + configReportLines() +
                         outputReportLines(module) +
-                        selectionReportLines(run_defs, selected, targets)).join('\n'),
+                        selectionReportLines(plan.runs, plan.selected, plan.targets)).join('\n'),
         reportFile   : verificationReportFile(module),
         intermediates: intermediatesDir(),
-        targets      : targets ]))
+        targets      : plan.targets ]))
 }
