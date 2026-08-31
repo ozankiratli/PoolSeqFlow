@@ -532,6 +532,21 @@ make_stub_conda() {
     chmod +x "$dir/bin/conda"
 }
 
+# A fake `nextflow` that runs nothing and records the arguments of each call, one per line.
+# It goes in the same bin directory as the stub conda, so PATH finds it first.
+make_stub_nextflow() {
+    local dir="$1" log="$2"
+    mkdir -p "$dir"
+    : > "$log"
+    {
+        echo '#!/bin/bash'
+        echo "echo \"\$*\" >> \"$log\""
+        echo 'echo "STUB nextflow: $*"'
+        echo 'exit 0'
+    } > "$dir/nextflow"
+    chmod +x "$dir/nextflow"
+}
+
 # Run the real ./PoolSeqFlow wrapper against a real project sandbox.
 #
 # The conda side is stubbed exactly as the launcher suite stubs it - `activate` is a no-op,
@@ -664,16 +679,24 @@ run_launcher_on_a_tty() {
 # The sandbox is also a project, because a module arm checks for one before it checks
 # anything else and would otherwise never reach what a case is testing. A case about
 # standing outside a project builds its own bare directory instead.
+#
+# Two variables let one call reach further, set by the case and unset after it:
+#
+#     LAUNCHER_STORE_MODULE             plant this module in the sandbox's own store, and
+#                                       write the <module>.config layer beside the project's
+#     LAUNCHER_STORE_MODULE_INCOMPLETE  plant it without a main.nf
 run_analysis_launcher_with_envs() {
     local envs_spec="$1"; shift
     local sb
     sb=$(guard_path "$TEST_TMPDIR/analysis-launcher")
     rm -rf "$sb"
-    mkdir -p "$sb/install" "$sb/lib"
+    mkdir -p "$sb/install" "$sb/lib" "$sb/analysis"
     cp "$REPO_ROOT/PoolSeqFlow" "$sb/"
     cp "$REPO_ROOT/lib/wrapper_lib.sh" "$sb/lib/"
     : > "$sb/analysis.nf"
     printf '// stub project marker\n' > "$sb/parameters.config"
+    printf '// stub analysis config\n' > "$sb/analysis.config"
+    printf '// stub defaults\n' > "$sb/analysis/defaults.config"
     printf 'name: stub\n' > "$sb/install/environment-analysis.yml"
     # Stubbed for the same reason install/check_install.sh is: it needs a real R environment,
     # and these tests are about which environment is chosen.
@@ -681,9 +704,18 @@ run_analysis_launcher_with_envs() {
         > "$sb/install/check_analysis_install.sh"
     chmod +x "$sb/install/check_analysis_install.sh"
 
+    if [ -n "${LAUNCHER_STORE_MODULE:-}" ]; then
+        mkdir -p "$sb/analysis/modules/$LAUNCHER_STORE_MODULE"
+        [ -n "${LAUNCHER_STORE_MODULE_INCOMPLETE:-}" ] || \
+            : > "$sb/analysis/modules/$LAUNCHER_STORE_MODULE/main.nf"
+        printf '// stub module config\n' > "$sb/${LAUNCHER_STORE_MODULE}.config"
+    fi
+
     # shellcheck disable=SC2086
     make_stub_conda "$sb/stub" $envs_spec
+    make_stub_nextflow "$sb/stub/bin" "$sb/stub/nextflow.log"
     LAUNCHER_CONDA_LOG="$sb/stub/conda.log"
+    LAUNCHER_NEXTFLOW_LOG="$sb/stub/nextflow.log"
     LAUNCHER_PREFIX="$sb/prefix"
     LAUNCHER_OUTPUT=$(cd "$sb" && PATH="$sb/stub/bin:$PATH" \
                       POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow analysis "$@" 2>&1)

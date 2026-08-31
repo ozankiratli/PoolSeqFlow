@@ -1000,10 +1000,34 @@ EOF
                 if [ -f "${ANALYSIS_COMMAND}.config" ]; then
                     CONFIGS+=(-c "${ANALYSIS_COMMAND}.config")
                 fi
-                # Absolute: the pipeline lives with the installation, the project is where we
-                # stand.
+                # Two Nextflow runs, in order. analysis.nf checks the project and clears the
+                # results folder; the module's own main.nf then produces the results, reading
+                # the same three config layers. Absolute paths: the pipeline lives with the
+                # installation, the project is where we stand.
+                echo "Checking $ANALYSIS_COMMAND in $(pwd)..."
+                echo ""
                 nextflow run "$INSTALL/analysis.nf" "${CONFIGS[@]}" --module "$ANALYSIS_COMMAND"
                 wait
+                # A module in the store has a directory and runs; a module the frame provides
+                # has neither, and the check above was all of it. --module is not passed on:
+                # a module's main.nf names itself.
+                MODULE_DIR="$INSTALL/analysis/modules/$ANALYSIS_COMMAND"
+                if [ -d "$MODULE_DIR" ]; then
+                    if [ ! -f "$MODULE_DIR/main.nf" ]; then
+                        echo "" >&2
+                        echo "ERROR: '$ANALYSIS_COMMAND' has no main.nf." >&2
+                        echo "  A module is a pipeline of its own, and main.nf is that pipeline." >&2
+                        echo "  Looked in: $MODULE_DIR" >&2
+                        echo "  The module is installed but incomplete; install it again." >&2
+                        conda deactivate
+                        exit 1
+                    fi
+                    echo ""
+                    echo "Running $ANALYSIS_COMMAND in $(pwd)..."
+                    echo ""
+                    nextflow run "$MODULE_DIR/main.nf" "${CONFIGS[@]}"
+                    wait
+                fi
                 conda deactivate
                 ;;
         esac

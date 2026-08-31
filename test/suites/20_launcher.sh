@@ -427,6 +427,64 @@ test_a_module_refuses_to_borrow_the_pipeline_environment() {
         "and activate nothing at all"
 }
 
+# Running a module is two Nextflow runs: analysis.nf checks the project and clears the results
+# folder, then the module's own main.nf produces the results. Nothing else in the wrapper
+# launches twice, so the order is asserted rather than the count alone.
+test_a_module_runs_the_verifier_then_its_own_pipeline() {
+    LAUNCHER_STORE_MODULE=probe
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" probe
+    unset LAUNCHER_STORE_MODULE
+    assert_status 0 "$LAUNCHER_STATUS" "a module with a main.nf should run"
+    assert_count 2 "$(grep -c '^run ' "$LAUNCHER_NEXTFLOW_LOG")" "two runs, not one"
+    local verifier module_run
+    verifier=$(sed -n 1p "$LAUNCHER_NEXTFLOW_LOG")
+    module_run=$(sed -n 2p "$LAUNCHER_NEXTFLOW_LOG")
+    assert_contains "$verifier" "analysis.nf" "the verifier goes first"
+    assert_contains "$verifier" "--module probe" "and it is the one told which module"
+    assert_contains "$module_run" "analysis/modules/probe/main.nf" \
+        "the module's own pipeline goes second"
+    assert_not_contains "$module_run" "--module" \
+        "which names itself, so it is not told again"
+}
+
+# A module the frame provides has no directory in the store and nothing to run after the
+# checks. `verify` is that module, and it is how a project is asked whether it is ready.
+test_a_builtin_module_runs_the_verifier_alone() {
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" verify
+    assert_status 0 "$LAUNCHER_STATUS" "verify should run"
+    assert_count 1 "$(grep -c '^run ' "$LAUNCHER_NEXTFLOW_LOG")" "one run, and no second"
+    assert_contains "$(cat "$LAUNCHER_NEXTFLOW_LOG")" "--module verify" \
+        "the verifier is the whole of it"
+}
+
+# Both invocations are assembled from one array, so they cannot drift apart - but a second
+# `nextflow run` written by hand is exactly where they would.
+test_both_invocations_read_the_same_configuration() {
+    LAUNCHER_STORE_MODULE=probe
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" probe
+    unset LAUNCHER_STORE_MODULE
+    local first second
+    first=$(sed -n 1p "$LAUNCHER_NEXTFLOW_LOG" | grep -o -- '-c [^ ]*')
+    second=$(sed -n 2p "$LAUNCHER_NEXTFLOW_LOG" | grep -o -- '-c [^ ]*')
+    assert_eq "$first" "$second" "both runs must read the same config layers, in the same order"
+    assert_count 3 "$(printf '%s\n' "$first" | grep -c .)" \
+        "defaults.config, analysis.config and probe.config"
+}
+
+# The store directory is how a module is found, so a directory without the pipeline in it is a
+# broken install rather than a module that does nothing. Silence here would look like success.
+test_an_installed_module_without_a_main_nf_fails_loudly() {
+    LAUNCHER_STORE_MODULE=probe
+    LAUNCHER_STORE_MODULE_INCOMPLETE=1
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" probe
+    unset LAUNCHER_STORE_MODULE LAUNCHER_STORE_MODULE_INCOMPLETE
+    assert_status 1 "$LAUNCHER_STATUS" "an installed module with no main.nf should fail"
+    assert_contains "$LAUNCHER_OUTPUT" "has no main.nf" "and say what is missing"
+    assert_contains "$LAUNCHER_OUTPUT" "analysis/modules/probe" "and where it looked"
+    assert_count 1 "$(grep -c '^run ' "$LAUNCHER_NEXTFLOW_LOG")" \
+        "the verifier still ran, and nothing ran after it"
+}
+
 # Analysis runs where the pipeline ran, and reads what it produced. Built by hand rather
 # than through the harness, whose sandbox is a project.
 test_a_module_refuses_outside_a_project() {
