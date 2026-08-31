@@ -25,8 +25,11 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 MAIN="PoolSeqFlow"
+# Every wrapper carries the release twice, in its header comment and in VERSION=. release.yml
+# and 00_static both refuse a disagreement between any of them.
+WRAPPERS="PoolSeqFlow PoolSeqFlow-analysis"
 LOG="CHANGELOG.md"
-for f in "$MAIN" "$LOG"; do
+for f in $WRAPPERS "$LOG"; do
     [ -f "$f" ] || { echo "ERROR: $f not found in $ROOT" >&2; exit 1; }
 done
 
@@ -86,7 +89,13 @@ else
     printf '\n%s\n' "$LINK" >> "$LOG"
 fi
 
-sed -i -E "s|^# Version: .*|# Version: $NEW|; s|^VERSION=\".*\"|VERSION=\"$NEW\"|" "$MAIN"
+for wrapper in $WRAPPERS; do
+    sed -i -E "s|^# Version: .*|# Version: $NEW|; s|^VERSION=\".*\"|VERSION=\"$NEW\"|" "$wrapper"
+    grep -q "^VERSION=\"$NEW\"$" "$wrapper" || {
+        echo "ERROR: could not update VERSION= in $wrapper" >&2; exit 1; }
+    grep -q "^# Version: $NEW$" "$wrapper" || {
+        echo "ERROR: could not update the header comment in $wrapper" >&2; exit 1; }
+done
 
 # The version also lives in nextflow.config's manifest, and release.yml refuses to publish if it
 # disagrees with $MAIN.
@@ -97,10 +106,12 @@ grep -q "version *= *'$NEW'" "$NFCONFIG" || {
     echo "ERROR: could not update the manifest version in $NFCONFIG" >&2; exit 1; }
 
 echo "$CURRENT -> $NEW"
-echo "  $MAIN  : $(grep -cF "$NEW" "$MAIN") references updated"
+for wrapper in $WRAPPERS; do
+    echo "  $wrapper : $(grep -cF "$NEW" "$wrapper") references updated"
+done
 echo "  $NFCONFIG : manifest version updated"
 echo "  $LOG   : $(printf '%s\n' "$COMMITS" | wc -l) commits since ${LAST_TAG:-start}, link definition added"
 echo
 echo "Review, then:"
-echo "  git add $MAIN $NFCONFIG $LOG && git commit -m 'Version bump $NEW'"
+echo "  git add $WRAPPERS $NFCONFIG $LOG && git commit -m 'Version bump $NEW'"
 echo "  git tag v$NEW"

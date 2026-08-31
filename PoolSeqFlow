@@ -732,6 +732,14 @@ EOF
         else
             echo "Nothing you wrote in $(pwd) is removed either, parameters.config included."
         fi
+        if [ -n "$MAINDIR" ] && [ -d "$MAINDIR/Analysis" ]; then
+            echo ""
+            echo "$MAINDIR/Analysis is left alone, and it is worth knowing what that"
+            echo "means: everything in it was computed from the results this command deletes, so"
+            echo "it survives as an analysis of numbers that will no longer exist. The analysis"
+            echo "layer refuses to write into a folder that already holds an analysis, so move or"
+            echo "remove the ones you are finished with before running a module again."
+        fi
         echo ""
         printf 'Type DELETE_MY_ANALYSIS to confirm: '
         if ! read -r CONFIRM; then
