@@ -61,11 +61,32 @@ export -f have_tools
 
 TEST_TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/poolseqflow-test.XXXXXX")
 export TEST_TMPDIR
+
+# A second working area on a DIFFERENT filesystem, when the machine has one to offer. Moving an
+# artifact between two volumes is a different code path from moving it within one, and it is the
+# path both atomic_mv.sh data-loss defects lived in; TEST_TMPDIR alone cannot reach it.
+#
+# Empty when no second filesystem is found, and the cases that need one skip. POOLSEQFLOW_TEST_XDEV
+# names a directory to look in, for a machine whose second volume is somewhere else.
+TEST_XDEV_TMPDIR=""
+for candidate in "${POOLSEQFLOW_TEST_XDEV:-}" /dev/shm /var/tmp; do
+    [ -n "$candidate" ] && [ -d "$candidate" ] && [ -w "$candidate" ] || continue
+    [ "$(stat -c %d "$candidate")" != "$(stat -c %d "$TEST_TMPDIR")" ] || continue
+    TEST_XDEV_TMPDIR=$(mktemp -d "$candidate/poolseqflow-test-xdev.XXXXXX") || continue
+    # Resolved, because guard_path compares against a resolved path and /dev/shm is a symlink
+    # to /run/shm on some distributions.
+    TEST_XDEV_TMPDIR=$(cd "$TEST_XDEV_TMPDIR" && pwd -P)
+    break
+done
+export TEST_XDEV_TMPDIR
+
 cleanup() {
     if [ "$KEEP" -eq 1 ]; then
         printf '\nworking directory kept at %s\n' "$TEST_TMPDIR"
+        [ -n "$TEST_XDEV_TMPDIR" ] && printf 'second filesystem kept at %s\n' "$TEST_XDEV_TMPDIR"
     else
         rm -rf "$TEST_TMPDIR"
+        [ -n "$TEST_XDEV_TMPDIR" ] && rm -rf "$TEST_XDEV_TMPDIR"
     fi
 }
 trap cleanup EXIT

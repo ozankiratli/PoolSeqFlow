@@ -26,8 +26,10 @@ dependencies:
   - coreutils=9.11=h280c20c_0
   - curl=8.21.0=heca4667_4
   - cutadapt=5.2=py311hc303176_2
+  - diffutils=3.12=h73b1eb8_0
   - dnaio=1.2.4=py311hc303176_0
   - fastqc=0.12.1=hdfd78af_0
+  - findutils=4.10.0=h86094a7_1
   - font-ttf-dejavu-sans-mono=2.37=hab24e00_0
   - font-ttf-inconsolata=3.000=h77eed37_0
   - font-ttf-source-code-pro=2.038=h77eed37_0
@@ -111,6 +113,7 @@ dependencies:
   - python-zlib-ng=1.0.0=py311h15805fc_2
   - python_abi=3.11=8_cp311
   - readline=8.3=h853b02a_0
+  - rsync=3.4.4=hffd6c76_1
   - samtools=1.24=h9dcdb79_1
   - sed=4.10=h19d0853_0
   - setuptools=84.0.0=pyh332efcf_0

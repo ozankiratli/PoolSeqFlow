@@ -8,11 +8,17 @@
 # Refuse any path that is not inside the suite's own temporary area. The pipeline deletes
 # and overwrites whatever mainDir/storageDir point at, and a real project holds sequencing
 # data that took days to produce, so this is checked rather than assumed.
+#
+# Two areas, not one: TEST_XDEV_TMPDIR is a second root on another filesystem, created by
+# run_tests.sh with mktemp and removed with it, so a case can exercise a move between volumes.
+# It is empty on a machine with only one filesystem, and the case below still refuses the
+# repository whichever area a path claims to be in.
 guard_path() {
     local path="$1" resolved
     resolved=$(cd "$(dirname "$path")" 2>/dev/null && pwd -P)/$(basename "$path")
     case "$resolved" in
         "$TEST_TMPDIR"/*) ;;
+        "${TEST_XDEV_TMPDIR:-/nonexistent}"/*) ;;
         *)
             echo "test harness: refusing to use '$resolved' - outside TEST_TMPDIR" >&2
             exit 1

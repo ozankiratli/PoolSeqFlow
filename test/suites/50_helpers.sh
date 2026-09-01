@@ -988,6 +988,347 @@ test_atomic_mv_moves_a_directory() {
     assert_no_file "$HELPERS_DIR/src/db" "and the source should be gone"
 }
 
+# THE BUG THIS GUARDS, measured 2026-09-01: the staged copy was made by MOVING the source into
+# it, so between that move and the rename into place the staged copy was the only copy - and
+# the EXIT trap deleted it. A failed rename destroyed the artifact outright, with no signal and
+# no race: source gone, destination absent, exit 1. Killing a move mid-way lost a 400 MB file
+# in two runs of five, and left a directory source 59% deleted with nothing at the destination.
+#
+# This case is the deterministic half of that. `atomic_mv.sh src dst/` used to resolve the
+# destination to dst/src WITHOUT re-testing it, so an existing directory of that name took the
+# source INSIDE itself: exit 0, source gone, artifact under a name no skip check looks for.
+test_atomic_mv_refuses_a_destination_that_is_already_a_directory() {
+    helpers_sandbox
+    mkdir -p "$HELPERS_DIR/src/payload" "$HELPERS_DIR/dst/payload/already_here"
+    printf 'the only copy\n' > "$HELPERS_DIR/src/payload/real.txt"
+    local status
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$HELPERS_DIR/src/payload" "$HELPERS_DIR/dst/" \
+        > /dev/null 2>&1 && status=0 || status=$?
+
+    assert_status 1 "$status" "moving onto an existing directory should be refused"
+    assert_file "$HELPERS_DIR/src/payload/real.txt" \
+        "and the source must survive a refusal - it may be the only copy there is"
+    assert_no_file "$HELPERS_DIR/dst/payload/payload" "nothing may be nested inside it"
+    assert_dir "$HELPERS_DIR/dst/payload/already_here" "and what was there is untouched"
+}
+
+# The refusal comes from rename(2), which reports ENOTDIR itself, so the wording is the
+# kernel's rather than this script's.
+test_atomic_mv_refuses_a_directory_onto_a_file() {
+    helpers_sandbox
+    mkdir -p "$HELPERS_DIR/src/tree" "$HELPERS_DIR/dst"
+    printf 'inside' > "$HELPERS_DIR/src/tree/f"
+    printf 'in the way' > "$HELPERS_DIR/dst/tree"
+    local status err
+    err=$(bash "$REPO_ROOT/bin/atomic_mv.sh" "$HELPERS_DIR/src/tree" "$HELPERS_DIR/dst/tree" 2>&1) \
+        && status=0 || status=$?
+
+    assert_status 1 "$status" "a directory must not replace a file"
+    assert_contains "$err" "Not a directory" "and the refusal says which way round it is"
+    assert_contains "$err" "$HELPERS_DIR/src/tree" "naming the source"
+    assert_file "$HELPERS_DIR/src/tree/f" "the source survives"
+    assert_eq "in the way" "$(cat "$HELPERS_DIR/dst/tree" 2>/dev/null)" "the destination is untouched"
+    assert_count 0 "$(find "$HELPERS_DIR/dst" -name '.atomic_mv.*' | wc -l)" "and nothing was staged"
+}
+
+# Within one filesystem there is nothing to stage: a rename is already atomic. Asserted by
+# inode, because a copy would answer every other question here identically while doubling the
+# I/O on every promoted BAM.
+test_atomic_mv_within_one_filesystem_is_a_rename() {
+    helpers_sandbox
+    mkdir -p "$HELPERS_DIR/src" "$HELPERS_DIR/dst"
+    printf 'payload\n' > "$HELPERS_DIR/src/f"
+    local before after
+    before=$(stat -c %i "$HELPERS_DIR/src/f")
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$HELPERS_DIR/src/f" "$HELPERS_DIR/dst/f"
+    after=$(stat -c %i "$HELPERS_DIR/dst/f")
+
+    assert_eq "$before" "$after" "the file should be renamed, not copied"
+    assert_no_file "$HELPERS_DIR/src/f" "and the source name is gone"
+    assert_count 0 "$(find "$HELPERS_DIR/dst" -name '.atomic_mv.*' | wc -l)" \
+        "with nothing staged at all"
+}
+
+# A working area on the OTHER filesystem, beside the usual one. Moving between two volumes is a
+# different code path - copy, hash both sides, rename, then remove the source - and it is the one
+# both data-loss defects lived in. run_tests.sh finds a second filesystem if the machine has one.
+XDEV_DIR=""
+xdev_sandbox() {
+    if [ -z "${TEST_XDEV_TMPDIR:-}" ]; then
+        skip_case "no second filesystem to move across"
+        return 1
+    fi
+    helpers_sandbox
+    XDEV_DIR=$(guard_path "$TEST_XDEV_TMPDIR/helpers")
+    rm -rf "$XDEV_DIR"
+    mkdir -p "$XDEV_DIR"
+    return 0
+}
+
+# Across filesystems there is no rename to be had, so the artifact is copied and the source is
+# removed only afterwards. A different inode is the proof that it was copied rather than moved.
+test_atomic_mv_across_filesystems_copies_and_verifies() {
+    xdev_sandbox || return
+    mkdir -p "$HELPERS_DIR/dst"
+    printf 'across\n' > "$XDEV_DIR/f"
+    local before after
+    before=$(stat -c %i "$XDEV_DIR/f")
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$XDEV_DIR/f" "$HELPERS_DIR/dst/f"
+    assert_status 0 "$?" "a move between filesystems should succeed"
+    after=$(stat -c %i "$HELPERS_DIR/dst/f")
+
+    assert_eq "across" "$(cat "$HELPERS_DIR/dst/f" 2>/dev/null)" "with the content intact"
+    [ "$before" != "$after" ] || fail_case "expected a copy across filesystems, not a rename"
+    assert_no_file "$XDEV_DIR/f" "and the source removed once the copy was in place"
+    assert_count 0 "$(find "$HELPERS_DIR/dst" -name '.atomic_mv.*' | wc -l)" \
+        "with no staging directory left behind"
+}
+
+# The digest stands for the whole tree, so what it compares has to be the whole tree: an empty
+# directory and a symlink carry no file contents and would both survive a check that only hashed
+# regular files.
+test_atomic_mv_across_filesystems_carries_a_whole_directory() {
+    xdev_sandbox || return
+    mkdir -p "$HELPERS_DIR/dst" "$XDEV_DIR/tree/sub" "$XDEV_DIR/tree/empty"
+    printf 'data' > "$XDEV_DIR/tree/sub/real"
+    ln -s sub/real "$XDEV_DIR/tree/link"
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$XDEV_DIR/tree" "$HELPERS_DIR/dst/tree"
+    assert_status 0 "$?" "a directory should move across filesystems"
+
+    assert_eq "data" "$(cat "$HELPERS_DIR/dst/tree/sub/real" 2>/dev/null)" "the file arrives"
+    assert_dir "$HELPERS_DIR/dst/tree/empty" "the empty directory arrives"
+    [ -L "$HELPERS_DIR/dst/tree/link" ] || fail_case "the symlink should arrive as a symlink"
+    assert_no_file "$XDEV_DIR/tree" "and the source is gone"
+}
+
+# THE HALF THAT MAKES IT SAFE. A copy that fails must leave the source untouched: the September
+# defect was that the source had already been moved away by the time anything could fail, so a
+# failure took the only copy with it.
+test_atomic_mv_keeps_the_source_when_the_copy_fails() {
+    xdev_sandbox || return
+    mkdir -p "$HELPERS_DIR/dst" "$XDEV_DIR/tree"
+    printf 'readable' > "$XDEV_DIR/tree/open"
+    printf 'secret' > "$XDEV_DIR/tree/closed"
+    chmod 000 "$XDEV_DIR/tree/closed"
+    local status
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$XDEV_DIR/tree" "$HELPERS_DIR/dst/tree" \
+        > /dev/null 2>&1 && status=0 || status=$?
+    chmod 600 "$XDEV_DIR/tree/closed" 2>/dev/null
+
+    assert_status 1 "$status" "an unreadable member should fail the move"
+    assert_file "$XDEV_DIR/tree/open" "and the source must survive it"
+    assert_no_file "$HELPERS_DIR/dst/tree" "with nothing written at the destination"
+    assert_count 0 "$(find "$HELPERS_DIR/dst" -name '.atomic_mv.*' | wc -l)" "and nothing staged"
+}
+
+# The hash is checked BEFORE the copy is renamed into place, so a copy that does not match its
+# source never appears under the destination's name at all.
+#
+# Driven by a writer that keeps appending for longer than the move can take, rather than by a
+# sleep: the source is then guaranteed to have changed by the time the two digests are compared,
+# on a fast machine and a slow one alike.
+test_atomic_mv_refuses_a_copy_that_does_not_match_its_source() {
+    xdev_sandbox || return
+    mkdir -p "$HELPERS_DIR/dst"
+    head -c 67108864 /dev/urandom > "$XDEV_DIR/moving.bin"
+
+    local writer status
+    ( for _ in $(seq 1 400); do printf 'more' >> "$XDEV_DIR/moving.bin"; sleep 0.01; done ) &
+    writer=$!
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$XDEV_DIR/moving.bin" "$HELPERS_DIR/dst/moving.bin" \
+        > "$HELPERS_DIR/mismatch.err" 2>&1 && status=0 || status=$?
+    kill "$writer" 2>/dev/null
+    wait "$writer" 2>/dev/null
+
+    assert_status 1 "$status" "a copy that does not match its source should fail"
+    assert_contains "$(cat "$HELPERS_DIR/mismatch.err" 2>/dev/null)" "does not match" \
+        "and say so"
+    assert_no_file "$HELPERS_DIR/dst/moving.bin" \
+        "nothing may appear under the destination name - every skip check would read it as done"
+    assert_file "$XDEV_DIR/moving.bin" "and the source is untouched"
+}
+
+# EVERY REFUSAL IS ONE RULE, NOT THREE CASES. rename(2) reports EISDIR, ENOTDIR and ENOTEMPTY
+# itself, and leaves both sides alone when it does; this script tests the destination's type
+# nowhere. A table, because the point is that the same mechanism covers every row - if a future
+# change re-introduces a hand-written guard, one row will start behaving differently from the
+# rest.
+test_atomic_mv_refusals_leave_both_sides_alone() {
+    helpers_sandbox
+    local label skind dkind status src dst
+    src="$HELPERS_DIR/s"
+    dst="$HELPERS_DIR/d"
+    while IFS='|' read -r label skind dkind; do
+        [ -n "$label" ] || continue
+        rm -rf "$src" "$dst"
+        case "$skind" in
+            file) printf 'the source' > "$src" ;;
+            dir)  mkdir -p "$src/inner"; printf 'the source' > "$src/inner/f" ;;
+        esac
+        case "$dkind" in
+            file)     printf 'the destination' > "$dst" ;;
+            fulldir)  mkdir -p "$dst/keep"; printf 'the destination' > "$dst/keep/f" ;;
+        esac
+
+        bash "$REPO_ROOT/bin/atomic_mv.sh" "$src" "$dst" > /dev/null 2>&1 && status=0 || status=$?
+        assert_status 1 "$status" "$label: should be refused"
+        [ -e "$src" ] || fail_case "$label: the source must survive a refusal"
+        if [ "$dkind" = "file" ]; then
+            assert_eq "the destination" "$(cat "$dst" 2>/dev/null)" "$label: destination untouched"
+        else
+            assert_file "$dst/keep/f" "$label: destination untouched"
+        fi
+        assert_count 0 "$(find "$HELPERS_DIR" -name '.atomic_mv.*' | wc -l)" "$label: nothing staged"
+    done <<'CASES'
+a file onto a directory|file|fulldir
+a directory onto a file|dir|file
+a directory onto a directory with something in it|dir|fulldir
+CASES
+}
+
+# The one cell where behaviour changed when the guards went: rename(2) replaces an EMPTY
+# directory rather than refusing it. Nothing is lost - an empty directory holds nothing - and
+# no caller reaches it, but it is a change and it is asserted rather than discovered.
+test_atomic_mv_replaces_an_empty_directory() {
+    helpers_sandbox
+    mkdir -p "$HELPERS_DIR/src/tree/inner" "$HELPERS_DIR/dst/tree"
+    printf 'moved' > "$HELPERS_DIR/src/tree/inner/f"
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$HELPERS_DIR/src/tree" "$HELPERS_DIR/dst/tree"
+    assert_status 0 "$?" "an empty directory should be replaced, not refused"
+    assert_eq "moved" "$(cat "$HELPERS_DIR/dst/tree/inner/f" 2>/dev/null)" "by the source"
+    assert_no_file "$HELPERS_DIR/src/tree" "and the source is gone"
+}
+
+# A file landing on an existing file is the one overwrite the pipeline wants: two callers
+# deriving the same artifact. It must NOT be caught by anything that refuses the other cells.
+test_atomic_mv_replaces_an_existing_file() {
+    helpers_sandbox
+    mkdir -p "$HELPERS_DIR/src" "$HELPERS_DIR/dst"
+    printf 'new' > "$HELPERS_DIR/src/f"
+    printf 'old' > "$HELPERS_DIR/dst/f"
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$HELPERS_DIR/src/f" "$HELPERS_DIR/dst/f"
+    assert_status 0 "$?" "a file should replace a file"
+    assert_eq "new" "$(cat "$HELPERS_DIR/dst/f" 2>/dev/null)" "with the source's content"
+}
+
+# THE SHAPE THAT USED TO GENERATE GUARDS. `dst/` resolves to `dst/<name>` and then travels the
+# identical path an explicit destination does - there is no check downstream of the resolution
+# that could treat the two differently. Asserted by running both and comparing the outcome.
+test_atomic_mv_both_destination_spellings_agree() {
+    helpers_sandbox
+    local explicit resolved
+    mkdir -p "$HELPERS_DIR/a" "$HELPERS_DIR/dst_a" "$HELPERS_DIR/b" "$HELPERS_DIR/dst_b"
+    printf 'payload' > "$HELPERS_DIR/a/f"
+    printf 'payload' > "$HELPERS_DIR/b/f"
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$HELPERS_DIR/a/f" "$HELPERS_DIR/dst_a/f"
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$HELPERS_DIR/b/f" "$HELPERS_DIR/dst_b/"
+    explicit=$(cd "$HELPERS_DIR/dst_a" && find . | sort)
+    resolved=$(cd "$HELPERS_DIR/dst_b" && find . | sort)
+    assert_eq "$explicit" "$resolved" "both spellings must land the same way"
+    assert_no_file "$HELPERS_DIR/a/f" "and both must consume the source"
+    assert_no_file "$HELPERS_DIR/b/f" ""
+}
+
+# The destination's parent is created on the way. Every caller writes into a results directory
+# that may not exist on a first run.
+test_atomic_mv_creates_the_destination_parent() {
+    helpers_sandbox
+    mkdir -p "$HELPERS_DIR/src"
+    printf 'x' > "$HELPERS_DIR/src/f"
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$HELPERS_DIR/src/f" "$HELPERS_DIR/made/up/path/f"
+    assert_status 0 "$?" "a missing destination parent should be created"
+    assert_file "$HELPERS_DIR/made/up/path/f" "and the artifact lands in it"
+}
+
+test_atomic_mv_refuses_the_wrong_number_of_arguments() {
+    helpers_sandbox
+    local status
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$HELPERS_DIR/only-one" > /dev/null 2>&1 && status=0 || status=$?
+    assert_status 1 "$status" "one argument should be refused"
+    bash "$REPO_ROOT/bin/atomic_mv.sh" a b c > /dev/null 2>&1 && status=0 || status=$?
+    assert_status 1 "$status" "three arguments should be refused"
+}
+
+# Across filesystems the refusals come AFTER the copy, because the kernel reports EXDEV before
+# it would report EISDIR and no trial rename can tell you sooner. The outcome has to be the
+# same as it is on one filesystem; only the wasted work differs.
+test_atomic_mv_refusals_reach_the_same_outcome_across_filesystems() {
+    xdev_sandbox || return
+    mkdir -p "$XDEV_DIR/tree/inner" "$HELPERS_DIR/dst"
+    printf 'the source' > "$XDEV_DIR/tree/inner/f"
+    printf 'in the way' > "$HELPERS_DIR/dst/tree"
+    local status
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$XDEV_DIR/tree" "$HELPERS_DIR/dst/tree" \
+        > /dev/null 2>&1 && status=0 || status=$?
+
+    assert_status 1 "$status" "a directory onto a file is refused across filesystems too"
+    assert_file "$XDEV_DIR/tree/inner/f" "the source survives"
+    assert_eq "in the way" "$(cat "$HELPERS_DIR/dst/tree" 2>/dev/null)" "the destination is untouched"
+    assert_count 0 "$(find "$HELPERS_DIR/dst" -name '.atomic_mv.*' | wc -l)" "and the stage is cleaned up"
+}
+
+# The race, on the path that actually stages. The same-filesystem race never reaches the
+# staging directory at all now, so without this the concurrency guarantee is untested where it
+# is hardest - eight callers copying into eight staging directories beside one destination.
+test_atomic_mv_survives_callers_racing_across_filesystems() {
+    xdev_sandbox || return
+    local i workers=8 fails=0 letters=ABCDEFGH
+    local -a pids=()
+    mkdir -p "$HELPERS_DIR/dst"
+    for ((i = 0; i < workers; i++)); do
+        head -c 1048576 /dev/zero | tr '\0' "${letters:$i:1}" > "$XDEV_DIR/w$i"
+    done
+    for ((i = 0; i < workers; i++)); do
+        bash "$REPO_ROOT/bin/atomic_mv.sh" "$XDEV_DIR/w$i" "$HELPERS_DIR/dst/shared" \
+            > /dev/null 2>&1 &
+        pids+=($!)
+    done
+    for i in "${pids[@]}"; do wait "$i" || fails=$((fails + 1)); done
+
+    assert_count 0 "$fails" "every caller should succeed"
+    assert_count 1048576 "$(wc -c < "$HELPERS_DIR/dst/shared")" "the destination should be whole"
+    local first rest
+    first=$(head -c1 "$HELPERS_DIR/dst/shared")
+    rest=$(LC_ALL=C tr -d "$first" < "$HELPERS_DIR/dst/shared" | wc -c)
+    assert_count 0 "$rest" "and hold exactly one caller's content"
+    assert_count 0 "$(find "$HELPERS_DIR/dst" -name '.atomic_mv.*' | wc -l)" \
+        "with no staging directory left behind"
+}
+
+# A symlink as the source. Today's digest followed the link and compared the target's contents,
+# which failed across filesystems whenever the target did not resolve from the staging
+# directory; the copy now carries the link itself.
+test_atomic_mv_moves_a_symlink_across_filesystems() {
+    xdev_sandbox || return
+    mkdir -p "$HELPERS_DIR/dst"
+    printf 'target' > "$XDEV_DIR/real"
+    ln -s real "$XDEV_DIR/link"
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$XDEV_DIR/link" "$HELPERS_DIR/dst/link"
+    assert_status 0 "$?" "a symlink should move across filesystems"
+    [ -L "$HELPERS_DIR/dst/link" ] || fail_case "it should arrive as a symlink, not its target"
+    assert_eq "real" "$(readlink "$HELPERS_DIR/dst/link")" "pointing where it pointed"
+    assert_no_file "$XDEV_DIR/link" "and the source link is gone"
+    assert_file "$XDEV_DIR/real" "while what it pointed at is left alone"
+}
+
+# THE ONLY SILENT FAILURE THIS HELPER HAD. `diff` opens a FIFO and blocks for a writer that
+# never arrives, and nothing here has a timeout - measured at 15 s and still going. The glob
+# loops in 2_trim_reads.nf and 9_completion.nf pass whatever the glob matched, so the argument
+# is not always something this file chose. Refused up front, loudly, in under a second.
+test_atomic_mv_refuses_a_source_that_is_not_a_file_or_a_directory() {
+    helpers_sandbox
+    mkdir -p "$HELPERS_DIR/dst"
+    mkfifo "$HELPERS_DIR/pipe" 2>/dev/null || { skip_case "mkfifo unavailable"; return; }
+    local status err
+    err=$(timeout 20 bash "$REPO_ROOT/bin/atomic_mv.sh" "$HELPERS_DIR/pipe" "$HELPERS_DIR/dst/pipe" 2>&1) \
+        && status=0 || status=$?
+
+    assert_status 1 "$status" "a FIFO source should be refused, not block forever"
+    assert_contains "$err" "neither a file nor a directory" "saying what it will move"
+    assert_no_file "$HELPERS_DIR/dst/pipe" "and nothing should be written"
+    rm -f "$HELPERS_DIR/pipe"
+}
+
 # The trap has to fire on the caller's OWN staging directory and no one else's, which is the
 # half that made the old code delete work in progress.
 test_atomic_mv_leaves_nothing_behind_when_it_fails() {

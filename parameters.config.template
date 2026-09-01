@@ -251,5 +251,16 @@ params {
         vcftools        = 'vcftools'
         snpEff          = 'snpEff'
         unzip           = 'unzip'
-    }   
+
+        // Moving a finished artifact into permanent storage. bin/atomic_mv.sh copies it
+        // with rsync, compares the copy against its source with diff, and only then
+        // removes the source; find lists what a results folder holds.
+        //
+        // These three are verified at the start of a run like the rest, but they are the
+        // one group a full path above does not repoint: they are called by name from the
+        // helper scripts in bin/, which read no Nextflow settings.
+        rsync           = 'rsync'
+        diff            = 'diff'
+        find            = 'find'
+    }
 }

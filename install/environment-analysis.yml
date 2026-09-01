@@ -23,6 +23,11 @@ dependencies:
   # GNU behaviour for the shell helpers, which is not what macOS provides.
   - bash
   - coreutils
+  # bin/atomic_mv.sh copies an artifact with rsync and compares it against its source with
+  # diff before the source is removed; the analysis layer moves its own results with it.
+  - rsync
+  - diffutils
+  - findutils
   - r-base
   # Reading the frequency and depth tables, which run to millions of rows.
   - r-data.table

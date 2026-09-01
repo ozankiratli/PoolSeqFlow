@@ -1408,6 +1408,8 @@ software {
 
 Replacing a command with an absolute path makes the pipeline use a system installation instead of the conda environment. This is supported but not recommended: the environment pins exact builds because Pool-seq results depend on the precise behaviour of the pileup and filtering tools, and a version mismatch will not announce itself. Use it to work around a genuine packaging problem, not as a default.
 
+**Three of them cannot be repointed.** `rsync`, `diff` and `find` are checked at the start of a run along with everything else, so a missing one is reported before any work begins — but a path you give for them is not used. They are called by name from the small scripts that move a finished file into permanent storage, and those scripts read none of your settings. If you need a different one, change what is on your `PATH`.
+
 ## Metadata
 <!--@ page: metadata | nav: Metadata -->
 
