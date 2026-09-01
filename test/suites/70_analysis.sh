@@ -941,8 +941,11 @@ test_an_intermediate_derived_from_other_results_refuses() {
     assert_contains "$out" ".poolseqflow_version" "and the record that moved"
 }
 
-# THE RISKY MOVE. Named files, one at a time, out of a directory that holds other things -
-# a wholesale move is how a neighbour gets lost.
+# THE RISKY TRANSFER. Named files, one at a time, out of a directory that holds other things -
+# a wholesale copy is how a neighbour comes back with them.
+#
+# It COPIES: permanent storage keeps its copy, so a cycle costs one transfer instead of two and
+# the next `complete` has something to discard rather than something to send again.
 test_an_intermediate_comes_back_from_permanent_storage() {
     analysis_writer_ready || return
     local status; status=$(analysis_run_module writer)
@@ -960,12 +963,223 @@ test_an_intermediate_comes_back_from_permanent_storage() {
     local main out
     main=$(analysis_main_dir)
     out=$(analysis_output)
-    assert_contains "$out" "brought back from permanent storage" "the move back is reported"
+    assert_contains "$out" "copied back from permanent storage" "the copy back is reported"
     assert_contains "$out" "WRITER reused" "and the intermediate is reused, not derived again"
     assert_file "$main/matrix.tsv" "it is on the working volume now"
     assert_file "$main/matrix.tsv.provenance" "and its record came with it"
-    assert_no_file "$archived/matrix.tsv" "the source is gone, not copied"
-    assert_no_file "$archived/matrix.tsv.provenance" "and so is its record"
+    assert_file "$archived/matrix.tsv" "and permanent storage still has it - this is a copy"
+    assert_file "$archived/matrix.tsv.provenance" "record included"
     assert_file "$archived/bystander.txt" \
         "and nothing else in permanent storage was carried off with them"
+}
+
+# The stage the copy lands in belongs to the transfer, not to Analysis/Main. Left behind it
+# would be read as an intermediate by the next `find` that walks Main.
+test_a_copy_back_leaves_no_staging_directory() {
+    analysis_writer_ready || return
+    local status; status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the first run should derive the intermediate"
+
+    analysis_archive_main
+    analysis_folder_name "'from_storage'"
+    status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the module should run against the archived intermediate"
+
+    local leftovers
+    leftovers=$(find "$(analysis_main_dir)" -maxdepth 1 -name '.restore.*' 2>/dev/null | wc -l)
+    assert_eq "0" "$leftovers" "no staging directory survives the copy"
+}
+
+# ---------------------------------------------------------------------------------------
+# `PoolSeqFlow analysis complete` - the move to permanent storage.
+
+# Where an archived analysis lands. The same relative path under either volume, which is what
+# lets a module find an intermediate again after this has run.
+analysis_archived() {
+    printf '%s\n' "$ANALYSIS_SB/store/Analysis"
+}
+
+# One analysis and one intermediate on the working volume, ready to be moved.
+analysis_completable() {
+    analysis_writer_ready || return 1
+    local status; status=$(analysis_run_module writer)
+    [ "$status" = "0" ] || { fail_case "the writer module should have run first"; return 1; }
+    return 0
+}
+
+test_complete_moves_the_analyses_and_the_intermediates() {
+    analysis_completable || return
+    local status; status=$(run_complete "$ANALYSIS_SB")
+    assert_status 0 "$status" "complete should move what the writer produced"
+
+    local store; store=$(analysis_archived)
+    assert_file "$store/Results/writer/result.tsv" "the analysis is in permanent storage"
+    assert_file "$store/Results/writer/0_verify_analysis.txt" "with the record that cleared it"
+    assert_file "$store/Main/Output/matrix.tsv" "and so is the intermediate"
+    assert_file "$store/Main/Output/matrix.tsv.provenance" "with its provenance record"
+    assert_no_file "$ANALYSIS_SB/main/Analysis/Results/writer" "the working copies are gone"
+    assert_no_file "$(analysis_main_dir)/matrix.tsv" ""
+}
+
+# THE RISK, IN THE OTHER DIRECTION. RestoreIntermediates already proves a move back does not
+# carry off a neighbour; this is the same guarantee on the way out.
+test_complete_leaves_permanent_storage_alone() {
+    analysis_completable || return
+    local store; store=$(analysis_archived)
+    mkdir -p "$store/Main/Output" "$store/Results/somebody_else"
+    printf 'not mine\n' > "$store/Main/Output/bystander.txt"
+    printf 'not mine\n' > "$store/Results/somebody_else/report.tsv"
+
+    local status; status=$(run_complete "$ANALYSIS_SB")
+    assert_status 0 "$status" "complete should run with other things already in storage"
+    assert_eq "not mine" "$(cat "$store/Main/Output/bystander.txt" 2>/dev/null)" \
+        "a file already beside the intermediates is untouched"
+    assert_eq "not mine" "$(cat "$store/Results/somebody_else/report.tsv" 2>/dev/null)" \
+        "and so is somebody else's results folder"
+    assert_file "$store/Main/Output/matrix.tsv" "while what was asked for did move"
+}
+
+# Logs and Session describe invocations rather than results - Session is overwritten by the
+# next one and Logs is appended to by every one - so neither belongs in permanent storage.
+test_complete_leaves_the_working_records_behind() {
+    analysis_completable || return
+    run_complete "$ANALYSIS_SB" > /dev/null
+    local out; out=$(analysis_output)
+    assert_dir "$ANALYSIS_SB/main/Analysis/Logs" "Logs stays on the working volume"
+    assert_no_file "$(analysis_archived)/Logs" "and does not appear in permanent storage"
+    assert_contains "$out" "Logs, Session and work stay" "and the run says so"
+}
+
+# Two different analyses under one name is what folderName exists to prevent, so a name
+# already taken stops the whole command - not just that one item.
+test_complete_refuses_a_name_already_in_permanent_storage() {
+    analysis_completable || return
+    local store; store=$(analysis_archived)
+    mkdir -p "$store/Results/writer"
+    printf 'an older analysis\n' > "$store/Results/writer/result.tsv"
+
+    local status; status=$(run_complete "$ANALYSIS_SB")
+    assert_status 1 "$status" "a collision should stop the command"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "already in permanent storage" "naming what collided"
+    assert_contains "$out" "Results/writer" "and which one"
+    assert_eq "an older analysis" "$(cat "$store/Results/writer/result.tsv" 2>/dev/null)" \
+        "the copy in storage is untouched"
+    assert_file "$ANALYSIS_SB/main/Analysis/Results/writer/result.tsv" \
+        "and NOTHING moved - not the colliding folder"
+    assert_file "$(analysis_main_dir)/matrix.tsv" "and not the intermediate either"
+}
+
+# A failed verification leaves a folder holding its record and nothing else, and the manual
+# promises that retry is allowed. Archiving it would take the name into storage and the
+# two-root refusal would then block the retry for good.
+test_complete_leaves_a_folder_holding_only_a_failed_record() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    analysis_install_module writer "$ANALYSIS_WRITER_MANIFEST" "$ANALYSIS_WRITER_MAIN"
+    run_analysis "$ANALYSIS_SB" writer > /dev/null
+
+    local folder; folder="$ANALYSIS_SB/main/Analysis/Results/writer"
+    assert_file "$folder/0_verify_analysis.txt" "the verification record is there to start with"
+
+    local status; status=$(run_complete "$ANALYSIS_SB")
+    assert_status 0 "$status" "complete should run"
+    assert_contains "$(analysis_output)" "left behind" "and say it passed the folder over"
+    assert_file "$folder/0_verify_analysis.txt" "the record stays on the working volume"
+    assert_no_file "$(analysis_archived)/Results/writer" \
+        "and the name is not consumed in permanent storage"
+}
+
+# Interrupted, it has to be safe to run again; and with nothing left to move it must not
+# invent an error.
+test_complete_run_twice_moves_nothing_the_second_time() {
+    analysis_completable || return
+    run_complete "$ANALYSIS_SB" > /dev/null
+    local status; status=$(run_complete "$ANALYSIS_SB")
+    assert_status 0 "$status" "a second run should succeed"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "0 item(s) moved" "having found nothing to move"
+    assert_file "$(analysis_archived)/Main/Output/matrix.tsv" "and disturbed nothing"
+}
+
+# END TO END, and the reason the relative path is the same under both volumes: a module run
+# after `complete` finds its intermediate in storage and brings it back.
+test_a_module_reaches_an_intermediate_that_complete_archived() {
+    analysis_completable || return
+    run_complete "$ANALYSIS_SB" > /dev/null
+
+    analysis_folder_name "'after_complete'"
+    local status; status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the module should run against the archived intermediate"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "copied back from permanent storage" "restoring it"
+    assert_contains "$out" "WRITER reused" "rather than deriving it again"
+}
+
+# THE LOOP THAT WAS NEVER TESTED, and the one that failed: complete -> run -> complete. The
+# second complete used to refuse, because every intermediate the run copied back collided with
+# the copy that was still in storage and every collision was a refusal.
+test_complete_after_a_resume_discards_the_working_intermediate() {
+    analysis_completable || return
+    run_complete "$ANALYSIS_SB" > /dev/null
+
+    analysis_folder_name "'after_complete'"
+    local status; status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the module runs against the archived intermediate"
+    assert_file "$(analysis_main_dir)/matrix.tsv" "which puts a working copy back"
+
+    status=$(run_complete "$ANALYSIS_SB")
+    assert_status 0 "$status" "the second complete should succeed, not refuse"
+
+    local out store
+    out=$(analysis_output)
+    store=$(analysis_archived)
+    assert_contains "$out" "discarded - permanent storage has it" "saying what it discarded"
+    assert_contains "$out" "Main/Output/matrix.tsv" "and naming it"
+    assert_no_file "$(analysis_main_dir)/matrix.tsv" "the working copy is gone"
+    assert_no_file "$(analysis_main_dir)/matrix.tsv.provenance" "and so is its record"
+    assert_file "$store/Main/Output/matrix.tsv" "the archived copy is untouched"
+    assert_file "$store/Results/after_complete/result.tsv" "and the new analysis did move"
+}
+
+# The discard is licensed by the provenance records agreeing. When they do not, the two copies
+# came from different results and only the user can say which one to keep.
+test_complete_refuses_an_intermediate_whose_records_disagree() {
+    analysis_completable || return
+    run_complete "$ANALYSIS_SB" > /dev/null
+
+    analysis_folder_name "'after_complete'"
+    analysis_run_module writer > /dev/null
+
+    local main store
+    main=$(analysis_main_dir)
+    store=$(analysis_archived)
+    printf 'derived from something else\n' > "$main/matrix.tsv.provenance"
+
+    local status; status=$(run_complete "$ANALYSIS_SB")
+    assert_status 1 "$status" "a disagreement should stop the command"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "do not agree" "naming the disagreement"
+    assert_contains "$out" "Main/Output/matrix.tsv" "and which intermediate"
+    assert_contains "$out" "Nothing was moved and nothing was discarded" "and doing nothing"
+    assert_file "$main/matrix.tsv" "the working copy is left for the user to judge"
+    assert_file "$store/Main/Output/matrix.tsv" "and so is the archived one"
+    assert_no_file "$store/Results/after_complete" "and the analysis did not move either"
+}
+
+# A working copy with no record beside it cannot license its own discard. publishIntermediate
+# writes the record first, so this state means something removed it by hand.
+test_complete_refuses_an_intermediate_with_no_record_beside_it() {
+    analysis_completable || return
+    run_complete "$ANALYSIS_SB" > /dev/null
+
+    analysis_folder_name "'after_complete'"
+    analysis_run_module writer > /dev/null
+    rm -f "$(analysis_main_dir)/matrix.tsv.provenance"
+
+    local status; status=$(run_complete "$ANALYSIS_SB")
+    assert_status 1 "$status" "a missing record should stop the command"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "no provenance record" "saying which side is missing one"
+    assert_file "$(analysis_main_dir)/matrix.tsv" "and nothing is discarded"
 }

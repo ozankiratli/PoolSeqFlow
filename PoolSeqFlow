@@ -21,6 +21,7 @@
 #                     check      - verifies the analysis installation
 #                     modules    - lists, installs and removes analysis modules
 #                     <module>   - runs one analysis module and writes its results
+#                     complete   - moves finished analyses to permanent storage
 #                     version    - prints the version of this copy
 #                     cite       - prints how to cite it, and R and the packages it runs on
 #                     uninstall  - removes this release's analysis conda environment
@@ -50,7 +51,7 @@ usage() {
 
 # The analysis layer's own words, shown when `analysis` arrives without one.
 usage_analysis() {
-    echo "Usage: $0 analysis {install|check|modules <command>|<module>|version|cite|uninstall}"
+    echo "Usage: $0 analysis {install|check|modules <command>|<module>|complete|version|cite|uninstall}"
     exit 1
 }
 
@@ -1079,13 +1080,24 @@ EOF
         else
             echo "Nothing you wrote in $(pwd) is removed either, parameters.config included."
         fi
-        if [ -n "$MAINDIR" ] && [ -d "$MAINDIR/Analysis" ]; then
+        # Both roots: `analysis complete` moves finished analyses to permanent storage, so a
+        # completed project keeps them there rather than under mainDir.
+        ANALYSIS_ROOTS=""
+        for d in "$MAINDIR/Analysis" "$STORAGE/Analysis"; do
+            if [ -n "${d%/Analysis}" ] && [ -d "$d" ]; then
+                ANALYSIS_ROOTS="${ANALYSIS_ROOTS}${ANALYSIS_ROOTS:+ }$d"
+            fi
+        done
+        if [ -n "$ANALYSIS_ROOTS" ]; then
             echo ""
-            echo "$MAINDIR/Analysis is left alone, and it is worth knowing what that"
-            echo "means: everything in it was computed from the results this command deletes, so"
-            echo "it survives as an analysis of numbers that will no longer exist. The analysis"
-            echo "layer refuses to write into a folder that already holds an analysis, so move or"
-            echo "remove the ones you are finished with before running a module again."
+            for d in $ANALYSIS_ROOTS; do
+                echo "$d is left alone."
+            done
+            echo "It is worth knowing what that means: everything in there was computed from the"
+            echo "results this command deletes, so it survives as an analysis of numbers that will"
+            echo "no longer exist. The analysis layer refuses to write into a folder that already"
+            echo "holds an analysis, so move or remove the ones you are finished with before"
+            echo "running a module again."
         fi
         echo ""
         printf 'Type DELETE_MY_ANALYSIS to confirm: '
@@ -1163,6 +1175,45 @@ EOF
                 require_analysis_install
                 require_analysis_env
                 bash "$INSTALL/install/check_analysis_install.sh"
+                ;;
+
+            complete)
+                analysis_takes_no_more
+                require_analysis_install
+                require_project_config
+                # Activates the environment, so it is last: the refusals above must be
+                # reachable without one.
+                require_analysis_env
+                echo ""
+                echo "This moves, from your working directory into permanent storage:"
+                echo "    Analysis/Main      the intermediates every module shares"
+                echo "    Analysis/Results   every analysis you have published"
+                echo ""
+                echo "Analysis/Logs, Analysis/Session and Analysis/work stay where they are."
+                echo "Nothing is deleted, and a name already taken in permanent storage stops the"
+                echo "command with nothing moved. There is no command that brings a results folder"
+                echo "back; a module reaches an archived intermediate on its own."
+                echo ""
+                printf 'Move them? [y/N]: '
+                if ! read -r CONFIRM; then
+                    echo ""
+                    echo "Aborted - no confirmation received. Nothing was moved." >&2
+                    conda deactivate
+                    exit 1
+                fi
+                case $CONFIRM in
+                    y|Y|yes|YES|Yes) ;;
+                    *) echo "Aborted - nothing was moved."; conda deactivate; exit 1 ;;
+                esac
+                CONFIGS=(-c "$INSTALL/analysis/defaults.config")
+                if [ -f analysis.config ]; then
+                    CONFIGS+=(-c analysis.config)
+                fi
+                echo ""
+                # Its own entry script, as dryrun.nf and a module's main.nf are.
+                nextflow run "$INSTALL/analysis/complete.nf" "${CONFIGS[@]}"
+                wait
+                conda deactivate
                 ;;
 
             modules)

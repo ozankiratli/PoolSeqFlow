@@ -1,8 +1,8 @@
 // Analysis/Main: what one module derives and every module after it reuses.
 //
 // Three things live here. Where an intermediate sits, given the results directory it was
-// derived from; the record of which results those were; and how one is brought back when
-// `PoolSeqFlow analysis complete` has moved it to permanent storage.
+// derived from; the record of which results those were; and how one is copied back when
+// `PoolSeqFlow analysis complete` has archived it to permanent storage.
 
 nextflow.enable.dsl=2
 
@@ -70,9 +70,12 @@ def publishIntermediate(Map target, String name, String source) {
 // An intermediate that is not there anywhere is the ordinary answer on a first run and the
 // module derives it. One that is stale fails the run, naming the file and what moved: it may be
 // the input to an analysis that has already been published, so removing it is the user's call.
+//
+// An archived intermediate is COPIED back: permanent storage keeps its copy, and the next
+// `complete` discards the working one.
 process FetchIntermediates {
     tag { target.label }
-    // A move between volumes is the one thing here a user should see happen.
+    // A transfer between volumes is the one thing here a user should see happen.
     debug true
 
     input:
@@ -86,9 +89,7 @@ process FetchIntermediates {
     rel      = intermediateSubpath(target)
     work     = intermediateDir(target)
     suffix   = provenanceSuffix()
-    // Permanent storage second: a copy on the working volume is the one a restore just put
-    // there, and this is the search that put it there.
-    roots    = [params.mainDir, params.storageDir].collect { root -> "\"${root}\"" }.join(' ')
+    storage  = params.storageDir
     wanted   = names.collect { name -> "'${name}'" }.join(' ')
     """
     set -eo pipefail
@@ -105,10 +106,43 @@ IDENTITY
         exit 1
     }
 
+    # One named item from permanent storage onto the working volume, leaving the source where
+    # it is: staged beside the destination, verified against the source, then renamed into
+    # place. The stage sits in the destination directory, so the rename is a rename.
+    copy_back() {
+        local src dest stage landed
+        src="\$1"
+        dest="\$2"
+        mkdir -p "\$(dirname "\$dest")"
+        stage=\$(mktemp -d "\$(dirname "\$dest")/.restore.XXXXXXXX")
+        landed="\$stage/\$(basename -- "\$src")"
+        if ! rsync -a -- "\$src" "\$stage/"; then
+            rm -rf -- "\$stage"
+            echo "INTERMEDIATES ${target.label}: ERROR: could not copy \$src" >&2
+            exit 1
+        fi
+        if ! diff -qr --no-dereference -- "\$src" "\$landed" > /dev/null 2>&1; then
+            rm -rf -- "\$stage"
+            echo "INTERMEDIATES ${target.label}: ERROR: the copy of \$src does not match it." >&2
+            exit 1
+        fi
+        if ! atomic_mv.sh "\$landed" "\$dest"; then
+            rm -rf -- "\$stage"
+            exit 1
+        fi
+        rmdir "\$stage"
+    }
+
     restore_one() {
         local name at record
         name="\$1"
-        at=\$(find_artifact.sh "${rel}/\$name" ${roots} || true)
+        # The working volume by name, and permanent storage only if it is not there. After a
+        # restore the intermediate is in BOTH roots, which is a state find_artifact.sh reports
+        # as a promotion that did not finish.
+        at="${work}/\$name"
+        if [ ! -e "\$at" ]; then
+            at=\$(find_artifact.sh "${rel}/\$name" "${storage}" || true)
+        fi
 
         if [ -z "\$at" ]; then
             echo "INTERMEDIATES ${target.label}: \$name  not derived yet"
@@ -119,19 +153,12 @@ IDENTITY
         [ -f "\$record" ] || no_record "\$at"
 
         if [ "\$at" != "${work}/\$name" ]; then
-            # Named files, one at a time. A directory move would carry off whatever else is in
+            # Named files, one at a time. A directory copy would bring back whatever else is in
             # permanent storage beside them.
-            mkdir -p "${work}"
-            atomic_mv.sh "\$record" "${work}/\$name${suffix}"
-            atomic_mv.sh "\$at" "${work}/\$name"
-            if [ -e "\$at" ]; then
-                echo "INTERMEDIATES ${target.label}: ERROR: still there after the move: \$at" >&2
-                exit 1
-            fi
-            # Only if it is genuinely empty.
-            rmdir "\$(dirname "\$at")" 2>/dev/null || true
+            copy_back "\$record" "${work}/\$name${suffix}"
+            copy_back "\$at" "${work}/\$name"
             record="${work}/\$name${suffix}"
-            echo "INTERMEDIATES ${target.label}: \$name  brought back from permanent storage"
+            echo "INTERMEDIATES ${target.label}: \$name  copied back from permanent storage"
         else
             echo "INTERMEDIATES ${target.label}: \$name  on the working volume"
         fi

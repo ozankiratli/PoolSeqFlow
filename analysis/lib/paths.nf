@@ -87,9 +87,14 @@ def checkFolderName(String name) {
     }
 }
 
+// Where every analysis this project has produced sits, one folder each.
+def resultsDir() {
+    return "${analysisRoot()}/Results".toString()
+}
+
 // This invocation's results folder, holding one analysis.
 def resultsRoot(String module) {
-    return "${analysisRoot()}/Results/${resultsFolderName(module)}".toString()
+    return "${resultsDir()}/${resultsFolderName(module)}".toString()
 }
 
 // Where one results directory's analysis goes inside it. A single run has no name anywhere, so

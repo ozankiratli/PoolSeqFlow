@@ -498,6 +498,7 @@ Choosing 3 removes `PoolSeqFlow-3.0.0` and `PoolSeqFlow-3.0.0-analysis`. To remo
 | `PoolSeqFlow analysis modules install <module> [version]` | Install one, newest readable version unless you name it |
 | `PoolSeqFlow analysis modules list` | List the modules installed for this release, and name any that are broken |
 | `PoolSeqFlow analysis modules uninstall <module>` | Remove one module, after confirmation. Results it produced are untouched |
+| `PoolSeqFlow analysis complete` | Move finished analyses and shared intermediates from `mainDir/Analysis/` to `storageDir/Analysis/`, after confirmation. A name already taken in permanent storage stops it with nothing moved |
 | `PoolSeqFlow analysis version` | Print the version of this copy |
 | `PoolSeqFlow analysis cite` | Print how to cite this copy, plus R and every package a module runs on |
 | `PoolSeqFlow analysis uninstall` | Remove the analysis environment, after confirmation. The pipeline, its environment, and your results are untouched |
@@ -2453,15 +2454,15 @@ Restoring the values, or `PoolSeqFlow reset` and a fresh run, are the two ways f
 ## Output Layout
 <!--@ page: output | nav: Output -->
 
-Everything the analysis layer produces goes under `mainDir/Analysis/`, and nothing it does touches `Output/`:
+Everything the analysis layer produces goes under `Analysis/` — on `mainDir` while you are working, and on `storageDir` once [`complete`](#analysis-complete) has moved it, at the same relative path under either. Nothing it does touches `Output/`:
 
-| Path | Holds |
-|---|---|
-| `Analysis/Main/` | intermediates derived from your results and shared between modules |
-| `Analysis/Results/<folderName>/` | one analysis, and the verification record that cleared it |
-| `Analysis/Logs/` | one directory per stage, as the pipeline keeps its own |
-| `Analysis/Session/` | this invocation's Nextflow dag, trace, timeline and report |
-| `Analysis/work/` | Nextflow's working directory, removed when a run succeeds |
+| Path | Holds | `complete` |
+|---|---|---|
+| `Analysis/Main/` | intermediates derived from your results and shared between modules | moves |
+| `Analysis/Results/<folderName>/` | one analysis, and the verification record that cleared it | moves |
+| `Analysis/Logs/` | one directory per stage, as the pipeline keeps its own | stays |
+| `Analysis/Session/` | this invocation's Nextflow dag, trace, timeline and report | stays |
+| `Analysis/work/` | Nextflow's working directory, removed when a run succeeds | stays |
 
 `Analysis/Session/` exists so that an analysis run does not overwrite the four session files in `Output/Reports`, which are the record of the pipeline run that produced the results being read.
 
@@ -2490,6 +2491,28 @@ Under `multiRun`, each results directory gets its own folder inside the one you 
 **Naming the folder is how two settings of one module are told apart.** Nothing is stamped with a date, nothing is versioned, and nothing is overwritten: a folder that already holds an analysis is **refused**, naming what is in it. To run the same module again with different settings, give the new one a folder of its own; to redo an analysis, move the old one out of the way first.
 
 The one thing allowed to be in the folder already is the verification record from a previous attempt. A module that fails after the check leaves the folder holding nothing else, and that retry has to be allowed — otherwise a single failure would make the name unusable.
+
+### Moving finished analyses to permanent storage { #analysis-complete }
+
+`PoolSeqFlow analysis complete` moves `Analysis/Main` and `Analysis/Results` from your working directory to `storageDir/Analysis/`, keeping the same relative path so that a module can still find an intermediate afterwards — it brings back what it needs on its own, a file at a time, and says so when it does. `Analysis/Logs`, `Analysis/Session` and `Analysis/work` stay where they are: they describe invocations rather than results, and the next analysis rewrites `Session` and appends to `Logs`.
+
+It asks before it starts, and everything is surveyed before anything moves. **A folder name already taken in permanent storage stops the command with nothing moved** — two different analyses under one name is exactly what naming a folder exists to prevent. Move the older one out of the way, or give the new one a name of its own, and run it again.
+
+A folder holding nothing but a verification record is passed over and said so, because that is what a failed attempt leaves and archiving it would consume the name the retry needs.
+
+Each item moves on its own, so an interrupted run can simply be run again: what already moved is left alone. There is no command that brings a results folder back to the working directory — move it by hand if you need it there.
+
+#### Working, archiving, working again { #analysis-resume }
+
+You can keep using a project after `complete` has archived it. Run a module and it finds the intermediates it needs in permanent storage and **copies** them back to your working directory, a named file at a time. They exist in both places from then on, deliberately: the copy in permanent storage is what makes the next `complete` cheap.
+
+That is what the second `complete` is for. An intermediate already in permanent storage is not moved a second time — **the working copy is discarded, and the run says which ones and why.** What decides that is the provenance record beside each intermediate: a few hundred bytes naming the results it was derived from. When the two records agree the two files are the same file, and only one of them needs keeping.
+
+When they do **not** agree, the command stops and moves nothing. One of the two was derived from results this project no longer holds, and an analysis you have already published may have come from either — so neither is removed for you. Delete the one you do not want and run it again. The same happens if either copy has lost its provenance record: without it there is no way to tell the two apart, and guessing is not an option the command takes.
+
+The cost of a working cycle is therefore one transfer, not two — which matters when `storageDir` is billed per operation, as on S3 or a tape-backed archive. What it costs instead is disk on the working volume, and that is what the discard reclaims.
+
+**Do not run it while a module is running.** The two would be moving the same folders in opposite directions, and neither checks for the other.
 
 # Pipeline Overview
 <!--@ section: pipeline | nav: Pipeline -->

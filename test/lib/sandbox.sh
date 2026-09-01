@@ -388,6 +388,14 @@ run_analysis() {
     _run_entry "$sb" analysis.nf "${ANALYSIS_CFG[@]}" --module "$module" "$@"
 }
 
+# Move finished analyses into permanent storage, the way `PoolSeqFlow analysis complete` does.
+# No module, so only the two configuration layers a moduleless invocation reads.
+run_complete() {
+    local sb="$1"; shift
+    _analysis_configs "$sb" ""
+    _run_entry "$sb" analysis/complete.nf "${ANALYSIS_CFG[@]}" "$@"
+}
+
 # Run an installed module's own pipeline, the second of the two invocations: the same
 # configuration, but the entry script is the module's main.nf inside the store.
 run_module() {
