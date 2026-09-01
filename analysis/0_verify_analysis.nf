@@ -9,14 +9,11 @@
 
 nextflow.enable.dsl=2
 
+include { verificationRecordName } from './lib/paths.nf'
+
 // Where the analysis layer keeps its own record, under mainDir.
 def analysisLogDir() {
     return "${params.mainDir}/Analysis/Logs/0_verify_analysis".toString()
-}
-
-// The name the verification record carries wherever it is written.
-def analysisReportName() {
-    return '0_verify_analysis.txt'
 }
 
 // A results directory's name as a file name. One task per directory writes its own stage
@@ -241,7 +238,7 @@ process CheckResultsFolder {
     script:
     dir_log = analysisLogDir()
     slug = targetSlug(target)
-    keep = analysisReportName()
+    keep = verificationRecordName()
     """
     REPORTFILE="analysis_folder_${slug}.txt"
 

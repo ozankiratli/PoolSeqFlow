@@ -193,7 +193,8 @@ test_the_analysis_layer_ships_with_the_release() {
     local f
     for f in analysis.nf analysis/modules.nf analysis/0_verify_analysis.nf \
              analysis/defaults.config analysis/analysis.config.template \
-             analysis/lib/paths.nf analysis/lib/plan.nf analysis/lib/modules.nf; do
+             analysis/lib/paths.nf analysis/lib/plan.nf analysis/lib/modules.nf \
+             analysis/lib/results.nf analysis/lib/store.nf; do
         assert_file "$REPO_ROOT/$f" "$f must ship"
     done
     assert_contains "$(cat "$REPO_ROOT/PoolSeqFlow")" "lib analysis install" \
@@ -729,4 +730,242 @@ test_the_library_does_not_reach_into_the_module_store() {
     assert_eq "" "$hits" "analysis/lib must not name the store:"$'\n'"$hits"
     hits=$(cd "$REPO_ROOT" && grep -rn "from '\./lib/\|from '\.\./lib/" analysis/modules.nf 2>/dev/null)
     assert_contains "$hits" "lib/paths.nf" "the frame reads the library, which is the allowed direction"
+}
+
+# ---------------------------------------------------------------------------------------
+# What a module writes: its results, and the intermediates it derives on the way.
+
+# A module that does the whole shape once - restore what is shared, derive it if it is not
+# there, produce an analysis, publish it. Nothing statistical again; these cases measure the
+# moves.
+ANALYSIS_WRITER_MAIN=$(cat <<'MODULE'
+nextflow.enable.dsl=2
+
+include { analysisPlan } from '../../lib/plan.nf'
+include { intermediateFile; publishIntermediate; RestoreIntermediates } from '../../lib/store.nf'
+include { PublishResults } from '../../lib/results.nf'
+
+process Derive {
+    debug true
+
+    input:
+    val target
+
+    output:
+    tuple val(target), path('result.*')
+
+    script:
+    matrix = intermediateFile(target, 'matrix.tsv')
+    publish = publishIntermediate(target, 'matrix.tsv', 'staged.tsv')
+    """
+    if [ -f '${matrix}' ]; then
+        echo "WRITER reused ${matrix}"
+    else
+        printf 'derived from %s\\n' '${target.label}' > staged.tsv
+        ${publish}
+        echo "WRITER derived ${matrix}"
+    fi
+
+    printf 'analysis of %s\\n' '${target.label}' > result.tsv
+    printf 'the script that produced it\\n' > result.R
+    """
+}
+
+workflow {
+    def targets = channel.fromList(analysisPlan('writer').targets)
+    RestoreIntermediates(targets.map { target -> tuple(target, ['matrix.tsv']) })
+    PublishResults(Derive(RestoreIntermediates.out))
+}
+MODULE
+)
+
+ANALYSIS_WRITER_MANIFEST='{ "name": "writer", "version": "0.1.0", "contract": "freq-1",
+  "summary": "derive one intermediate and publish one analysis", "needs": ["frequencies"] }'
+
+# The same, minus everything shared: it produces its results and then fails, which is the state
+# refuse-if-populated has to survive.
+ANALYSIS_BREAKER_MAIN=$(cat <<'MODULE'
+nextflow.enable.dsl=2
+
+include { analysisPlan } from '../../lib/plan.nf'
+include { PublishResults } from '../../lib/results.nf'
+
+process Derive {
+    input:
+    val target
+
+    output:
+    tuple val(target), path('result.*')
+
+    script:
+    """
+    printf 'analysis of %s\\n' '${target.label}' > result.tsv
+    echo "BREAKER has its results and is about to fail" >&2
+    exit 3
+    """
+}
+
+workflow {
+    PublishResults(Derive(channel.fromList(analysisPlan('breaker').targets)))
+}
+MODULE
+)
+
+ANALYSIS_BREAKER_MANIFEST='{ "name": "breaker", "version": "0.1.0", "contract": "freq-1",
+  "summary": "fail after producing results", "needs": ["frequencies"] }'
+
+# Set up a single-run project with results planted and one module installed.
+analysis_writer_ready() {
+    analysis_ready single || return 1
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    analysis_install_module writer "$ANALYSIS_WRITER_MANIFEST" "$ANALYSIS_WRITER_MAIN"
+    return 0
+}
+
+# What Analysis/Main holds for the one results directory a single-run project has.
+analysis_main_dir() {
+    printf '%s\n' "$ANALYSIS_SB/main/Analysis/Main/Output"
+}
+
+# What `PoolSeqFlow analysis complete` will do: Analysis/Main moves to permanent storage. The
+# command is not built yet and these cases must not wait for it - the move back is the half
+# that carries the risk.
+analysis_archive_main() {
+    mkdir -p "$ANALYSIS_SB/store/Analysis"
+    mv "$ANALYSIS_SB/main/Analysis/Main" "$ANALYSIS_SB/store/Analysis/Main"
+}
+
+# One analysis, start to finish: verify, then the module itself.
+analysis_run_module() {
+    local module="$1" status
+    status=$(run_analysis "$ANALYSIS_SB" "$module")
+    [ "$status" = "0" ] || { printf 'verify:%s\n' "$status"; return 0; }
+    run_module "$ANALYSIS_SB" "$module"
+}
+
+# A module writes everything it produced into the folder the verification cleared, and the
+# record that cleared it is still there beside the analysis.
+test_a_module_publishes_what_it_produced() {
+    analysis_writer_ready || return
+    local status; status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the writer module should run"
+
+    local folder; folder="$ANALYSIS_SB/main/Analysis/Results/writer"
+    assert_file "$folder/result.tsv" "the analysis is published"
+    assert_file "$folder/result.R" "and so is the script beside it"
+    assert_file "$folder/0_verify_analysis.txt" \
+        "the record that cleared the folder travels with the analysis it let run"
+    assert_eq "analysis of Output" "$(cat "$folder/result.tsv" 2>/dev/null)" \
+        "the file's contents, not a link into a work directory cleanup has removed"
+}
+
+# THE HALF THAT WILL REGRESS. A module that fails must leave the folder as the verification
+# left it, or its own name is unusable for good: refuse-if-populated cannot tell a crash from
+# a collision.
+test_a_module_that_fails_publishes_nothing() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    analysis_install_module breaker "$ANALYSIS_BREAKER_MANIFEST" "$ANALYSIS_BREAKER_MAIN"
+
+    local status; status=$(analysis_run_module breaker)
+    assert_status 1 "$status" "the breaker module should fail"
+
+    local folder held
+    folder="$ANALYSIS_SB/main/Analysis/Results/breaker"
+    held=$(ls -A "$folder" 2>/dev/null | sort | tr '\n' ' ')
+    assert_eq "0_verify_analysis.txt " "$held" \
+        "a failed module leaves the folder holding nothing but the verification record"
+
+    status=$(run_analysis "$ANALYSIS_SB" breaker)
+    assert_status 0 "$status" "so the retry is not refused"
+    assert_contains "$(analysis_report "$ANALYSIS_SB")" "holds no analysis" \
+        "and the folder still reads as ready to be written"
+}
+
+# Every intermediate says which results it came from. Analysis/Main outlives any one analysis,
+# so nothing else in the layout would notice a pipeline re-run underneath it.
+test_an_intermediate_records_the_results_it_came_from() {
+    analysis_writer_ready || return
+    local status; status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the writer module should run"
+
+    local main; main=$(analysis_main_dir)
+    assert_file "$main/matrix.tsv" "the intermediate is on the working volume"
+    assert_file "$main/matrix.tsv.provenance" "with its provenance record beside it"
+
+    local record; record=$(cat "$main/matrix.tsv.provenance" 2>/dev/null)
+    assert_contains "$record" ".poolseqflow_params" "the record names the parameter manifest"
+    assert_contains "$record" ".poolseqflow_version" "and the version record"
+    assert_contains "$record" ".multirun.csv" "and the run table, absent or not"
+}
+
+# Derived once, reused by every module after it. That is what Analysis/Main is for, and the
+# reuse is skip-by-existence across separate Nextflow runs.
+test_an_intermediate_is_derived_once() {
+    analysis_writer_ready || return
+    local status; status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the first run should derive it"
+    assert_contains "$(analysis_output)" "WRITER derived" "the first run derives the intermediate"
+
+    analysis_folder_name "'second'"
+    status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the second run should reuse it"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "WRITER reused" "the second run reuses it"
+    assert_contains "$out" "on the working volume" "and finds it without touching storage"
+}
+
+# THE ONE THE VERIFICATION CANNOT CATCH. Re-running the pipeline under the settings it already
+# recorded leaves the identity check passing, and every intermediate derived from the results
+# it replaced is stale. The record beside the intermediate is the only thing that sees it.
+test_an_intermediate_derived_from_other_results_refuses() {
+    analysis_writer_ready || return
+    local status; status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the first run should derive the intermediate"
+
+    # Field 2 is the date the results were recorded, which the identity check prints and does
+    # not compare - so this is a re-run the verification has no quarrel with.
+    local version release
+    version="$ANALYSIS_SB/store/Output/.poolseqflow_version"
+    release=$(cut -f1 < "$version")
+    printf '%s\t%s\n' "$release" "1999-01-01" > "$version"
+
+    analysis_folder_name "'after_rerun'"
+    status=$(run_analysis "$ANALYSIS_SB" writer)
+    assert_status 0 "$status" "the verification still passes, which is the point"
+
+    status=$(run_module "$ANALYSIS_SB" writer)
+    assert_status 1 "$status" "the module refuses on the stale intermediate"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "matrix.tsv is STALE" "and names the file"
+    assert_contains "$out" ".poolseqflow_version" "and the record that moved"
+}
+
+# THE RISKY MOVE. Named files, one at a time, out of a directory that holds other things -
+# a wholesale move is how a neighbour gets lost.
+test_an_intermediate_comes_back_from_permanent_storage() {
+    analysis_writer_ready || return
+    local status; status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the first run should derive the intermediate"
+
+    analysis_archive_main
+    local archived; archived="$ANALYSIS_SB/store/Analysis/Main/Output"
+    printf 'somebody else put this here\n' > "$archived/bystander.txt"
+    assert_file "$archived/matrix.tsv" "the intermediate is in permanent storage to start with"
+
+    analysis_folder_name "'from_storage'"
+    status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the module should run against the archived intermediate"
+
+    local main out
+    main=$(analysis_main_dir)
+    out=$(analysis_output)
+    assert_contains "$out" "brought back from permanent storage" "the move back is reported"
+    assert_contains "$out" "WRITER reused" "and the intermediate is reused, not derived again"
+    assert_file "$main/matrix.tsv" "it is on the working volume now"
+    assert_file "$main/matrix.tsv.provenance" "and its record came with it"
+    assert_no_file "$archived/matrix.tsv" "the source is gone, not copied"
+    assert_no_file "$archived/matrix.tsv.provenance" "and so is its record"
+    assert_file "$archived/bystander.txt" \
+        "and nothing else in permanent storage was carried off with them"
 }

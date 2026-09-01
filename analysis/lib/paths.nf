@@ -99,8 +99,14 @@ def targetResultsDir(String module, String label) {
     return "${resultsRoot(module)}/${label}".toString()
 }
 
+// What the verification record is called wherever it is written. Read by the stage that writes
+// it and by the publish that has to carry it across.
+def verificationRecordName() {
+    return '0_verify_analysis.txt'
+}
+
 // The verification record, written beside the results it cleared. One per invocation, however
 // many results directories it covers.
 def verificationReportFile(String module) {
-    return "${resultsRoot(module)}/0_verify_analysis.txt".toString()
+    return "${resultsRoot(module)}/${verificationRecordName()}".toString()
 }

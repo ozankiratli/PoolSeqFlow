@@ -821,11 +821,11 @@ The two verbatim copies serve a different purpose from the rest. They are not wh
 
 ### Moves across filesystems are atomic
 
-**The decision.** All cross-filesystem moves stage through a `.part` file and rename into place, via `bin/atomic_mv.sh`.
+**The decision.** All cross-filesystem moves stage inside a temporary directory of the mover's own and rename into place, via `bin/atomic_mv.sh`.
 
 **Why.** A plain `mv` across a filesystem boundary is a copy followed by an unlink, not an atomic rename. A job killed mid-move — walltime, preemption, a node failure — leaves a **truncated file under its final name**. Combined with existence-based resume, that is the worst possible failure: the next run sees the file, concludes the step is done, and builds everything downstream on a partial BAM.
 
-Staging through a temporary name and renaming means an interrupted move leaves a `.part` file that no existence check looks for, and the step simply runs again.
+Staging under a temporary name and renaming means an interrupted move leaves nothing any existence check looks for, and the step simply runs again. The staging directory belongs to the one move: two jobs racing for the same destination stage separately, so neither can be seen writing into the other's copy.
 
 ---
 
@@ -2856,7 +2856,7 @@ Step 7 is a chain of five sub-steps, and each checks for the outputs of every *l
 
 A plain `mv` across a filesystem boundary is a copy followed by an unlink. A job killed mid-move would leave a **truncated file under its final name**, which existence-based resume would then accept as a completed step.
 
-All cross-filesystem moves go through `bin/atomic_mv.sh`, which stages via a `.part` file and renames into place. An interrupted move leaves a `.part` that no check looks for, and the step simply runs again.
+All cross-filesystem moves go through `bin/atomic_mv.sh`, which stages inside a temporary directory of its own and renames into place. An interrupted move leaves nothing any check looks for, and the step simply runs again.
 
 ### What resume does not protect you from
 
@@ -3252,7 +3252,7 @@ Correct — PoolSeqFlow does not use Nextflow's `-resume`, and the wrapper never
 
 #### A step reruns after an interrupted job
 
-If the interruption hit a cross-filesystem move, the partial file was left as `.part` rather than under its final name, so the step correctly runs again. That is the atomic move working.
+If the interruption hit a cross-filesystem move, the partial copy was left under a temporary name rather than under the final one, so the step correctly runs again. That is the atomic move working.
 
 ### Getting help
 

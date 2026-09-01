@@ -60,8 +60,8 @@ if [ -n "$ALSO" ]; then
         echo "  also at $extra" >&2
     done <<< "$ALSO"
     echo "  The first is the one that counts. A duplicate means a promotion did not" >&2
-    echo "  finish; atomic_mv.sh stages through .part and renames, so this should not" >&2
-    echo "  happen, and the extra copy is worth looking at before it is removed." >&2
+    echo "  finish; atomic_mv.sh stages and renames, so this should not happen, and" >&2
+    echo "  the extra copy is worth looking at before it is removed." >&2
 fi
 
 printf '%s\n' "$FOUND"

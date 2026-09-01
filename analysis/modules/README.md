@@ -17,16 +17,27 @@ A module is a pipeline in its own right. It imports what it wants from `analysis
 nextflow.enable.dsl=2
 
 include { analysisPlan } from '../../lib/plan.nf'
+include { PublishResults } from '../../lib/results.nf'
+
+process Analyse {
+    input:
+    val target          // target.classes.frequencies.dir  - where the published tables are
+
+    output:
+    tuple val(target), path('result.*')
+
+    script:
+    """
+    ...
+    """
+}
 
 workflow {
-    analysisPlan('mymodule').targets.each { target ->
-        // target.classes.frequencies.dir  - where the published tables are
-        // target.results                  - the folder this analysis writes to
-    }
+    PublishResults(Analyse(channel.fromList(analysisPlan('mymodule').targets)))
 }
 ```
 
-`analysisPlan` takes the module's own name and returns one target per results directory the invocation covers. The artifact classes it marks required are the `needs` from your `manifest.json`, so you state what you read once and nothing repeats it. It recomputes the pipeline's own partition of the runs, so two runs that produced the same tables are one target and are analysed once.
+`analysisPlan` takes the module's own name and returns one target per results directory the invocation covers. `PublishResults` takes what you produced for one of them and installs it in `target.results`. The artifact classes it marks required are the `needs` from your `manifest.json`, so you state what you read once and nothing repeats it. It recomputes the pipeline's own partition of the runs, so two runs that produced the same tables are one target and are analysed once.
 
 A module ships no configuration. `PoolSeqFlow analysis` assembles it — the installation's `analysis/defaults.config`, then the project's `analysis.config`, then `<module>.config` — and `defaults.config` carries what the pipeline gets from `nextflow.config`, which Nextflow does not read for a module: `bin/` on the task PATH, conda, and the resource ceiling.
 
@@ -69,19 +80,24 @@ The classes `needs` may name:
 
 ### Writing your own results
 
-13. **Write to a temp location and move in on success.** `bin/atomic_mv.sh` is on the task `PATH` and stages through a directory of its own for exactly this, so a destination is only ever absent or complete, even when two callers race for it. A results folder that already holds an analysis is refused, so a crashed run that left a partial folder makes that folder name unusable for good.
-14. **Publish a real copy or a real move, never a symlink.** `cleanup = true` is set for analysis runs, so the work directory is removed on success and a symlinked result becomes a dangling link.
+13. **Publish through `PublishResults`, and never write into `target.results` yourself.** Hand it the target and everything you produced for it; the whole analysis moves into the folder under one rename, so the folder is only ever absent or complete. A module that installs its results one file at a time leaves a half-populated folder when it fails partway, and refuse-if-populated cannot tell that from a collision — so its own folder name becomes unusable for good.
+14. **What you hand it must be real files.** `PublishResults` dereferences what Nextflow staged for exactly this reason: `cleanup = true` is set for analysis runs, so the work directory goes on success and a symlinked result becomes a dangling link. Anything you write anywhere else is yours to get right the same way.
 15. **Emit the script that produced each result** into the folder beside it. A result nobody can regenerate is the reproducibility gap this whole layer exists to close.
+
+### Sharing what you derive
+
+16. **Anything another module could want goes in `Analysis/Main`, through `publishIntermediate`.** It writes the provenance record and then the file, which is the invariant everything else reads: an intermediate that is there is one whose provenance can be read. It is one call rather than two so that the order is not yours to get wrong.
+17. **Call `RestoreIntermediates` before you read one.** `PoolSeqFlow analysis complete` moves `Analysis/Main` to permanent storage, and the restore brings back the ones you name, a file at a time. It refuses anything derived from results the project no longer holds — a pipeline re-run leaves the identity check with nothing to object to and every intermediate under it stale, and the record beside each one is what sees that. An intermediate that is nowhere is the ordinary answer on a first run: derive it.
 
 ### Assumptions
 
-16. **If your statistic assumes something, refuse when it does not hold, and name the assumption.** A gate that silently passes is the failure mode; a gate that stops the run with `diploidy = 3, and this estimator assumes 2` costs a user one minute. Declare it in the manifest's `gates` as well — the frame carries that field, and enforcing it is currently the module's own job.
-17. **A decision is yours to state, not the library's to have made.** Where a shared derivation needs a choice — a missing-site policy, say — take it as a required argument with no default, print it in what you write, and **key the intermediate's filename on it**: `freqmatrix_pairwise.tsv`, never `freqmatrix.tsv`. Shared intermediates are reused by name, so a name that omits the decision hands the next module your assumption while its report claims its own.
-18. **Print your assumptions on what you write.** A figure that leaves the project must carry the conditions it was computed under.
+18. **If your statistic assumes something, refuse when it does not hold, and name the assumption.** A gate that silently passes is the failure mode; a gate that stops the run with `diploidy = 3, and this estimator assumes 2` costs a user one minute. Declare it in the manifest's `gates` as well — the frame carries that field, and enforcing it is currently the module's own job.
+19. **A decision is yours to state, not the library's to have made.** Where a shared derivation needs a choice — a missing-site policy, say — take it as a required argument with no default, print it in what you write, and **key the intermediate's name on it**: `freqmatrix_pairwise.tsv`, never `freqmatrix.tsv`. Intermediates are reused by name, so a name that omits the decision hands the next module your assumption while its report claims its own.
+20. **Print your assumptions on what you write.** A figure that leaves the project must carry the conditions it was computed under.
 
 ### Testing
 
-19. **Make the statistics callable without starting Nextflow.** A Nextflow run costs about 21 seconds of startup, flat, so anything provable by calling a function directly should be a unit test of that function rather than an end-to-end run.
+21. **Make the statistics callable without starting Nextflow.** A Nextflow run costs about 21 seconds of startup, flat, so anything provable by calling a function directly should be a unit test of that function rather than an end-to-end run.
 
 ## Where they come from
 
@@ -116,7 +132,7 @@ Several rows may name one module. `install <name>` takes the newest version whos
 
 Two rules the installer enforces, so build for them:
 
-20. **The checksum must match before anything is unpacked.** An archive becomes code that runs on someone's machine, so a mismatch stops the install with nothing written. A row whose `sha256` is out of date makes the module uninstallable, not silently different.
-21. **The archive must contain `<name>/manifest.json` and `<name>/main.nf`.** An archive that unpacks to a different directory name, or to the files bare, is refused as not a module. Build it as `tar -czf <name>-<version>.tar.gz <name>`.
+22. **The checksum must match before anything is unpacked.** An archive becomes code that runs on someone's machine, so a mismatch stops the install with nothing written. A row whose `sha256` is out of date makes the module uninstallable, not silently different.
+23. **The archive must contain `<name>/manifest.json` and `<name>/main.nf`.** An archive that unpacks to a different directory name, or to the files bare, is refused as not a module. Build it as `tar -czf <name>-<version>.tar.gz <name>`.
 
 Installing writes a `.source` file beside the module recording the name, version, contract, URL and checksum it came from, so an installation can account for every module in it.
