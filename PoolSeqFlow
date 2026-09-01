@@ -624,7 +624,7 @@ EOF
         echo "ERROR: $name v$version could not be unpacked. Nothing was installed." >&2
         exit 1
     fi
-    for f in manifest.json main.nf; do
+    for f in manifest.json main.nf citations.json; do
         if [ ! -f "$unpacked/$name/$f" ]; then
             echo "ERROR: the $name archive has no $name/$f, so it is not a module." >&2
             echo "  Nothing was installed." >&2

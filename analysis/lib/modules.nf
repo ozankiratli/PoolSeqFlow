@@ -74,6 +74,15 @@ def readManifest(Object dir) {
             "${dir} has a manifest but no main.nf. A module is a pipeline of its own and " +
             "main.nf is that pipeline. Install the module again, or remove the directory.")
     }
+    // Refused here rather than at publish, for the same reason main.nf is: a module that
+    // cannot say what to cite is caught before the verification clears a results folder.
+    if (!file("${dir}/citations.json").exists()) {
+        throw new IllegalStateException(
+            "${dir} has no citations.json. Every module says what it should be cited with - " +
+            "the method it implements and the R packages it uses - because the frame cannot " +
+            "know them for a module published separately.\n" +
+            "Install the module again, or remove the directory.")
+    }
     return [ summary : "${parsed.summary}".toString(),
              version : "${parsed.version}".toString(),
              contract: "${parsed.contract}".toString(),

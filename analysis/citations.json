@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "Citations for what an ANALYSIS run invokes, beside install/citations.json which covers",
+    "the pipeline's own tools. Same shape, same writer: bin/write_citations.py turns the",
+    "merged set into CITATIONS.md and references.bib inside every published results folder.",
+    "",
+    "Three sources are merged for one analysis. PoolSeqFlow and Nextflow come from",
+    "install/citations.json, so there is one copy of each in the release. This file adds what",
+    "the analysis layer itself runs on. A module adds its own methods citations in its own",
+    "citations.json, because a module is published separately and the frame cannot hold a",
+    "list of citations for modules that do not exist yet.",
+    "",
+    "There is no 'when' gate here: what a run invoked is decided before the writer is called,",
+    "by merging only the module that actually ran. An entry that is in the merged set is one",
+    "the run used.",
+    "",
+    "'r_package' names the R package an entry is about, and the version reported is the one",
+    "R answers with rather than the one the environment pins."
+  ],
+
+  "r": {
+    "name": "R",
+    "type": "misc",
+    "key": "rcoreteam",
+    "authors": "{R Core Team}",
+    "title": "R: A Language and Environment for Statistical Computing",
+    "publisher": "R Foundation for Statistical Computing",
+    "address": "Vienna, Austria",
+    "url": "https://www.R-project.org/",
+    "note": "Every analysis module runs on R. `PoolSeqFlow analysis cite` asks your installed R for the exact citation of the version you ran, including its year."
+  }
+}

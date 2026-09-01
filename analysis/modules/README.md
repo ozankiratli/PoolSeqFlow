@@ -6,6 +6,7 @@ One directory per module, named exactly as the module is named. Each holds at le
 |---|---|
 | `manifest.json` | `name`, `version`, `contract`, `summary`, and optionally `needs` and `gates` |
 | `main.nf` | the module's own Nextflow pipeline |
+| `citations.json` | the methods and packages your module should be cited with |
 
 A module is a pipeline in its own right. It imports what it wants from `analysis/lib` by relative path and is launched directly; nothing in the frame includes it, so a module that is absent, or one whose directory has been removed, costs the others nothing.
 
@@ -83,6 +84,8 @@ The classes `needs` may name:
 13. **Publish through `PublishResults`, and never write into `target.results` yourself.** Hand it the target and everything you produced for it; the whole analysis moves into the folder under one rename, so the folder is only ever absent or complete. A module that installs its results one file at a time leaves a half-populated folder when it fails partway, and refuse-if-populated cannot tell that from a collision — so its own folder name becomes unusable for good.
 14. **What you hand it must be real files.** `PublishResults` dereferences what Nextflow staged for exactly this reason: `cleanup = true` is set for analysis runs, so the work directory goes on success and a symlinked result becomes a dangling link. Anything you write anywhere else is yours to get right the same way.
 15. **Emit the script that produced each result** into the folder beside it, in the same set of files you hand `PublishResults`. A result nobody can regenerate is the reproducibility gap this whole layer exists to close, so this one is **enforced, not asked**: publishing an analysis that carries no `*.R`, `*.r`, `*.Rmd`, `*.rmd`, `*.sh`, `*.py` or `*.jl` fails the run, names what you did produce, and publishes nothing. The folder is left exactly as the verification cleared it, so the retry is not refused.
+
+15b. **Carry your own `citations.json`. It is required, like `manifest.json` and `main.nf`.** Every published analysis gets `CITATIONS.md` and `references.bib` written into its folder, in the same rename as the result. The frame contributes PoolSeqFlow, Nextflow and R; **the method your module implements and the R packages it uses are yours to declare**, because you are published separately and the frame cannot hold a list of citations for modules that do not exist yet. At the very least, name the libraries you call — a user cannot credit a package they never learn they depended on. The shape is `analysis/citations.json`'s, one entry per reference, keyed however you like; an entry naming `"r_package": "vegan"` has its version asked of R at run time rather than taken from what the environment pins, so it stays correct if someone repointed it. A directory without the file is refused at DAG-build time, before the verification clears a results folder, exactly as a missing `main.nf` is, and `modules install` refuses an archive that lacks one.
 
 ### Sharing what you derive
 

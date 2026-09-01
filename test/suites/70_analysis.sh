@@ -135,6 +135,9 @@ analysis_install_module() {
     else
         printf '%s\n' 'nextflow.enable.dsl=2' 'workflow { println "module ran" }' > "$dir/main.nf"
     fi
+    # Required of every module, so a fixture that omits it fails on that rather than on what
+    # the case is about. A case testing its absence removes it again.
+    printf '{}\n' > "$dir/citations.json"
 }
 
 # Write the project's analysis.config with one run selection in it.
@@ -470,6 +473,21 @@ test_a_module_with_a_manifest_but_no_pipeline_refuses() {
     assert_status 1 "$status" "a module with no main.nf must stop even an unrelated module"
     assert_contains "$(analysis_output)" "has a manifest but no main.nf" \
         "naming what is missing"
+    assert_no_file "$ANALYSIS_SB/main/Analysis/Results/verify" \
+        "and refusing before anything is cleared or written"
+}
+
+# A module says what it should be cited with, and it is not optional: a result whose method
+# nobody can credit is the same class of gap as one nobody can regenerate. Refused where
+# main.nf is, at DAG-build time, before the verification clears a results folder.
+test_a_module_without_citations_refuses() {
+    analysis_ready single || return
+    analysis_install_module mds \
+        '{"name":"mds","version":"1.4.2","contract":"freq-1","summary":"scaling over frequencies"}'
+    rm "$ANALYSIS_SB/install/analysis/modules/mds/citations.json"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a module with no citations.json must stop even an unrelated module"
+    assert_contains "$(analysis_output)" "has no citations.json" "naming what is missing"
     assert_no_file "$ANALYSIS_SB/main/Analysis/Results/verify" \
         "and refusing before anything is cleared or written"
 }
@@ -984,6 +1002,57 @@ test_a_module_that_fails_publishes_nothing() {
     assert_status 0 "$status" "so the retry is not refused"
     assert_contains "$(analysis_report "$ANALYSIS_SB")" "holds no analysis" \
         "and the folder still reads as ready to be written"
+}
+
+# A published analysis is self-describing: the result, the script that made it, the record
+# that cleared the folder, and what it was all produced with. Written into the STAGE, so the
+# citations arrive in the same rename and a folder is never half-described.
+test_a_published_analysis_carries_its_citations() {
+    analysis_writer_ready || return
+    local status; status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the writer module should run"
+
+    local folder; folder="$ANALYSIS_SB/main/Analysis/Results/writer"
+    assert_file "$folder/CITATIONS.md" "the citation list is published with the analysis"
+    assert_file "$folder/references.bib" "and the BibTeX beside it"
+
+    local md; md=$(cat "$folder/CITATIONS.md" 2>/dev/null)
+    assert_contains "$md" "PoolSeqFlow" "citing the pipeline itself"
+    assert_contains "$md" "Nextflow" "and Nextflow"
+    assert_contains "$md" "R" "and R, which every module runs on"
+    # The pipeline's own tools are in install/citations.json and an analysis invokes none of
+    # them. Citing BWA for a run that never aligned anything would be a false claim.
+    assert_not_contains "$md" "BWA" "but not a tool the analysis never ran"
+    assert_not_contains "$md" "SnpEff" "nor another"
+}
+
+# A module is published separately, so the frame cannot hold a list of citations for modules
+# that do not exist yet. Each carries its own, and they are merged for the run that used it.
+test_a_module_adds_its_own_citations() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    analysis_install_module writer "$ANALYSIS_WRITER_MANIFEST" "$ANALYSIS_WRITER_MAIN"
+    cat > "$ANALYSIS_SB/install/analysis/modules/writer/citations.json" <<'JSON'
+{
+  "vegan": {
+    "name": "vegan",
+    "type": "misc",
+    "key": "oksanen2024vegan",
+    "authors": "Oksanen, Jari and others",
+    "title": "vegan: Community Ecology Package",
+    "url": "https://CRAN.R-project.org/package=vegan",
+    "r_package": "vegan"
+  }
+}
+JSON
+
+    local status; status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the module should still run"
+    local md; md=$(cat "$ANALYSIS_SB/main/Analysis/Results/writer/CITATIONS.md" 2>/dev/null)
+    assert_contains "$md" "vegan" "the module's own citation is in the list"
+    assert_contains "$md" "PoolSeqFlow" "beside the frame's"
+    assert_contains "$(cat "$ANALYSIS_SB/main/Analysis/Results/writer/references.bib" 2>/dev/null)" \
+        "oksanen2024vegan" "and its BibTeX key is in references.bib"
 }
 
 # THE REPRODUCIBILITY GUARANTEE, enforced rather than documented. README rule 15 has always

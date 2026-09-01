@@ -9,6 +9,7 @@
 nextflow.enable.dsl=2
 
 include { verificationRecordName } from './paths.nf'
+include { citationShell } from './citations.nf'
 
 // What counts as the script that produced a result, by extension. The layer is R, and a module
 // may reasonably drive it from a shell or Python wrapper, so those count too.
@@ -33,6 +34,8 @@ process InstallResults {
     // `find -name` tests, one per accepted extension, joined for a single walk of the stage.
     script_test = scriptSuffixes().collect { s -> "-name '*.${s}'" }.join(' -o ')
     script_list = scriptSuffixes().collect { s -> "*.${s}" }.join(', ')
+    // Written into the STAGE, so the citations arrive in the same rename as the analysis.
+    citations = citationShell("${target.module}", '$STAGE')
     """
     set -eo pipefail
 
@@ -62,6 +65,9 @@ process InstallResults {
         echo "PUBLISHING ${target.label}: Nothing was published and the folder is untouched." >&2
         exit 1
     fi
+
+    # What this analysis was produced with, beside the analysis itself.
+    ${citations}
 
     if [ -d "\$DEST" ]; then
         HELD=\$(find "\$DEST" -mindepth 1 -maxdepth 1 ! -name '${keep}' | wc -l)

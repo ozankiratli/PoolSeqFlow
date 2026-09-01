@@ -556,6 +556,8 @@ make_module_release() {
     printf '{"name":"%s","version":"%s","contract":"%s","summary":"planted"}\n' \
         "$name" "$version" "$contract" > "$dir/src/$name/manifest.json"
     printf 'nextflow.enable.dsl=2\nworkflow { println "%s ran" }\n' "$name" > "$dir/src/$name/main.nf"
+    # Required of every module, and `install` refuses an archive without one.
+    printf '{}\n' > "$dir/src/$name/citations.json"
     tarball="$dir/$name-$version.tar.gz"
     tar -czf "$tarball" -C "$dir/src" "$name"
     rm -rf "$dir/src"

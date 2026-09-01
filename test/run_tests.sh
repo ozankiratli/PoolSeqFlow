@@ -5,6 +5,7 @@
 #   test/run_tests.sh                 run everything
 #   test/run_tests.sh --list          show the suites without running them
 #   test/run_tests.sh --suite static  run suites whose name contains "static"
+#   test/run_tests.sh --case citation run only cases whose name contains "citation"
 #   test/run_tests.sh --fast          skip the suites that run the pipeline
 #   test/run_tests.sh --keep          leave the working directories behind for inspection
 #
@@ -23,6 +24,7 @@ LIST_ONLY=0
 FAST=0
 KEEP=0
 SUITE_FILTER=""
+CASE_FILTER=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -30,8 +32,9 @@ while [ $# -gt 0 ]; do
         --fast)  FAST=1 ;;
         --keep)  KEEP=1 ;;
         --suite) SUITE_FILTER="${2:-}"; shift ;;
+        --case)  CASE_FILTER="${2:-}"; shift ;;
         -h|--help)
-            sed -n '3,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '3,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *)
             echo "unknown option: $1" >&2
@@ -137,6 +140,11 @@ for suite in "${SUITES[@]}"; do
     printf '\n%s%s%s\n' "$C_HEAD" "$name" "$C_OFF"
     while read -r fn; do
         [ -n "$fn" ] || continue
+        # Filtered here rather than at discovery: a suite's fixtures are built by the cases
+        # that need them, so the ones that run must still be the ones the suite defines.
+        if [ -n "$CASE_FILTER" ]; then
+            case "$fn" in *"$CASE_FILTER"*) ;; *) unset -f "$fn"; continue ;; esac
+        fi
         run_case "$fn"
         unset -f "$fn"
     done < <(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))

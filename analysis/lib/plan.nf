@@ -94,6 +94,7 @@ def resultsTargets(Map plan, List selected, String module, List needs) {
             }
             def label = directoryLabel(variant)
             return [ label   : label,
+                     module  : module,
                      dir     : "${variant.dir.outputs}".toString(),
                      members : variant.members.collect { member -> runToken(member) },
                      selected: variant.members.findAll { member -> wanted.contains(member) }
