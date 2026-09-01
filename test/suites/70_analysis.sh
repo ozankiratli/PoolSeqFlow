@@ -889,6 +889,35 @@ MODULE
 ANALYSIS_BREAKER_MANIFEST='{ "name": "breaker", "version": "0.1.0", "contract": "freq-1",
   "summary": "fail after producing results", "needs": ["frequencies"] }'
 
+# Produces a result and no script - the thing README rule 15 forbids and nothing used to catch.
+ANALYSIS_MUTE_MAIN=$(cat <<'MODULE'
+nextflow.enable.dsl=2
+
+include { analysisPlan } from '../../lib/plan.nf'
+include { PublishResults } from '../../lib/results.nf'
+
+process Derive {
+    input:
+    val target
+
+    output:
+    tuple val(target), path('result.*')
+
+    script:
+    """
+    printf 'analysis of %s\\n' '${target.label}' > result.tsv
+    """
+}
+
+workflow {
+    PublishResults(Derive(channel.fromList(analysisPlan('mute').targets)))
+}
+MODULE
+)
+
+ANALYSIS_MUTE_MANIFEST='{ "name": "mute", "version": "20260901.001", "contract": "freq-1",
+  "summary": "produce a result and no script", "needs": ["frequencies"] }'
+
 # Set up a single-run project with results planted and one module installed.
 analysis_writer_ready() {
     analysis_ready single || return 1
@@ -955,6 +984,32 @@ test_a_module_that_fails_publishes_nothing() {
     assert_status 0 "$status" "so the retry is not refused"
     assert_contains "$(analysis_report "$ANALYSIS_SB")" "holds no analysis" \
         "and the folder still reads as ready to be written"
+}
+
+# THE REPRODUCIBILITY GUARANTEE, enforced rather than documented. README rule 15 has always
+# said a result ships the script that made it; nothing checked, so a module could simply not
+# and no one would know until someone tried to regenerate the result.
+test_a_module_that_emits_no_script_publishes_nothing() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    analysis_install_module mute "$ANALYSIS_MUTE_MANIFEST" "$ANALYSIS_MUTE_MAIN"
+
+    local status; status=$(analysis_run_module mute)
+    assert_status 1 "$status" "publishing without a script must fail the run"
+
+    local out; out=$(analysis_output)
+    assert_contains "$out" "carries no script" "saying what is missing"
+    assert_contains "$out" "result.tsv" "and listing what it did produce"
+    assert_contains "$out" "*.R" "and which extensions count"
+
+    # The same guarantee the breaker case makes: a refusal here must not consume the folder
+    # name, or the module could never be published under it again.
+    local folder held
+    folder="$ANALYSIS_SB/main/Analysis/Results/mute"
+    held=$(ls -A "$folder" 2>/dev/null | sort | tr '\n' ' ')
+    assert_eq "0_verify_analysis.txt " "$held" \
+        "and the folder still holds nothing but the verification record"
+    assert_no_file "$folder/result.tsv" "the result itself is not published"
 }
 
 # Every intermediate says which results it came from. Analysis/Main outlives any one analysis,

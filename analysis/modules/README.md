@@ -82,7 +82,7 @@ The classes `needs` may name:
 
 13. **Publish through `PublishResults`, and never write into `target.results` yourself.** Hand it the target and everything you produced for it; the whole analysis moves into the folder under one rename, so the folder is only ever absent or complete. A module that installs its results one file at a time leaves a half-populated folder when it fails partway, and refuse-if-populated cannot tell that from a collision — so its own folder name becomes unusable for good.
 14. **What you hand it must be real files.** `PublishResults` dereferences what Nextflow staged for exactly this reason: `cleanup = true` is set for analysis runs, so the work directory goes on success and a symlinked result becomes a dangling link. Anything you write anywhere else is yours to get right the same way.
-15. **Emit the script that produced each result** into the folder beside it. A result nobody can regenerate is the reproducibility gap this whole layer exists to close.
+15. **Emit the script that produced each result** into the folder beside it, in the same set of files you hand `PublishResults`. A result nobody can regenerate is the reproducibility gap this whole layer exists to close, so this one is **enforced, not asked**: publishing an analysis that carries no `*.R`, `*.r`, `*.Rmd`, `*.rmd`, `*.sh`, `*.py` or `*.jl` fails the run, names what you did produce, and publishes nothing. The folder is left exactly as the verification cleared it, so the retry is not refused.
 
 ### Sharing what you derive
 

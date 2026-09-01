@@ -2471,6 +2471,8 @@ Everything the analysis layer produces goes under `Analysis/` — on `mainDir` w
 
 `Analysis/Results` holds one folder per analysis, named by [`folderName`](#analysis-folder-name).
 
+**Every published analysis carries the script that produced it.** That is a guarantee of the layer rather than a convention module authors are asked to follow: an analysis handed over without one is refused, nothing is published, and the folder is left exactly as it was. So a result you find in `Analysis/Results` can always be regenerated, and the folder also holds the verification record that cleared it — which names the module, its version, the runs it covered and the configuration it was assembled from.
+
 ### Naming an analysis { #analysis-folder-name }
 
 `analysis.folderName` decides where an invocation writes, under `Analysis/Results`:

@@ -10,6 +10,12 @@ nextflow.enable.dsl=2
 
 include { verificationRecordName } from './paths.nf'
 
+// What counts as the script that produced a result, by extension. The layer is R, and a module
+// may reasonably drive it from a shell or Python wrapper, so those count too.
+def scriptSuffixes() {
+    return ['R', 'r', 'Rmd', 'rmd', 'sh', 'py', 'jl']
+}
+
 // One results directory's analysis, moved into place.
 process InstallResults {
     tag { target.label }
@@ -24,6 +30,9 @@ process InstallResults {
 
     script:
     keep = verificationRecordName()
+    // `find -name` tests, one per accepted extension, joined for a single walk of the stage.
+    script_test = scriptSuffixes().collect { s -> "-name '*.${s}'" }.join(' -o ')
+    script_list = scriptSuffixes().collect { s -> "*.${s}" }.join(', ')
     """
     set -eo pipefail
 
@@ -38,6 +47,20 @@ process InstallResults {
     # directory a link points into, and a published result outlives the run that made it.
     if [ -d produced ]; then
         cp -RL produced/. "\$STAGE/"
+    fi
+
+    # A result nobody can regenerate is the gap this layer exists to close, so the script that
+    # produced it travels with it. Checked here because this is the one point every module
+    # passes through; a module that emits none stops before anything is published.
+    SCRIPTS=\$(find "\$STAGE" -type f \\( ${script_test} \\) | wc -l)
+    if [ "\$SCRIPTS" -eq 0 ]; then
+        echo "PUBLISHING ${target.label}: ERROR: this analysis carries no script." >&2
+        echo "PUBLISHING ${target.label}: What it produced:" >&2
+        find "\$STAGE" -mindepth 1 | sed 's|.*/|  |' >&2
+        echo "PUBLISHING ${target.label}: A published result has to ship the script that made it -" >&2
+        echo "PUBLISHING ${target.label}: one of ${script_list} - or nobody can regenerate it." >&2
+        echo "PUBLISHING ${target.label}: Nothing was published and the folder is untouched." >&2
+        exit 1
     fi
 
     if [ -d "\$DEST" ]; then
