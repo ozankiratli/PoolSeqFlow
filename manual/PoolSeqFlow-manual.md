@@ -2379,19 +2379,18 @@ Versions are not in that listing. A module reports its own version in the header
 ## Configuring the Analysis Layer
 <!--@ page: configuration | nav: Configuration -->
 
-### The three files { #analysis-configuration }
+### Your two files { #analysis-configuration }
 
-Three files are read, each winning over the one before it:
+There are two, both optional, and the second wins over the first:
 
 | File | Where | Applies to |
 |---|---|---|
-| `analysis/defaults.config` | the installation | every project on the machine |
 | `analysis.config` | your project, beside `parameters.config` | every module in this project |
 | `<module>.config` | your project | that one module — `mds.config` for `mds` |
 
-**Only the last two are yours, and both are optional.** Copy `analysis/analysis.config.template` out of the installation to start one — until you do, the report at the top of every module prints the path.
+Copy `analysis/analysis.config.template` out of the installation to start one — until you do, the report at the top of every module prints the path. **The default for every setting below is built into PoolSeqFlow**, so a setting you do not write has exactly one source, and there is no file anywhere you could edit to change it for every project at once.
 
-The first is not a settings file and holds none of the settings in this section. It ships with the release and it is how a module reaches conda, the helpers in `bin/` and its resource ceiling — the things the pipeline gets from `nextflow.config` and a module, being its own entry script, does not. **The defaults for the settings below are built into PoolSeqFlow**, so a setting you do not write has one source and no file you could edit to change it for every project at once.
+There is a third file, `analysis/frame.config` in the installation, and it is **not** a settings file: it holds none of the settings in this section and is installed read-only. It is how a module reaches conda, the helpers in `bin/` and its resource ceiling — the things the pipeline gets from `nextflow.config` and a module, being its own entry script, does not get at all. It is listed here so that seeing it in a verification report is not a surprise; nothing in it is yours to change, and anything you set in `analysis.config` wins over it in any case.
 
 `parameters.config` is read as well, and is where the pipeline's own settings stay. The analysis layer does not repeat them.
 

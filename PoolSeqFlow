@@ -122,6 +122,11 @@ PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf dryrun.nf analysis.nf \
 nextflow.config scripts bin lib analysis install parameters.config.template \
 metadata.csv.template multi-run.csv.example manual README.md CHANGELOG.md LICENSE"
 
+# Payload files installed read-only. These are wiring rather than settings: a run reads them,
+# nobody is meant to edit them, and an edit would apply to every project on the machine without
+# appearing in any project's record of itself.
+SEALED_ITEMS="analysis/frame.config"
+
 # The payload's executables, stamped with their installed location and symlinked into
 # $PREFIX/bin twice, once under the plain name and once carrying the version.
 WRAPPERS="PoolSeqFlow"
@@ -274,7 +279,7 @@ deploy_payload() {
     if [ "$here" = "$dest" ]; then
         echo "The pipeline is already installed at $dest."
     else
-        for item in $PAYLOAD_ITEMS; do
+        for item in $PAYLOAD_ITEMS $SEALED_ITEMS; do
             [ -e "$INSTALL/$item" ] || {
                 echo "ERROR: $INSTALL/$item is missing." >&2
                 echo "  This copy is incomplete, so installing from it would deploy a broken tree." >&2
@@ -297,6 +302,11 @@ deploy_payload() {
                 exit 1
             }
             chmod +x "$dest/$item"
+        done
+        # Read-only, after the copy that carried them in. A slip-guard and not a lock: a user
+        # who owns the installation can still chmod one back.
+        for item in $SEALED_ITEMS; do
+            chmod 0444 "$dest/$item"
         done
     fi
 
@@ -1239,7 +1249,7 @@ EOF
                     y|Y|yes|YES|Yes) ;;
                     *) echo "Aborted - nothing was moved."; conda deactivate; exit 1 ;;
                 esac
-                CONFIGS=(-c "$INSTALL/analysis/defaults.config")
+                CONFIGS=(-c "$INSTALL/analysis/frame.config")
                 if [ -f analysis.config ]; then
                     CONFIGS+=(-c analysis.config)
                 fi
@@ -1382,11 +1392,11 @@ EOF
                 require_analysis_install
                 require_project_config
                 require_analysis_env
-                # Three layers, each winning over the one before it: the installation's
-                # defaults, the project's own analysis.config, and this module's
-                # <module>.config. The last two are optional and are read from the directory
-                # you are standing in.
-                CONFIGS=(-c "$INSTALL/analysis/defaults.config")
+                # Three layers, each winning over the one before it: the installation's frame,
+                # the project's own analysis.config, and this module's <module>.config. The
+                # last two are the user's, are optional, and are read from the directory you
+                # are standing in.
+                CONFIGS=(-c "$INSTALL/analysis/frame.config")
                 if [ -f analysis.config ]; then
                     CONFIGS+=(-c analysis.config)
                 fi

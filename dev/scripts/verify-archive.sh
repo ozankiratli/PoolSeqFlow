@@ -33,7 +33,7 @@ root="${tmp}/${name}"
 # Everything a run needs.
 for f in PoolSeqFlow poolseqflow.nf analysis.nf nextflow.config \
          parameters.config.template metadata.csv.template \
-         analysis/modules.nf analysis/0_verify_analysis.nf analysis/defaults.config \
+         analysis/modules.nf analysis/0_verify_analysis.nf analysis/frame.config \
          analysis/analysis.config.template \
          install/environment.yml install/environment-analysis.yml \
          install/check_install.sh install/check_analysis_install.sh \

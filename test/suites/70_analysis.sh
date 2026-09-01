@@ -192,7 +192,7 @@ test_the_frame_and_a_module_share_one_answer() {
 test_the_analysis_layer_ships_with_the_release() {
     local f
     for f in analysis.nf analysis/modules.nf analysis/0_verify_analysis.nf \
-             analysis/defaults.config analysis/analysis.config.template \
+             analysis/frame.config analysis/analysis.config.template \
              analysis/lib/paths.nf analysis/lib/plan.nf analysis/lib/modules.nf \
              analysis/lib/results.nf analysis/lib/store.nf; do
         assert_file "$REPO_ROOT/$f" "$f must ship"
@@ -226,10 +226,10 @@ test_the_module_roster_lives_in_one_place() {
 # settings, and both look like the module simply ignoring the config.
 test_the_wrapper_layers_three_configurations() {
     local wrapper; wrapper=$(cat "$REPO_ROOT/PoolSeqFlow")
-    assert_contains "$wrapper" 'analysis/defaults.config' "the installation's defaults"
+    assert_contains "$wrapper" 'analysis/frame.config' "the installation's frame"
     assert_contains "$wrapper" '-f analysis.config' "then the project's"
     assert_contains "$wrapper" '-f "${ANALYSIS_COMMAND}.config"' "then the module's"
-    # analysis/defaults.config reads this back. It is the run's only way to the installation,
+    # analysis/frame.config reads this back. It is the run's only way to the installation,
     # a module having become the entry script.
     assert_contains "$wrapper" 'export POOLSEQFLOW_HOME="$INSTALL"' \
         "and the installation goes into the environment"
@@ -238,7 +238,7 @@ test_the_wrapper_layers_three_configurations() {
 # An analysis run must not overwrite the pipeline's dag, trace, timeline and report, which
 # are the record of the run that produced the results being read.
 test_the_defaults_keep_the_session_files_out_of_the_pipeline_reports() {
-    local cfg; cfg=$(cat "$REPO_ROOT/analysis/defaults.config")
+    local cfg; cfg=$(cat "$REPO_ROOT/analysis/frame.config")
     local key
     for key in trace report timeline dag; do
         assert_contains "$cfg" "PoolSeqFlow_analysis_${key}" "the ${key} must be redirected"
@@ -254,7 +254,7 @@ test_the_defaults_keep_the_session_files_out_of_the_pipeline_reports() {
 # absent: no conda for a task that asks for it, no bin/ on PATH, and a null `cores` scope that
 # fails inside pipeline code with nothing pointing back here.
 test_the_defaults_carry_what_a_module_run_has_no_other_source_for() {
-    local cfg; cfg=$(cat "$REPO_ROOT/analysis/defaults.config")
+    local cfg; cfg=$(cat "$REPO_ROOT/analysis/frame.config")
     assert_contains "$cfg" 'params.cores = params.containsKey' "the cores scope"
     assert_contains "$cfg" 'PATH="${System.getenv(' "bin/ on the task PATH"
     assert_contains "$cfg" 'conda.enabled = true' "conda, which every analysis module needs"
@@ -265,7 +265,7 @@ test_the_defaults_carry_what_a_module_run_has_no_other_source_for() {
 # from the params.dir.bin that analysisPlan() sets - it has to compute the installation itself.
 # The two would disagree silently: the task would run with a PATH pointing at the module.
 test_the_task_path_does_not_wait_for_params_dir_bin() {
-    local cfg; cfg=$(cat "$REPO_ROOT/analysis/defaults.config")
+    local cfg; cfg=$(cat "$REPO_ROOT/analysis/frame.config")
     assert_not_contains "$cfg" 'PATH="${params.dir.bin}' \
         "PATH must not be interpolated from a params value set later"
     local plan; plan=$(cat "$REPO_ROOT/analysis/lib/plan.nf")
@@ -277,7 +277,7 @@ test_the_task_path_does_not_wait_for_params_dir_bin() {
 # them. A block in the frame would be a second copy of every default, in a file that ships.
 test_the_analysis_settings_default_without_a_config_block() {
     local cfg paths
-    cfg=$(cat "$REPO_ROOT/analysis/defaults.config")
+    cfg=$(cat "$REPO_ROOT/analysis/frame.config")
     paths=$(cat "$REPO_ROOT/analysis/lib/paths.nf")
     assert_not_contains "$cfg" 'runs = ' "the frame declares no run selection"
     assert_not_contains "$cfg" 'folderName' "and no folder name"
@@ -454,7 +454,7 @@ test_verify_names_the_configuration_it_was_assembled_from() {
     analysis_ready single || return
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     local report; report=$(analysis_report "$ANALYSIS_SB")
-    assert_contains "$report" "analysis/defaults.config" "the installation's defaults"
+    assert_contains "$report" "analysis/frame.config" "the installation's frame"
     assert_contains "$report" "this project has no analysis.config" \
         "and that this project has none of its own"
     assert_contains "$report" "analysis/analysis.config.template" "naming what to copy"

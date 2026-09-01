@@ -39,7 +39,7 @@ workflow {
 
 `analysisPlan` takes the module's own name and returns one target per results directory the invocation covers. `PublishResults` takes what you produced for one of them and installs it in `target.results`. The artifact classes it marks required are the `needs` from your `manifest.json`, so you state what you read once and nothing repeats it. It recomputes the pipeline's own partition of the runs, so two runs that produced the same tables are one target and are analysed once.
 
-A module ships no configuration. `PoolSeqFlow analysis` assembles it — the installation's `analysis/defaults.config`, then the project's `analysis.config`, then `<module>.config` — and `defaults.config` carries what the pipeline gets from `nextflow.config`, which Nextflow does not read for a module: `bin/` on the task PATH, conda, and the resource ceiling.
+A module ships no configuration. `PoolSeqFlow analysis` assembles it — the installation's `analysis/frame.config`, then the project's `analysis.config`, then `<module>.config` — and `frame.config` carries what the pipeline gets from `nextflow.config`, which Nextflow does not read for a module: `bin/` on the task PATH, conda, and the resource ceiling.
 
 ## Rules
 

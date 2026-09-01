@@ -370,7 +370,7 @@ ENTRY
 # see the first as unset.
 _analysis_configs() {
     local sb="$1" module="$2" proj="${SANDBOX_PROJECT_DIR:-$1/main}"
-    ANALYSIS_CFG=(-c "$sb/install/analysis/defaults.config")
+    ANALYSIS_CFG=(-c "$sb/install/analysis/frame.config")
     if [ -f "$proj/analysis.config" ]; then
         ANALYSIS_CFG+=(-c "$proj/analysis.config")
     fi
@@ -637,6 +637,16 @@ payload_items() {
     printf '%s' "$PAYLOAD_ITEMS"
 }
 
+# The payload files `install` deploys read-only, read out of the wrapper for the same reason.
+# These are checked for existence like any other payload item, and a directory placeholder is
+# not enough for them: they are named FILES inside a payload directory.
+sealed_items() {
+    local assignment
+    assignment=$(awk '/^SEALED_ITEMS=/{p=1} p{print; if ($0 !~ /\\$/) exit}' "$REPO_ROOT/PoolSeqFlow")
+    eval "$assignment"
+    printf '%s' "$SEALED_ITEMS"
+}
+
 run_launcher_with_envs() {
     local envs_spec="$1"; shift   # space-separated environment names, may be empty
     local sb
@@ -665,6 +675,13 @@ run_launcher_with_envs() {
         # with its installed location and refuses when the stamp does not take.
         case "$f" in PoolSeqFlow) continue ;; esac
         if [ -d "$REPO_ROOT/$f" ]; then mkdir -p "$sb/$f"; else : > "$sb/$f"; fi
+    done
+    # A sealed item is a file INSIDE one of those directories, so the placeholder above made
+    # its parent and not it. `install` checks it exists and then chmods it, and both fail on
+    # a name that is not there.
+    for f in $(sealed_items); do
+        mkdir -p "$sb/$(dirname "$f")"
+        : > "$sb/$f"
     done
     # The one payload file that is not placeholder-able: the wrapper SOURCES it, so an empty
     # lib/ makes every launcher case fail before it reaches what it is testing.
@@ -737,7 +754,7 @@ run_analysis_launcher_with_envs() {
     : > "$sb/analysis.nf"
     printf '// stub project marker\n' > "$sb/parameters.config"
     printf '// stub analysis config\n' > "$sb/analysis.config"
-    printf '// stub defaults\n' > "$sb/analysis/defaults.config"
+    printf '// stub defaults\n' > "$sb/analysis/frame.config"
     # The real one: `modules available|install` read the table contract this release speaks
     # out of it, and a stub would let the compatibility check pass on anything.
     mkdir -p "$sb/analysis/lib"

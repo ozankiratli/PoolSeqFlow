@@ -63,6 +63,44 @@ test_install_deploys_the_pipeline_and_wrappers() {
     assert_contains "$LAUNCHER_OUTPUT" "PATH" "should say something about PATH"
 }
 
+# The frame config is wiring, not settings. Read-only stops the slip where a user edits an
+# installation file and silently changes every project on the machine; it is not a lock, and
+# the manual does not call it one.
+test_install_deploys_the_frame_config_read_only() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    assert_status 0 "$LAUNCHER_STATUS" "install should succeed: $LAUNCHER_OUTPUT"
+    local dest="$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION"
+    assert_file "$dest/analysis/frame.config" "the frame config should be deployed"
+    assert_eq "444" "$(stat -c '%a' "$dest/analysis/frame.config" 2>/dev/null)" \
+        "and it should be read-only"
+    # The checkout it was installed FROM stays writable, or development would need a chmod
+    # after every install.
+    assert_eq "644" "$(stat -c '%a' "$REPO_ROOT/analysis/frame.config" 2>/dev/null)" \
+        "while the source in the checkout stays writable"
+}
+
+# Installing over an installation has to work, and a 0444 file inside a writable directory is
+# removable - but only because `rm -rf` takes the directory's permission, not the file's. If
+# that ever stops being true, every upgrade fails on the second install rather than the first.
+test_install_over_a_sealed_installation_succeeds() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    assert_status 0 "$LAUNCHER_STATUS" "the first install should succeed"
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    assert_status 0 "$LAUNCHER_STATUS" "and so should a second over it: $LAUNCHER_OUTPUT"
+    local dest="$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION"
+    assert_eq "444" "$(stat -c '%a' "$dest/analysis/frame.config" 2>/dev/null)" \
+        "with the frame config still sealed afterwards"
+}
+
+# A sealed item is checked for existence like any other payload item. Deploying an
+# installation without it would leave every analysis run without conda, bin/ or a ceiling.
+test_install_refuses_when_a_sealed_item_is_missing() {
+    local names; names=$(sealed_items)
+    assert_contains "$(cat "$REPO_ROOT/PoolSeqFlow")" 'for item in $PAYLOAD_ITEMS $SEALED_ITEMS' \
+        "the existence check must cover the sealed items too"
+    assert_contains "$names" "analysis/frame.config" "which is where the frame config is named"
+}
+
 # The deployed copy is reached through a symlink, so it carries its own location rather than
 # resolving one. The copy in a clone must stay unstamped, or a checkout would point at an
 # installation instead of itself.
@@ -468,7 +506,7 @@ test_both_invocations_read_the_same_configuration() {
     second=$(sed -n 2p "$LAUNCHER_NEXTFLOW_LOG" | grep -o -- '-c [^ ]*')
     assert_eq "$first" "$second" "both runs must read the same config layers, in the same order"
     assert_count 3 "$(printf '%s\n' "$first" | grep -c .)" \
-        "defaults.config, analysis.config and probe.config"
+        "frame.config, analysis.config and probe.config"
 }
 
 # The store directory is how a module is found, so a directory without the pipeline in it is a

@@ -8,7 +8,7 @@
 //
 // Three files are read, in this order, each winning over the one before it:
 //
-//     the installation's own wiring      analysis/defaults.config
+//     the installation's own wiring      analysis/frame.config
 //     your project                       analysis.config          <- this file
 //     one module                         <module>.config          e.g. mds.config
 //
