@@ -256,11 +256,34 @@ test_the_defaults_keep_the_session_files_out_of_the_pipeline_reports() {
 test_the_defaults_carry_what_a_module_run_has_no_other_source_for() {
     local cfg; cfg=$(cat "$REPO_ROOT/analysis/defaults.config")
     assert_contains "$cfg" 'params.cores = params.containsKey' "the cores scope"
-    assert_contains "$cfg" 'params.dir.bin = "${params.analysis.installDir}/bin"' \
-        "bin/ in the installation rather than beside the module"
-    assert_contains "$cfg" 'PATH="${params.dir.bin}:\$PATH"' "and on the task PATH"
+    assert_contains "$cfg" 'PATH="${System.getenv(' "bin/ on the task PATH"
     assert_contains "$cfg" 'conda.enabled = true' "conda, which every analysis module needs"
     assert_contains "$cfg" 'resourceLimits' "and the ceiling on what a task may ask for"
+}
+
+# env is a config scope and config is read before the entry script, so PATH cannot be built
+# from the params.dir.bin that analysisPlan() sets - it has to compute the installation itself.
+# The two would disagree silently: the task would run with a PATH pointing at the module.
+test_the_task_path_does_not_wait_for_params_dir_bin() {
+    local cfg; cfg=$(cat "$REPO_ROOT/analysis/defaults.config")
+    assert_not_contains "$cfg" 'PATH="${params.dir.bin}' \
+        "PATH must not be interpolated from a params value set later"
+    local plan; plan=$(cat "$REPO_ROOT/analysis/lib/plan.nf")
+    assert_contains "$plan" 'params.dir.bin = "${installDir()}/bin"' \
+        "and analysisPlan sets it for the Groovy that reads it"
+}
+
+# The scope is not declared in any config file, so the defaults live in the code that reads
+# them. A block in the frame would be a second copy of every default, in a file that ships.
+test_the_analysis_settings_default_without_a_config_block() {
+    local cfg paths
+    cfg=$(cat "$REPO_ROOT/analysis/defaults.config")
+    paths=$(cat "$REPO_ROOT/analysis/lib/paths.nf")
+    assert_not_contains "$cfg" 'runs = ' "the frame declares no run selection"
+    assert_not_contains "$cfg" 'folderName' "and no folder name"
+    assert_contains "$paths" "runs      : 'all'" "the default for runs is in the accessor"
+    assert_contains "$paths" 'scope.containsKey(key) ? scope[key] : defaults[key]' \
+        "and a key the project did not set falls back to it"
 }
 
 # The installation is what the environment variable says, and a run that cannot find it stops

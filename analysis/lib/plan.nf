@@ -113,7 +113,8 @@ def resultsTargets(Map plan, List selected, String module, List needs) {
 // resolveParameters() fills the computed ones in.
 def analysisPlan(String module) {
     // runDefinitions() calls a helper in bin/, so where bin/ is has to be settled before it.
-    installDir()
+    // parameters.config sets dir.bin beside the entry script, which for a module is the module.
+    params.dir.bin = "${installDir()}/bin".toString()
     def runDefs = runDefinitions()
     resolveParameters()
     def selected = selectedRuns(runDefs)

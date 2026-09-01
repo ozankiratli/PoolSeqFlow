@@ -2389,7 +2389,9 @@ Three files are read, each winning over the one before it:
 | `analysis.config` | your project, beside `parameters.config` | every module in this project |
 | `<module>.config` | your project | that one module — `mds.config` for `mds` |
 
-Only the first is required, and it ships with the release. The other two are yours and are optional; without them every setting is the installation default. Copy `analysis/analysis.config.template` out of the installation to start one — until you do, the report at the top of every module prints the path.
+**Only the last two are yours, and both are optional.** Copy `analysis/analysis.config.template` out of the installation to start one — until you do, the report at the top of every module prints the path.
+
+The first is not a settings file and holds none of the settings in this section. It ships with the release and it is how a module reaches conda, the helpers in `bin/` and its resource ceiling — the things the pipeline gets from `nextflow.config` and a module, being its own entry script, does not. **The defaults for the settings below are built into PoolSeqFlow**, so a setting you do not write has one source and no file you could edit to change it for every project at once.
 
 `parameters.config` is read as well, and is where the pipeline's own settings stay. The analysis layer does not repeat them.
 
@@ -2893,11 +2895,13 @@ That gap is closed by the consistency guards at the start of a run, which record
 
 | Command | Removes |
 |---|---|
-| `PoolSeqFlow clean` | Nextflow work directories — the empty hash-prefix folders `cleanup = true` leaves behind |
+| `PoolSeqFlow clean` | Nextflow work directories — the empty hash-prefix folders `cleanup = true` leaves behind — and any staging directory left by a killed transfer |
 | `PoolSeqFlow dryclean` | The empty directory tree `dryrun` created as a preview |
 | `PoolSeqFlow reset` | All progress, across both directories, after listing it and asking you to type a confirmation |
 
 `clean` is safe at any time and does not affect resume — nothing in `work/` is consulted by the skip logic. `reset` deletes results.
+
+Every file the pipeline and the analysis layer publish is written into a staging directory beside its destination, verified there, and only then renamed into place, so that a partly-written file is never visible under a final name. That staging directory is removed on every path the transfer can reach, including failure — but a process that is *killed* reaches none of them, and leaves one behind. `clean` collects them from both `mainDir` and `storageDir`, naming each one before it goes. They are named `.atomic_mv.*`, `.restore.*` and `.analysis_results.*`, and finding one is a sign a run was killed rather than allowed to stop.
 
 The preview itself is built in `dryRunDir`, which is `dryrun/` in the directory you launch from, beside `parameters.config`, unless you point it somewhere else. It is outside the `Output/` tree on both roots, so a preview is never mixed in among results. `dryclean` asks the same parameter where to look, and both commands check what they are about to delete first: a directory holding anything other than empty folders, a `README.txt` and a `members.txt` is not a preview, so they list what is in it and remove nothing. `dryrun` replaces a preview that passes that check without asking, because there is nothing in one to lose.
 

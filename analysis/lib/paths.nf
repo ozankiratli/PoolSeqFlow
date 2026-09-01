@@ -4,29 +4,37 @@
 
 nextflow.enable.dsl=2
 
-// One of the analysis layer's own settings, from analysis/defaults.config and whatever the
-// project put over it.
+// Every setting the analysis layer has of its own, and what it is when nobody says otherwise.
+//
+// A function and not a script-level constant: the strict parser rejects a statement outside a
+// process, workflow or function.
+def analysisDefaults() {
+    return [ runs      : 'all',   // 'all' is a keyword; a list is always run names.
+             folderName: ''    ]  // Empty means the module's own name.
+}
+
+// One of those settings, as the project set it or as it defaults.
+//
+// The scope is deliberately not declared anywhere: the default belongs to the code that reads
+// it, and analysis.config carries only what the user chose to write.
 def analysisSetting(String key) {
-    if (!params.containsKey('analysis') || !(params.analysis instanceof Map)) {
+    def defaults = analysisDefaults()
+    if (!defaults.containsKey(key)) {
         throw new IllegalStateException(
-            "the analysis layer's own settings are missing. Modules are run through\n" +
-            "    PoolSeqFlow analysis <module>\n" +
-            "which loads analysis/defaults.config from the installation before anything in your\n" +
-            "project; started any other way there are no defaults to start from.")
+            "analysis.${key} is not a setting the analysis layer has. It has: " +
+            "${defaults.keySet().sort().join(', ')}.")
     }
-    if (!params.analysis.containsKey(key)) {
-        throw new IllegalStateException(
-            "analysis.${key} is not set, and analysis/defaults.config in the installation is " +
-            "where it comes from. This copy of PoolSeqFlow is incomplete.")
-    }
-    return params.analysis[key]
+    def scope = params.containsKey('analysis') && params.analysis instanceof Map ? params.analysis : [:]
+    // containsKey and not a truthiness test: an empty list is a value the user wrote, and
+    // selectedRuns() refuses it by name rather than reading it as 'all'.
+    return scope.containsKey(key) ? scope[key] : defaults[key]
 }
 
 // The installation this invocation was launched from, and a refusal when it cannot be found. A
 // module is its own pipeline, so ${projectDir} is the module's own directory and nothing
-// Nextflow computes points at the installation.
+// Nextflow computes points at the installation. Both wrappers export POOLSEQFLOW_HOME.
 def installDir() {
-    def dir = "${analysisSetting('installDir') ?: ''}".trim()
+    def dir = "${System.getenv('POOLSEQFLOW_HOME') ?: ''}".trim()
     if (dir.isEmpty() || !file("${dir}/analysis/lib/paths.nf").exists()) {
         throw new IllegalStateException(
             "the installation this analysis belongs to could not be found" +

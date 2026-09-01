@@ -688,6 +688,44 @@ test_clean_removes_scratch_and_keeps_everything_else() {
     assert_file "$sb/main/parameters.config"                     "your config should survive clean"
 }
 
+# A staged transfer removes its own directory on every path it can reach, so one that is still
+# there means the process was killed outright. It is garbage in BOTH roots: a stage is made
+# beside the DESTINATION, and destinations are in both.
+test_clean_collects_staging_directories_left_by_a_killed_transfer() {
+    needs_run || return
+    local sb
+    sb=$(guard_path "$TEST_TMPDIR/clean-stages")
+    rm -rf "$sb"; cp -r "$PIPELINE_SB" "$sb"; rm -f "$sb/run.out"
+    write_sandbox_config "$sb"
+
+    # One of each prefix, planted where its own transfer would have made it.
+    mkdir -p "$sb/store/Output/Frequencies/.atomic_mv.abc12345"
+    echo "half a promotion" > "$sb/store/Output/Frequencies/.atomic_mv.abc12345/Test_snp_freq.tsv"
+    mkdir -p "$sb/main/Analysis/Main/Output/.restore.def67890"
+    echo "half a copy back" > "$sb/main/Analysis/Main/Output/.restore.def67890/matrix.tsv"
+    mkdir -p "$sb/main/Analysis/Results/.analysis_results.ghi13579"
+    echo "half a publish" > "$sb/main/Analysis/Results/.analysis_results.ghi13579/result.tsv"
+
+    # A FILE whose name matches the pattern. Only directories are staging directories.
+    echo "mine" > "$sb/main/.restore.notadirectory"
+
+    run_project_wrapper "$sb" clean
+    assert_status 0 "$WRAPPER_STATUS" "clean should succeed: $WRAPPER_OUTPUT"
+
+    assert_contains "$WRAPPER_OUTPUT" ".atomic_mv.abc12345" "clean names each stage it found"
+    assert_contains "$WRAPPER_OUTPUT" "killed part way through" "and says what one is"
+    assert_no_file "$sb/store/Output/Frequencies/.atomic_mv.abc12345" \
+        "a stage in permanent storage is collected"
+    assert_no_file "$sb/main/Analysis/Main/Output/.restore.def67890" \
+        "and so is one a copy back left behind"
+    assert_no_file "$sb/main/Analysis/Results/.analysis_results.ghi13579" \
+        "and one a results publish left behind"
+    assert_file "$sb/main/.restore.notadirectory" \
+        "a file whose name matches is not a staging directory"
+    assert_file "$sb/store/Output/Frequencies/Test_snp_freq.tsv" \
+        "and the result the stage sat beside is untouched"
+}
+
 # reset is the destructive one, so what it does NOT delete is the assertion that matters. A
 # reset that took the reads, the reference or the configuration with it would leave a project
 # that cannot be re-run at all - and the reads are the one thing here that cannot be recreated.

@@ -700,6 +700,24 @@ run_utilized_dirs() {
     return 0
 }
 
+# Staging directories left behind by a transfer that was killed rather than allowed to fail.
+#
+# Every staged transfer creates one beside its destination and removes it on every path it can
+# reach, so one that is still here means the process was killed outright. The three prefixes are
+# the ones bin/atomic_mv.sh, analysis/lib/results.nf and analysis/lib/store.nf create.
+#
+# Printed one per line, and pruned so a stage inside a stage is named once.
+staging_dirs() {
+    local root
+    for root in "$@"; do
+        [ -n "$root" ] && [ -d "$root" ] || continue
+        find "$root" -type d \( -name '.atomic_mv.*' \
+                             -o -name '.analysis_results.*' \
+                             -o -name '.restore.*' \) -prune -print 2>/dev/null
+    done
+    return 0
+}
+
 # Whether a preview directory is ours to `rm -rf` - empty directories, a README.txt and a
 # members.txt per shared directory, nothing else. Returns 0 when it is not there at all.
 dryrun_is_ours() {
@@ -996,6 +1014,11 @@ case $COMMAND in
         WORKDIR=$(nf_config_value workDir)
         UTILDIR=$(nf_config_value params.dir.utilized)
         MAINDIR=$(nf_config_value params.mainDir)
+        STORAGE=$(nf_config_value params.storageDir)
+
+        # Both roots: a staged transfer creates its directory beside the DESTINATION, and
+        # destinations are in both.
+        STAGES=$(staging_dirs "$MAINDIR" "$STORAGE")
 
         # Everything that will be removed is listed before anything is, including when
         # workDir cannot be resolved.
@@ -1005,6 +1028,11 @@ case $COMMAND in
             echo "    $WORKDIR - Nextflow's task directories"
         fi
         echo "    $(pwd)/.nextflow*    - Nextflow's own history and cache"
+        while IFS= read -r d; do
+            if [ -n "$d" ]; then echo "    $d - a transfer killed part way through"; fi
+        done <<EOF
+$STAGES
+EOF
         echo ""
         echo "Not removed:"
         [ -n "$UTILDIR" ] && [ -d "$UTILDIR" ] && \
@@ -1028,6 +1056,12 @@ EOF
             echo "WARNING: could not resolve workDir; leaving it in place." >&2
         fi
         rm -rf .nextflow*
+        # Re-read rather than reusing the list above: `nextflow clean -f` ran in between.
+        while IFS= read -r d; do
+            if [ -n "$d" ]; then rm -rf "$d"; fi
+        done <<EOF
+$(staging_dirs "$MAINDIR" "$STORAGE")
+EOF
         echo "Cleaned."
         ;;
     reset)
