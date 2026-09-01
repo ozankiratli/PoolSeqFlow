@@ -9,6 +9,7 @@ nextflow.enable.dsl=2
 include { runDefinitions; resolveParameters } from '../../scripts/resolve_parameters.nf'
 include { variantPlan; runToken } from '../../scripts/variants.nf'
 include { analysisSetting; renderSetting; targetResultsDir; installDir } from './paths.nf'
+include { moduleNeeds } from './modules.nf'
 
 // The published files a module can read. `step` is the step that produced the class, and
 // therefore whose variant owns the directory it was promoted into; `subdir` is the key under
@@ -105,9 +106,12 @@ def resultsTargets(Map plan, List selected, String module, List needs) {
 // Everything an invocation needs to know about what it is reading: the runs the project defines,
 // the ones selected, and one target per results directory they land in.
 //
+// The artifact classes it marks required come from the module's own manifest, so a module states
+// what it reads once and the verification and the module itself cannot disagree about it.
+//
 // The two calls are ordered: runDefinitions() copies each run's own parameters before
 // resolveParameters() fills the computed ones in.
-def analysisPlan(String module, List needs) {
+def analysisPlan(String module) {
     // runDefinitions() calls a helper in bin/, so where bin/ is has to be settled before it.
     installDir()
     def runDefs = runDefinitions()
@@ -115,5 +119,5 @@ def analysisPlan(String module, List needs) {
     def selected = selectedRuns(runDefs)
     return [ runs    : runDefs,
              selected: selected,
-             targets : resultsTargets(variantPlan(runDefs), selected, module, needs) ]
+             targets : resultsTargets(variantPlan(runDefs), selected, module, moduleNeeds(module)) ]
 }

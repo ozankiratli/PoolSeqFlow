@@ -181,7 +181,7 @@ test_the_analysis_layer_reads_the_pipeline_partition() {
 # The frame and a module ask one function where the results are, so a module can never be
 # reading a directory the verification did not clear.
 test_the_frame_and_a_module_share_one_answer() {
-    assert_contains "$(cat "$REPO_ROOT/analysis.nf")" "analysisPlan(module, moduleNeeds(module))" \
+    assert_contains "$(cat "$REPO_ROOT/analysis.nf")" "analysisPlan(module)" \
         "the entry point takes its targets from the library"
     local hits
     hits=$(cd "$REPO_ROOT" && grep -rln "def analysisPlan" . --exclude-dir=.git --exclude-dir=test \
@@ -193,7 +193,7 @@ test_the_analysis_layer_ships_with_the_release() {
     local f
     for f in analysis.nf analysis/modules.nf analysis/0_verify_analysis.nf \
              analysis/defaults.config analysis/analysis.config.template \
-             analysis/lib/paths.nf analysis/lib/plan.nf; do
+             analysis/lib/paths.nf analysis/lib/plan.nf analysis/lib/modules.nf; do
         assert_file "$REPO_ROOT/$f" "$f must ship"
     done
     assert_contains "$(cat "$REPO_ROOT/PoolSeqFlow")" "lib analysis install" \
@@ -216,7 +216,7 @@ test_the_module_roster_lives_in_one_place() {
     local hits
     hits=$(cd "$REPO_ROOT" && grep -rln "moduleRoster" . --exclude-dir=.git --exclude-dir=test \
         --exclude-dir=docs --exclude-dir=site --exclude-dir=.claude 2>/dev/null | sort)
-    assert_eq "./analysis/modules.nf" "$hits" "the roster must exist in exactly one file"
+    assert_eq "./analysis/lib/modules.nf" "$hits" "the roster must exist in exactly one file"
     assert_contains "$(cat "$REPO_ROOT/PoolSeqFlow")" '--module "$ANALYSIS_COMMAND"' \
         "the wrapper passes the word through rather than judging it"
 }
@@ -332,6 +332,34 @@ test_a_module_version_is_not_the_release_version() {
     assert_contains "$report" "mds v9.9.9" "the module reports its own version"
     assert_contains "$report" "PoolSeqFlow ${EXPECTED_VERSION:-2.2.0}" \
         "while the results still carry the pipeline release"
+}
+
+# OPTION (C), Z's call: a module names itself and nothing else, and analysisPlan() reads what it
+# needs from that module's own manifest. Before this there were two lists to keep equal - the
+# manifest's, which the verification ran against, and the literal in main.nf, which the module
+# ran against - and a disagreement between them was silent.
+#
+# The module below asks for NOTHING, so a required class in what it gets back can only have come
+# from the manifest.
+test_a_module_states_what_it_reads_only_in_its_manifest() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    local main='nextflow.enable.dsl=2
+
+include { analysisPlan } from '"'"'../../lib/plan.nf'"'"'
+
+workflow {
+    analysisPlan('"'"'probe'"'"').targets.each { target ->
+        println "PROBE requires " + target.classes.findAll { k, v -> v.required }.keySet().sort().join(",")
+    }
+}'
+    analysis_install_module probe \
+        '{"name":"probe","version":"0.1.0","contract":"freq-1","summary":"reads depths","needs":["depths"]}' \
+        "$main"
+    local status; status=$(run_module "$ANALYSIS_SB" probe)
+    assert_status 0 "$status" "a module naming only itself should run"
+    assert_contains "$(analysis_output)" "PROBE requires depths" \
+        "the required classes come from the module's manifest, which main.nf never repeats"
 }
 
 test_a_manifest_missing_a_field_refuses() {
@@ -646,7 +674,7 @@ ANALYSIS_PROBE_MAIN='nextflow.enable.dsl=2
 include { analysisPlan } from '"'"'../../lib/plan.nf'"'"'
 
 workflow {
-    analysisPlan('"'"'probe'"'"', ['"'"'frequencies'"'"']).targets.each { target ->
+    analysisPlan('"'"'probe'"'"').targets.each { target ->
         println "PROBE reads ${target.classes.frequencies.dir}"
         println "PROBE writes ${target.results}"
     }

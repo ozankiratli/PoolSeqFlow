@@ -8,7 +8,7 @@
 
 nextflow.enable.dsl=2
 
-include { requireModule; moduleNeeds } from './analysis/modules.nf'
+include { requireModule } from './analysis/lib/modules.nf'
 include { recordedManifest; configReportLines } from './analysis/modules.nf'
 include { moduleReportLines; outputReportLines; selectionReportLines } from './analysis/modules.nf'
 include { intermediatesDir; verificationReportFile } from './analysis/lib/paths.nf'
@@ -21,7 +21,7 @@ workflow {
     def module = requireModule(params.containsKey('module') ? params.module : null)
 
     // The same call a module makes, so the results this checks are the results it reads.
-    def plan = analysisPlan(module, moduleNeeds(module))
+    def plan = analysisPlan(module)
 
     VerifyAnalysis(channel.value([
         manifest     : recordedManifest().join('\n'),

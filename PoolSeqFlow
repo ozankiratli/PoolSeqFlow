@@ -472,7 +472,7 @@ available_modules() {
     # tables differently would install silently.
     if [ -z "$contract" ]; then
         echo "ERROR: cannot tell which table contract this release speaks." >&2
-        echo "  Expected to read it from $INSTALL/analysis/modules.nf." >&2
+        echo "  Expected to read it from $INSTALL/analysis/lib/modules.nf." >&2
         echo "  This installation is incomplete; install it again." >&2
         exit 1
     fi
@@ -532,7 +532,7 @@ install_module() {
     # tables differently would install silently.
     if [ -z "$contract" ]; then
         echo "ERROR: cannot tell which table contract this release speaks." >&2
-        echo "  Expected to read it from $INSTALL/analysis/modules.nf." >&2
+        echo "  Expected to read it from $INSTALL/analysis/lib/modules.nf." >&2
         echo "  This installation is incomplete; install it again." >&2
         exit 1
     fi

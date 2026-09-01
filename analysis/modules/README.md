@@ -19,14 +19,14 @@ nextflow.enable.dsl=2
 include { analysisPlan } from '../../lib/plan.nf'
 
 workflow {
-    analysisPlan('mymodule', ['frequencies']).targets.each { target ->
+    analysisPlan('mymodule').targets.each { target ->
         // target.classes.frequencies.dir  - where the published tables are
         // target.results                  - the folder this analysis writes to
     }
 }
 ```
 
-`analysisPlan` takes the module's own name and the artifact classes it cannot run without, and returns one target per results directory the invocation covers. It recomputes the pipeline's own partition of the runs, so two runs that produced the same tables are one target and are analysed once.
+`analysisPlan` takes the module's own name and returns one target per results directory the invocation covers. The artifact classes it marks required are the `needs` from your `manifest.json`, so you state what you read once and nothing repeats it. It recomputes the pipeline's own partition of the runs, so two runs that produced the same tables are one target and are analysed once.
 
 A module ships no configuration. `PoolSeqFlow analysis` assembles it — the installation's `analysis/defaults.config`, then the project's `analysis.config`, then `<module>.config` — and `defaults.config` carries what the pipeline gets from `nextflow.config`, which Nextflow does not read for a module: `bin/` on the task PATH, conda, and the resource ceiling.
 
@@ -43,7 +43,7 @@ Follow these and a module written by anyone runs beside the ones shipped here. M
 
 ### Declaring what you read
 
-5. **The `needs` in your manifest and the list you pass to `analysisPlan` must be the same list.** The verification runs `analysisPlan(module, needs-from-the-manifest)`; your `main.nf` runs `analysisPlan('yourname', [...])` with its own. If the two disagree, the check that ran covers a different set of artifacts from the one you then read.
+5. **`needs` in your manifest is the only place you say what you read.** `analysisPlan('yourname')` looks it up there, and so does the verification that runs before you, so the two cannot disagree about which artifacts were checked.
 6. **`contract` is the published-table contract you speak** — `freq-1` today. It is bumped only when a column's name or meaning changes, which has not happened since the project's first commit.
 
 The classes `needs` may name:
@@ -69,7 +69,7 @@ The classes `needs` may name:
 
 ### Writing your own results
 
-13. **Write to a temp location and move in on success.** `bin/atomic_mv.sh` is on the task `PATH` and stages through a `.part` name for exactly this. A results folder that already holds an analysis is refused, so a crashed run that left a partial folder makes that folder name unusable for good.
+13. **Write to a temp location and move in on success.** `bin/atomic_mv.sh` is on the task `PATH` and stages through a directory of its own for exactly this, so a destination is only ever absent or complete, even when two callers race for it. A results folder that already holds an analysis is refused, so a crashed run that left a partial folder makes that folder name unusable for good.
 14. **Publish a real copy or a real move, never a symlink.** `cleanup = true` is set for analysis runs, so the work directory is removed on success and a symlinked result becomes a dangling link.
 15. **Emit the script that produced each result** into the folder beside it. A result nobody can regenerate is the reproducibility gap this whole layer exists to close.
 
