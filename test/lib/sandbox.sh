@@ -532,6 +532,30 @@ make_stub_conda() {
     chmod +x "$dir/bin/conda"
 }
 
+# Builds a module the way one is published - a tarball unpacking to <name>/ with a manifest
+# and a main.nf in it - and appends the catalogue row that points at it, creating the index
+# with its header on the first call. Everything is local: nothing here reaches the network.
+# Echoes the index path, which a case passes as LAUNCHER_MODULE_INDEX.
+make_module_release() {
+    local dir="$1" name="$2" version="$3" contract="${4:-freq-1}" tarball sha
+    mkdir -p "$dir/src/$name"
+    printf '{"name":"%s","version":"%s","contract":"%s","summary":"planted"}\n' \
+        "$name" "$version" "$contract" > "$dir/src/$name/manifest.json"
+    printf 'nextflow.enable.dsl=2\nworkflow { println "%s ran" }\n' "$name" > "$dir/src/$name/main.nf"
+    tarball="$dir/$name-$version.tar.gz"
+    tar -czf "$tarball" -C "$dir/src" "$name"
+    rm -rf "$dir/src"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha=$(sha256sum "$tarball" | awk '{print $1}')
+    else
+        sha=$(shasum -a 256 "$tarball" | awk '{print $1}')
+    fi
+    [ -f "$dir/index.tsv" ] || printf 'name\tversion\tcontract\turl\tsha256\tsummary\n' > "$dir/index.tsv"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$name" "$version" "$contract" "$tarball" "$sha" "planted $name" >> "$dir/index.tsv"
+    printf '%s' "$dir/index.tsv"
+}
+
 # A fake `nextflow` that runs nothing and records the arguments of each call, one per line.
 # It goes in the same bin directory as the stub conda, so PATH finds it first.
 make_stub_nextflow() {
@@ -685,6 +709,9 @@ run_launcher_on_a_tty() {
 #     LAUNCHER_STORE_MODULE             plant this module in the sandbox's own store, and
 #                                       write the <module>.config layer beside the project's
 #     LAUNCHER_STORE_MODULE_INCOMPLETE  plant it without a main.nf
+#     LAUNCHER_MODULE_INDEX             a catalogue for `modules available|install` to read,
+#                                       as POOLSEQFLOW_MODULE_INDEX. Build one with
+#                                       make_module_release
 run_analysis_launcher_with_envs() {
     local envs_spec="$1"; shift
     local sb
@@ -697,6 +724,9 @@ run_analysis_launcher_with_envs() {
     printf '// stub project marker\n' > "$sb/parameters.config"
     printf '// stub analysis config\n' > "$sb/analysis.config"
     printf '// stub defaults\n' > "$sb/analysis/defaults.config"
+    # The real one: `modules available|install` read the table contract this release speaks
+    # out of it, and a stub would let the compatibility check pass on anything.
+    cp "$REPO_ROOT/analysis/modules.nf" "$sb/analysis/"
     printf 'name: stub\n' > "$sb/install/environment-analysis.yml"
     # Stubbed for the same reason install/check_install.sh is: it needs a real R environment,
     # and these tests are about which environment is chosen.
@@ -705,9 +735,14 @@ run_analysis_launcher_with_envs() {
     chmod +x "$sb/install/check_analysis_install.sh"
 
     if [ -n "${LAUNCHER_STORE_MODULE:-}" ]; then
-        mkdir -p "$sb/analysis/modules/$LAUNCHER_STORE_MODULE"
-        [ -n "${LAUNCHER_STORE_MODULE_INCOMPLETE:-}" ] || \
-            : > "$sb/analysis/modules/$LAUNCHER_STORE_MODULE/main.nf"
+        local store="$sb/analysis/modules/$LAUNCHER_STORE_MODULE"
+        mkdir -p "$store"
+        # Never read here - the wrapper looks for the directory and main.nf, and the manifest is
+        # the analysis layer's to parse - but an installed module has one, and `modules list`
+        # tells a directory holding one from a directory that is merely there.
+        printf '{"name":"%s","version":"0.0.1","contract":"freq-1","summary":"stub"}\n' \
+            "$LAUNCHER_STORE_MODULE" > "$store/manifest.json"
+        [ -n "${LAUNCHER_STORE_MODULE_INCOMPLETE:-}" ] || : > "$store/main.nf"
         printf '// stub module config\n' > "$sb/${LAUNCHER_STORE_MODULE}.config"
     fi
 
@@ -717,7 +752,10 @@ run_analysis_launcher_with_envs() {
     LAUNCHER_CONDA_LOG="$sb/stub/conda.log"
     LAUNCHER_NEXTFLOW_LOG="$sb/stub/nextflow.log"
     LAUNCHER_PREFIX="$sb/prefix"
+    LAUNCHER_STORE="$sb/analysis/modules"
     LAUNCHER_OUTPUT=$(cd "$sb" && PATH="$sb/stub/bin:$PATH" \
-                      POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow analysis "$@" 2>&1)
+                      POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" \
+                      POOLSEQFLOW_MODULE_INDEX="${LAUNCHER_MODULE_INDEX:-}" \
+                      ./PoolSeqFlow analysis "$@" 2>&1)
     LAUNCHER_STATUS=$?
 }

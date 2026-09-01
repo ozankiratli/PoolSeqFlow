@@ -80,6 +80,29 @@ test_release_archive_excludes_development_material() {
     done
 }
 
+# The module catalogue is read over the network, from the repository, so that a module
+# published after a release is installable into it. A copy inside the tarball would be a second
+# answer to what can be installed, frozen on the day the release was built.
+test_the_module_catalogue_never_reaches_a_release() {
+    local index="analysis/modules-index.tsv"
+    [ -f "$REPO_ROOT/$index" ] || { fail_case "$index is missing"; return; }
+    local attr; attr=$(cd "$REPO_ROOT" && git check-attr export-ignore -- "$index")
+    assert_contains "$attr" "set" "the catalogue must be export-ignore'd out of a release"
+    local listing; listing=$(working_tree_archive)
+    [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
+    assert_not_contains "$listing" "modules-index" "and must not appear in the tarball"
+}
+
+# Its columns are what the wrapper reads by position, so a reordered header would install the
+# wrong thing from the right row.
+test_the_module_catalogue_header_is_the_one_the_wrapper_reads() {
+    local header
+    header=$(grep -v '^[[:space:]]*#' "$REPO_ROOT/analysis/modules-index.tsv" \
+             | grep -v '^[[:space:]]*$' | head -1)
+    assert_eq "$(printf 'name\tversion\tcontract\turl\tsha256\tsummary')" "$header" \
+        "the catalogue's columns"
+}
+
 test_release_archive_carries_the_runtime() {
     local listing
     listing=$(working_tree_archive)

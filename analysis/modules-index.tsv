@@ -1,0 +1,24 @@
+# The catalogue of analysis modules that can be installed.
+#
+# `PoolSeqFlow analysis modules available` and `... modules install <name>` read this file over
+# the network, from the repository's default branch. It is NOT part of a release download:
+# .gitattributes export-ignores it, so a tarball carries no copy that could disagree with the
+# published one. That is the whole point - a module is published on its own timetable, and the
+# release it is installed into does not change when one appears.
+#
+# One row per published module VERSION, tab-separated. Several rows may name one module; the
+# newest version whose contract this release speaks is what `install <name>` picks, and naming a
+# version installs exactly that one.
+#
+#   name      the module's name, which is also the directory it installs into
+#   version   its own version, independent of any pipeline release
+#   contract  the published-table contract it reads. This release speaks the one
+#             analysis/modules.nf returns from contractVersion()
+#   url       where the tarball is, unpacking to <name>/ with manifest.json and main.nf in it
+#   sha256    the tarball's checksum, which install verifies before unpacking anything
+#   summary   one line, shown by `modules available`
+#
+# Adding a module is adding a row. Removing one takes it out of `available` and leaves every
+# installation that already has it untouched.
+
+name	version	contract	url	sha256	summary

@@ -19,6 +19,7 @@
 #  analysis       - the analysis layer, which takes one word of its own:
 #                     install    - creates this release's analysis conda environment
 #                     check      - verifies the analysis installation
+#                     modules    - lists, installs and removes analysis modules
 #                     <module>   - runs one analysis module and writes its results
 #                     version    - prints the version of this copy
 #                     cite       - prints how to cite it, and R and the packages it runs on
@@ -30,7 +31,8 @@
 #                   always confirming before anything goes
 #  uninstall_all  - removes every PoolSeqFlow environment and installation
 #
-# Each subcommand takes no arguments, except `analysis`, which takes exactly one.
+# Each subcommand takes no arguments. `analysis` takes one word of its own, and `analysis
+# modules` takes a second.
 # POOLSEQFLOW_PREFIX and POOLSEQFLOW_HOME adjust it.
 #
 # The analysis layer ships with the pipeline and is enabled separately: `analysis install`
@@ -48,8 +50,23 @@ usage() {
 
 # The analysis layer's own words, shown when `analysis` arrives without one.
 usage_analysis() {
-    echo "Usage: $0 analysis {install|check|<module>|version|cite|uninstall}"
+    echo "Usage: $0 analysis {install|check|modules <command>|<module>|version|cite|uninstall}"
     exit 1
+}
+
+# The module store's own words.
+usage_modules() {
+    echo "Usage: $0 analysis modules {list|available|install <module> [version]|uninstall <module>}"
+    exit 1
+}
+
+# Refuses when an analysis arm was handed a word it has no use for. Called per arm: `modules`
+# and the verbs under it take words the others do not.
+analysis_takes_no_more() {
+    if [ "${#ANALYSIS_ARGS[@]}" -ne 0 ]; then
+        echo "ERROR: 'analysis $ANALYSIS_COMMAND' takes no further argument." >&2
+        usage_analysis
+    fi
 }
 
 # Stamped by `install` into the copy it deploys; empty everywhere else. A default, not an
@@ -384,6 +401,253 @@ require_analysis_env() {
     exit 1
 }
 
+# Every directory in the store, and whether it holds a usable module. Names and files only:
+# what a module IS - its version, the tables it speaks, what it reads - comes from its manifest,
+# which the analysis layer reads and `analysis <module>` prints.
+list_modules() {
+    local dir name found=0 broken=0
+    echo "Modules installed for v$VERSION, in"
+    echo "    $MODULE_STORE"
+    echo ""
+    if [ -d "$MODULE_STORE" ]; then
+        for dir in "$MODULE_STORE"/*/; do
+            [ -d "$dir" ] || continue
+            name=$(basename "$dir")
+            found=$((found + 1))
+            if [ ! -f "$dir/manifest.json" ]; then
+                printf '    %-20s not a module - no manifest.json, so it is passed over\n' "$name"
+            elif [ ! -f "$dir/main.nf" ]; then
+                printf '    %-20s INCOMPLETE - no main.nf\n' "$name"
+                broken=$((broken + 1))
+            else
+                printf '    %-20s installed\n' "$name"
+            fi
+        done
+    fi
+    if [ "$found" -eq 0 ]; then
+        echo "    none"
+        echo ""
+        echo "A release ships none. Modules are installed separately, one directory each."
+        return 0
+    fi
+    echo ""
+    if [ "$broken" -gt 0 ]; then
+        echo "An incomplete module stops EVERY analysis run, not only its own. Install it again"
+        echo "or remove it:"
+        echo "    $(basename "$0") analysis modules uninstall <module>"
+        echo ""
+    fi
+    echo "Each module's version and what it reads are in its own report:"
+    echo "    $(basename "$0") analysis <module>"
+}
+
+# Downloads the catalogue to a temp file the caller names, or explains why it could not.
+get_module_index() {
+    local dest="$1" src
+    src=$(module_index_source)
+    if fetch_url "$src" "$dest"; then
+        return 0
+    fi
+    local status=$?
+    echo "ERROR: could not read the module catalogue." >&2
+    echo "  Tried: $src" >&2
+    if [ "$status" -eq 127 ]; then
+        echo "  Neither curl nor wget is on PATH, so nothing can be downloaded." >&2
+    else
+        echo "  Check the connection, or point POOLSEQFLOW_MODULE_INDEX at a copy:" >&2
+        echo "      POOLSEQFLOW_MODULE_INDEX=/path/to/modules-index.tsv $(basename "$0") analysis modules available" >&2
+    fi
+    exit 1
+}
+
+# What can be installed, and whether this release can read it. Contract and version come from
+# the catalogue; whether a module is already here comes from the store.
+available_modules() {
+    local index contract name version row_contract url sha summary rows=0 state
+    index=$(mktemp)
+    trap 'rm -f "$index"' RETURN
+    get_module_index "$index"
+    contract=$(module_contract)
+    # Without it every row would pass the compatibility check, and a module that reads the
+    # tables differently would install silently.
+    if [ -z "$contract" ]; then
+        echo "ERROR: cannot tell which table contract this release speaks." >&2
+        echo "  Expected to read it from $INSTALL/analysis/modules.nf." >&2
+        echo "  This installation is incomplete; install it again." >&2
+        exit 1
+    fi
+
+    echo "Modules published for the table contract this release speaks (${contract:-unknown}):"
+    echo ""
+    printf '    %-16s %-10s %-12s %s\n' NAME VERSION CONTRACT ''
+    while IFS=$'\t' read -r name version row_contract url sha summary; do
+        [ -n "$name" ] || continue
+        rows=$((rows + 1))
+        if [ -n "$contract" ] && [ "$row_contract" != "$contract" ]; then
+            state="reads $row_contract - not this release"
+        elif [ -d "$MODULE_STORE/$name" ]; then
+            state="installed"
+        else
+            state=""
+        fi
+        printf '    %-16s %-10s %-12s %s\n' "$name" "$version" "$row_contract" "$state"
+        [ -z "$summary" ] || printf '    %-16s %s\n' "" "$summary"
+    done < <(module_index_rows "$index")
+
+    echo ""
+    if [ "$rows" -eq 0 ]; then
+        echo "The catalogue is empty. No module has been published yet."
+        return 0
+    fi
+    echo "Install one with:"
+    echo "    $(basename "$0") analysis modules install <name>"
+    echo "which takes the newest version this release can read, or name a version to pin it."
+}
+
+# Installs one module into this installation's store. Takes the name, and optionally the exact
+# version; without one, the newest the catalogue offers for this release's contract.
+install_module() {
+    local name="$1" want="${2:-}" index contract line version row_contract url sha summary
+    local tmp tarball unpacked dest
+    case $name in
+        ''|*[!A-Za-z0-9_-]*)
+            echo "ERROR: '$name' is not a module name." >&2
+            usage_modules
+            ;;
+    esac
+    if [ -d "$MODULE_STORE/$name" ]; then
+        echo "'$name' is already installed for v$VERSION, in"
+        echo "    $MODULE_STORE/$name"
+        echo ""
+        echo "Remove it first if you mean to replace it:"
+        echo "    $(basename "$0") analysis modules uninstall $name"
+        exit 0
+    fi
+
+    index=$(mktemp)
+    trap 'rm -f "$index"' RETURN
+    get_module_index "$index"
+    contract=$(module_contract)
+    # Without it every row would pass the compatibility check, and a module that reads the
+    # tables differently would install silently.
+    if [ -z "$contract" ]; then
+        echo "ERROR: cannot tell which table contract this release speaks." >&2
+        echo "  Expected to read it from $INSTALL/analysis/modules.nf." >&2
+        echo "  This installation is incomplete; install it again." >&2
+        exit 1
+    fi
+
+    # The newest row for this name whose contract this release speaks, or the exact version
+    # asked for. sort -V puts the highest last.
+    line=$(module_index_rows "$index" | awk -F'\t' -v n="$name" -v c="$contract" -v w="$want" '
+        $1 != n { next }
+        w != "" && $2 != w { next }
+        c != "" && $3 != c { next }
+        { print }' | sort -t"$(printf '\t')" -k2,2V | tail -1)
+
+    if [ -z "$line" ]; then
+        echo "ERROR: no module '$name'${want:+ at version $want} is published for this release." >&2
+        echo "" >&2
+        echo "What is available:" >&2
+        available_modules >&2
+        exit 1
+    fi
+    IFS=$'\t' read -r name version row_contract url sha summary <<EOF
+$line
+EOF
+
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"; rm -f "$index"' RETURN
+    tarball="$tmp/$name-$version.tar.gz"
+    echo "Installing $name v$version"
+    echo "    from $url"
+    if ! fetch_url "$url" "$tarball"; then
+        echo "ERROR: could not download $name v$version." >&2
+        echo "  Tried: $url" >&2
+        exit 1
+    fi
+
+    # Verified before anything is unpacked: the archive becomes code that runs on this machine.
+    if [ -n "$sha" ]; then
+        local got; got=$(file_sha256 "$tarball")
+        if [ -z "$got" ]; then
+            echo "ERROR: no sha256sum or shasum on this machine, so the download cannot be" >&2
+            echo "  verified. Nothing was installed." >&2
+            exit 1
+        fi
+        if [ "$got" != "$sha" ]; then
+            echo "ERROR: $name v$version does not match the checksum the catalogue gives." >&2
+            echo "  expected $sha" >&2
+            echo "  got      $got" >&2
+            echo "  Nothing was installed." >&2
+            exit 1
+        fi
+    fi
+
+    unpacked="$tmp/unpacked"
+    mkdir -p "$unpacked"
+    if ! tar -xzf "$tarball" -C "$unpacked"; then
+        echo "ERROR: $name v$version could not be unpacked. Nothing was installed." >&2
+        exit 1
+    fi
+    for f in manifest.json main.nf; do
+        if [ ! -f "$unpacked/$name/$f" ]; then
+            echo "ERROR: the $name archive has no $name/$f, so it is not a module." >&2
+            echo "  Nothing was installed." >&2
+            exit 1
+        fi
+    done
+
+    mkdir -p "$MODULE_STORE"
+    dest="$MODULE_STORE/$name"
+    mv "$unpacked/$name" "$dest"
+    # Beside the module, so an installation can say where each of its modules came from.
+    printf 'name\t%s\nversion\t%s\ncontract\t%s\nurl\t%s\nsha256\t%s\n' \
+        "$name" "$version" "$row_contract" "$url" "$sha" > "$dest/.source"
+    echo "Installed $name v$version into"
+    echo "    $dest"
+    echo ""
+    echo "Run it from a project directory:"
+    echo "    $(basename "$0") analysis $name"
+}
+
+# Removes one module's directory from this installation's store, after confirming.
+uninstall_module() {
+    local name="$1" dir
+    case $name in
+        ''|*[!A-Za-z0-9_-]*)
+            echo "ERROR: '$name' is not a module name." >&2
+            usage_modules
+            ;;
+    esac
+    dir="$MODULE_STORE/$name"
+    if [ ! -d "$dir" ]; then
+        echo "No module '$name' is installed for v$VERSION. What is installed:"
+        echo ""
+        list_modules
+        exit 0
+    fi
+    echo ""
+    echo "This removes:"
+    echo "    $dir"
+    echo ""
+    echo "Only the module goes. The pipeline, both environments and everything under Analysis/"
+    echo "stay where they are, including results this module has already produced."
+    echo ""
+    printf 'Remove it? [y/N]: '
+    if ! read -r CONFIRM; then
+        echo ""
+        echo "Aborted - no confirmation received. Nothing was removed." >&2
+        exit 1
+    fi
+    case "$CONFIRM" in
+        y|Y|yes|YES|Yes) ;;
+        *) echo "Aborted - nothing was removed."; exit 1 ;;
+    esac
+    rm -rf "$dir"
+    echo "Removed '$name'. Install it again with the same command that installed it."
+}
+
 # Reports the other PoolSeqFlow environments present, if any.
 report_other_envs() {
     OTHERS=$(poolseqflow_envs | grep -vxF "$ENV_NAME" || true)
@@ -462,12 +726,16 @@ fi
 
 COMMAND=$1
 
-# `analysis` is the one subcommand that carries a word of its own - the analysis command, or
-# the module to run. Every other subcommand still takes none.
+# `analysis` is the one subcommand that carries words of its own - an analysis command, or the
+# module to run. How many follow that first word is each arm's own business, enforced there.
+# Every other subcommand takes none.
 ANALYSIS_COMMAND=""
+ANALYSIS_ARGS=()
 if [ "$COMMAND" = "analysis" ]; then
-    [ "$#" -eq 2 ] || usage_analysis
+    [ "$#" -ge 2 ] || usage_analysis
     ANALYSIS_COMMAND=$2
+    shift 2
+    ANALYSIS_ARGS=("$@")
 elif [ "$#" -ne 1 ]; then
     usage
 fi
@@ -494,6 +762,10 @@ export ENV_NAME
 export ANALYSIS_ENV_NAME="$ANALYSIS_ENV"
 
 ENV_FILE="$INSTALL/install/environment.yml"
+
+# Where installed modules live: inside this release's own installation, so a module installed
+# for one release is never picked up by another. analysis/modules.nf resolves the same path.
+MODULE_STORE="$INSTALL/analysis/modules"
 
 # Puts a project's starting files in the directory you are standing in. Never overwrites, and
 # never writes metadata.csv or the run table - only their .example copies.
@@ -857,6 +1129,7 @@ EOF
     analysis)
         case $ANALYSIS_COMMAND in
             install)
+                analysis_takes_no_more
                 require_analysis_install
                 [ -f "$ANALYSIS_ENV_FILE" ] || {
                     echo "ERROR: $ANALYSIS_ENV_FILE is missing." >&2
@@ -886,12 +1159,45 @@ EOF
                 ;;
 
             check)
+                analysis_takes_no_more
                 require_analysis_install
                 require_analysis_env
                 bash "$INSTALL/install/check_analysis_install.sh"
                 ;;
 
+            modules)
+                # The store, not the environment: these read and remove directories inside the
+                # installation and need neither conda nor a project.
+                require_analysis_install
+                case "${ANALYSIS_ARGS[0]:-}" in
+                    list)
+                        [ "${#ANALYSIS_ARGS[@]}" -eq 1 ] || usage_modules
+                        list_modules
+                        ;;
+                    available)
+                        [ "${#ANALYSIS_ARGS[@]}" -eq 1 ] || usage_modules
+                        available_modules
+                        ;;
+                    install)
+                        # The version is optional: without one, the newest this release reads.
+                        case "${#ANALYSIS_ARGS[@]}" in
+                            2|3) ;;
+                            *) usage_modules ;;
+                        esac
+                        install_module "${ANALYSIS_ARGS[1]}" "${ANALYSIS_ARGS[2]:-}"
+                        ;;
+                    uninstall)
+                        [ "${#ANALYSIS_ARGS[@]}" -eq 2 ] || usage_modules
+                        uninstall_module "${ANALYSIS_ARGS[1]}"
+                        ;;
+                    *)
+                        usage_modules
+                        ;;
+                esac
+                ;;
+
             uninstall)
+                analysis_takes_no_more
                 if ! env_exists "$ANALYSIS_ENV"; then
                     echo "Conda environment '$ANALYSIS_ENV' is already absent."
                     echo "The pipeline and its own environment are untouched by this command."
@@ -926,11 +1232,13 @@ EOF
                 ;;
 
             version)
+                analysis_takes_no_more
                 echo "PoolSeqFlow analysis layer"
                 echo "v$VERSION"
                 ;;
 
             cite)
+                analysis_takes_no_more
                 # The software citation is the pipeline's: the analysis layer is part of the
                 # same release and carries the same DOI.
                 poolseqflow_citation "$VERSION"
@@ -1011,7 +1319,7 @@ EOF
                 # A module in the store has a directory and runs; a module the frame provides
                 # has neither, and the check above was all of it. --module is not passed on:
                 # a module's main.nf names itself.
-                MODULE_DIR="$INSTALL/analysis/modules/$ANALYSIS_COMMAND"
+                MODULE_DIR="$MODULE_STORE/$ANALYSIS_COMMAND"
                 if [ -d "$MODULE_DIR" ]; then
                     if [ ! -f "$MODULE_DIR/main.nf" ]; then
                         echo "" >&2

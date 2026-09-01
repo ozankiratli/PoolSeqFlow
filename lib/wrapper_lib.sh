@@ -55,6 +55,62 @@ nf_config_value() {
 # install/citations.json, which the per-run CITATIONS.md is built from.
 CONCEPT_DOI="10.5281/zenodo.19245611"
 
+# The catalogue of modules that can be installed. It is export-ignored, so a release carries no
+# copy and this URL is the only source.
+MODULE_INDEX_URL="https://raw.githubusercontent.com/ozankiratli/PoolSeqFlow/main/analysis/modules-index.tsv"
+
+# Where to read the index from. POOLSEQFLOW_MODULE_INDEX overrides it with a URL or a local
+# path, for a mirror inside an institution, an air-gapped machine, or a module being tested
+# before it is published.
+module_index_source() {
+    printf '%s' "${POOLSEQFLOW_MODULE_INDEX:-$MODULE_INDEX_URL}"
+}
+
+# Copies a URL or a path to a local file. Returns non-zero and says nothing on failure; the
+# caller has the context to explain it.
+fetch_url() {
+    local src="$1" dest="$2"
+    case $src in
+        file://*) src="${src#file://}" ;;
+    esac
+    case $src in
+        /*|./*|../*)
+            [ -f "$src" ] || return 1
+            cp "$src" "$dest"
+            return 0
+            ;;
+    esac
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --retry 2 "$src" -o "$dest"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "$dest" "$src"
+    else
+        return 127
+    fi
+}
+
+# The published-table contract this release speaks, read out of the analysis layer, which is
+# where the value lives. A module declaring a different one reads the tables differently.
+module_contract() {
+    sed -n "/^def contractVersion()/,/^}/s/.*return '\(.*\)'.*/\1/p" \
+        "$INSTALL/analysis/modules.nf" 2>/dev/null | head -1
+}
+
+# The index's data rows: tab-separated, comments and the header dropped, blank lines dropped.
+# Columns are name, version, contract, url, sha256, summary.
+module_index_rows() {
+    grep -v '^[[:space:]]*#' "$1" | grep -v '^[[:space:]]*$' | grep -v '^name[[:space:]]' || true
+}
+
+# The checksum of a file, or nothing when no tool on this machine can produce one.
+file_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
 # How to cite this release. Takes the version to name. Both `cite` arms print it; the analysis
 # one follows it with R and the packages a module ran on.
 poolseqflow_citation() {

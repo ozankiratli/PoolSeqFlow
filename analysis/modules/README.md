@@ -86,3 +86,37 @@ The classes `needs` may name:
 ## Where they come from
 
 This directory is empty in a fresh installation. Modules are installed separately from the pipeline, into this release's own installation, so a module installed for one release is never picked up by another.
+
+```bash
+PoolSeqFlow analysis modules available            # what is published
+PoolSeqFlow analysis modules install <name>       # newest version this release can read
+PoolSeqFlow analysis modules install <name> 1.2.0 # or exactly that one
+PoolSeqFlow analysis modules list                 # what is installed here
+PoolSeqFlow analysis modules uninstall <name>     # remove one, after confirming
+```
+
+`list` and `uninstall` read this directory and nothing else — no environment, no project — so they answer from anywhere. `list` marks a directory that holds a manifest and no `main.nf`, which is the state that stops every analysis run.
+
+`available` and `install` read the **catalogue**, over the network, from `analysis/modules-index.tsv` on the repository's default branch. **A release carries no copy of it** — it is `export-ignore`d — because a module published after a release still has to be installable into it. `POOLSEQFLOW_MODULE_INDEX` points them at a URL or a local path instead, for a mirror inside an institution or a machine with no network.
+
+## Publishing a module
+
+A published module is a **gzipped tarball unpacking to `<name>/`**, with `manifest.json` and `main.nf` inside it, plus whatever else the module needs — its R, its config, its manual fragment. Then one row in the catalogue:
+
+| Column | What |
+|---|---|
+| `name` | the module's name, and the directory it installs into |
+| `version` | its own version, moving on its own timetable, never the pipeline's |
+| `contract` | the published-table contract it reads. A release installs only its own |
+| `url` | where the tarball is |
+| `sha256` | the tarball's checksum |
+| `summary` | one line, shown by `available` |
+
+Several rows may name one module. `install <name>` takes the newest version whose `contract` this release speaks; naming a version installs exactly that one, which is what a paper's methods section should say.
+
+Two rules the installer enforces, so build for them:
+
+20. **The checksum must match before anything is unpacked.** An archive becomes code that runs on someone's machine, so a mismatch stops the install with nothing written. A row whose `sha256` is out of date makes the module uninstallable, not silently different.
+21. **The archive must contain `<name>/manifest.json` and `<name>/main.nf`.** An archive that unpacks to a different directory name, or to the files bare, is refused as not a module. Build it as `tar -czf <name>-<version>.tar.gz <name>`.
+
+Installing writes a `.source` file beside the module recording the name, version, contract, URL and checksum it came from, so an installation can account for every module in it.

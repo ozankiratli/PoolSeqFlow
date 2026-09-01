@@ -105,7 +105,7 @@ Full walkthrough: [Install](https://ozankiratli.github.io/PoolSeqFlow/getting-st
 | `./PoolSeqFlow uninstall` | Remove one installed version — environment and pipeline together, after confirmation |
 | `./PoolSeqFlow uninstall_all` | Remove every PoolSeqFlow environment and installation, after confirmation |
 
-`analysis` takes `install`, `check`, `version`, `cite`, `uninstall`, or the name of a module to run. The analysis layer ships with the pipeline and is enabled separately with `./PoolSeqFlow analysis install`, which creates the conda environment that carries R.
+`analysis` takes `install`, `check`, `modules`, `version`, `cite`, `uninstall`, or the name of a module to run. `analysis modules available|install|list|uninstall` manages the modules themselves, which are published separately from the pipeline. The analysis layer ships with the pipeline and is enabled separately with `./PoolSeqFlow analysis install`, which creates the conda environment that carries R.
 
 There is no `-resume` flag. Every step checks whether its outputs already exist in permanent storage and skips itself if they do, so `run` both starts and resumes — and that survives job timeouts, reboots and `work/` cleanups. [Why →](https://ozankiratli.github.io/PoolSeqFlow/pipeline/resume/)
 

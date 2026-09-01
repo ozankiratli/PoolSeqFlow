@@ -26,3 +26,8 @@ Project/            export-ignore
 # The test suite and its committed fixture data. Kept in the repository so every change can
 # be checked against a known dataset, kept out of releases because a user never runs it.
 test/               export-ignore
+
+# The module catalogue, which `modules available` and `modules install` read over the network
+# from this branch. A copy inside a tarball would be a second answer to what can be installed,
+# frozen on the day the release was built, and modules are published after it.
+analysis/modules-index.tsv  export-ignore

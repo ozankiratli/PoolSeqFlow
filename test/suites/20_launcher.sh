@@ -485,6 +485,145 @@ test_an_installed_module_without_a_main_nf_fails_loudly() {
         "the verifier still ran, and nothing ran after it"
 }
 
+# `modules list` reads the store and nothing else - no conda, no project - because it is the
+# thing you run when an analysis run is refusing and you need to know what is installed.
+test_modules_list_reports_the_store() {
+    run_analysis_launcher_with_envs "base" modules list
+    assert_status 0 "$LAUNCHER_STATUS" "listing should work without any environment"
+    assert_contains "$LAUNCHER_OUTPUT" "none" "an empty store should say so"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "activate" "and activate nothing"
+
+    LAUNCHER_STORE_MODULE=probe
+    run_analysis_launcher_with_envs "base" modules list
+    unset LAUNCHER_STORE_MODULE
+    assert_contains "$LAUNCHER_OUTPUT" "probe" "an installed module should be listed"
+    assert_contains "$LAUNCHER_OUTPUT" "installed" "as installed"
+}
+
+# An incomplete module stops every analysis run, not only its own, so the listing is where a
+# user finds out which one is at fault.
+test_modules_list_names_an_incomplete_module() {
+    LAUNCHER_STORE_MODULE=probe
+    LAUNCHER_STORE_MODULE_INCOMPLETE=1
+    run_analysis_launcher_with_envs "base" modules list
+    unset LAUNCHER_STORE_MODULE LAUNCHER_STORE_MODULE_INCOMPLETE
+    assert_status 0 "$LAUNCHER_STATUS" "listing a broken store should still work"
+    assert_contains "$LAUNCHER_OUTPUT" "INCOMPLETE" "the module should be marked"
+    assert_contains "$LAUNCHER_OUTPUT" "stops EVERY analysis run" "and the consequence stated"
+}
+
+# Removal confirms, as every uninstall in this wrapper does, and takes only the directory it
+# names.
+test_modules_uninstall_confirms_and_can_be_refused() {
+    local store="$TEST_TMPDIR/analysis-launcher/analysis/modules"
+    LAUNCHER_STORE_MODULE=probe
+    run_analysis_launcher_with_envs "base" modules uninstall probe <<< n
+    assert_status 1 "$LAUNCHER_STATUS" "a refused removal should fail"
+    assert_dir "$store/probe" "and leave the module in place"
+
+    run_analysis_launcher_with_envs "base" modules uninstall probe <<< y
+    unset LAUNCHER_STORE_MODULE
+    assert_status 0 "$LAUNCHER_STATUS" "a confirmed removal should succeed"
+    assert_no_file "$store/probe" "and the module should be gone"
+}
+
+# The catalogue is the one thing a release does NOT carry, so everything below reads a local
+# one through POOLSEQFLOW_MODULE_INDEX. That override is a shipped feature - a lab mirror, an
+# air-gapped machine - and not only a test hook.
+modules_catalogue() {
+    local dir; dir=$(guard_path "$TEST_TMPDIR/module-catalogue")
+    rm -rf "$dir"; mkdir -p "$dir"
+    make_module_release "$dir" probe 0.1.0 > /dev/null
+    make_module_release "$dir" probe 0.2.0 > /dev/null
+    make_module_release "$dir" future 9.0.0 freq-2
+}
+
+test_modules_available_reads_the_catalogue() {
+    LAUNCHER_MODULE_INDEX=$(modules_catalogue)
+    run_analysis_launcher_with_envs "base" modules available
+    unset LAUNCHER_MODULE_INDEX
+    assert_status 0 "$LAUNCHER_STATUS" "listing what is published should work"
+    assert_contains "$LAUNCHER_OUTPUT" "probe" "a published module should be listed"
+    assert_contains "$LAUNCHER_OUTPUT" "0.2.0" "with its version"
+    # A module reading a contract this release does not speak is shown and marked, not hidden:
+    # a user who was told to install it needs to know why they cannot.
+    assert_contains "$LAUNCHER_OUTPUT" "future" "a module for another contract should still appear"
+    assert_contains "$LAUNCHER_OUTPUT" "not this release" "marked as unreadable here"
+}
+
+test_modules_install_takes_the_newest_version_it_can_read() {
+    LAUNCHER_MODULE_INDEX=$(modules_catalogue)
+    LAUNCHER_STORE_MODULE=""
+    run_analysis_launcher_with_envs "base" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE
+    assert_status 0 "$LAUNCHER_STATUS" "installing a published module should work"
+    assert_contains "$LAUNCHER_OUTPUT" "probe v0.2.0" "the newest version, not the first row"
+    assert_file "$LAUNCHER_STORE/probe/main.nf" "the module's pipeline should be in the store"
+    assert_file "$LAUNCHER_STORE/probe/manifest.json" "and its manifest"
+    # Where it came from, beside the module, so an installation can account for itself.
+    assert_contains "$(cat "$LAUNCHER_STORE/probe/.source")" "0.2.0" "a source record should be written"
+}
+
+test_modules_install_pins_a_named_version() {
+    LAUNCHER_MODULE_INDEX=$(modules_catalogue)
+    run_analysis_launcher_with_envs "base" modules install probe 0.1.0
+    unset LAUNCHER_MODULE_INDEX
+    assert_status 0 "$LAUNCHER_STATUS" "naming a version should install that one"
+    assert_contains "$LAUNCHER_OUTPUT" "probe v0.1.0" "the version asked for, not the newest"
+}
+
+# The archive becomes code that runs on this machine, so it is verified before it is unpacked.
+test_modules_install_refuses_a_tampered_download() {
+    local index; index=$(modules_catalogue)
+    awk -F'\t' 'BEGIN { OFS = "\t" }
+        $1 == "probe" && $2 == "0.2.0" { $5 = "0000000000000000000000000000000000000000000000000000000000000000" }
+        { print }' "$index" > "$index.tampered"
+    LAUNCHER_MODULE_INDEX="$index.tampered"
+    run_analysis_launcher_with_envs "base" modules install probe
+    unset LAUNCHER_MODULE_INDEX
+    assert_status 1 "$LAUNCHER_STATUS" "a checksum mismatch must stop the install"
+    assert_contains "$LAUNCHER_OUTPUT" "does not match the checksum" "saying what failed"
+    assert_no_file "$LAUNCHER_STORE/probe" "and nothing should reach the store"
+}
+
+test_modules_install_refuses_a_module_for_another_contract() {
+    LAUNCHER_MODULE_INDEX=$(modules_catalogue)
+    run_analysis_launcher_with_envs "base" modules install future
+    unset LAUNCHER_MODULE_INDEX
+    assert_status 1 "$LAUNCHER_STATUS" "a module for another contract should be refused"
+    assert_no_file "$LAUNCHER_STORE/future" "and not installed"
+}
+
+# Replacing in place would leave a half-old module if the download failed partway.
+test_modules_install_will_not_replace_an_installed_module() {
+    LAUNCHER_MODULE_INDEX=$(modules_catalogue)
+    LAUNCHER_STORE_MODULE=probe
+    run_analysis_launcher_with_envs "base" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE
+    assert_status 0 "$LAUNCHER_STATUS" "it is not an error, only a no-op"
+    assert_contains "$LAUNCHER_OUTPUT" "already installed" "saying so"
+    assert_contains "$LAUNCHER_OUTPUT" "modules uninstall probe" "and how to replace it"
+}
+
+test_modules_explains_an_unreachable_catalogue() {
+    LAUNCHER_MODULE_INDEX="$TEST_TMPDIR/module-catalogue/absent.tsv"
+    run_analysis_launcher_with_envs "base" modules available
+    unset LAUNCHER_MODULE_INDEX
+    assert_status 1 "$LAUNCHER_STATUS" "an unreachable catalogue should fail"
+    assert_contains "$LAUNCHER_OUTPUT" "could not read the module catalogue" "saying what failed"
+    assert_contains "$LAUNCHER_OUTPUT" "POOLSEQFLOW_MODULE_INDEX" "and how to point it elsewhere"
+}
+
+# A name that is not a plain word never reaches `rm -rf`.
+test_modules_uninstall_refuses_a_name_that_is_not_one() {
+    run_analysis_launcher_with_envs "base" modules uninstall ../../etc
+    assert_status 1 "$LAUNCHER_STATUS" "a path should be refused"
+    assert_contains "$LAUNCHER_OUTPUT" "is not a module name" "saying why"
+    run_analysis_launcher_with_envs "base" modules uninstall absent
+    assert_status 0 "$LAUNCHER_STATUS" "a module that is not installed is not an error"
+    assert_contains "$LAUNCHER_OUTPUT" "No module 'absent' is installed" "and says so"
+}
+
 # Analysis runs where the pipeline ran, and reads what it produced. Built by hand rather
 # than through the harness, whose sandbox is a project.
 test_a_module_refuses_outside_a_project() {
@@ -516,6 +655,20 @@ test_the_analysis_subcommand_takes_exactly_one_word() {
     assert_status 1 "$LAUNCHER_STATUS" "an unknown option should be refused"
 }
 
+# Arity is each arm's own, which is what lets `modules uninstall <name>` take a second word
+# while everything beside it still takes none.
+test_the_modules_arm_takes_a_word_the_others_refuse() {
+    run_analysis_launcher_with_envs "base" modules
+    assert_status 1 "$LAUNCHER_STATUS" "modules with no verb should be refused"
+    assert_contains "$LAUNCHER_OUTPUT" "modules {list|available|install" "with its own usage"
+    run_analysis_launcher_with_envs "base" modules list
+    assert_status 0 "$LAUNCHER_STATUS" "modules list should be accepted as two words"
+    run_analysis_launcher_with_envs "base" modules list extra
+    assert_status 1 "$LAUNCHER_STATUS" "but not as three"
+    run_analysis_launcher_with_envs "base" modules uninstall
+    assert_status 1 "$LAUNCHER_STATUS" "uninstall needs the module to remove"
+}
+
 # Every subcommand the analysis usage line advertises must have an arm, and every arm must be
 # advertised. `<module>` is the one exclusion: it is a placeholder, not a word. Anything else
 # excluded here is a command advertised to users that does nothing.
@@ -524,7 +677,9 @@ test_the_analysis_subcommand_takes_exactly_one_word() {
 test_analysis_usage_and_implementation_agree() {
     local wrapper="$REPO_ROOT/PoolSeqFlow" usage_line advertised implemented cmd
     usage_line=$(sed -n 's/.*Usage: \$0 analysis {\(.*\)}.*/\1/p' "$wrapper" | head -1)
-    advertised=$(printf '%s' "$usage_line" | tr '|' '\n' | grep -vx '<module>' | sort)
+    # The arm is the first word of each entry; `modules <command>` is an arm that carries a
+    # word, `<module>` is a placeholder with no arm at all.
+    advertised=$(printf '%s' "$usage_line" | tr '|' '\n' | awk '{print $1}' | grep -vx '<module>' | sort)
     implemented=$(sed -n 's/^            \([a-z_|]*\))$/\1/p' "$wrapper" | tr '|' '\n' | sort)
     # Both sides going empty together would pass vacuously, and a changed usage line or a
     # re-indented case is exactly how that happens.
@@ -533,10 +688,23 @@ test_analysis_usage_and_implementation_agree() {
     assert_eq "$advertised" "$implemented" "the advertised subcommands and the implemented arms"
     while read -r cmd; do
         [ -n "$cmd" ] || continue
+        # Only the entries that carry no word of their own can be run bare.
+        case $cmd in *' '*|*'<'*) continue ;; esac
         # `y` for `uninstall`, which confirms before it removes anything; the rest ignore it.
         run_analysis_launcher_with_envs "base $VERSIONED_ENV ${VERSIONED_ENV}-analysis" "$cmd" <<< y
         assert_status 0 "$LAUNCHER_STATUS" "$cmd should be implemented"
-    done < <(printf '%s\n' "$advertised")
+    done < <(printf '%s' "$usage_line" | tr '|' '\n')
+}
+
+# The same agreement one level down: every verb `modules` advertises must have an arm.
+test_modules_usage_and_implementation_agree() {
+    local wrapper="$REPO_ROOT/PoolSeqFlow" usage_line advertised implemented
+    usage_line=$(sed -n 's/.*Usage: \$0 analysis modules {\(.*\)}.*/\1/p' "$wrapper" | head -1)
+    advertised=$(printf '%s' "$usage_line" | tr '|' '\n' | awk '{print $1}' | sort)
+    implemented=$(sed -n 's/^                    \([a-z_|]*\))$/\1/p' "$wrapper" | tr '|' '\n' | sort)
+    [ -n "$advertised" ] || fail_case "could not read the modules usage line out of the wrapper"
+    [ -n "$implemented" ] || fail_case "could not read any modules arm out of the wrapper"
+    assert_eq "$advertised" "$implemented" "the advertised module verbs and the implemented arms"
 }
 
 # `check` is the analysis half of `PoolSeqFlow check`: it activates this version's analysis

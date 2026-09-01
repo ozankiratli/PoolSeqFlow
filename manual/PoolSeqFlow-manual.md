@@ -469,7 +469,7 @@ How to read the tables: [Interpreting Results](#interpreting-results).
 
 Before anything is installed there is no `PoolSeqFlow` on your `PATH`, so the first command is `./PoolSeqFlow install`, run from the folder you downloaded. Everything after that uses the installed command.
 
-**Each subcommand takes no arguments of its own**, with one exception: `analysis` carries exactly one word, the analysis command or the module to run. Anything else is rejected. Two environment variables adjust the wrapper instead: `POOLSEQFLOW_PREFIX`, where `install` puts things and where `list` and `uninstall` look, and `POOLSEQFLOW_HOME`, to run a checkout without installing it.
+**Each subcommand takes no arguments of its own**, with one exception: `analysis` carries a word — the analysis command, or the module to run — and `analysis modules` carries a second. Anything else is rejected. Two environment variables adjust the wrapper instead: `POOLSEQFLOW_PREFIX`, where `install` puts things and where `list` and `uninstall` look, and `POOLSEQFLOW_HOME`, to run a checkout without installing it.
 
 **Naming a version.** Every installed release is also on your `PATH` under its own name, so `PoolSeqFlow-2.1.0 run` uses that release and plain `PoolSeqFlow` uses the newest. This matters most for `uninstall`: with several installations present it lists them and asks which to remove, and if nothing is attached to ask — a script, a CI job — it refuses and tells you to name one, rather than guessing at which installation to delete. `PoolSeqFlow-2.1.0 uninstall` names it and is never asked.
 
@@ -494,6 +494,10 @@ Choosing 3 removes `PoolSeqFlow-3.0.0` and `PoolSeqFlow-3.0.0-analysis`. To remo
 |---|---|
 | `PoolSeqFlow analysis install` | Create this release's analysis conda environment, which carries R, then verify it |
 | `PoolSeqFlow analysis check` | Verify an existing analysis installation — tools, R packages, entry point |
+| `PoolSeqFlow analysis modules available` | List the modules published for this release's table contract |
+| `PoolSeqFlow analysis modules install <module> [version]` | Install one, newest readable version unless you name it |
+| `PoolSeqFlow analysis modules list` | List the modules installed for this release, and name any that are broken |
+| `PoolSeqFlow analysis modules uninstall <module>` | Remove one module, after confirmation. Results it produced are untouched |
 | `PoolSeqFlow analysis version` | Print the version of this copy |
 | `PoolSeqFlow analysis cite` | Print how to cite this copy, plus R and every package a module runs on |
 | `PoolSeqFlow analysis uninstall` | Remove the analysis environment, after confirmation. The pipeline, its environment, and your results are untouched |
@@ -2344,6 +2348,28 @@ Modules in this release:
 | `verify` | Reports what the analysis layer can see, and produces nothing |
 
 That is the only one a release ships. Modules are installed separately from the pipeline and published on their own timetable, so what this layer can do grows without the pipeline changing version.
+
+### The modules installed here { #analysis-modules }
+
+```bash
+PoolSeqFlow analysis modules available         # what is published for this release
+PoolSeqFlow analysis modules install mds       # install one
+PoolSeqFlow analysis modules install mds 1.2.0 # or pin the version
+PoolSeqFlow analysis modules list              # what is installed for this release
+PoolSeqFlow analysis modules uninstall mds     # remove one, after confirming
+```
+
+All of them read the installation rather than your project, so they work from anywhere and need neither the analysis environment nor a `parameters.config`.
+
+**`install` pins by name.** Without a version it takes the newest one this release can read; with one it takes exactly that. **Name the version in your methods section**, and install that version to reproduce the analysis — a module carries its own version precisely so it can move without the pipeline moving, which means two runs of "the same module" are not necessarily the same code. Every analysis prints the module version it ran in its header, and installing writes a `.source` file beside the module recording where it came from and the checksum it matched.
+
+**`available` reads a catalogue over the network** and a release carries no copy of it, so a module published long after a release is still installable into it. What it lists is filtered to the table contract this release speaks; a module written against a later contract is shown and marked rather than hidden, so being told to install something that cannot work here gives you a reason instead of a blank. If your machine has no route to the internet, or your institution keeps a mirror, `POOLSEQFLOW_MODULE_INDEX` points at a URL or a file instead.
+
+**A download is verified before it is unpacked.** A module is code that runs on your machine, so the checksum in the catalogue is checked first, and a mismatch stops the install having written nothing.
+
+`list` is worth knowing about before you need it. Modules live inside the release's own installation, so each release has its own set and a module installed for one is never picked up by another — reinstalling the same version wipes them, and one command puts each back. More usefully: **a module directory that has lost its pipeline stops every analysis run, not only its own**, and `list` is what names the one at fault. It also tells you where the store is, which is the directory a module is installed into.
+
+Versions are not in that listing. A module reports its own version in the header of every analysis it produces, and that is the copy worth reading, because it comes from the same manifest the layer validated before it ran.
 
 `verify` is also the first thing every other module does. It resolves your configuration, works out which results directories the invocation covers, checks them against the record the pipeline wrote beside them, and refuses before any compute if anything does not line up. Running it on its own is how you check a project is ready without spending anything.
 
