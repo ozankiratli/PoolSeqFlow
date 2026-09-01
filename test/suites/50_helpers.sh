@@ -933,3 +933,70 @@ test_every_depth_decision_explains_itself() {
     reason=$(python3 "$REPO_ROOT/bin/depth_cutoff.py" "$DC_CORPUS/hill-small.tsv" | sed -n 2p)
     assert_contains "$reason" "rises again" "a capped one says what it found"
 }
+
+# ---------------------------------------------------------------------------------------
+# atomic_mv.sh
+
+# THE BUG THIS GUARDS, measured 2026-08-31: atomic_mv.sh staged every caller through one
+# ${DEST}.part, derived from the destination alone. Each caller's EXIT trap then removed the
+# file the others were still writing, so six to eight of eight callers failed, and - worse - a
+# PARTIAL file appeared under the destination's own name, which skip-by-existence reads as a
+# finished derivation. The analysis layer shares intermediates across separate Nextflow
+# invocations, so nothing arbitrates between two callers there.
+#
+# Eight callers is enough: the old code failed at least five of eight in every run, at any
+# file size, because the race is on the trap rather than on the copy.
+test_atomic_mv_survives_callers_racing_for_one_destination() {
+    helpers_sandbox
+    local i workers=8 fails=0 letters=ABCDEFGH
+    local -a pids=()
+    mkdir -p "$HELPERS_DIR/src" "$HELPERS_DIR/dst"
+    for ((i = 0; i < workers; i++)); do
+        head -c 1048576 /dev/zero | tr '\0' "${letters:$i:1}" > "$HELPERS_DIR/src/w$i"
+    done
+    for ((i = 0; i < workers; i++)); do
+        bash "$REPO_ROOT/bin/atomic_mv.sh" "$HELPERS_DIR/src/w$i" "$HELPERS_DIR/dst/shared" \
+            > /dev/null 2>&1 &
+        pids+=($!)
+    done
+    for i in "${pids[@]}"; do
+        wait "$i" || fails=$((fails + 1))
+    done
+
+    assert_count 0 "$fails" "every caller should succeed, not just the one that won the race"
+    assert_file "$HELPERS_DIR/dst/shared" "the destination should exist"
+    assert_count 1048576 "$(wc -c < "$HELPERS_DIR/dst/shared")" "and be whole, not truncated"
+    # One caller's bytes, all the way through: two callers writing one file would leave both.
+    local first rest
+    first=$(head -c1 "$HELPERS_DIR/dst/shared")
+    rest=$(LC_ALL=C tr -d "$first" < "$HELPERS_DIR/dst/shared" | wc -c)
+    assert_count 0 "$rest" "the destination should hold exactly one caller's content"
+    assert_count 0 "$(find "$HELPERS_DIR/dst" -name '.atomic_mv.*' | wc -l)" \
+        "and no staging directory should be left behind"
+}
+
+# Step 1 moves a whole snpEff database directory with this, so a source that is a directory is
+# not a corner case. A staging TEMP FILE instead of a temp directory passes every file-based
+# test here and fails the pipeline at step 1.
+test_atomic_mv_moves_a_directory() {
+    helpers_sandbox
+    mkdir -p "$HELPERS_DIR/src/db/nested" "$HELPERS_DIR/dst"
+    printf 'x' > "$HELPERS_DIR/src/db/nested/file"
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$HELPERS_DIR/src/db" "$HELPERS_DIR/dst/db"
+    assert_status 0 "$?" "moving a directory should work"
+    assert_file "$HELPERS_DIR/dst/db/nested/file" "with its contents"
+    assert_no_file "$HELPERS_DIR/src/db" "and the source should be gone"
+}
+
+# The trap has to fire on the caller's OWN staging directory and no one else's, which is the
+# half that made the old code delete work in progress.
+test_atomic_mv_leaves_nothing_behind_when_it_fails() {
+    helpers_sandbox
+    mkdir -p "$HELPERS_DIR/dst"
+    local status
+    bash "$REPO_ROOT/bin/atomic_mv.sh" "$HELPERS_DIR/absent" "$HELPERS_DIR/dst/x" \
+        > /dev/null 2>&1 && status=0 || status=$?
+    assert_status 1 "$status" "a missing source should fail"
+    assert_no_file "$HELPERS_DIR/dst/x" "and write nothing"
+    assert_count 0 "$(find "$HELPERS_DIR/dst" -name '.atomic_mv.*' | wc -l)" "and stage nothing"
+}

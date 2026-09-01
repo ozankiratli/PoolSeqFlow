@@ -50,9 +50,9 @@ def promotionLabel(Map run, String stage, String key) {
     return who ? "${who}:${what}" : "${what}"
 }
 
-// The move itself. One task per (producing variant, stage, key), never one per member: two
-// concurrent callers would stage through the same ${DEST}.part. `key` is the sample, and is
-// empty for an artifact belonging to the cohort.
+// The move itself. One task per (producing variant, stage, key), never one per member: the
+// members of a variant share one artifact, so a task each would move the same file N times.
+// `key` is the sample, and is empty for an artifact belonging to the cohort.
 process PromoteArtifacts {
     tag { promotionLabel(run, stage, key) }
 

@@ -2,13 +2,19 @@
 #
 # Move a finished artifact into place without ever leaving a partial file under its final name.
 #
-# Usage: atomic_mv.sh <source-file> <destination-file>
-#        atomic_mv.sh <source-file> <destination-directory>/     <- note the trailing slash
+# Usage: atomic_mv.sh <source> <destination>
+#        atomic_mv.sh <source> <destination-directory>/     <- note the trailing slash
 #
-# Staged through a `.part` suffix: the cross-filesystem copy lands on a name the skip logic
-# cannot match, and the last step is an atomic rename within the destination filesystem.
+# The source may be a file or a directory: step 1 moves a whole snpEff database with this.
 #
-# NO LOCKING. The caller is responsible for one task per artifact path.
+# Staged through a temp name of this caller's own: the cross-filesystem copy lands on a name the
+# skip logic cannot match, and the last step is an atomic rename within the destination
+# filesystem.
+#
+# NO LOCKING, and none is needed for the destination to stay whole: callers racing for one
+# destination stage separately and the last rename wins, so the destination is only ever absent
+# or complete. They all do the work, and two callers writing DIFFERENT content to one
+# destination is a bug in the caller.
 
 set -euo pipefail
 
@@ -47,8 +53,13 @@ case "$DEST" in
         ;;
 esac
 
-# Without this, a kill between the two moves below leaves ${DEST}.part behind for good.
-trap 'rm -rf -- "${DEST}.part"' EXIT
+# Staged inside a directory of this caller's own: a temp name derived from the destination alone
+# is shared by every concurrent caller. It is a directory because the source may be one, and
+# `mktemp` makes only files.
+STAGE=$(mktemp -d "$(dirname "$DEST")/.atomic_mv.XXXXXXXX")
 
-mv "$SRC" "${DEST}.part"
-mv "${DEST}.part" "$DEST"
+# Without this, a kill between the two moves below leaves the staged copy behind for good.
+trap 'rm -rf -- "$STAGE"' EXIT
+
+mv "$SRC" "$STAGE/item"
+mv "$STAGE/item" "$DEST"
