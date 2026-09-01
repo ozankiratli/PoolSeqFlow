@@ -6,7 +6,7 @@
 
 nextflow.enable.dsl=2
 
-include { intermediatesDir } from './paths.nf'
+include { frameVersion; intermediatesDir } from './paths.nf'
 
 // What a provenance record is called, beside the intermediate it describes.
 def provenanceSuffix() {
@@ -38,12 +38,13 @@ def recordDigest(String path) {
         .digest(record.bytes).encodeHex().toString()
 }
 
-// The results an intermediate was derived from, as the records the pipeline wrote beside them.
-// Every one of these decides what a frequency means, so an intermediate carrying an older copy
-// was derived from results that no longer exist.
+// The results an intermediate was derived from, as the records the pipeline wrote beside them,
+// and the frame that derived it. Every one of these decides what a frequency means, so an
+// intermediate carrying an older copy was derived from results that no longer exist - or by
+// code that no longer computes the same thing.
 def resultsIdentity() {
     def root = "${params.storageDir}/Output"
-    def lines = ["release                ${workflow.manifest.version ?: 'unknown'}".toString()]
+    def lines = ["frame                  ${frameVersion()}".toString()]
     ['.poolseqflow_version', '.poolseqflow_params', '.multirun.csv'].each { name ->
         lines << "${name.padRight(22)} ${recordDigest("${root}/${name}")}".toString()
     }

@@ -125,7 +125,7 @@ metadata.csv.template multi-run.csv.example manual README.md CHANGELOG.md LICENS
 # Payload files installed read-only. These are wiring rather than settings: a run reads them,
 # nobody is meant to edit them, and an edit would apply to every project on the machine without
 # appearing in any project's record of itself.
-SEALED_ITEMS="analysis/frame.config"
+SEALED_ITEMS="analysis/frame.config analysis/frame.version"
 
 # The payload's executables, stamped with their installed location and symlinked into
 # $PREFIX/bin twice, once under the plain name and once carrying the version.
@@ -471,6 +471,25 @@ get_module_index() {
     exit 1
 }
 
+# THE COLUMN LAYOUT, checked before a single row is read. The rows are parsed by position, so a
+# layout this release does not know would install the wrong thing from the right row, or verify
+# a tarball against whatever had shifted into the sha256 column.
+#
+# A catalogue with no format line is layout 1: it predates the header and its columns are the
+# ones this release reads.
+require_module_index_format() {
+    local found; found=$(module_index_header "$1" index-format)
+    [ -n "$found" ] || found=1
+    [ "$found" = "$MODULE_INDEX_FORMAT" ] && return 0
+    echo "ERROR: the module catalogue is in layout $found; this release reads layout $MODULE_INDEX_FORMAT." >&2
+    echo "  Its columns are not the ones this release would read, so nothing is listed or" >&2
+    echo "  installed from it - reading it by position would take the wrong field for each." >&2
+    echo "" >&2
+    echo "  Upgrade PoolSeqFlow, or point POOLSEQFLOW_MODULE_INDEX at a catalogue in layout" >&2
+    echo "  $MODULE_INDEX_FORMAT. A module already installed here is unaffected and still runs." >&2
+    exit 1
+}
+
 # What can be installed, and whether this release can read it. Contract and version come from
 # the catalogue; whether a module is already here comes from the store.
 available_modules() {
@@ -478,6 +497,7 @@ available_modules() {
     index=$(mktemp)
     trap 'rm -f "$index"' RETURN
     get_module_index "$index"
+    require_module_index_format "$index"
     contract=$(module_contract)
     # Without it every row would pass the compatibility check, and a module that reads the
     # tables differently would install silently.
@@ -488,7 +508,9 @@ available_modules() {
         exit 1
     fi
 
+    local catalogue; catalogue=$(module_index_header "$index" index-version)
     echo "Modules published for the table contract this release speaks (${contract:-unknown}):"
+    echo "Catalogue ${catalogue:-unversioned}, read from $(module_index_source)"
     echo ""
     printf '    %-16s %-10s %-12s %s\n' NAME VERSION CONTRACT ''
     while IFS=$'\t' read -r name version row_contract url sha summary; do
@@ -538,6 +560,7 @@ install_module() {
     index=$(mktemp)
     trap 'rm -f "$index"' RETURN
     get_module_index "$index"
+    require_module_index_format "$index"
     contract=$(module_contract)
     # Without it every row would pass the compatibility check, and a module that reads the
     # tables differently would install silently.
@@ -612,9 +635,11 @@ EOF
     mkdir -p "$MODULE_STORE"
     dest="$MODULE_STORE/$name"
     mv "$unpacked/$name" "$dest"
-    # Beside the module, so an installation can say where each of its modules came from.
-    printf 'name\t%s\nversion\t%s\ncontract\t%s\nurl\t%s\nsha256\t%s\n' \
-        "$name" "$version" "$row_contract" "$url" "$sha" > "$dest/.source"
+    # Beside the module, so an installation can say where each of its modules came from - and
+    # which catalogue it was read out of, which is the only record of that afterwards.
+    printf 'name\t%s\nversion\t%s\ncontract\t%s\nurl\t%s\nsha256\t%s\ncatalogue\t%s\n' \
+        "$name" "$version" "$row_contract" "$url" "$sha" \
+        "$(module_index_header "$index" index-version)" > "$dest/.source"
     echo "Installed $name v$version into"
     echo "    $dest"
     echo ""

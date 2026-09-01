@@ -103,6 +103,39 @@ test_the_module_catalogue_header_is_the_one_the_wrapper_reads() {
         "the catalogue's columns"
 }
 
+# The catalogue is fetched from the default branch at RUN TIME, so a release meets whatever is
+# there years later. The layout number is what lets it refuse a file whose columns have moved
+# instead of reading the wrong field out of each row; the test above cannot protect a wrapper
+# that has already shipped.
+test_the_module_catalogue_declares_its_layout_and_its_version() {
+    local index="$REPO_ROOT/analysis/modules-index.tsv"
+    local format version supported
+    format=$(sed -n 's|^#![[:space:]]*index-format:[[:space:]]*\(.*\)$|\1|p' "$index" | head -1 | tr -d ' ')
+    version=$(sed -n 's|^#![[:space:]]*index-version:[[:space:]]*\(.*\)$|\1|p' "$index" | head -1 | tr -d ' ')
+    supported=$(sed -n 's|^MODULE_INDEX_FORMAT="\(.*\)"$|\1|p' "$REPO_ROOT/lib/wrapper_lib.sh" | head -1)
+    assert_eq "$supported" "$format" "the catalogue's layout vs the one the wrapper reads"
+    case "$version" in
+        [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].[0-9][0-9][0-9]) ;;
+        *) fail_case "the catalogue version must be YYYYMMDD.NNN, got '$version'" ;;
+    esac
+}
+
+# Nothing in the pipeline forces a version bump, and this project has had a hand-kept list
+# drift twice. These are what catch it.
+test_the_analysis_version_scripts_are_there_and_runnable() {
+    local script
+    for script in bump-analysis-version.sh check-analysis-versions.sh; do
+        assert_file "$REPO_ROOT/dev/scripts/$script" "dev/scripts/$script should exist"
+        [ -x "$REPO_ROOT/dev/scripts/$script" ] || fail_case "dev/scripts/$script is not executable"
+        bash -n "$REPO_ROOT/dev/scripts/$script" 2>/dev/null || fail_case "dev/scripts/$script does not parse"
+    done
+    # Named without a target it explains itself rather than guessing one.
+    local out; out=$("$REPO_ROOT/dev/scripts/bump-analysis-version.sh" 2>&1 || true)
+    assert_contains "$out" "frame" "usage should name the frame target"
+    assert_contains "$out" "index" "and the index target"
+    assert_contains "$out" "module" "and the module target"
+}
+
 test_release_archive_carries_the_runtime() {
     local listing
     listing=$(working_tree_archive)

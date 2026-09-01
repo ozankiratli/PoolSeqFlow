@@ -589,6 +589,58 @@ test_modules_available_reads_the_catalogue() {
     assert_contains "$LAUNCHER_OUTPUT" "not this release" "marked as unreadable here"
 }
 
+# Puts the two `#!` headers on a fixture catalogue. A catalogue without them is layout 1 by
+# definition, which is what the other cases here exercise.
+modules_catalogue_stamped() {
+    local index="$1" format="$2" version="$3" tmp
+    tmp="${index}.stamped"
+    { printf '#!index-format: %s\n#!index-version: %s\n' "$format" "$version"; cat "$index"; } > "$tmp"
+    mv "$tmp" "$index"
+    printf '%s' "$index"
+}
+
+# THE REASON THE LAYOUT NUMBER EXISTS. The catalogue is fetched from the default branch at run
+# time, so a release meets whatever is there years later, and its rows are read BY POSITION. A
+# layout this release does not know must stop it, or it takes the wrong field out of each row -
+# including the sha256 it verifies the tarball against.
+test_modules_available_refuses_a_catalogue_layout_it_cannot_read() {
+    LAUNCHER_MODULE_INDEX=$(modules_catalogue_stamped "$(modules_catalogue)" 99 20991231.001)
+    run_analysis_launcher_with_envs "base" modules available
+    unset LAUNCHER_MODULE_INDEX
+    assert_status 1 "$LAUNCHER_STATUS" "an unreadable layout must stop the command"
+    assert_contains "$LAUNCHER_OUTPUT" "layout 99" "naming the layout it found"
+    assert_contains "$LAUNCHER_OUTPUT" "reads layout 1" "and the one it reads"
+    assert_not_contains "$LAUNCHER_OUTPUT" "probe" "and listing nothing out of it"
+    # An installation that already has modules keeps working; only the catalogue is unreadable.
+    assert_contains "$LAUNCHER_OUTPUT" "still runs" "saying installed modules are unaffected"
+}
+
+# `install` goes through the same gate: refusing to LIST a catalogue but agreeing to install
+# from it would be the worse half of the two.
+test_modules_install_refuses_a_catalogue_layout_it_cannot_read() {
+    LAUNCHER_MODULE_INDEX=$(modules_catalogue_stamped "$(modules_catalogue)" 99 20991231.001)
+    LAUNCHER_STORE_MODULE=""
+    run_analysis_launcher_with_envs "base" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE
+    assert_status 1 "$LAUNCHER_STATUS" "an unreadable layout must stop the install"
+    assert_no_file "$LAUNCHER_STORE/probe" "and nothing may be installed from it"
+}
+
+# Which catalogue a module came from is answerable only if it was recorded when it was read.
+test_the_catalogue_version_is_reported_and_recorded() {
+    LAUNCHER_MODULE_INDEX=$(modules_catalogue_stamped "$(modules_catalogue)" 1 20260901.007)
+    run_analysis_launcher_with_envs "base" modules available
+    assert_status 0 "$LAUNCHER_STATUS" "a known layout should still list"
+    assert_contains "$LAUNCHER_OUTPUT" "20260901.007" "available should name the catalogue it read"
+
+    LAUNCHER_STORE_MODULE=""
+    run_analysis_launcher_with_envs "base" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE
+    assert_status 0 "$LAUNCHER_STATUS" "and installing from it should work"
+    assert_contains "$(cat "$LAUNCHER_STORE/probe/.source" 2>/dev/null)" "20260901.007" \
+        "the .source file should record which catalogue it came from"
+}
+
 test_modules_install_takes_the_newest_version_it_can_read() {
     LAUNCHER_MODULE_INDEX=$(modules_catalogue)
     LAUNCHER_STORE_MODULE=""

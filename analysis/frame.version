@@ -1,0 +1,25 @@
+# The analysis frame's own version, and the only place it is written.
+#
+# YYYYMMDD.NNN - the day it changed, then a counter from 001 for that day. Commit the bump with
+# the change it describes: every intermediate's provenance record carries this, and it is what
+# tells a later run that an intermediate was derived by code that no longer computes the same
+# thing.
+#
+# BUMP IT FOR: analysis/frame.config, and anything under analysis/lib/. Those are what a module
+# imports and what it runs under, so a change to either can change what a derivation produces.
+#
+# DO NOT BUMP FOR: analysis/modules-index.tsv, which is the catalogue of downloadable modules -
+# it does not ship, no derivation reads it, and it changes whenever anyone publishes a module.
+# Nor for a module under analysis/modules/, which carries its own version in its manifest.json.
+# Nor for analysis.nf, 0_verify_analysis.nf, modules.nf or complete.nf: they verify, report and
+# move files, and a module imports none of them.
+#
+# A change in scripts/ CAN reach a derivation, because analysis/lib/plan.nf imports
+# resolve_parameters.nf and variants.nf. That one is caught elsewhere: the pipeline release
+# moves with it, and the identity check refuses results produced by a different release.
+#
+# It is NOT the pipeline release and does not move with it, so dev/scripts/bump-version.sh does
+# not touch this file. Each module carries its own version in the same form, in its manifest.json.
+#
+# Blank lines and lines starting with # are ignored; the first line left is the version.
+20260901.001

@@ -50,7 +50,7 @@ Follow these and a module written by anyone runs beside the ones shipped here. M
 1. **`main.nf` is required, and the directory name must equal the manifest's `name`.** A directory holding a manifest and no `main.nf` is refused while the DAG is built — before the results folder is cleared — and it stops **every** invocation, not only yours. A directory holding no manifest at all is passed over in silence, so a half-finished install is harmless.
 2. **Import the library by a literal relative path**, `'../../lib/plan.nf'`. An interpolated include path is rejected both by `nextflow lint` and at runtime, and the literal resolves in a checkout and in an installation alike because a module sits at `analysis/modules/<name>/` in both.
 3. **Import only the workflows you call.** An unused import still couples you: a library workflow that is renamed or removed breaks every module naming it, called or not. Import breadth is coupling breadth.
-4. **Report your own version.** `manifest.json`'s `version` is the module's, and it moves on the module's timetable — never the pipeline release's. That separation is the reason modules are installed separately at all.
+4. **Report your own version.** `manifest.json`'s `version` is the module's, and it moves on the module's timetable — never the pipeline release's. That separation is the reason modules are installed separately at all. The modules published with PoolSeqFlow use **`YYYYMMDD.NNN`** — the day the manifest changed, then a counter from `001` for that day — bumped whenever the manifest is touched and committed with the change. Any version string works as far as the frame is concerned, but `install` picks the newest with `sort -V`, so whatever you choose has to order correctly under it.
 
 ### Declaring what you read
 
@@ -129,6 +129,10 @@ A published module is a **gzipped tarball unpacking to `<name>/`**, with `manife
 | `summary` | one line, shown by `available` |
 
 Several rows may name one module. `install <name>` takes the newest version whose `contract` this release speaks; naming a version installs exactly that one, which is what a paper's methods section should say.
+
+The catalogue carries two headers of its own, and they are not interchangeable. **`#!index-format`** is the column layout, checked before a single row is read — the columns are parsed by position, so a release that met a layout it did not know would take the wrong field from each row, and it refuses instead. Bump it only when the columns change, which stops every already-published release from reading the file. **`#!index-version`** is what is in the catalogue, in the same `YYYYMMDD.NNN` form, bumped on every publish; nothing is ever refused on it, because a release has to be able to read a catalogue newer than itself. `modules available` prints it, and `install` records it in the `.source` file beside the module — which is the only record afterwards of which catalogue a module came from.
+
+`dev/scripts/bump-analysis-version.sh index` moves it, and `dev/scripts/check-analysis-versions.sh` refuses a change to the rows that left it behind.
 
 Two rules the installer enforces, so build for them:
 

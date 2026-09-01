@@ -261,6 +261,58 @@ test_the_defaults_carry_what_a_module_run_has_no_other_source_for() {
     assert_contains "$cfg" 'resourceLimits' "and the ceiling on what a task may ask for"
 }
 
+# The frame's version reaches a module or nothing does: Nextflow reads a nextflow.config beside
+# the ENTRY SCRIPT, and for a module that is the module. Without this block every intermediate's
+# provenance recorded an unknown release, on both the write and the comparison, so the staleness
+# check passed on everything.
+test_the_frame_carries_a_version_of_its_own() {
+    local version
+    version=$(grep -vE '^\s*(#|$)' "$REPO_ROOT/analysis/frame.version" 2>/dev/null | head -1 | tr -d ' ')
+    case "$version" in
+        [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].[0-9][0-9][0-9]) ;;
+        *) fail_case "analysis/frame.version must hold one YYYYMMDD.NNN line, got '$version'"; return ;;
+    esac
+}
+
+# `manifest.version` IS the pipeline release: 0_verify_analysis.nf:42 reads it and compares it
+# against the .poolseqflow_version the results carry. A manifest block in frame.config overrides
+# it for every analysis run, and the identity check then refuses every project - measured, and it
+# failed 17 runtime cases before the version moved to a file of its own.
+test_the_frame_version_does_not_hijack_the_release() {
+    local cfg; cfg=$(cat "$REPO_ROOT/analysis/frame.config")
+    assert_not_contains "$cfg" "manifest {" "frame.config must not declare a manifest"
+    # Comments stripped: the reason this must not read the release is written there in full.
+    local code; code=$(grep -vE '^\s*//' "$REPO_ROOT/analysis/lib/paths.nf")
+    assert_not_contains "$code" "workflow.manifest" \
+        "and frameVersion() must not read the release"
+    assert_contains "$code" 'frame.version' "it reads its own file instead"
+    # A params key would be settable from a project's analysis.config, and a provenance record
+    # the analysed project can rewrite records nothing.
+    assert_not_contains "$cfg" "frameVersion" "and it is not a parameter either"
+}
+
+# bump-version.sh moves the RELEASE. The frame version moves when the frame changes, which is a
+# different event, so a release bump must leave it alone - otherwise every intermediate derived
+# before the release reads as stale for no reason.
+test_bump_version_does_not_touch_the_frame() {
+    local bump; bump=$(cat "$REPO_ROOT/dev/scripts/bump-version.sh")
+    assert_not_contains "$bump" "frame.version" "bump-version.sh must not name the frame version"
+    assert_not_contains "$bump" "frame.config" "nor the frame config"
+    assert_contains "$bump" 'NFCONFIG="nextflow.config"' \
+        "and the file it rewrites is named explicitly"
+}
+
+# A missing frame version REFUSES rather than falling back. Both the write and the comparison
+# would read the same placeholder, so a fallback is a check that passes on everything.
+test_a_run_without_a_frame_version_refuses() {
+    local paths; paths=$(cat "$REPO_ROOT/analysis/lib/paths.nf")
+    assert_contains "$paths" "does not know its own version" "the refusal exists"
+    assert_not_contains "$(cat "$REPO_ROOT/analysis/lib/store.nf")" "'unknown'" \
+        "and store.nf no longer has a placeholder to compare against itself"
+    assert_not_contains "$(cat "$REPO_ROOT/analysis/lib/modules.nf")" "?: 'unknown'" \
+        "nor does the builtin roster"
+}
+
 # env is a config scope and config is read before the entry script, so PATH cannot be built
 # from the params.dir.bin that analysisPlan() sets - it has to compute the installation itself.
 # The two would disagree silently: the task would run with a PATH pointing at the module.
@@ -962,6 +1014,23 @@ test_an_intermediate_derived_from_other_results_refuses() {
     local out; out=$(analysis_output)
     assert_contains "$out" "matrix.tsv is STALE" "and names the file"
     assert_contains "$out" ".poolseqflow_version" "and the record that moved"
+}
+
+# What is IN the record is the contract: a later run compares against it byte for byte. The
+# frame version is the half the results digests cannot see - .poolseqflow_version records the
+# PIPELINE release that produced the results, not the code that derived from them.
+test_an_intermediate_records_the_frame_that_derived_it() {
+    analysis_writer_ready || return
+    local status; status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the module should derive the intermediate"
+
+    local record declared
+    record=$(cat "$(analysis_main_dir)/matrix.tsv.provenance" 2>/dev/null)
+    declared=$(grep -vE '^\s*(#|$)' "$REPO_ROOT/analysis/frame.version" | head -1 | tr -d ' ')
+    assert_contains "$record" "frame " "the record names the frame that derived it"
+    assert_contains "$record" "$declared" "with the version frame.config declares"
+    assert_not_contains "$record" "unknown" "and never a placeholder"
+    assert_contains "$record" ".poolseqflow_version" "beside the pipeline's own records"
 }
 
 # THE RISKY TRANSFER. Named files, one at a time, out of a directory that holds other things -

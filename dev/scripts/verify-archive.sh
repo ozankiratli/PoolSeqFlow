@@ -34,7 +34,7 @@ root="${tmp}/${name}"
 for f in PoolSeqFlow poolseqflow.nf analysis.nf nextflow.config \
          parameters.config.template metadata.csv.template \
          analysis/modules.nf analysis/0_verify_analysis.nf analysis/frame.config \
-         analysis/analysis.config.template \
+         analysis/frame.version analysis/analysis.config.template \
          install/environment.yml install/environment-analysis.yml \
          install/check_install.sh install/check_analysis_install.sh \
          LICENSE README.md CHANGELOG.md; do

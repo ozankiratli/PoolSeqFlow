@@ -20,5 +20,21 @@
 #
 # Adding a module is adding a row. Removing one takes it out of `available` and leaves every
 # installation that already has it untouched.
+#
+# THE TWO VERSIONS BELOW DO DIFFERENT JOBS AND ARE NOT INTERCHANGEABLE.
+#
+# index-format is the COLUMN LAYOUT, and every wrapper checks it before reading a single row.
+# A wrapper reads the columns by position, so a release that met a layout it did not know
+# would install the wrong thing from the right row - or verify a tarball against whatever had
+# shifted into the sha256 column. It refuses instead. Bump it ONLY when the columns change,
+# which is a thing to avoid: every already-published release stops reading this file.
+#
+# index-version is WHAT IS IN THE CATALOGUE, in the same YYYYMMDD.NNN form the frame and the
+# modules use. Bump it on every publish. Nothing is refused on it - a release must be able to
+# read a catalogue newer than itself, which is the whole point of publishing modules
+# separately - so it is reported and recorded, never compared.
+#
+#!index-format: 1
+#!index-version: 20260901.001
 
 name	version	contract	url	sha256	summary

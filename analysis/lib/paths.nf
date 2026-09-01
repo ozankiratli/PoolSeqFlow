@@ -30,6 +30,32 @@ def analysisSetting(String key) {
     return scope.containsKey(key) ? scope[key] : defaults[key]
 }
 
+// The analysis frame's own version, from analysis/frame.version in the installation.
+//
+// NOT workflow.manifest.version: that is the PIPELINE release, which 0_verify_analysis.nf
+// compares against the .poolseqflow_version the results carry. And not a params key either -
+// a later -c could set it, and a provenance record a project can rewrite records nothing.
+//
+// moduleDir is this file's own directory whichever script is the entry point, so the frame
+// finds its version without being told where the installation is.
+def frameVersion() {
+    def record = file("${moduleDir}/../frame.version")
+    def version = record.exists()
+        ? record.readLines().collect { line -> line.trim() }
+              .find { line -> !line.isEmpty() && !line.startsWith('#') } ?: ''
+        : ''
+    if (!(version ==~ /\d{8}\.\d{3}/)) {
+        throw new IllegalStateException(
+            "the analysis frame does not know its own version.\n" +
+            "    ${record}\n" +
+            "should hold one line of the form YYYYMMDD.NNN" +
+            (version.isEmpty() ? ', and holds none' : ", and holds '${version}'") + ".\n" +
+            "Every intermediate this run derived would otherwise be indistinguishable from one\n" +
+            "derived by different code. Install this release again.")
+    }
+    return version
+}
+
 // The installation this invocation was launched from, and a refusal when it cannot be found. A
 // module is its own pipeline, so ${projectDir} is the module's own directory and nothing
 // Nextflow computes points at the installation. Both wrappers export POOLSEQFLOW_HOME.

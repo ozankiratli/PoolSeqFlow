@@ -9,7 +9,7 @@
 
 nextflow.enable.dsl=2
 
-include { installDir } from './paths.nf'
+include { frameVersion; installDir } from './paths.nf'
 
 // Where installed modules live: inside this release's own installation. From installDir() and
 // not projectDir, which is the entry script's directory - the MODULE's own when a module is
@@ -30,7 +30,7 @@ def builtinModules() {
     return [
         verify: [
             summary : 'report what the analysis layer can see, and produce nothing',
-            version : "${workflow.manifest.version ?: 'unknown'}".toString(),
+            version : frameVersion(),
             contract: contractVersion(),
             needs   : [],
             gates   : [],
