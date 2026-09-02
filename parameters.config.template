@@ -110,6 +110,11 @@ params {
     // sample there, 0 caps nothing.
     capBAM {
         maxDepth        = -1
+        // How deep step 5's depth histogram looks. A sample with positions deeper than this
+        // stops the run naming this parameter: a ceiling read from a truncated histogram is
+        // read from a partial picture. Raising it cannot change a result and is not compared
+        // against previous runs, so it never costs a reset.
+        histogramMax    = 100000
     }
 
     // Step 6: how bcftools calls variants.

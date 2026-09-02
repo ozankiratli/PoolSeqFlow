@@ -37,9 +37,16 @@ dirty() {
     [ -n "$(git status --porcelain -- "$@" 2>/dev/null)" ]
 }
 
-# The commit time of the last commit touching any of the given paths, or nothing.
-last_commit() {
-    git log -1 --format=%ct -- "$@" 2>/dev/null || true
+# The day analysis/frame.version names, from its one non-comment line. YYYYMMDD.
+frame_version_day() {
+    grep -vE '^[[:space:]]*(#|$)' "$1" 2>/dev/null | head -1 | tr -d ' ' | cut -d. -f1
+}
+
+# The day the given paths last changed: today when anything is uncommitted, otherwise the day of
+# the last commit touching them. UTC, which is what bump-analysis-version.sh writes.
+last_change_day() {
+    if dirty "$@"; then date -u +%Y%m%d; return; fi
+    TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d -- "$@" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------------------
@@ -48,15 +55,27 @@ last_commit() {
 FRAME_SOURCES=(analysis/frame.config analysis/lib)
 FRAME_VERSION=analysis/frame.version
 
-if dirty "${FRAME_SOURCES[@]}" && ! dirty "$FRAME_VERSION"; then
-    report "the frame changed and analysis/frame.version did not" \
-        "uncommitted: $(git status --porcelain -- "${FRAME_SOURCES[@]}" | awk '{print $NF}' | tr '\n' ' ')" \
-        "bump it:    dev/scripts/bump-analysis-version.sh frame"
-else
-    src=$(last_commit "${FRAME_SOURCES[@]}")
-    ver=$(last_commit "$FRAME_VERSION")
-    if [ -n "${src:-}" ] && [ -n "${ver:-}" ] && [ "$src" -gt "$ver" ]; then
-        report "the frame was committed after analysis/frame.version last moved" \
+# The DAY the version names, against the day the frame last changed.
+#
+# A day, not a commit and not a timestamp. The counter after the dot is bookkeeping; the day is
+# what this compares, so a run of frame changes on one day needs one bump rather than one each.
+# Commit timestamps cannot do the job at all: `%ct` is whole seconds, so a source commit landing
+# in the same second as the version's compares equal and the drift goes unreported - measured.
+#
+# It reads a bump the moment it is written, committed or not, because the bump writes today's
+# date and the comparison is on dates.
+#
+# What it gives up: a frame change made AFTER the bump on the SAME day reads as covered. That is
+# the price of one bump a day, and it is paid in development rather than in a release.
+ver_day=$(frame_version_day "$FRAME_VERSION")
+src_day=$(last_change_day "${FRAME_SOURCES[@]}")
+if [ -n "${ver_day:-}" ] && [ -n "${src_day:-}" ] && [ "$ver_day" -lt "$src_day" ]; then
+    if dirty "${FRAME_SOURCES[@]}"; then
+        report "the frame changed and analysis/frame.version still says ${ver_day}" \
+            "uncommitted: $(git status --porcelain -- "${FRAME_SOURCES[@]}" | awk '{print $NF}' | tr '\n' ' ')" \
+            "bump it:     dev/scripts/bump-analysis-version.sh frame"
+    else
+        report "the frame changed on ${src_day} and analysis/frame.version still says ${ver_day}" \
             "last frame change:   $(git log -1 --format='%h %ad %s' --date=short -- "${FRAME_SOURCES[@]}")" \
             "last version change: $(git log -1 --format='%h %ad %s' --date=short -- "$FRAME_VERSION")" \
             "bump it:             dev/scripts/bump-analysis-version.sh frame"

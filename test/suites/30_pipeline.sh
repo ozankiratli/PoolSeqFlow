@@ -1230,6 +1230,27 @@ test_a_fixed_ceiling_caps_every_sample() {
     fi
 }
 
+# THE HISTOGRAM CEILING IS A PARAMETER, AND THE REFUSAL HAS TO NAME IT. It was a Groovy local
+# in scripts/5_reports.nf, in no scope and in no template, and the failure told the user to
+# raise it there - in an installation that is replaced wholesale on the next upgrade, so the
+# edit is lost silently and the run that worked stops working.
+#
+# A fresh sandbox and not a copy of the finished project: DepthProfile skips on its own decision
+# file, so a project that already has one never measures a histogram at all.
+test_a_truncated_depth_histogram_names_the_parameter() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status out
+    sb=$(make_pipeline_sandbox "hist-ceiling")
+    write_sandbox_config "$sb" 's|^        histogramMax    = 100000|        histogramMax    = 2|'
+    status=$(run_pipeline "$sb")
+    assert_status 1 "$status" "a truncated histogram must stop the run; see $sb/run.out"
+    out=$(cat "$sb/run.out")
+    assert_contains "$out" "capBAM.histogramMax" "the refusal should name the parameter"
+    assert_not_contains "$out" "in scripts/5_reports.nf" \
+        "and never send the user into the installation"
+}
+
 # THE COUNTS BEHIND EVERY PUBLISHED FREQUENCY. Until E4a the depth table existed only inside a
 # pipe and was thrown away, so nothing anywhere said how many reads a frequency was computed
 # from. The analysis layer needs it for n_eff, and a reader needs it to judge a frequency at all.

@@ -5,6 +5,8 @@
 # tells a later run that an intermediate was derived by code that no longer computes the same
 # thing.
 #
+# dev/scripts/check-analysis-versions.sh compares the DAY, so one bump covers a day's changes.
+#
 # BUMP IT FOR: analysis/frame.config, and anything under analysis/lib/. Those are what a module
 # imports and what it runs under, so a change to either can change what a derivation produces.
 #
@@ -22,4 +24,4 @@
 # not touch this file. Each module carries its own version in the same form, in its manifest.json.
 #
 # Blank lines and lines starting with # are ignored; the first line left is the version.
-20260901.001
+20260902.001

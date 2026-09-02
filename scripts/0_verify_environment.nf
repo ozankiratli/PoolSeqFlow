@@ -20,11 +20,16 @@ def flattenParams(Map m, String prefix, Map out) {
 def analysisParams(Map p) {
     // Excluded: paths, resources, tool locations, and the parsed metadata, which has its own
     // guard. Everything not named here counts as analysis-affecting.
+    //
+    // capBAM.histogramMax bounds how deep step 5 looks, not what it decides: samtools reports
+    // only the depths that occur, and a run whose histogram is truncated stops, so every value
+    // the run completes at yields the same histogram and the same ceiling.
     def skipKey = [
         'mainDir', 'storageDir', 'runId', 'dryRun', 'dryRunDir',
         'metadata',
         'referencePath', 'gffPath', 'metadataPath', 'multiRunPath', 'referenceFa', 'reference', 'gff', 'reads',
-        'threads', 'memory'
+        'threads', 'memory',
+        'capBAM.histogramMax'
     ] as Set
     def skipPrefix = ['dir.', 'cores.', 'java.', 'software.']
     return flattenParams(p, '', [:])

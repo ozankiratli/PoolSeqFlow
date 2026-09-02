@@ -29,7 +29,9 @@ def stepParameterMap() {
              publish : [] ],
 
         // Step 5 decides each sample's depth cap, so the cap setting refines what it passes on.
-        5: [ artifact: ['capBAM.maxDepth'], publish: [] ],
+        // histogramMax changes nothing it writes or passes on; declaring it makes runs that
+        // share the step agree on it, and one too low for a sample fails all of them.
+        5: [ artifact: ['capBAM.maxDepth'], publish: ['capBAM.histogramMax'] ],
 
         6: [ artifact: ['variantCall.mpileupOptions', 'variantCall.callOptions', 'vcf.fileName',
                         'dir.subpath.vcf'],
@@ -62,7 +64,7 @@ def stepFolders() {
         5: ['dir.subpath.report.align', 'dir.subpath.report.coverage', 'dir.subpath.report.depth'],
         6: ['dir.subpath.vcf'],
         7: ['dir.subpath.vcf', 'dir.subpath.freq'],
-        // snpEff writes its summary straight into Reports/.
+        // Step 8 publishes snpEff's summary and gene table into Reports/.
         8: ['dir.subpath.vcf', 'dir.subpath.reports'],
     ]
 }
@@ -461,10 +463,10 @@ def publishConflictLines(Map plan, List runDefs) {
             lines << "SHARING CHECK:                 ${who} = ${value}"
         }
     }
-    lines << "SHARING CHECK:         A parameter like this changes only what the step writes for you"
-    lines << "SHARING CHECK:         to look at, not what it passes on - so the runs still share the"
-    lines << "SHARING CHECK:         artifact, and only one of these values can have produced the"
-    lines << "SHARING CHECK:         report beside it. Make them agree, or vary something that makes"
-    lines << "SHARING CHECK:         the runs diverge at this step."
+    lines << "SHARING CHECK:         A parameter like this does not change what the step passes on,"
+    lines << "SHARING CHECK:         so the runs still share the artifact - but the step runs ONCE,"
+    lines << "SHARING CHECK:         under one of these values, and every run sharing it gets that"
+    lines << "SHARING CHECK:         one. Make them agree, or vary something that makes the runs"
+    lines << "SHARING CHECK:         diverge at this step."
     return lines
 }

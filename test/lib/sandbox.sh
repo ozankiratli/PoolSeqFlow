@@ -452,6 +452,21 @@ _run_entry() {
     printf '%s' "$?"
 }
 
+# The sandbox's configuration as Nextflow resolves it, flattened. The same question the wrapper
+# asks through nf_config_value, and the only way to see which layer won a setting: a run reports
+# what it did, not which file decided it.
+sandbox_config_flat() {
+    local sb="$1"
+    (
+        cd "$sb/main" || exit 1
+        export JAVA_HOME="$TEST_CONDA_ENV" JAVA_CMD="$TEST_CONDA_ENV/bin/java"
+        export PATH="$TEST_CONDA_ENV/bin:$PATH"
+        export NXF_HOME="$sb/nxfhome" NXF_VER="${TEST_NXF_VER:-26.04.6}"
+        export POOLSEQFLOW_HOME="$sb/install"
+        nextflow config -flat "$sb/install" 2>/dev/null
+    )
+}
+
 # Where Nextflow's trace landed.
 #
 # It describes the whole INVOCATION, so under multiRun it is filed with the rest of the work

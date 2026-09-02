@@ -1300,6 +1300,9 @@ Safe to tune between runs. Step 0 does not track them, precisely because they ca
 | `java.heapSize` | JVM heap for FastQC and SnpEff | [Resources](#java) |
 | `fastqc.memory` | FastQC's own memory setting, in megabytes | [Resources](#java) |
 | `software.*` | Paths to executables, if not using the conda environment | [below](#using-system-tools) |
+| `capBAM.histogramMax` | How deep step 5's depth histogram looks | [Variant Calling](#capping-each-bam) |
+
+`capBAM.histogramMax` is the odd one here: it changes nothing about speed. It is in this group because it bounds what step 5 *looks at* rather than what it decides — a run whose histogram would be truncated stops instead of choosing, so every value a run completes at gives the same ceiling. That is what makes it safe to raise on a project that already holds results.
 
 #### Parameters that change where files go
 
@@ -2061,7 +2064,8 @@ Everything here is analysis-affecting: change one and the next run stops rather 
 
 ```groovy
 capBAM {
-    maxDepth = -1
+    maxDepth     = -1
+    histogramMax = 100000    // how deep step 5's histogram looks
 }
 ```
 
@@ -2074,6 +2078,8 @@ capBAM {
 `param_capMaxDepth` in `metadata.csv` overrides this for a single sample and takes the same three values, which is the way to handle one library that needs a different answer from the rest — see [Metadata](#the-four-kinds-of-column).
 
 **Nothing is deleted.** A position deeper than the ceiling is truncated to it on the way into the pileup, and the sample's ready BAM is untouched on disk. Reads are dropped whole rather than trimmed, so a pair may lose one mate.
+
+**`histogramMax` is how deep step 5 looks, and a sample deeper than it stops the run.** The histogram reaches `100000×` by default, and everything above that would land in a single open bin — so a ceiling read from it would be read from a partial picture. Rather than choose on partial evidence, step 5 fails and names the sample and the depth it found. Raise `histogramMax` past that depth and run again. An organelle in a well-covered library is the case that reaches it in practice. **Raising it costs nothing already produced**: `samtools stats` reports only the depths that actually occur, so every value the run completes at gives the same histogram and the same ceiling, and step 0 does not compare it against previous runs.
 
 **Why the ceiling is measured rather than set.** Pooled coverage is uneven by design, so no single depth is "too deep" in the abstract. What is worth truncating is a *second population* of positions — a collapsed repeat, or a PCR hill — carrying read counts no single locus produced. A hand-set number cannot find those: it cuts legitimate coverage in a deep sample and lets the pile-up through in a shallow one. [The Filter Chain](#depth-capping) shows the histograms this is read off, including the two cases where the detector deliberately declines.
 
@@ -2601,6 +2607,22 @@ That pattern is what makes the pipeline resumable without Nextflow's cache, keep
 `ClipReads` is the exception, with `errorStrategy 'retry'` and `maxRetries 3` — it is the one step whose failures are commonly transient.
 
 `cleanup = true` removes task working directories after a successful run, leaving only empty hash-prefix folders under `work/`. `./PoolSeqFlow clean` clears those.
+
+**These five are yours to change, from `parameters.config`** — `errorStrategy`, `maxRetries`, `maxErrors`, `cleanup` and `conda.enabled`. They are defaults the installation sets *before* it reads your config, so anything you write wins. Nextflow scopes go outside the `params { }` block:
+
+```groovy
+params {
+    // ... your settings ...
+}
+
+cleanup = false          // keep work/ for debugging
+process {
+    errorStrategy = 'retry'
+    maxRetries = 5
+}
+```
+
+Two settings in `nextflow.config` are **not** yours to change, and a value you write for either is ignored. `workDir` is `mainDir/work`, which is where `clean` and `reset` look for it — move `mainDir` if you need the work directory elsewhere. `env.PATH` is what puts `dir.bin` in front of every task, and it is how the process scripts find the helpers they call by bare name; both of those follow the installation, and a run that lost them would fail at its first `atomic_mv.sh`.
 
 ## Pipeline Steps
 <!--@ page: steps | nav: Steps -->

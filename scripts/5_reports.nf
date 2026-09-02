@@ -124,7 +124,7 @@ process DepthProfile {
     target_folder = "${run.dir.output.report.depth}"
     dir_log = "${run.dir.logs}/5_reports"
     // The histogram's top bin. samtools' own default is 1000.
-    hist_max = 100000
+    hist_max = run.capBAM.histogramMax
 
     """
     set -eo pipefail
@@ -144,8 +144,10 @@ process DepthProfile {
         if [ -n "\$open_bin" ] && [ "\$open_bin" -gt 0 ]; then
             echo "DEPTH PROFILE ${ready_bam}: ERROR: \$open_bin position(s) deeper than ${hist_max}," >&2
             echo "DEPTH PROFILE ${ready_bam}: so the depth histogram is truncated and a ceiling read" >&2
-            echo "DEPTH PROFILE ${ready_bam}: from it would be chosen from a partial picture. Raise the" >&2
-            echo "DEPTH PROFILE ${ready_bam}: histogram ceiling in scripts/5_reports.nf." >&2
+            echo "DEPTH PROFILE ${ready_bam}: from it would be chosen from a partial picture." >&2
+            echo "DEPTH PROFILE ${ready_bam}: Raise capBAM.histogramMax in parameters.config and run" >&2
+            echo "DEPTH PROFILE ${ready_bam}: again. It is not compared against previous runs, so it" >&2
+            echo "DEPTH PROFILE ${ready_bam}: costs nothing already produced." >&2
             exit 1
         fi
 

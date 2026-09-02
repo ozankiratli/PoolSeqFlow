@@ -107,24 +107,26 @@ process TrimReads {
         # working volume, the htmls straight to permanent storage.
         echo "TRIMMING READS ${pair_id}: Moving FASTQC zips to ${target_folder_fastqc_work}"
         mkdir -p ${target_folder_fastqc_work}
-        for f in *.zip; do atomic_mv.sh "\$f" ${target_folder_fastqc_work}/; done
+        for f in *.zip; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_fastqc_work}/; fi; done
 
         echo "TRIMMING READS ${pair_id}: Moving FASTQC reports to ${target_folder_fastqc}"
         mkdir -p ${target_folder_fastqc}
-        for f in *.html; do atomic_mv.sh "\$f" ${target_folder_fastqc}/; done
+        for f in *.html; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_fastqc}/; fi; done
 
         echo "TRIMMING READS ${pair_id}: Moving trim reports to ${target_folder_report_trim}"
         mkdir -p ${target_folder_report_trim}
         # Trim Galore 2.x writes both .txt and .json reports; keep whichever are present.
-        for f in *_trimming_report.*; do atomic_mv.sh "\$f" ${target_folder_report_trim}/; done
+        for f in *_trimming_report.*; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_report_trim}/; fi; done
 
         echo "TRIMMING READS ${pair_id}: Moving trimmed reads to ${target_folder_trimmed}"
         mkdir -p ${target_folder_trimmed}
-        for f in *_val_*; do atomic_mv.sh "\$f" ${target_folder_trimmed}/; done
+        for f in *_val_*; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_trimmed}/; fi; done
 
         echo "TRIMMING READS ${pair_id}: Moving unpaired reads to ${target_folder_unpaired}"
         mkdir -p ${target_folder_unpaired}
-        for f in *_unpaired_*; do atomic_mv.sh "\$f" ${target_folder_unpaired}/; done
+        # Trim Galore writes these only when it discards a mate, so a clean pair matches nothing
+        # and the loop is handed the pattern itself.
+        for f in *_unpaired_*; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_unpaired}/; fi; done
 
         echo "TRIMMING READS ${pair_id}: Creating symbolic links..."
         ln -s ${target_file_val1} .
@@ -336,11 +338,11 @@ process ClipReads {
 
         echo "CLIPPING READS ${pair_id}: Moving clipped reads to ${target_folder_trimmed}" 
         mkdir -p ${target_folder_trimmed}
-        for f in *_clipped.fq.gz; do atomic_mv.sh "\$f" ${target_folder_trimmed}/; done
+        for f in *_clipped.fq.gz; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_trimmed}/; fi; done
 
         echo "CLIPPING READS ${pair_id}: Moving FASTQC reports and zip files to ${target_folder_fastqc}" 
         mkdir -p ${target_folder_fastqc}
-        for f in *_clipped_fastqc.zip *_clipped_fastqc.html; do atomic_mv.sh "\$f" ${target_folder_fastqc}/; done
+        for f in *_clipped_fastqc.zip *_clipped_fastqc.html; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_fastqc}/; fi; done
 
         echo "CLIPPING READS ${pair_id}: Creating symbolic links..."
         ln -s ${target_file_clipped1} .

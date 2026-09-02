@@ -54,7 +54,7 @@ test_no_compiled_python_is_tracked() {
 #
 # The index is a throwaway under TEST_TMPDIR: `git add` here must never stage anything in the
 # repository the suite is testing.
-working_tree_archive() {
+working_tree_tree() {
     local idx tree
     idx=$(guard_path "$TEST_TMPDIR/archive-index")
     rm -f "$idx"
@@ -65,6 +65,11 @@ working_tree_archive() {
     ) >/dev/null 2>&1 || return 1
     tree=$(cd "$REPO_ROOT" && GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null) || return 1
     [ -n "$tree" ] || return 1
+    printf '%s' "$tree"
+}
+
+working_tree_archive() {
+    local tree; tree=$(working_tree_tree) || return 1
     (cd "$REPO_ROOT" && git archive "$tree" 2>/dev/null | tar -t 2>/dev/null)
 }
 
@@ -78,6 +83,45 @@ test_release_archive_excludes_development_material() {
     for unwanted in "test/" "dev/" "docs/" ".github/" "mkdocs.yml" "__pycache__"; do
         assert_not_contains "$listing" "$unwanted" "release tarball should not carry $unwanted"
     done
+}
+
+# AN UNMATCHED GLOB IS HANDED TO THE LOOP BODY, and these loops hand it straight to
+# atomic_mv.sh, which refuses a source that is not there and takes the task down with it under
+# `set -eo pipefail`. Seven loops in 2_trim_reads.nf had no guard. The live one is
+# `*_unpaired_*`: Trim Galore writes those only when it discards a mate, so a run where every
+# pair survived trimming died on the pattern itself. Reproduced before it was fixed -
+# `atomic_mv: source not found: *_unpaired_*`.
+#
+# One-line loops, which is how all of these are written. The multi-line one in 9_completion.nf
+# carries the same guard inside its body and is not matched here.
+test_glob_loops_publishing_artifacts_are_guarded() {
+    local unguarded
+    unguarded=$(cd "$REPO_ROOT" && grep -n 'for [A-Za-z_]* in [^;]*\*[^;]*; *do' scripts/*.nf \
+                | grep 'atomic_mv\.sh' | grep -v '\[ -e ' || true)
+    [ -z "$unguarded" ] || fail_case \
+        "glob loops calling atomic_mv.sh with no existence guard:"$'\n'"$unguarded"
+}
+
+# THE RELEASE GATE ITSELF, run here rather than only in CI.
+#
+# dev/scripts/verify-archive.sh is what stands between a broken tarball and a published release,
+# and nothing in this suite ran it - only ci.yml and release.yml did. That is how its hand-kept
+# file lists drifted twice with nobody noticing: they named six of the thirteen helpers in bin/
+# and nothing at all under analysis/lib, which every analysis module imports. It enumerates from
+# the ref now, and running it here catches the next drift before a pull request instead of in
+# one.
+#
+# Against a tree object built from the WORKING TREE, for the same reason the cases above are: a
+# payload item is added before it is committed, and reading HEAD would call every such addition
+# missing for exactly as long as it is under review.
+test_the_release_archive_gate_passes() {
+    local tree out log status
+    tree=$(working_tree_tree) || { skip_case "could not write a working tree object"; return; }
+    out=$(guard_path "$TEST_TMPDIR/gate-dist")
+    rm -rf "$out"
+    log=$(cd "$REPO_ROOT" && bash dev/scripts/verify-archive.sh "$tree" "$out" 2>&1)
+    status=$?
+    assert_status 0 "$status" "the release gate should pass on the working tree:"$'\n'"$log"
 }
 
 # The module catalogue is read over the network, from the repository, so that a module

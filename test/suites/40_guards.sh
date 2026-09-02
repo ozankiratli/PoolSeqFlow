@@ -92,6 +92,101 @@ test_a_changed_parameter_value_fails_the_run() {
     assert_contains "$report" "STATUS=FAIL" "the stage should record a failure"
 }
 
+# THE EXECUTION DEFAULTS A PROJECT MAY REPLACE, and until E6g it could replace none of them.
+#
+# nextflow.config's includeConfig sat ABOVE its own assignments and Nextflow is later-wins, so
+# conda.enabled, cleanup and the whole process block were set again from the installation after
+# the project's config had already been read. MEASURED before the fix: a project asking for
+# errorStrategy = 'ignore', maxRetries = 99, cleanup = false and conda.enabled = false got
+# 'finish', 3, true and true - silently, while the config went on advertising the alternatives
+# in a comment beside each one. Editing the installation was the only route, and an installation
+# is replaced wholesale on the next upgrade.
+#
+# workDir and env.PATH stay below the include and stay the installation's. Both read a parameter,
+# so they cannot move; both are also structural, and a project that repointed either would lose
+# the helpers in bin/ or put work/ outside the roots clean and reset know about.
+test_a_project_can_replace_the_execution_defaults() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb flat
+    sb=$(make_pipeline_sandbox "exec-defaults")
+    write_sandbox_config "$sb"
+    cat >> "$sb/main/parameters.config" <<'OVERRIDE'
+
+cleanup = false
+conda.enabled = false
+process {
+    errorStrategy = 'ignore'
+    maxRetries = 99
+}
+workDir = '/tmp/somewhere-the-project-picked'
+OVERRIDE
+    flat=$(sandbox_config_flat "$sb")
+    [ -n "$flat" ] || { fail_case "nextflow config produced nothing for $sb"; return; }
+
+    assert_contains "$flat" "cleanup = false"          "a project must be able to keep work/"
+    assert_contains "$flat" "conda.enabled = false"    "and to run without conda"
+    assert_contains "$flat" "process.errorStrategy = 'ignore'" \
+        "and to choose how a failed task is handled"
+    assert_contains "$flat" "process.maxRetries = 99"  "and how often one is retried"
+
+    # Still derived, from below the include, out of the project's own two numbers.
+    assert_contains "$flat" "process.resourceLimits.cpus = 4" \
+        "while the resource ceiling stays computed"
+    # And workDir stays the installation's even when the project names one, which is what the
+    # manual promises: clean and reset look for it under mainDir and nowhere else.
+    assert_contains "$flat" "workDir = '$sb/main/work'" \
+        "workDir must stay under mainDir"
+    assert_not_contains "$flat" "somewhere-the-project-picked" \
+        "a project must not be able to move the work directory out of mainDir"
+}
+
+# THE HELPERS' OWN DEPENDENCIES ARE VERIFIED LIKE ANY OTHER TOOL. bin/atomic_mv.sh copies an
+# artifact with rsync, compares the copy against its source with diff, and only then removes the
+# source; find lists what a results folder holds. All three are called by bare name from bin/,
+# which reads no Nextflow settings, so a machine without rsync does not fail at step 0 - it fails
+# at the first move between volumes, which is hours into a run.
+#
+# They joined the software block when atomic_mv.sh started using them, and nothing checked that
+# they stayed in it.
+test_the_helper_dependencies_are_verified_at_step_0() {
+    guards_ready || return
+    local status report tool
+    status=$(run_verify_only "$GUARD_SB")
+    assert_status 0 "$status" "the baseline should verify"
+    report=$(guard_report)
+    for tool in rsync diff find; do
+        assert_contains "$report" "Installed: $tool" \
+            "step 0 should verify $tool, which the helpers in bin/ call by bare name"
+    done
+}
+
+# capBAM.histogramMax IS DELIBERATELY OUT OF THE MANIFEST, and it is the only tuning parameter
+# that is. It bounds how deep step 5 LOOKS, not what it decides: samtools reports only the
+# depths that occur, and a run whose histogram would be truncated stops instead of choosing, so
+# every value a run completes at gives the same histogram and the same ceiling.
+#
+# Recording it would make it useless. The only remedy for a truncated histogram is to raise it,
+# and a project that had recorded the old value would answer that with "parameters.config has
+# CHANGED ... ./PoolSeqFlow reset" - demanding every result be thrown away to apply the fix the
+# failure had just asked for.
+test_the_histogram_ceiling_is_not_a_tracked_parameter() {
+    guards_ready || return
+    local recorded status report
+    recorded=$(cat "$GUARD_SB/store/Output/.poolseqflow_params")
+    assert_not_contains "$recorded" "capBAM.histogramMax" \
+        "the histogram ceiling must not reach the recorded manifest"
+    assert_contains "$recorded" "capBAM.maxDepth" \
+        "while the ceiling it decides most certainly does"
+
+    write_sandbox_config "$GUARD_SB" 's|^        histogramMax    = 100000|        histogramMax    = 250000|'
+    status=$(run_verify_only "$GUARD_SB")
+    report=$(guard_report)
+    assert_status 0 "$status" "raising it must not invalidate results already produced"
+    assert_contains "$report" "parameters.config unchanged since the outputs" \
+        "and the guard should not see the change at all"
+}
+
 # A PROJECT BELONGS TO ONE RELEASE, and this is checked before anything else and on its own.
 #
 # Z, 2026-08-28: *"Nobody should ever resume to a pipeline using a different version. That needs

@@ -30,29 +30,47 @@ trap 'rm -rf "$tmp"' EXIT
 tar -xzf "${OUT}/${name}.tar.gz" -C "$tmp"
 root="${tmp}/${name}"
 
-# Everything a run needs.
-for f in PoolSeqFlow poolseqflow.nf analysis.nf nextflow.config \
-         parameters.config.template metadata.csv.template \
-         analysis/modules.nf analysis/0_verify_analysis.nf analysis/frame.config \
-         analysis/frame.version analysis/citations.json analysis/analysis.config.template \
-         install/environment.yml install/environment-analysis.yml \
-         install/check_install.sh install/check_analysis_install.sh \
+# The entry points and the files a user edits. Their absence is a different failure from the one
+# below: not "it did not ship" but "it is not there any more".
+for f in PoolSeqFlow poolseqflow.nf analysis.nf dryrun.nf nextflow.config \
+         parameters.config.template metadata.csv.template multi-run.csv.example \
          LICENSE README.md CHANGELOG.md; do
     [ -f "$root/$f" ] || fail "missing from archive: $f"
 done
 
-# Every module poolseqflow.nf includes, named rather than counted.
-for f in 0_verify_environment.nf 1_build_dictionaries.nf 2_trim_reads.nf 3_align.nf \
-         4_clean.nf 5_reports.nf 6_variant_call.nf 7_vcf2freq.nf 8_annotate_variants.nf \
-         9_completion.nf citations.nf metadata.nf resolve_parameters.nf variants.nf; do
-    [ -f "$root/scripts/$f" ] || fail "missing from archive: scripts/$f"
-done
+# EVERYTHING ELSE THE REPOSITORY TRACKS MUST SHIP TOO, enumerated from the ref so that a file
+# added to bin/ or to analysis/lib/ is covered without being named anywhere.
+#
+# What is deliberately kept out of a release, and the only paths that are. NAMED HERE, not read
+# from .gitattributes: an export-ignore added by accident would take the file out of this check
+# as well as out of the archive, and the check would pass. So an export-ignore fails here until
+# it is named in this list too.
+excluded='docs/ .github/ mkdocs.yml .gitignore .gitattributes dev/ Project/ test/
+          analysis/modules-index.tsv'
 
-# The helpers the process scripts call by bare name via nextflow.config's PATH.
-for f in atomic_mv.sh config_migrate.sh createDepthFile.sh \
-         depth2freq.awk filterFalsePositives.sh MajorAlleleToRef.py; do
-    [ -f "$root/bin/$f" ] || fail "missing from archive: bin/$f"
-done
+# Whether one tracked path is meant to reach the archive at all.
+ships() {
+    local path="$1" pat
+    for pat in $excluded; do
+        case "$pat" in
+            */) case "$path" in "$pat"*) return 1 ;; esac ;;
+            *)  if [ "$path" = "$pat" ]; then return 1; fi ;;
+        esac
+    done
+    return 0
+}
+
+checked=0
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    ships "$f" || continue
+    [ -f "$root/$f" ] || fail "missing from archive: $f"
+    checked=$((checked + 1))
+done <<< "$(git ls-tree -r --name-only "$REF")"
+
+# An enumeration that found nothing would pass against an empty archive.
+[ "$checked" -gt 40 ] \
+    || fail "only ${checked} file(s) enumerated at ${REF}; this check is not reading the release"
 
 # Repository furniture must NOT ship: the other half of .gitattributes' export-ignore.
 for f in docs .github mkdocs.yml .gitignore .gitattributes dev Project; do
