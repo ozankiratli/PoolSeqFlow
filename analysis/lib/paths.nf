@@ -13,10 +13,8 @@ def analysisDefaults() {
              folderName: ''    ]  // Empty means the module's own name.
 }
 
-// One of those settings, as the project set it or as it defaults.
-//
-// The scope is deliberately not declared anywhere: the default belongs to the code that reads
-// it, and analysis.config carries only what the user chose to write.
+// One of those settings, as the project set it or as it defaults. The scope may not exist:
+// analysis.config carries only what the user chose to write.
 def analysisSetting(String key) {
     def defaults = analysisDefaults()
     if (!defaults.containsKey(key)) {
@@ -26,18 +24,16 @@ def analysisSetting(String key) {
     }
     def scope = params.containsKey('analysis') && params.analysis instanceof Map ? params.analysis : [:]
     // containsKey and not a truthiness test: an empty list is a value the user wrote, and
-    // selectedRuns() refuses it by name rather than reading it as 'all'.
+    // selectedRuns() refuses it by name.
     return scope.containsKey(key) ? scope[key] : defaults[key]
 }
 
 // The analysis frame's own version, from analysis/frame.version in the installation.
 //
-// NOT workflow.manifest.version: that is the PIPELINE release, which 0_verify_analysis.nf
-// compares against the .poolseqflow_version the results carry. And not a params key either -
-// a later -c could set it, and a provenance record a project can rewrite records nothing.
+// Not workflow.manifest.version: that is the PIPELINE release, which 0_verify_analysis.nf
+// compares against the .poolseqflow_version the results carry.
 //
-// moduleDir is this file's own directory whichever script is the entry point, so the frame
-// finds its version without being told where the installation is.
+// moduleDir is this file's own directory whichever script is the entry point.
 def frameVersion() {
     def record = file("${moduleDir}/../frame.version")
     def version = record.exists()
@@ -58,7 +54,7 @@ def frameVersion() {
 
 // The installation this invocation was launched from, and a refusal when it cannot be found. A
 // module is its own pipeline, so ${projectDir} is the module's own directory and nothing
-// Nextflow computes points at the installation. Both wrappers export POOLSEQFLOW_HOME.
+// Nextflow computes points at the installation. The wrapper exports POOLSEQFLOW_HOME.
 def installDir() {
     def dir = "${System.getenv('POOLSEQFLOW_HOME') ?: ''}".trim()
     if (dir.isEmpty() || !file("${dir}/analysis/lib/paths.nf").exists()) {
@@ -89,8 +85,7 @@ def intermediatesDir() {
     return "${analysisRoot()}/Main".toString()
 }
 
-// What this invocation's results folder is called. Empty means the module's own name, so
-// `mds` writes to Results/mds until you say otherwise.
+// What this invocation's results folder is called. Empty means the module's own name.
 def resultsFolderName(String module) {
     def name = "${analysisSetting('folderName') ?: ''}".trim()
     if (name.isEmpty()) return module

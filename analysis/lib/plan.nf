@@ -23,10 +23,8 @@ def artifactClasses() {
     ]
 }
 
-// The runs this invocation covers, from analysis.runs.
-//
-// `all` is a keyword and a list is always run names, so a run named all is still reachable by
-// writing ['all'].
+// The runs this invocation covers, from analysis.runs. `all` is a keyword and a list is always
+// run names.
 def selectedRuns(List runDefs) {
     def wanted = analysisSetting('runs')
     def asList = (wanted instanceof List)
@@ -107,8 +105,7 @@ def resultsTargets(Map plan, List selected, String module, List needs) {
 // Everything an invocation needs to know about what it is reading: the runs the project defines,
 // the ones selected, and one target per results directory they land in.
 //
-// The artifact classes it marks required come from the module's own manifest, so a module states
-// what it reads once and the verification and the module itself cannot disagree about it.
+// The artifact classes it marks required come from the module's own manifest.
 //
 // The two calls are ordered: runDefinitions() copies each run's own parameters before
 // resolveParameters() fills the computed ones in.

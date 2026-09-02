@@ -635,8 +635,8 @@ EOF
     mkdir -p "$MODULE_STORE"
     dest="$MODULE_STORE/$name"
     mv "$unpacked/$name" "$dest"
-    # Beside the module, so an installation can say where each of its modules came from - and
-    # which catalogue it was read out of, which is the only record of that afterwards.
+    # Beside the module, so an installation can say where each of its modules came from, and
+    # which catalogue it was read out of.
     printf 'name\t%s\nversion\t%s\ncontract\t%s\nurl\t%s\nsha256\t%s\ncatalogue\t%s\n' \
         "$name" "$version" "$row_contract" "$url" "$sha" \
         "$(module_index_header "$index" index-version)" > "$dest/.source"
@@ -1205,8 +1205,8 @@ EOF
         echo "Reset complete."
         ;;
 
-    # The analysis layer. It ships with the pipeline and shares this wrapper; what it installs
-    # and removes here is its own conda environment, never the pipeline's.
+    # The analysis layer. What it installs and removes here is its own conda environment,
+    # never the pipeline's.
     analysis)
         case $ANALYSIS_COMMAND in
             install)
@@ -1279,7 +1279,6 @@ EOF
                     CONFIGS+=(-c analysis.config)
                 fi
                 echo ""
-                # Its own entry script, as dryrun.nf and a module's main.nf are.
                 nextflow run "$INSTALL/analysis/complete.nf" "${CONFIGS[@]}"
                 wait
                 conda deactivate
@@ -1323,7 +1322,6 @@ EOF
                     echo "The pipeline and its own environment are untouched by this command."
                     exit 0
                 fi
-                # Confirmed, as `uninstall` is.
                 echo ""
                 echo "This removes:"
                 echo "    the analysis environment $ANALYSIS_ENV"
@@ -1372,8 +1370,7 @@ EOF
                     conda activate "$ANALYSIS_ENV"
                     if command -v Rscript >/dev/null 2>&1; then
                         # Each package's own citation, asked of R, so the version reported is
-                        # the one installed. Failure is not fatal: the software citation above
-                        # is the part a paper cannot do without.
+                        # the one installed. Failure is not fatal.
                         # shellcheck disable=SC2046
                         Rscript --vanilla -e '
                             want <- commandArgs(trailingOnly = TRUE)

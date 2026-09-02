@@ -1,8 +1,9 @@
 // The analysis layer's step 0: everything checked before a module is allowed to compute.
 //
-// Three stages. The identity check compares the project as it stands with the record the
+// Three checks. The identity check compares the project as it stands with the record the
 // pipeline wrote beside the results; the directory check counts what each selected results
-// directory holds; the report assembles both and fails the run on either.
+// directory holds; the folder check reports what is already where this invocation would write.
+// The report assembles all three and fails the run on any of them.
 //
 // The module and the run selection are settled while the DAG is built and arrive here already
 // rendered, so a mistyped module or run name never reaches a task.

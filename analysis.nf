@@ -16,8 +16,7 @@ include { analysisPlan } from './analysis/lib/plan.nf'
 include { VerifyAnalysis } from './analysis/0_verify_analysis.nf'
 
 workflow {
-    // Before anything else, and before the run table is read: a mistyped module name should cost
-    // nothing.
+    // Before anything else, and before the run table is read.
     def module = requireModule(params.containsKey('module') ? params.module : null)
 
     // The same call a module makes, so the results this checks are the results it reads.

@@ -39,9 +39,7 @@ def recordDigest(String path) {
 }
 
 // The results an intermediate was derived from, as the records the pipeline wrote beside them,
-// and the frame that derived it. Every one of these decides what a frequency means, so an
-// intermediate carrying an older copy was derived from results that no longer exist - or by
-// code that no longer computes the same thing.
+// and the frame that derived it.
 def resultsIdentity() {
     def root = "${params.storageDir}/Output"
     def lines = ["frame                  ${frameVersion()}".toString()]
@@ -55,8 +53,7 @@ def resultsIdentity() {
 // itself under its final name.
 //
 // That order is the invariant the restore below reads: an intermediate that is there is one
-// whose provenance can be read. `atomic_mv.sh` for both, so neither is ever seen partial, and
-// two modules deriving the same intermediate at once write the same bytes to both.
+// whose provenance can be read. `atomic_mv.sh` for both, so neither is ever seen partial.
 def publishIntermediate(Map target, String name, String source) {
     def dir = intermediateDir(target)
     def record = "${name}${provenanceSuffix()}"
@@ -69,8 +66,7 @@ def publishIntermediate(Map target, String name, String source) {
 // Whatever a module named that already exists, on the working volume and fresh.
 //
 // An intermediate that is not there anywhere is the ordinary answer on a first run and the
-// module derives it. One that is stale fails the run, naming the file and what moved: it may be
-// the input to an analysis that has already been published, so removing it is the user's call.
+// module derives it. One that is stale fails the run, naming the file and what moved.
 //
 // An archived intermediate is COPIED back: permanent storage keeps its copy, and the next
 // `complete` discards the working one.

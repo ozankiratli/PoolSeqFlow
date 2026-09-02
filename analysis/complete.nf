@@ -75,9 +75,8 @@ process ArchiveAnalysis {
             | LC_ALL=C sort > candidates.txt
         while IFS= read -r rel; do
             [ -n "\$rel" ] || continue
-            # A folder holding nothing but the record is a failed attempt, not an analysis.
-            # Archiving it would take the name into permanent storage, and the retry that a
-            # failure is promised would then be refused for good.
+            # A folder holding nothing but the record is a failed attempt, not an analysis:
+            # archiving it would take the name into permanent storage and refuse the retry.
             held=\$(find "\$WORKING/\$rel" -mindepth 1 -maxdepth 1 ! -name '${keep}' | wc -l)
             if [ "\$held" -eq 0 ]; then
                 echo "COMPLETE: \$rel  left behind - it holds a verification record and no analysis"
@@ -88,10 +87,9 @@ process ArchiveAnalysis {
     fi
 
     # WHAT HAPPENS TO EACH ITEM. A name already in permanent storage means two different things
-    # depending on which root it is under. Under Results it is two analyses under one name,
-    # which is what folderName exists to prevent. Under Main it is the state a resume leaves
-    # behind: the intermediate was COPIED back, so permanent storage still holds it and the
-    # working copy is the duplicate.
+    # depending on which root it is under. Under Results it is two analyses under one name.
+    # Under Main it is the state a resume leaves behind: the intermediate was COPIED back, so
+    # permanent storage still holds it and the working copy is the duplicate.
     : > move.txt
     : > discard.txt
     : > taken.txt

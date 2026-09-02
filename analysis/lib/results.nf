@@ -2,17 +2,15 @@
 //
 // Everything the module produced for one results directory is assembled beside the destination
 // and moved in under its final name in a single rename, so the folder is only ever absent or
-// complete. A module that fails partway therefore leaves nothing behind, and the refusal on a
-// populated folder stays a real collision rather than a state a crash can put a project into
-// for good.
+// complete.
 
 nextflow.enable.dsl=2
 
 include { verificationRecordName } from './paths.nf'
 include { citationShell } from './citations.nf'
 
-// What counts as the script that produced a result, by extension. The layer is R, and a module
-// may reasonably drive it from a shell or Python wrapper, so those count too.
+// What counts as the script that produced a result, by extension: R, and the shell, Python and
+// Julia a module may drive it from.
 def scriptSuffixes() {
     return ['R', 'r', 'Rmd', 'rmd', 'sh', 'py', 'jl']
 }
@@ -52,9 +50,8 @@ process InstallResults {
         cp -RL produced/. "\$STAGE/"
     fi
 
-    # A result nobody can regenerate is the gap this layer exists to close, so the script that
-    # produced it travels with it. Checked here because this is the one point every module
-    # passes through; a module that emits none stops before anything is published.
+    # The script that produced the result travels with it. Checked in the stage, so a module
+    # that emits none stops before anything is published.
     SCRIPTS=\$(find "\$STAGE" -type f \\( ${script_test} \\) | wc -l)
     if [ "\$SCRIPTS" -eq 0 ]; then
         echo "PUBLISHING ${target.label}: ERROR: this analysis carries no script." >&2
@@ -80,8 +77,8 @@ process InstallResults {
             exit 1
         fi
         # The record the verification wrote travels with the analysis it cleared. Put back if
-        # the folder turns out not to be empty after all: the trap below removes the staging
-        # directory, and the record would go with it.
+        # the folder turns out not to be empty after all: the EXIT trap set above removes the
+        # staging directory, and the record would go with it.
         if [ -f "\$DEST/${keep}" ]; then mv "\$DEST/${keep}" "\$STAGE/"; fi
         if ! rmdir "\$DEST"; then
             if [ -f "\$STAGE/${keep}" ]; then mv "\$STAGE/${keep}" "\$DEST/"; fi

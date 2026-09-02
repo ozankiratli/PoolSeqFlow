@@ -13,7 +13,7 @@ include { moduleEntry; moduleStore } from './lib/modules.nf'
 
 // The configuration the pipeline recorded beside the results, recomputed from the project as it
 // stands now. The analysis layer's own parameters are dropped: they did not exist when the
-// results were produced, and every one of them would read as an added setting.
+// results were produced.
 def recordedManifest() {
     def mine = ['analysis.', 'module=']
     return analysisParams(params).findAll { line -> !mine.any { prefix -> line.startsWith(prefix) } }

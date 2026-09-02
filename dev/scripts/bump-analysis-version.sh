@@ -15,8 +15,7 @@
 # The new value is today's UTC date and a counter: .001 the first time on a given day, then
 # .002 and so on. It writes one line and nothing else, and prints what it changed.
 #
-# It does NOT touch the release version. That is dev/scripts/bump-version.sh, and the two are
-# separate because the release and the analysis layer move on different timetables.
+# It does NOT touch the release version. That is dev/scripts/bump-version.sh.
 
 set -euo pipefail
 

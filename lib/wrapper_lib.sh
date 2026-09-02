@@ -64,14 +64,13 @@ MODULE_INDEX_URL="https://raw.githubusercontent.com/ozankiratli/PoolSeqFlow/main
 MODULE_INDEX_FORMAT="1"
 
 # Where to read the index from. POOLSEQFLOW_MODULE_INDEX overrides it with a URL or a local
-# path, for a mirror inside an institution, an air-gapped machine, or a module being tested
-# before it is published.
+# path.
 module_index_source() {
     printf '%s' "${POOLSEQFLOW_MODULE_INDEX:-$MODULE_INDEX_URL}"
 }
 
 # One `#!key: value` header out of a catalogue, or nothing. They are comments, so the row
-# reader already skips them and an older release simply never looked.
+# reader already skips them.
 module_index_header() {
     sed -n "s|^#![[:space:]]*$2:[[:space:]]*\(.*\)$|\1|p" "$1" 2>/dev/null | head -1 | tr -d ' '
 }

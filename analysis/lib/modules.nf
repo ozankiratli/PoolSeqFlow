@@ -1,8 +1,7 @@
 // The roster: which modules exist, and what each one declares about itself.
 //
 // Imported by a MODULE as well as by the frame: analysisPlan() asks it what the module it was
-// given needs, so a module's manifest is the one statement of that and its main.nf repeats
-// nothing.
+// given needs.
 //
 // Nothing here includes a module: a module is its own pipeline and imports what it wants from
 // here. The report the frame prints is in analysis/modules.nf, which reads this.
@@ -18,14 +17,13 @@ def moduleStore() {
     return "${installDir()}/analysis/modules".toString()
 }
 
-// The published-table contract a module declares it speaks. Bumped only when a column's name or
-// meaning changes - which has not happened since the project's first commit.
+// The published-table contract a module declares it speaks. Bumped when a column's name or
+// meaning changes.
 def contractVersion() {
     return 'freq-1'
 }
 
-// The modules the frame itself provides. `verify` runs nothing after the checks, which is what
-// makes it the way to ask whether a project is ready without spending anything.
+// The modules the frame itself provides. `verify` runs nothing after the checks.
 def builtinModules() {
     return [
         verify: [
@@ -74,8 +72,6 @@ def readManifest(Object dir) {
             "${dir} has a manifest but no main.nf. A module is a pipeline of its own and " +
             "main.nf is that pipeline. Install the module again, or remove the directory.")
     }
-    // Refused here rather than at publish, for the same reason main.nf is: a module that
-    // cannot say what to cite is caught before the verification clears a results folder.
     if (!file("${dir}/citations.json").exists()) {
         throw new IllegalStateException(
             "${dir} has no citations.json. Every module says what it should be cited with - " +
@@ -112,8 +108,7 @@ def moduleNames() {
     return moduleRoster().keySet().sort()
 }
 
-// The named module, or a refusal listing what there is. Called while the DAG is built, so a
-// mistyped name costs nothing.
+// The named module, or a refusal listing what there is. Called while the DAG is built.
 def requireModule(Object name) {
     def asked = name == null ? '' : "${name}".trim()
     def known = moduleNames().join(', ')

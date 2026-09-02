@@ -37,7 +37,7 @@ dirty() {
     [ -n "$(git status --porcelain -- "$@" 2>/dev/null)" ]
 }
 
-# The commit time of the last commit touching any of the given paths, or 0.
+# The commit time of the last commit touching any of the given paths, or nothing.
 last_commit() {
     git log -1 --format=%ct -- "$@" 2>/dev/null || true
 }

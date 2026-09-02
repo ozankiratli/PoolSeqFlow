@@ -2,12 +2,9 @@
 //
 // One published analysis carries the result, the script that produced it, the record that
 // cleared the folder, and this: CITATIONS.md and references.bib for the software behind it.
-// Everything a reader needs to regenerate and to credit it is in one directory.
 //
-// Three sources are merged: PoolSeqFlow and Nextflow from install/citations.json, so the
-// release holds one copy of each; the analysis layer's own from analysis/citations.json; and
-// the module's, from its own directory. A module is published separately, so its methods
-// citations travel with it and the frame keeps no list of them.
+// Three sources are merged: PoolSeqFlow and Nextflow from install/citations.json, the analysis
+// layer's own from analysis/citations.json, and the module's, from its own directory.
 
 nextflow.enable.dsl=2
 
@@ -49,10 +46,9 @@ def mergedCitations(String module) {
 
 // The shell that writes CITATIONS.md and references.bib into `dest`.
 //
-// The merged set is rendered here rather than assembled in the task, so no reader of three
-// JSON files has to exist on the far side of a PATH. Versions are asked of what is installed:
-// an entry naming an r_package is asked of R, and one that cannot be answered is recorded
-// without a version, which the writer already handles.
+// The merged set is rendered here, into the task's own script. Versions are asked of what is
+// installed: an entry naming an r_package is asked of R, and one that cannot be answered is
+// recorded without a version, which the writer already handles.
 def citationShell(String module, String dest) {
     def merged = mergedCitations(module)
     // printf and not a heredoc: this whole block is interpolated into an indented script, and
@@ -76,8 +72,7 @@ def citationShell(String module, String dest) {
         lines << "    VERSIONS=\"\$VERSIONS ${key}=\$PV\""
     }
     lines << "fi"
-    // Non-fatal: a published analysis without its citation list is worse than one whose
-    // citation list could not be built, and the result itself is already correct.
+    // Non-fatal: the failure is reported and the analysis is still published.
     lines << "python3 ${installDir()}/bin/write_citations.py \\"
     lines << "    --data analysis_citations.json --out-dir \"${dest}\" \\"
     lines << "    --pipeline-version '${release}' \$VERSIONS > citations.txt 2>&1 || {"
