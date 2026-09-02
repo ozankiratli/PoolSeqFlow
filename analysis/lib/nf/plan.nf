@@ -6,8 +6,8 @@
 
 nextflow.enable.dsl=2
 
-include { runDefinitions; resolveParameters } from '../../scripts/resolve_parameters.nf'
-include { variantPlan; runToken } from '../../scripts/variants.nf'
+include { runDefinitions; resolveParameters } from '../../../scripts/resolve_parameters.nf'
+include { variantPlan; runToken } from '../../../scripts/variants.nf'
 include { analysisSetting; renderSetting; targetResultsDir; installDir } from './paths.nf'
 include { moduleNeeds } from './modules.nf'
 

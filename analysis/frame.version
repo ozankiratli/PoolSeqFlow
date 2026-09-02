@@ -16,7 +16,7 @@
 # Nor for analysis.nf, 0_verify_analysis.nf, modules.nf or complete.nf: they verify, report and
 # move files, and a module imports none of them.
 #
-# A change in scripts/ CAN reach a derivation, because analysis/lib/plan.nf imports
+# A change in scripts/ CAN reach a derivation, because analysis/lib/nf/plan.nf imports
 # resolve_parameters.nf and variants.nf. That one is caught elsewhere: the pipeline release
 # moves with it, and the identity check refuses results produced by a different release.
 #

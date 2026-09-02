@@ -10,7 +10,7 @@
 
 nextflow.enable.dsl=2
 
-include { verificationRecordName } from './lib/paths.nf'
+include { verificationRecordName } from './lib/nf/paths.nf'
 
 // Where the analysis layer keeps its own record, under mainDir.
 def analysisLogDir() {

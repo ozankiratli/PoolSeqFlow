@@ -8,11 +8,11 @@
 
 nextflow.enable.dsl=2
 
-include { requireModule } from './analysis/lib/modules.nf'
+include { requireModule } from './analysis/lib/nf/modules.nf'
 include { recordedManifest; configReportLines } from './analysis/modules.nf'
 include { moduleReportLines; outputReportLines; selectionReportLines } from './analysis/modules.nf'
-include { intermediatesDir; verificationReportFile } from './analysis/lib/paths.nf'
-include { analysisPlan } from './analysis/lib/plan.nf'
+include { intermediatesDir; verificationReportFile } from './analysis/lib/nf/paths.nf'
+include { analysisPlan } from './analysis/lib/nf/plan.nf'
 include { VerifyAnalysis } from './analysis/0_verify_analysis.nf'
 
 workflow {

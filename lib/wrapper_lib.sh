@@ -102,7 +102,7 @@ fetch_url() {
 # where the value lives. A module declaring a different one reads the tables differently.
 module_contract() {
     sed -n "/^def contractVersion()/,/^}/s/.*return '\(.*\)'.*/\1/p" \
-        "$INSTALL/analysis/lib/modules.nf" 2>/dev/null | head -1
+        "$INSTALL/analysis/lib/nf/modules.nf" 2>/dev/null | head -1
 }
 
 # The index's data rows: tab-separated, comments and the header dropped, blank lines dropped.

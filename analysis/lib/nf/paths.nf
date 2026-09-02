@@ -35,7 +35,7 @@ def analysisSetting(String key) {
 //
 // moduleDir is this file's own directory whichever script is the entry point.
 def frameVersion() {
-    def record = file("${moduleDir}/../frame.version")
+    def record = file("${moduleDir}/../../frame.version")
     def version = record.exists()
         ? record.readLines().collect { line -> line.trim() }
               .find { line -> !line.isEmpty() && !line.startsWith('#') } ?: ''
@@ -57,7 +57,7 @@ def frameVersion() {
 // Nextflow computes points at the installation. The wrapper exports POOLSEQFLOW_HOME.
 def installDir() {
     def dir = "${System.getenv('POOLSEQFLOW_HOME') ?: ''}".trim()
-    if (dir.isEmpty() || !file("${dir}/analysis/lib/paths.nf").exists()) {
+    if (dir.isEmpty() || !file("${dir}/analysis/lib/nf/paths.nf").exists()) {
         throw new IllegalStateException(
             "the installation this analysis belongs to could not be found" +
             (dir.isEmpty() ? ': POOLSEQFLOW_HOME is not set' : " at ${dir}") + ".\n" +

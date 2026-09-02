@@ -503,7 +503,7 @@ available_modules() {
     # tables differently would install silently.
     if [ -z "$contract" ]; then
         echo "ERROR: cannot tell which table contract this release speaks." >&2
-        echo "  Expected to read it from $INSTALL/analysis/lib/modules.nf." >&2
+        echo "  Expected to read it from $INSTALL/analysis/lib/nf/modules.nf." >&2
         echo "  This installation is incomplete; install it again." >&2
         exit 1
     fi
@@ -566,7 +566,7 @@ install_module() {
     # tables differently would install silently.
     if [ -z "$contract" ]; then
         echo "ERROR: cannot tell which table contract this release speaks." >&2
-        echo "  Expected to read it from $INSTALL/analysis/lib/modules.nf." >&2
+        echo "  Expected to read it from $INSTALL/analysis/lib/nf/modules.nf." >&2
         echo "  This installation is incomplete; install it again." >&2
         exit 1
     fi
@@ -739,7 +739,7 @@ run_utilized_dirs() {
 #
 # Every staged transfer creates one beside its destination and removes it on every path it can
 # reach, so one that is still here means the process was killed outright. The three prefixes are
-# the ones bin/atomic_mv.sh, analysis/lib/results.nf and analysis/lib/store.nf create.
+# the ones bin/atomic_mv.sh, analysis/lib/nf/results.nf and analysis/lib/nf/store.nf create.
 #
 # Printed one per line, and pruned so a stage inside a stage is named once.
 staging_dirs() {

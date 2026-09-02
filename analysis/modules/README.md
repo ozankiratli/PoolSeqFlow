@@ -8,7 +8,7 @@ One directory per module, named exactly as the module is named. Each holds at le
 | `main.nf` | the module's own Nextflow pipeline |
 | `citations.json` | the methods and packages your module should be cited with |
 
-A module is a pipeline in its own right. It imports what it wants from `analysis/lib` by relative path and is launched directly; nothing in the frame includes it, so a module that is absent, or one whose directory has been removed, costs the others nothing.
+A module is a pipeline in its own right. It imports what it wants from `analysis/lib/nf` by relative path and is launched directly; nothing in the frame includes it, so a module that is absent, or one whose directory has been removed, costs the others nothing.
 
 **Import only the workflows you call.** An import you never use still couples you to it — a library workflow that is renamed or removed breaks every module naming it, called or not.
 
@@ -17,8 +17,8 @@ A module is a pipeline in its own right. It imports what it wants from `analysis
 ```groovy
 nextflow.enable.dsl=2
 
-include { analysisPlan } from '../../lib/plan.nf'
-include { PublishResults } from '../../lib/results.nf'
+include { analysisPlan } from '../../lib/nf/plan.nf'
+include { PublishResults } from '../../lib/nf/results.nf'
 
 process Analyse {
     input:
@@ -49,7 +49,7 @@ Follow these and a module written by anyone runs beside the ones shipped here. M
 ### The shape
 
 1. **`main.nf` is required, and the directory name must equal the manifest's `name`.** A directory holding a manifest and no `main.nf` is refused while the DAG is built — before the results folder is cleared — and it stops **every** invocation, not only yours. A directory holding no manifest at all is passed over in silence, so a half-finished install is harmless.
-2. **Import the library by a literal relative path**, `'../../lib/plan.nf'`. An interpolated include path is rejected both by `nextflow lint` and at runtime, and the literal resolves in a checkout and in an installation alike because a module sits at `analysis/modules/<name>/` in both.
+2. **Import the library by a literal relative path**, `'../../lib/nf/plan.nf'`. An interpolated include path is rejected both by `nextflow lint` and at runtime, and the literal resolves in a checkout and in an installation alike because a module sits at `analysis/modules/<name>/` in both.
 3. **Import only the workflows you call.** An unused import still couples you: a library workflow that is renamed or removed breaks every module naming it, called or not. Import breadth is coupling breadth.
 4. **Report your own version.** `manifest.json`'s `version` is the module's, and it moves on the module's timetable — never the pipeline release's. That separation is the reason modules are installed separately at all. The modules published with PoolSeqFlow use **`YYYYMMDD.NNN`** — the day the manifest changed, then a counter from `001` for that day — bumped whenever the manifest is touched and committed with the change. Any version string works as far as the frame is concerned, but `install` picks the newest with `sort -V`, so whatever you choose has to order correctly under it.
 

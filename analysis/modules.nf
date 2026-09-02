@@ -1,15 +1,15 @@
 // What the analysis layer can do, and what it says for itself before it runs.
 //
 // A module is one analysis: it reads what a pipeline run published and writes a result of its
-// own. The roster itself is in analysis/lib/modules.nf, which a module reads too; this file is
+// own. The roster itself is in analysis/lib/nf/modules.nf, which a module reads too; this file is
 // what the frame prints before it runs one.
 
 nextflow.enable.dsl=2
 
 include { analysisParams } from '../scripts/0_verify_environment.nf'
-include { analysisSetting; renderSetting } from './lib/paths.nf'
-include { intermediatesDir; resultsRoot } from './lib/paths.nf'
-include { moduleEntry; moduleStore } from './lib/modules.nf'
+include { analysisSetting; renderSetting } from './lib/nf/paths.nf'
+include { intermediatesDir; resultsRoot } from './lib/nf/paths.nf'
+include { moduleEntry; moduleStore } from './lib/nf/modules.nf'
 
 // The configuration the pipeline recorded beside the results, recomputed from the project as it
 // stands now. The analysis layer's own parameters are dropped: they did not exist when the

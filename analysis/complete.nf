@@ -15,8 +15,8 @@
 
 nextflow.enable.dsl=2
 
-include { analysisRoot; intermediatesDir; resultsDir; verificationRecordName } from './lib/paths.nf'
-include { provenanceSuffix } from './lib/store.nf'
+include { analysisRoot; intermediatesDir; resultsDir; verificationRecordName } from './lib/nf/paths.nf'
+include { provenanceSuffix } from './lib/nf/store.nf'
 
 // Where the analysis layer keeps its own record, under mainDir.
 def completeLogDir() {

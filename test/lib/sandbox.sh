@@ -774,8 +774,8 @@ run_analysis_launcher_with_envs() {
     printf '// stub defaults\n' > "$sb/analysis/frame.config"
     # The real one: `modules available|install` read the table contract this release speaks
     # out of it, and a stub would let the compatibility check pass on anything.
-    mkdir -p "$sb/analysis/lib"
-    cp "$REPO_ROOT/analysis/lib/modules.nf" "$sb/analysis/lib/"
+    mkdir -p "$sb/analysis/lib/nf"
+    cp "$REPO_ROOT/analysis/lib/nf/modules.nf" "$sb/analysis/lib/nf/"
     printf 'name: stub\n' > "$sb/install/environment-analysis.yml"
     # Stubbed for the same reason install/check_install.sh is: it needs a real R environment,
     # and these tests are about which environment is chosen.

@@ -174,10 +174,10 @@ test_the_pipeline_does_not_read_the_analysis_layer() {
 
 # The analysis layer reads the pipeline, which is the direction that is allowed.
 test_the_analysis_layer_reads_the_pipeline_partition() {
-    local lib; lib=$(cat "$REPO_ROOT/analysis/lib/plan.nf")
-    assert_contains "$lib" "from '../../scripts/variants.nf'" \
+    local lib; lib=$(cat "$REPO_ROOT/analysis/lib/nf/plan.nf")
+    assert_contains "$lib" "from '../../../scripts/variants.nf'" \
         "the results directory of a run comes from the pipeline's own plan"
-    assert_contains "$lib" "from '../../scripts/resolve_parameters.nf'" \
+    assert_contains "$lib" "from '../../../scripts/resolve_parameters.nf'" \
         "and so do the run definitions"
 }
 
@@ -189,15 +189,16 @@ test_the_frame_and_a_module_share_one_answer() {
     local hits
     hits=$(cd "$REPO_ROOT" && grep -rln "def analysisPlan" . --exclude-dir=.git --exclude-dir=test \
         --exclude-dir=docs --exclude-dir=site --exclude-dir=.claude 2>/dev/null | sort)
-    assert_eq "./analysis/lib/plan.nf" "$hits" "and there is one definition of it"
+    assert_eq "./analysis/lib/nf/plan.nf" "$hits" "and there is one definition of it"
 }
 
 test_the_analysis_layer_ships_with_the_release() {
     local f
-    for f in analysis.nf analysis/modules.nf analysis/0_verify_analysis.nf \
-             analysis/frame.config analysis/analysis.config.template \
-             analysis/lib/paths.nf analysis/lib/plan.nf analysis/lib/modules.nf \
-             analysis/lib/results.nf analysis/lib/store.nf; do
+    for f in analysis.nf analysis/modules.nf analysis/0_verify_analysis.nf analysis/complete.nf \
+             analysis/frame.config analysis/frame.version analysis/citations.json \
+             analysis/analysis.config.template \
+             analysis/lib/nf/paths.nf analysis/lib/nf/plan.nf analysis/lib/nf/modules.nf \
+             analysis/lib/nf/results.nf analysis/lib/nf/store.nf analysis/lib/nf/citations.nf; do
         assert_file "$REPO_ROOT/$f" "$f must ship"
     done
     assert_contains "$(cat "$REPO_ROOT/PoolSeqFlow")" "lib analysis install" \
@@ -220,7 +221,7 @@ test_the_module_roster_lives_in_one_place() {
     local hits
     hits=$(cd "$REPO_ROOT" && grep -rln "moduleRoster" . --exclude-dir=.git --exclude-dir=test \
         --exclude-dir=docs --exclude-dir=site --exclude-dir=.claude 2>/dev/null | sort)
-    assert_eq "./analysis/lib/modules.nf" "$hits" "the roster must exist in exactly one file"
+    assert_eq "./analysis/lib/nf/modules.nf" "$hits" "the roster must exist in exactly one file"
     assert_contains "$(cat "$REPO_ROOT/PoolSeqFlow")" '--module "$ANALYSIS_COMMAND"' \
         "the wrapper passes the word through rather than judging it"
 }
@@ -285,7 +286,7 @@ test_the_frame_version_does_not_hijack_the_release() {
     local cfg; cfg=$(cat "$REPO_ROOT/analysis/frame.config")
     assert_not_contains "$cfg" "manifest {" "frame.config must not declare a manifest"
     # Comments stripped: the reason this must not read the release is written there in full.
-    local code; code=$(grep -vE '^\s*//' "$REPO_ROOT/analysis/lib/paths.nf")
+    local code; code=$(grep -vE '^\s*//' "$REPO_ROOT/analysis/lib/nf/paths.nf")
     assert_not_contains "$code" "workflow.manifest" \
         "and frameVersion() must not read the release"
     assert_contains "$code" 'frame.version' "it reads its own file instead"
@@ -308,11 +309,11 @@ test_bump_version_does_not_touch_the_frame() {
 # A missing frame version REFUSES rather than falling back. Both the write and the comparison
 # would read the same placeholder, so a fallback is a check that passes on everything.
 test_a_run_without_a_frame_version_refuses() {
-    local paths; paths=$(cat "$REPO_ROOT/analysis/lib/paths.nf")
+    local paths; paths=$(cat "$REPO_ROOT/analysis/lib/nf/paths.nf")
     assert_contains "$paths" "does not know its own version" "the refusal exists"
-    assert_not_contains "$(cat "$REPO_ROOT/analysis/lib/store.nf")" "'unknown'" \
+    assert_not_contains "$(cat "$REPO_ROOT/analysis/lib/nf/store.nf")" "'unknown'" \
         "and store.nf no longer has a placeholder to compare against itself"
-    assert_not_contains "$(cat "$REPO_ROOT/analysis/lib/modules.nf")" "?: 'unknown'" \
+    assert_not_contains "$(cat "$REPO_ROOT/analysis/lib/nf/modules.nf")" "?: 'unknown'" \
         "nor does the builtin roster"
 }
 
@@ -323,7 +324,7 @@ test_the_task_path_does_not_wait_for_params_dir_bin() {
     local cfg; cfg=$(cat "$REPO_ROOT/analysis/frame.config")
     assert_not_contains "$cfg" 'PATH="${params.dir.bin}' \
         "PATH must not be interpolated from a params value set later"
-    local plan; plan=$(cat "$REPO_ROOT/analysis/lib/plan.nf")
+    local plan; plan=$(cat "$REPO_ROOT/analysis/lib/nf/plan.nf")
     assert_contains "$plan" 'params.dir.bin = "${installDir()}/bin"' \
         "and analysisPlan sets it for the Groovy that reads it"
 }
@@ -333,7 +334,7 @@ test_the_task_path_does_not_wait_for_params_dir_bin() {
 test_the_analysis_settings_default_without_a_config_block() {
     local cfg paths
     cfg=$(cat "$REPO_ROOT/analysis/frame.config")
-    paths=$(cat "$REPO_ROOT/analysis/lib/paths.nf")
+    paths=$(cat "$REPO_ROOT/analysis/lib/nf/paths.nf")
     assert_not_contains "$cfg" 'runs = ' "the frame declares no run selection"
     assert_not_contains "$cfg" 'folderName' "and no folder name"
     assert_contains "$paths" "runs      : 'all'" "the default for runs is in the accessor"
@@ -425,7 +426,7 @@ test_a_module_states_what_it_reads_only_in_its_manifest() {
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     local main='nextflow.enable.dsl=2
 
-include { analysisPlan } from '"'"'../../lib/plan.nf'"'"'
+include { analysisPlan } from '"'"'../../lib/nf/plan.nf'"'"'
 
 workflow {
     analysisPlan('"'"'probe'"'"').targets.each { target ->
@@ -765,7 +766,7 @@ test_an_analysis_run_leaves_the_pipeline_session_reports_alone() {
 # Nothing statistical, so the case measures the library and not an analysis.
 ANALYSIS_PROBE_MAIN='nextflow.enable.dsl=2
 
-include { analysisPlan } from '"'"'../../lib/plan.nf'"'"'
+include { analysisPlan } from '"'"'../../lib/nf/plan.nf'"'"'
 
 workflow {
     analysisPlan('"'"'probe'"'"').targets.each { target ->
@@ -819,10 +820,14 @@ test_a_module_covers_exactly_what_the_verification_cleared() {
 # every other one, which is what the store exists to avoid.
 test_the_library_does_not_reach_into_the_module_store() {
     local hits
-    hits=$(cd "$REPO_ROOT" && grep -rn "modules/" analysis/lib 2>/dev/null)
+    # CODE only. Documentation under analysis/lib is free to name a path - the library's own
+    # README points module authors at the one in the store - and the rule being enforced is
+    # about what the library READS, not what it mentions. Both extensions, so the R library is
+    # held to the same rule as the Nextflow one.
+    hits=$(cd "$REPO_ROOT" && grep -rn --include='*.nf' --include='*.R' "modules/" analysis/lib 2>/dev/null)
     assert_eq "" "$hits" "analysis/lib must not name the store:"$'\n'"$hits"
     hits=$(cd "$REPO_ROOT" && grep -rn "from '\./lib/\|from '\.\./lib/" analysis/modules.nf 2>/dev/null)
-    assert_contains "$hits" "lib/paths.nf" "the frame reads the library, which is the allowed direction"
+    assert_contains "$hits" "lib/nf/paths.nf" "the frame reads the library, which is the allowed direction"
 }
 
 # ---------------------------------------------------------------------------------------
@@ -834,9 +839,9 @@ test_the_library_does_not_reach_into_the_module_store() {
 ANALYSIS_WRITER_MAIN=$(cat <<'MODULE'
 nextflow.enable.dsl=2
 
-include { analysisPlan } from '../../lib/plan.nf'
-include { intermediateFile; publishIntermediate; RestoreIntermediates } from '../../lib/store.nf'
-include { PublishResults } from '../../lib/results.nf'
+include { analysisPlan } from '../../lib/nf/plan.nf'
+include { intermediateFile; publishIntermediate; RestoreIntermediates } from '../../lib/nf/store.nf'
+include { PublishResults } from '../../lib/nf/results.nf'
 
 process Derive {
     debug true
@@ -880,8 +885,8 @@ ANALYSIS_WRITER_MANIFEST='{ "name": "writer", "version": "0.1.0", "contract": "f
 ANALYSIS_BREAKER_MAIN=$(cat <<'MODULE'
 nextflow.enable.dsl=2
 
-include { analysisPlan } from '../../lib/plan.nf'
-include { PublishResults } from '../../lib/results.nf'
+include { analysisPlan } from '../../lib/nf/plan.nf'
+include { PublishResults } from '../../lib/nf/results.nf'
 
 process Derive {
     input:
@@ -911,8 +916,8 @@ ANALYSIS_BREAKER_MANIFEST='{ "name": "breaker", "version": "0.1.0", "contract": 
 ANALYSIS_MUTE_MAIN=$(cat <<'MODULE'
 nextflow.enable.dsl=2
 
-include { analysisPlan } from '../../lib/plan.nf'
-include { PublishResults } from '../../lib/results.nf'
+include { analysisPlan } from '../../lib/nf/plan.nf'
+include { PublishResults } from '../../lib/nf/results.nf'
 
 process Derive {
     input:
