@@ -1239,6 +1239,7 @@ Those two are the whole of it. Every VCF step 7 produces — `_sort`, `_sort_fp`
 | `Fastqc/<sample>/` | FastQC | Raw, trimmed and clipped read quality |
 | `Trimming/<sample>/` | Trim Galore | How much was removed, and which adapter was detected |
 | `snpeff_summary.html` | SnpEff | Variant effect summary, if annotation ran |
+| `snpeff_summary.genes.txt` | SnpEff | The same counts per gene and transcript, tab separated |
 | `PoolSeqFlow_pipeline_report.html` | Nextflow | Per-task resource usage |
 | `PoolSeqFlow_pipeline_timeline.html` | Nextflow | Where wall-clock time went |
 | `PoolSeqFlow_pipeline_trace.txt` | Nextflow | Machine-readable task trace |
@@ -2315,7 +2316,7 @@ Changing either changes what step 8 writes, so step 0 tracks them and refuses a 
 
 ### What you get, and what it is not joined to
 
-Output is `Output/VCF/<name>_annotated.vcf` and `Output/Reports/snpeff_summary.html`.
+Output is `Output/VCF/<name>_annotated.vcf`, `Output/Reports/snpeff_summary.html` and `Output/Reports/snpeff_summary.genes.txt`.
 
 **The annotated VCF is not your frequency tables with a column added.** Step 8 reads step 6's output, so it carries sites the step 7 filters removed and encodes them against the original reference rather than the major allele. Joining the two is yours to do, on `CHROM`/`POS`, expecting unmatched rows on the annotation side — see [Step 8](#step-8-annotate-variants).
 
@@ -2801,7 +2802,7 @@ Splits multiallelic sites onto separate lines — SnpEff annotates one alternate
 
     Step 8 takes step **6**'s output, not step 7's. It runs in parallel with the frequency branch, so `<name>_annotated.vcf` contains sites the step 7 filters removed, encoded against the original reference rather than the major allele. To attach annotations to your frequency tables, join on `CHROM`/`POS` and expect unmatched rows on the annotation side.
 
-Output: `Output/VCF/<name>_annotated.vcf` and `Output/Reports/snpeff_summary.html`.
+Output: `Output/VCF/<name>_annotated.vcf`, `Output/Reports/snpeff_summary.html` and `Output/Reports/snpeff_summary.genes.txt`. SnpEff names the gene table after the summary and writes the two together, so they arrive and are replaced as a pair.
 
 Setting `annotate = false` skips this step and makes `gffFile` unnecessary — step 1 also stops building the SnpEff database.
 
@@ -3029,7 +3030,7 @@ Either reference file may be gzipped or plain.
         ├── Fastqc/<sample>/
         ├── Trimming/<sample>/
         ├── 0_verify_environment.txt
-        ├── snpeff_summary.html
+        ├── snpeff_summary.{html,genes.txt}
         └── PoolSeqFlow_pipeline_{report,timeline,trace,dag}.*
 ```
 

@@ -580,6 +580,68 @@ test_a_missing_index_is_not_treated_as_a_finished_bam() {
         "$others was complete and should have been skipped"
 }
 
+# snpEff's summary was written straight into the results tree by the tool itself: `-stats` was
+# given an absolute path under Output/Reports, so the file appeared there while the task was
+# still running. A task killed partway left a truncated HTML report that looked like a finished
+# one, and nothing declared it, so neither Nextflow nor the artifact table could see it.
+#
+# TWO files, not one. snpEff derives the gene table's name from the summary's, so
+# snpeff_summary.html brings snpeff_summary.genes.txt with it, and both are published.
+test_the_annotation_summary_is_published() {
+    needs_run || return
+    local r="$PIPELINE_SB/store/Output/Reports"
+    assert_file "$r/snpeff_summary.html"      "step 8 should publish the snpEff summary"
+    assert_file "$r/snpeff_summary.genes.txt" "and the gene table snpEff writes beside it"
+    # A real file in the results tree. A link would point into a work directory the next
+    # cleanup removes, and the results are what outlives the run.
+    local f
+    for f in snpeff_summary.html snpeff_summary.genes.txt; do
+        if [ -L "$r/$f" ]; then
+            fail_case "$f must be a real file in the results tree, not a link into work/"
+        fi
+    done
+}
+
+# The annotated VCF without the two lines that differ between two runs of the same annotation.
+# Both are provenance the tools stamp in themselves: snpEff writes its own command line into
+# ##SnpEffCmd, which names the normalised input by the mktemp name that task gave it, and
+# bcftools writes a wall-clock Date into ##bcftools_normCommand. Everything else - the rest of
+# the header and every variant - has to be identical.
+annotated_vcf_body() {
+    grep -vE '^##(SnpEffCmd|bcftools_normCommand)' \
+        "$1/store/Output/VCF/Test_annotated.vcf" | md5sum | awk '{print $1}'
+}
+
+# The skip test keys on all three artifacts. It keyed on the annotated VCF alone, so a summary
+# deleted from the results tree was never produced again: the run reported COMPLETED and the
+# manual went on promising a file that was not there.
+#
+# Against a copy, like the missing-index case above, so the shared run keeps its own results.
+test_a_deleted_annotation_summary_is_rebuilt() {
+    needs_run || return
+    local sb status r vcf_before vcf_after
+    sb=$(guard_path "$TEST_TMPDIR/missing-summary")
+    rm -rf "$sb"
+    cp -r "$PIPELINE_SB" "$sb"
+    rm -f "$sb/run.out"
+    write_sandbox_config "$sb"
+
+    r="$sb/store/Output/Reports"
+    vcf_before=$(annotated_vcf_body "$sb")
+    rm -f "$r/snpeff_summary.html" "$r/snpeff_summary.genes.txt"
+
+    status=$(run_pipeline "$sb")
+    assert_status 0 "$status" "the run should recover; see $sb/run.out"
+
+    assert_file "$r/snpeff_summary.html"      "the summary should be produced again"
+    assert_file "$r/snpeff_summary.genes.txt" "and the gene table with it"
+
+    # Rebuilding the summary re-runs snpEff, which writes the annotated VCF again. It must land
+    # on the one already there rather than beside it or through it.
+    vcf_after=$(annotated_vcf_body "$sb")
+    assert_eq "$vcf_before" "$vcf_after" "the annotated VCF should survive the rebuild unchanged"
+}
+
 # The first artifact with two consumers: step 5 reads the ready BAMs for its reports, step 6
 # for calling. Releasing on either one alone would delete a file the other still needs, so the
 # gate is both - and because calling is a cohort step, no sample's BAM can go until every
