@@ -217,7 +217,8 @@ test_the_analysis_layer_ships_with_the_release() {
              analysis/analysis.config.template \
              analysis/lib/nf/paths.nf analysis/lib/nf/plan.nf analysis/lib/nf/modules.nf \
              analysis/lib/nf/results.nf analysis/lib/nf/store.nf analysis/lib/nf/citations.nf \
-             analysis/lib/nf/design.nf analysis/lib/nf/outputs.nf analysis/lib/nf/time.nf; do
+             analysis/lib/nf/design.nf analysis/lib/nf/outputs.nf analysis/lib/nf/time.nf \
+             analysis/lib/nf/pools.nf; do
         assert_file "$REPO_ROOT/$f" "$f must ship"
     done
     assert_contains "$(cat "$REPO_ROOT/PoolSeqFlow")" "lib analysis install" \
@@ -871,6 +872,63 @@ TestSample1,PoolA,Pop1'
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     assert_contains "$(analysis_report "$ANALYSIS_SB")" "no metadata rows" \
         "and a missing file says so rather than reporting an empty design"
+}
+
+# ---------------------------------------------------------------------------------------
+# The pools, which every frequency in a published table is read against. A module gets these
+# off its target: poolSizes() and diploidy live in the pipeline's scripts, which a module does
+# not import.
+#
+# The detection limits below are hand-computed from 1/(2*diploidy*poolSize), which is a third
+# copy of the equation - the Groovy one in resolve_parameters.nf and the awk one in
+# bin/filterFalsePositives.sh are tied together by 50_helpers, and these numbers tie this one
+# to both.
+
+test_the_verification_report_states_the_pool_sizes() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "the fixture's pools are consistent"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "POOL SIZES:                diploidy 2, 6 pools of 100 individuals" \
+        "the report gives the size every pool was filtered against"
+    assert_contains "$report" "200 chromosomes, frequencies above 0.0025" \
+        "with the chromosome count and the detection limit derived from it"
+}
+
+# A pool that sets param_poolSize is a different size from one that takes the global, and the
+# n_chrom every diversity estimate scales by moves with it.
+test_pools_of_different_sizes_are_reported_apart() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,param_poolSize,exp_population,exp_time
+TestSample1,PoolA,,Pop1,T1
+TestSample2,PoolB,25,Pop1,T2'
+    run_analysis "$ANALYSIS_SB" verify > /dev/null
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "diploidy 2, 2 pools" "the sizes are no longer one number"
+    assert_contains "$report" "PoolA: 100 individuals, 200 chromosomes, frequencies above 0.0025" \
+        "the pool with a blank cell takes the run's own poolSize"
+    assert_contains "$report" "PoolB: 25 individuals, 50 chromosomes, frequencies above 0.01" \
+        "and the one that sets param_poolSize is measured and reported on its own"
+}
+
+# poolSize is NOT part of what decides whether two runs share step 7, so two runs that set
+# filterFalsePositives.sensitivity themselves agree there and can still disagree about how many
+# individuals a pool holds. One of them filtered the tables and the directory does not say which.
+test_runs_sharing_a_directory_must_agree_on_a_pool_size() {
+    analysis_ready multi || return
+    cat > "$ANALYSIS_SB/main/runs.csv" <<'TABLE'
+RunID,poolSize,filterFalsePositives.sensitivity
+small,100,0.0025
+large,200,0.0025
+TABLE
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "one directory cannot hold two answers about a pool's size"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "is given more than one size by the runs" "the refusal says what happened"
+    assert_contains "$out" "'100' by small" "and which run said what"
+    assert_contains "$out" "'200' by large" "for both of them"
+    assert_contains "$out" "param_poolSize in each run's metadata" "and how to settle it"
 }
 
 # ---------------------------------------------------------------------------------------

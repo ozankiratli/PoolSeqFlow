@@ -2732,6 +2732,19 @@ The results on disk were produced under a configuration, and the pipeline record
 
 Restoring the values, or `PoolSeqFlow reset` and a fresh run, are the two ways forward. Nothing is deleted for you.
 
+### The pools your results were filtered against { #analysis-pools }
+
+A frequency in a published table is read against how many chromosomes the pool holds, so the report states that before any module reads one:
+
+```text
+POOL SIZES:            Output
+POOL SIZES:                diploidy 2, 6 pools of 100 individuals - 200 chromosomes, frequencies above 0.0025
+```
+
+Those are the pipeline's own `poolSize` and `diploidy`, per pool: a pool whose rows set `param_poolSize` holds that many individuals and every other pool holds `poolSize` of them. The chromosome count is `diploidy × poolSize`, and the detection limit is `1 / (2 × diploidy × poolSize)` — the frequency below which step 7's false-positive filter took a call to be error rather than a rare allele, explained in [The Filter Chain](#where-s-comes-from). Pools of one size share a line; a pool of its own size gets one, because its chromosome count and its detection limit both move with it.
+
+**Two runs whose results are in one directory must agree about a pool's size,** and the run stops if they do not, naming the pool, the runs and each size. Those runs produced one set of tables against one of the sizes and nothing in the directory records which — so the analysis refuses rather than choose. It takes a project that pins `filterFalsePositives.sensitivity` in the run table: that is what decides whether two runs share step 7's work, and pinning it lets two runs with different `poolSize` values share a directory. Give the pool a `param_poolSize` in each run's metadata, or give each run its own `storageDir`.
+
 ## Output Layout
 <!--@ page: output | nav: Output -->
 

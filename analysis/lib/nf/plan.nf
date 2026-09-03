@@ -11,6 +11,7 @@ include { variantPlan; runToken; dig } from '../../../scripts/variants.nf'
 include { analysisSetting; renderSetting; targetResultsDir; installDir } from './paths.nf'
 include { moduleNeeds } from './modules.nf'
 include { checkTargetDesign; designSummary } from './design.nf'
+include { poolFigures } from './pools.nf'
 include { checkModuleOutputs; moduleOutputs } from './outputs.nf'
 
 // The published files a module can read. `step` is the step that produced the class, and
@@ -97,8 +98,8 @@ def directoryLabel(Map variant) {
 // inside it. Two runs whose tables are the same file share a directory and are covered once.
 // `needs` names the classes the module cannot run without.
 //
-// The design is summarised over ALL the directory's members and not only the selected ones: the
-// tables hold a column per pool of every run that produced them.
+// The design and the pool figures cover ALL the directory's members and not only the selected
+// ones: the tables hold a column per pool of every run that produced them.
 def resultsTargets(Map plan, List runDefs, List selected, String module, List needs) {
     def wanted = selected.collect { run -> run.runId }
     return plan.variants[7]
@@ -120,8 +121,8 @@ def resultsTargets(Map plan, List runDefs, List selected, String module, List ne
                           required: needs.contains(name) ] ]
             }
             def label = directoryLabel(variant)
-            def rows = runDefs.findAll { run -> variant.members.contains(run.runId) }
-                              .collectMany { run -> run.metadata }
+            def covered = runDefs.findAll { run -> variant.members.contains(run.runId) }
+            def rows = covered.collectMany { run -> run.metadata }
             checkTargetDesign(label, rows)
             return [ label   : label,
                      module  : module,
@@ -131,6 +132,7 @@ def resultsTargets(Map plan, List runDefs, List selected, String module, List ne
                                               .collect { member -> runToken(member) },
                      classes : classes,
                      design  : designSummary(rows),
+                     pools   : poolFigures(label, covered),
                      results : targetResultsDir(module, label) ]
         }
 }

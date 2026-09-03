@@ -13,6 +13,7 @@ include { recordedManifest; configReportLines } from './analysis/modules.nf'
 include { moduleReportLines; moduleSettingLines } from './analysis/modules.nf'
 include { outputReportLines; selectionReportLines } from './analysis/modules.nf'
 include { designReportLines } from './analysis/lib/nf/design.nf'
+include { poolReportLines } from './analysis/lib/nf/pools.nf'
 include { intermediatesDir; verificationReportFile } from './analysis/lib/nf/paths.nf'
 include { analysisPlan } from './analysis/lib/nf/plan.nf'
 include { VerifyAnalysis } from './analysis/0_verify_analysis.nf'
@@ -29,6 +30,7 @@ workflow {
         header       : (moduleReportLines(module) + configReportLines() +
                         moduleSettingLines(module) + outputReportLines(module) +
                         selectionReportLines(plan.runs, plan.selected, plan.targets) +
+                        poolReportLines(plan.targets) +
                         designReportLines(plan.targets)).join('\n'),
         reportFile   : verificationReportFile(module),
         intermediates: intermediatesDir(),
