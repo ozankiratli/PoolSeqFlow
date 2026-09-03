@@ -38,6 +38,21 @@ analysis_write_multi_config() {
         "s|^    multiRunFile .*|    multiRunFile    = 'runs.csv'|"
 }
 
+# The fixture's metadata carries exp_time, and a project with a time column has to say how to
+# read it or every analysis refuses. So the baseline carries the analysis.config a real project of
+# this shape would have, and EVERY helper that writes that file carries this block too - the file
+# is written whole, so a helper that omitted it would leave the project unreadable. A case testing
+# what happens without an analysis.config removes the time column as well.
+ANALYSIS_TIME_BLOCK="        timeVar {
+            kind  = 'categorical'
+            order = ['T1', 'T2']
+        }"
+
+analysis_write_time_config() {
+    printf 'params {\n    analysis {\n%s\n    }\n}\n' "$ANALYSIS_TIME_BLOCK" \
+        > "$1/main/analysis.config"
+}
+
 # A single-run project whose identity the pipeline has recorded. Step 0 alone writes
 # .poolseqflow_version and .poolseqflow_params, which is everything the identity check reads,
 # and costs about a fifth of a full run.
@@ -46,6 +61,7 @@ analysis_baseline_single() {
     local sb status
     sb=$(make_pipeline_sandbox "analysis-single")
     write_sandbox_config "$sb"
+    analysis_write_time_config "$sb"
     status=$(run_verify_only "$sb")
     [ "$status" = "0" ] || return 1
     ANALYSIS_BASELINE_SINGLE="$sb"
@@ -59,6 +75,7 @@ analysis_baseline_multi() {
     sb=$(make_pipeline_sandbox "analysis-multi")
     analysis_write_runs_table "$sb"
     analysis_write_multi_config "$sb"
+    analysis_write_time_config "$sb"
     status=$(run_verify_only "$sb")
     [ "$status" = "0" ] || return 1
     ANALYSIS_BASELINE_MULTI="$sb"
@@ -143,13 +160,13 @@ analysis_install_module() {
 
 # Write the project's analysis.config with one run selection in it.
 analysis_select() {
-    printf 'params {\n    analysis {\n        runs = %s\n    }\n}\n' "$1" \
+    printf 'params {\n    analysis {\n        runs = %s\n%s\n    }\n}\n' "$1" "$ANALYSIS_TIME_BLOCK" \
         > "$ANALYSIS_SB/main/analysis.config"
 }
 
 # The same for the results folder name.
 analysis_folder_name() {
-    printf 'params {\n    analysis {\n        folderName = %s\n    }\n}\n' "$1" \
+    printf 'params {\n    analysis {\n        folderName = %s\n%s\n    }\n}\n' "$1" "$ANALYSIS_TIME_BLOCK" \
         > "$ANALYSIS_SB/main/analysis.config"
 }
 
@@ -200,7 +217,7 @@ test_the_analysis_layer_ships_with_the_release() {
              analysis/analysis.config.template \
              analysis/lib/nf/paths.nf analysis/lib/nf/plan.nf analysis/lib/nf/modules.nf \
              analysis/lib/nf/results.nf analysis/lib/nf/store.nf analysis/lib/nf/citations.nf \
-             analysis/lib/nf/design.nf analysis/lib/nf/outputs.nf; do
+             analysis/lib/nf/design.nf analysis/lib/nf/outputs.nf analysis/lib/nf/time.nf; do
         assert_file "$REPO_ROOT/$f" "$f must ship"
     done
     assert_contains "$(cat "$REPO_ROOT/PoolSeqFlow")" "lib analysis install" \
@@ -344,8 +361,12 @@ test_the_analysis_settings_default_without_a_config_block() {
     assert_not_contains "$cfg" 'runs = ' "the frame declares no run selection"
     assert_not_contains "$cfg" 'folderName' "and no folder name"
     assert_contains "$paths" "runs      : 'all'" "the default for runs is in the accessor"
-    assert_contains "$paths" 'scope.containsKey(key) ? scope[key] : defaults[key]' \
+    assert_contains "$paths" 'if (!scope.containsKey(key)) return defaults[key]' \
         "and a key the project did not set falls back to it"
+    # Nextflow REPLACES a nested map rather than merging into it, so a project writing one
+    # sub-key would otherwise lose every other default in that scope.
+    assert_contains "$paths" 'return defaults[key] + written' \
+        "while a scope the project set only part of keeps the rest of its defaults"
 }
 
 # The installation is what the environment variable says, and a run that cannot find it stops
@@ -545,6 +566,11 @@ test_verify_passes_on_a_recorded_single_run_project() {
 # The report says where the settings came from, and where a project's own would go.
 test_verify_names_the_configuration_it_was_assembled_from() {
     analysis_ready single || return
+    # The baseline carries an analysis.config because its metadata has a time column. Both go,
+    # so this is a project that has written no settings at all.
+    rm -f "$ANALYSIS_SB/main/analysis.config"
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population
+TestSample1,TestSample1,Pop1'
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     local report; report=$(analysis_report "$ANALYSIS_SB")
     assert_contains "$report" "analysis/frame.config" "the installation's frame"
@@ -559,6 +585,7 @@ test_a_project_with_no_results_refuses() {
     local sb status
     sb=$(make_pipeline_sandbox "analysis-empty")
     write_sandbox_config "$sb"
+    analysis_write_time_config "$sb"
     status=$(run_analysis "$sb" verify)
     assert_status 1 "$status" "there is nothing to analyse"
     local report; report=$(analysis_report "$sb")
@@ -758,13 +785,13 @@ analysis_write_metadata() {
 # metadata the guard watches.
 test_a_pool_whose_rows_disagree_on_an_experimental_column_refuses() {
     analysis_ready single || return
-    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_timepoint
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_time
 TestSample1,PoolA,T1
 TestSample2,PoolA,T2'
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "one pool with two timepoints is not a design"
     local out; out=$(analysis_output)
-    assert_contains "$out" "the pool 'PoolA' is given more than one exp_timepoint" \
+    assert_contains "$out" "the pool 'PoolA' is given more than one exp_time" \
         "the refusal names the column and the pool"
     assert_contains "$out" "'T1' on TestSample1" "and which row said what"
     assert_contains "$out" "'T2' on TestSample2" "for both of them"
@@ -790,9 +817,9 @@ TestSample2,PoolA,'
 # members for exactly that reason: neither file disagrees with itself.
 test_two_runs_sharing_a_directory_are_checked_against_each_other() {
     analysis_ready multi || return
-    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_timepoint
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_time
 TestSample1,PoolA,T1'
-    printf '%s\n' 'SampleID,RG_Sample,exp_timepoint' 'TestSample1,PoolA,T2' \
+    printf '%s\n' 'SampleID,RG_Sample,exp_time' 'TestSample1,PoolA,T2' \
         > "$ANALYSIS_SB/main/metadata_b.csv"
     cat > "$ANALYSIS_SB/main/runs.csv" <<'TABLE'
 RunID,annotate,metadataFile
@@ -802,7 +829,7 @@ TABLE
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "two runs in one directory must agree about the pool they share"
     local out; out=$(analysis_output)
-    assert_contains "$out" "the pool 'PoolA' is given more than one exp_timepoint" \
+    assert_contains "$out" "the pool 'PoolA' is given more than one exp_time" \
         "even though neither file disagrees with itself"
 }
 
@@ -812,27 +839,485 @@ test_the_verification_report_states_the_design() {
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 0 "$status" "the fixture's design is consistent"
     local report; report=$(analysis_report "$ANALYSIS_SB")
-    assert_contains "$report" "EXPERIMENTAL DESIGN:       Output: 6 pools from 6 libraries" \
+    assert_contains "$report" "EXPERIMENTAL DESIGN:       6 pools from 6 libraries" \
         "the report counts the pools and the libraries merged into them"
-    assert_contains "$report" "exp_population (3 levels), exp_timepoint (2 levels)" \
+    assert_contains "$report" "exp_population (3 levels), exp_time (2 levels)" \
         "and names each variable with how many levels it has"
+    assert_contains "$report" "TIME VARIABLE:         exp_time, categorical" \
+        "and says how the time axis was read"
+    assert_contains "$report" "SERIES:                conditions   exp_population" \
+        "and what a repeated measurement is"
+    assert_contains "$report" "SERIES:                biological   (none declared)" \
+        "with every key column placed under a role, declared or not"
+    assert_contains "$report" "3 series over 2 timepoints" "and the shape it found"
 }
 
 # A project with no exp_ columns and one whose metadata was never copied both have no design,
 # and they are not the same thing - the second is a project set up somewhere the CSV is not.
 test_the_report_tells_no_design_from_no_metadata() {
     analysis_ready single || return
+    rm -f "$ANALYSIS_SB/main/analysis.config"
     analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,population
 TestSample1,PoolA,Pop1'
     run_analysis "$ANALYSIS_SB" verify > /dev/null
-    assert_contains "$(analysis_report "$ANALYSIS_SB")" "1 pools, no exp_ columns" \
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "1 pools from 1 libraries, no exp_ columns" \
         "an unprefixed column is not an experimental variable"
+    assert_contains "$report" "TIME VARIABLE:         none" \
+        "and with no time column nothing is a trajectory"
 
     analysis_ready single || return
-    rm -f "$ANALYSIS_SB/main/metadata.csv"
+    rm -f "$ANALYSIS_SB/main/metadata.csv" "$ANALYSIS_SB/main/analysis.config"
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     assert_contains "$(analysis_report "$ANALYSIS_SB")" "no metadata rows" \
         "and a missing file says so rather than reporting an empty design"
+}
+
+# ---------------------------------------------------------------------------------------
+# The time axis. Every failure here is silent when it is not caught: the plot renders, the
+# slope has a sign, and nothing says the order was wrong.
+
+# Replaces the baseline's analysis.config with an `analysis` scope of the case's own.
+analysis_write_analysis_config() {
+    cat > "$1/main/analysis.config" <<CFG
+params {
+    analysis {
+$2
+    }
+}
+CFG
+}
+
+# Time is not guessed. 20240307 reads as a number as readily as a date, which keeps the order
+# right and makes every interval wrong, so the kind is asked for rather than detected.
+test_a_time_column_without_a_kind_refuses() {
+    analysis_ready single || return
+    rm -f "$ANALYSIS_SB/main/analysis.config"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a project with exp_time and no kind must stop"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "analysis.timeVar.kind is not set" "the refusal names the setting"
+    assert_contains "$out" "numerical, categorical, datetime" "and lists what it may be"
+}
+
+test_a_kind_with_no_time_column_refuses() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population
+TestSample1,PoolA,Pop1'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a setting that cannot apply must be refused where it is written"
+    assert_contains "$(analysis_output)" "has no exp_time column" "naming the column it looked for"
+}
+
+# Anything outside the exp_ prefix escapes the pool-agreement refusal, and one pool could then
+# carry two timepoints with nothing to stop it.
+test_a_time_column_outside_the_prefix_refuses() {
+    analysis_ready single || return
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { column = 'timepoint'; kind = 'categorical' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "the time variable has to be an exp_ column"
+    assert_contains "$(analysis_output)" "has to be an exp_ column" "and the refusal says why"
+}
+
+# A numerical axis is an interval scale, so a rate is meaningful and has to be labelled.
+test_numerical_time_requires_a_unit() {
+    analysis_ready single || return
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "numerical time with no unit must stop"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "no unit is set" "the refusal names what is missing"
+    assert_contains "$out" "generation, passage, cycle" "and lists the units it takes"
+}
+
+# A unit asserts that the spacing between levels means something, which is exactly what
+# categorical time does not have.
+test_a_unit_on_categorical_time_refuses() {
+    analysis_ready single || return
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; unit = 'generation' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a spacing categorical time does not have must not be asserted"
+    assert_contains "$(analysis_output)" "categorical time is an order and nothing more" \
+        "and the refusal says what to do instead"
+}
+
+# THE T10 PROBLEM. Alphabetically T10 sorts between T1 and T2, and every trajectory built on
+# that order is wrong with nothing to show for it.
+test_numerical_time_orders_by_number_not_by_string() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
+TestSample1,PoolA,Pop1,1
+TestSample2,PoolB,Pop1,10
+TestSample3,PoolC,Pop1,2'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
+        series { by = ['exp_population'] }"
+    run_analysis "$ANALYSIS_SB" verify > /dev/null
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "TIME VARIABLE:         exp_time, numerical, in generations" \
+        "the report says how time was read"
+    assert_contains "$report" "1.0  2.0  10.0" "and 10 comes last, where a string sort puts it second"
+}
+
+# The natural-sort warning. It cannot catch pre/post - nothing can - but T1 T10 T2 buried in a
+# long list is the case that slides past the eye, and two plausible orderings disagreeing is a
+# fact rather than a guess.
+test_alphabetical_time_warns_when_a_number_sort_disagrees() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
+TestSample1,PoolA,Pop1,T1
+TestSample2,PoolB,Pop1,T10
+TestSample3,PoolC,Pop1,T2'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
+    run_analysis "$ANALYSIS_SB" verify > /dev/null
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "alphabetical order" "the note says which order was used"
+    assert_contains "$report" "T1  T10  T2" "showing what that gives"
+    assert_contains "$report" "T1  T2  T10" "beside what reading the digits as numbers would give"
+}
+
+test_an_explicit_order_that_misses_a_level_refuses() {
+    analysis_ready single || return
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1'] }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a level with nowhere to go must stop the run"
+    assert_contains "$(analysis_output)" "does not include 'T2'" "naming the level it left out"
+}
+
+# ---------------------------------------------------------------------------------------
+# Dates. The parser configuration was measured rather than assumed; each of these is one of
+# the measurements.
+
+test_datetime_time_parses_and_positions_in_days() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
+TestSample1,PoolA,Pop1,07/03/2024
+TestSample2,PoolB,Pop1,11/04/2024'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'dd/MM/yyyy' }
+        series { by = ['exp_population'] }"
+    run_analysis "$ANALYSIS_SB" verify > /dev/null
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    # Echoed as ISO, which is the only thing that catches a user who meant July 3rd. No check can.
+    assert_contains "$report" "2024-03-07T00:00  2024-04-11T00:00" \
+        "the resolved dates are echoed, so an ambiguous pattern is visible"
+    assert_contains "$report" "'dd/MM/yyyy' (en)" "with the pattern and locale that read them"
+}
+
+# `yyyy` is year-of-era and cannot resolve under a strict parser; `uuuu` is the proleptic year.
+# Everyone writes yyyy, so both are accepted - they differ only before year 1.
+test_a_yyyy_pattern_is_accepted() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_time
+TestSample1,PoolA,2024-03-07
+TestSample2,PoolB,2024-04-11'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'yyyy-MM-dd' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "the pattern everyone writes has to work"
+}
+
+# A lenient parser turns 2024-02-31 into 2024-02-29 and says nothing, which is a typo silently
+# corrected into a date that sorts perfectly.
+test_an_impossible_date_refuses_rather_than_being_corrected() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_time
+TestSample1,PoolA,2024-02-31
+TestSample2,PoolB,2024-04-11'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'yyyy-MM-dd' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "31 February must not become 29 February"
+    assert_contains "$(analysis_output)" "2024-02-31" "and the refusal names the value"
+}
+
+# A researcher writes their metadata in their own language. Parsing is locale-aware; what gets
+# published is ISO and a number, so the output is the same either way.
+test_a_month_name_is_read_in_the_projects_own_locale() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_time
+TestSample1,PoolA,5 décembre 2011
+TestSample2,PoolB,7 mars 2012'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'd MMMM yyyy'; locale = 'fr' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "French month names should read under locale fr"
+    assert_contains "$(analysis_report "$ANALYSIS_SB")" "2011-12-05T00:00  2012-03-07T00:00" \
+        "and are published as ISO whatever language wrote them"
+}
+
+# forLanguageTag does NOT fall back to English for an unknown tag: it returns a locale with no
+# month names, which then refuses every value with a message about the value.
+test_an_unknown_locale_is_refused_by_name() {
+    analysis_ready single || return
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'yyyy-MM-dd'; locale = 'xx' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a locale this Java does not have must be named as the problem"
+    assert_contains "$(analysis_output)" "not a locale this Java knows" \
+        "rather than failing later on a value that is perfectly good"
+}
+
+# ---------------------------------------------------------------------------------------
+# Series: which pools are one thing measured repeatedly.
+
+test_two_pools_at_one_timepoint_in_one_series_refuse() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
+TestSample1,PoolA,Pop1,T1
+TestSample2,PoolB,Pop1,T1'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a series has to be a function of time"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "2 pools at the same exp_time" "the refusal counts them"
+    assert_contains "$out" "'T1': PoolA, PoolB" "and names the timepoint and the pools"
+}
+
+test_a_series_key_naming_the_time_column_refuses() {
+    analysis_ready single || return
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }
+        series { by = ['exp_time'] }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "time cannot identify what is being followed through time"
+    assert_contains "$(analysis_output)" "which is the time column" "and the refusal says so"
+}
+
+# A ragged panel analysed as a complete one is a wrong answer that looks like a right one.
+test_an_incomplete_series_refuses_by_default() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
+TestSample1,PoolA,Pop1,T1
+TestSample2,PoolB,Pop1,T2
+TestSample3,PoolC,Pop2,T1'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "fail is the default and this panel is ragged"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "Pop2 lacks T2" "naming the series and what it lacks"
+    assert_contains "$out" "analysis.series.incomplete" "and the setting that decides what to do"
+}
+
+test_drop_leaves_the_incomplete_series_out() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
+TestSample1,PoolA,Pop1,T1
+TestSample2,PoolB,Pop1,T2
+TestSample3,PoolC,Pop2,T1'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }
+        series { incomplete = 'drop' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "drop should proceed on what is complete"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "1 series over 2 timepoints" "one series survives"
+    assert_contains "$report" "Pop2 lacked T2" "and the note says what went and why"
+}
+
+# keepLeft cuts the timeline back from the start, keepRight from the end, and on a panel with a
+# hole in the middle BOTH work and they discard different data. The choice is early drift
+# against late response, not a mechanical one.
+test_keepleft_and_keepright_cut_the_timeline_from_opposite_ends() {
+    local metadata='SampleID,RG_Sample,exp_population,exp_time
+TestSample1,PoolA,Pop1,1
+TestSample2,PoolB,Pop1,2
+TestSample3,PoolC,Pop1,3
+TestSample4,PoolD,Pop2,1
+TestSample5,PoolE,Pop2,2'
+
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" "$metadata"
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
+        series { incomplete = 'keepLeft' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "keepLeft should keep the shared start"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "2 series over 2 timepoints" "both series survive, shortened"
+    assert_contains "$report" "kept 1, 2; dropped 3" "and the note says exactly what went"
+
+    # The same panel from the other end: Pop2 has no third point, so there is no shared suffix.
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" "$metadata"
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
+        series { incomplete = 'keepRight' }"
+    status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "keepRight has nothing to keep here"
+    assert_contains "$(analysis_output)" "Try 'keepLeft'" "and the refusal points at the one that would work"
+}
+
+# Truncating to a single point leaves a legal-looking analysis with no time axis at all.
+test_a_truncation_to_one_timepoint_is_reported_loudly() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
+TestSample1,PoolA,Pop1,1
+TestSample2,PoolB,Pop1,2
+TestSample3,PoolC,Pop1,3
+TestSample4,PoolD,Pop2,1'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
+        series { incomplete = 'keepLeft' }"
+    run_analysis "$ANALYSIS_SB" verify > /dev/null
+    assert_contains "$(analysis_report "$ANALYSIS_SB")" "SINGLE point" \
+        "a one-point timeline has to be stated, not left to look like an analysis"
+}
+
+# A pool with no time value joins no series. Reported and counted; whether that is fatal is the
+# module's to decide, because a sound project can legitimately have one.
+test_a_pool_with_no_time_value_is_counted_and_excluded() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
+TestSample1,PoolA,Pop1,T1
+TestSample2,PoolB,Pop1,T2
+TestSample3,PoolC,Pop2,'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "a pool without a timepoint is not an error"
+    assert_contains "$(analysis_report "$ANALYSIS_SB")" "have no exp_time and are in no series: PoolC" \
+        "but it is named"
+}
+
+# Nextflow REPLACES a nested map rather than merging into it, so a project writing one sub-key
+# would lose every other default in the scope - and fail as "no time column" on a project that
+# plainly has one.
+test_a_partly_written_scope_keeps_the_rest_of_its_defaults() {
+    analysis_ready single || return
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "column should still default to exp_time"
+    assert_contains "$(analysis_report "$ANALYSIS_SB")" "TIME VARIABLE:         exp_time, categorical" \
+        "the default column survives a scope that set only the kind"
+}
+
+test_an_unknown_key_in_a_nested_scope_refuses() {
+    analysis_ready single || return
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; ordering = ['T1'] }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a misspelled sub-key must not be ignored"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "does not have: ordering" "the refusal names the key"
+    assert_contains "$out" "column, format, kind, locale, order, unit" "and lists the ones it has"
+}
+
+# ---------------------------------------------------------------------------------------
+# Biological and technical replicates. The two have OPPOSITE statistical standing - biological
+# ones are independent and carry degrees of freedom, technical ones are the same material
+# measured twice and carry none - so treating one as the other is pseudo-replication.
+
+# Two conditions, two biological replicates each, and two technical dimensions crossed over
+# them: 2 lanes x 2 sequencing runs = 4 series per unit, 16 series, 8 independent units.
+ANALYSIS_REPLICATE_METADATA='SampleID,RG_Sample,exp_treatment,exp_rep,exp_lane,exp_seqrun,exp_time
+S1,P1,control,1,L1,R1,T1
+S2,P2,control,1,L1,R1,T2
+S3,P3,control,1,L2,R1,T1
+S4,P4,control,1,L2,R1,T2
+S5,P5,control,1,L1,R2,T1
+S6,P6,control,1,L1,R2,T2
+S7,P7,control,1,L2,R2,T1
+S8,P8,control,1,L2,R2,T2
+S9,P9,control,2,L1,R1,T1
+S10,P10,control,2,L1,R1,T2
+S11,P11,control,2,L2,R1,T1
+S12,P12,control,2,L2,R1,T2
+S13,P13,control,2,L1,R2,T1
+S14,P14,control,2,L1,R2,T2
+S15,P15,control,2,L2,R2,T1
+S16,P16,control,2,L2,R2,T2'
+
+# Both lists take more than one column. Lane and sequencing run are two technical dimensions of
+# one biological unit, and the unit is what a module counts.
+test_technical_replicates_roll_up_into_independent_units() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_REPLICATE_METADATA"
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
+        series {
+            biologicalRep = ['exp_rep']
+            technicalRep  = ['exp_lane', 'exp_seqrun']
+        }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "a crossed technical design should resolve"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "SERIES:                technical    exp_lane, exp_seqrun" \
+        "both technical dimensions are named"
+    assert_contains "$report" "8 series over 2 timepoints, from 2 independent units" \
+        "16 pools make 8 series, and dropping both technical columns leaves 2 units"
+    assert_contains "$report" "1 condition, 2 biological replicates each, 4 technical" \
+        "counted per unit, since 2 lanes by 2 runs is 4 and not 2"
+}
+
+# THE MISASSIGNMENT NOTHING CAN CATCH. Leave a technical column out of technicalRep and it is
+# read as a condition - one treatment becomes four, and a test gets strata that are the same
+# DNA. So every key column is printed under a role, which is the only defence there is.
+test_every_key_column_is_printed_under_a_role() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_REPLICATE_METADATA"
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
+        series {
+            biologicalRep = ['exp_rep']
+            technicalRep  = ['exp_lane']
+        }"
+    run_analysis "$ANALYSIS_SB" verify > /dev/null
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "SERIES:                conditions   exp_treatment, exp_seqrun" \
+        "the forgotten column shows up as a condition, where it can be seen"
+    assert_contains "$report" "2 conditions" "and the count it produces is visible beside it"
+}
+
+test_a_replicate_column_outside_the_series_key_refuses() {
+    analysis_ready single || return
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
+        series { biologicalRep = ['exp_cage'] }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "naming a column that identifies nothing must stop the run"
+    assert_contains "$(analysis_output)" "which does not identify a series" \
+        "and the refusal says what the key actually holds"
+}
+
+# A column is independent or it is not; it cannot be both, and the difference is what degrees of
+# freedom are counted from.
+test_a_column_named_as_both_kinds_of_replicate_refuses() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_REPLICATE_METADATA"
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
+        series {
+            biologicalRep = ['exp_rep', 'exp_lane']
+            technicalRep  = ['exp_lane']
+        }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "one column cannot be both kinds of replicate"
+    assert_contains "$(analysis_output)" "carry degrees of freedom; technical replicates" \
+        "and the refusal says what the difference is"
+}
+
+# Technical replication is legitimately unbalanced - one sample sequenced twice for validation
+# and another once - so a single number would be a plausible-looking lie.
+test_an_unbalanced_technical_design_is_reported_as_a_range() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_treatment,exp_rep,exp_lane,exp_time
+S1,P1,control,1,L1,T1
+S2,P2,control,1,L1,T2
+S3,P3,control,1,L2,T1
+S4,P4,control,1,L2,T2
+S5,P5,control,2,L1,T1
+S6,P6,control,2,L1,T2'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
+        series {
+            biologicalRep = ['exp_rep']
+            technicalRep  = ['exp_lane']
+        }"
+    run_analysis "$ANALYSIS_SB" verify > /dev/null
+    assert_contains "$(analysis_report "$ANALYSIS_SB")" "1-2 technical" \
+        "one unit was sequenced twice and the other once"
+}
+
+# The same-key-same-timepoint refusal is ambiguous between the two remedies, and offering only
+# one of them is wrong half the time: technical replicates that were meant to be merged belong
+# under one RG_Sample, not in a new exp_ column.
+test_the_duplicate_pool_refusal_offers_both_remedies() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
+TestSample1,PoolA,Pop1,T1
+TestSample2,PoolB,Pop1,T1'
+    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "two pools at one point is still a refusal"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "analysis.series.biologicalRep or technicalRep" \
+        "one remedy is to tell them apart and declare what they are"
+    assert_contains "$out" "give the rows the same" \
+        "and the other is to merge them, which is the pipeline's job and not a series"
 }
 
 # ---------------------------------------------------------------------------------------

@@ -10,11 +10,21 @@ nextflow.enable.dsl=2
 // process, workflow or function.
 def analysisDefaults() {
     return [ runs      : 'all',   // 'all' is a keyword; a list is always run names.
-             folderName: ''    ]  // Empty means the module's own name.
+             folderName: '',      // Empty means the module's own name.
+             // The time axis. Empty kind means the project has not declared one.
+             timeVar   : [ column: 'exp_time', kind: '', unit: '', order: [], format: '', locale: 'en' ],
+             // What a repeated measurement is. Empty `by` means every exp_ variable but time; a
+             // key column in neither replicate list is a condition.
+             series    : [ by: [], biologicalRep: [], technicalRep: [], incomplete: 'fail' ] ]
 }
 
 // One of those settings, as the project set it or as it defaults. The scope may not exist:
 // analysis.config carries only what the user chose to write.
+//
+// A NESTED scope is merged key by key. Nextflow replaces a map rather than merging into it, so a
+// project writing only `analysis { timeVar { kind = 'numerical' } }` would otherwise get a map
+// holding kind and nothing else - and the time column would default to nothing rather than to
+// exp_time, failing as "no time column" on a project that plainly has one.
 def analysisSetting(String key) {
     def defaults = analysisDefaults()
     if (!defaults.containsKey(key)) {
@@ -25,7 +35,27 @@ def analysisSetting(String key) {
     def scope = params.containsKey('analysis') && params.analysis instanceof Map ? params.analysis : [:]
     // containsKey and not a truthiness test: an empty list is a value the user wrote, and
     // selectedRuns() refuses it by name.
-    return scope.containsKey(key) ? scope[key] : defaults[key]
+    if (!scope.containsKey(key)) return defaults[key]
+
+    def written = scope[key]
+    if (!(defaults[key] instanceof Map)) return written
+
+    if (!(written instanceof Map)) {
+        throw new IllegalArgumentException(
+            "analysis.${key} is a scope holding ${defaults[key].keySet().sort().join(', ')}, " +
+            "and this project sets it to a single value.\n" +
+            "Write it as\n" +
+            "    analysis {\n        ${key} {\n            ${defaults[key].keySet().sort().first()} = ...\n        }\n    }")
+    }
+    def unknown = written.keySet().collect { name -> "${name}".toString() }
+                         .findAll { name -> !defaults[key].containsKey(name) }
+    if (!unknown.isEmpty()) {
+        throw new IllegalArgumentException(
+            "analysis.${key} is given ${unknown.size() == 1 ? 'a setting' : 'settings'} the " +
+            "analysis layer does not have: ${unknown.join(', ')}\n" +
+            "It has: ${defaults[key].keySet().sort().join(', ')}.")
+    }
+    return defaults[key] + written
 }
 
 // Every setting one module has, as the project set them over the module's own defaults.

@@ -763,7 +763,7 @@ A1,counted twice,Pop1
 # exp_ is the first OPEN prefix. RG_ and param_ are closed lists and that is what lets them
 # catch a typo; here there is no list, so a misspelling is a variable rather than an error.
 test_metadata_accepts_any_experimental_variable() {
-    pm 'SampleID,exp_timepoint,exp_treatment,exp_tiempoint
+    pm 'SampleID,exp_time,exp_treatment,exp_tiempoint
 A1,T1,control,T1
 '
     assert_status 0 "$PM_STATUS" "an exp_ name is checked against nothing"
@@ -777,7 +777,7 @@ A1,T1
 '
     assert_status 1 "$PM_STATUS" "exp_ alone should be refused"
     assert_contains "$PM_ERR" "no variable name after it" "saying what is missing"
-    assert_contains "$PM_ERR" "exp_timepoint" "and showing the shape of one"
+    assert_contains "$PM_ERR" "exp_time" "and showing the shape of one"
 }
 
 # pt_ is claimed for a later release and refused today, so that giving it a meaning then does

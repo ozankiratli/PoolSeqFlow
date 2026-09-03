@@ -20,7 +20,7 @@
 #                cell means "use the global setting". A closed list, like RG_.
 #
 #   exp_*        An experimental variable — exp_population, exp_treatment, exp_replicate.
-#                exp_timepoint is time. Any name you like after the prefix: unlike RG_ and
+#                exp_time is time. Any name you like after the prefix: unlike RG_ and
 #                param_ there is no list to check it against, so a misspelled exp_ column is
 #                a new variable and not an error. Read by analyses, never by steps 0-8.
 #
@@ -60,7 +60,7 @@
 # its two rows share an RG_Sample and repeat that pool's param_poolSize and its exp_ values.
 # `sequencing_run` is what differs BETWEEN those two rows, so it carries no prefix; `phenotype`
 # is a column of the user's own. Replace all of it with yours.
-SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,param_poolSize,exp_population,exp_timepoint,sequencing_run,phenotype
+SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,param_poolSize,exp_population,exp_time,sequencing_run,phenotype
 Sample1T1Rep1,Sample1T1,Lib1,ILLUMINA,Unit1,50,Pop1,T1,Run1,susceptible
 Sample1T1Rep2,Sample1T1,Lib1,ILLUMINA,Unit2,50,Pop1,T1,Run2,susceptible
 Sample1T2Rep1,Sample1T2,Lib1,ILLUMINA,Unit1,50,Pop1,T2,Run1,resistant

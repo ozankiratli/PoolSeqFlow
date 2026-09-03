@@ -112,6 +112,31 @@ def outputLink(Map entry) {
     return "[#${entry.anchor}](${manualFile()}#${entry.anchor})".toString()
 }
 
+// How the design was read, for the published folder. The same list the verification report
+// renders: a note that reaches only a console is lost by the time anyone reads the result.
+def readmeDesignLines(Map target) {
+    def design = target.design
+    def lines = []
+    if (design?.time != null) {
+        def how = design.time.kind == 'datetime'
+            ? "parsed as `${design.time.format}` under locale `${design.time.locale}`"
+            : (design.time.kind == 'numerical' ? "numeric, in ${design.time.unit}s" : 'categorical, ordered as below')
+        lines << ''
+        lines << '## The time axis'
+        lines << ''
+        lines << "`${design.time.column}`, ${how}. The levels, in the order this analysis used them:"
+        lines << ''
+        lines << "    ${design.time.levels.collect { level -> level.shown }.join('  ')}"
+    }
+    if (design?.warnings) {
+        lines << ''
+        lines << '## Read these before the numbers'
+        lines << ''
+        design.warnings.each { note -> lines << "- ${note.detail.split('\n').join(' ')}".toString() }
+    }
+    return lines
+}
+
 // The README a published folder carries: every file in it, what it is, and where to read about
 // it. Rendered from the module's declarations and the frame's own, so no module writes its own.
 def readmeText(String module, Map target, List outputs) {
@@ -131,6 +156,8 @@ def readmeText(String module, Map target, List outputs) {
     (outputs + frameOutputs()).each { output ->
         lines << "| `${output.file}` | ${output.summary ?: ''} | ${outputLink(output)} |".toString()
     }
+
+    lines.addAll(readmeDesignLines(target))
 
     lines << ''
     lines << 'The manual this release ships is the one linked above. The same text for whichever'

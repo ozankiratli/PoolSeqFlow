@@ -57,6 +57,87 @@ params {
         // as the pipeline named it - Results/<folderName>/Shared_1, and so on.
         folderName = ''
 
+        // THE TIME AXIS. Set this whenever your metadata has an exp_time column — a project
+        // that has one and does not say how to read it is refused, because time is the one
+        // variable whose ORDER changes what a result means and it is never guessed.
+        //
+        // timeVar {
+        //     // Which column holds time. Must be an exp_ column: only those are checked for
+        //     // agreeing across the rows of one pool.
+        //     column = 'exp_time'
+        //
+        //     // How to read it. Required. One of:
+        //     //
+        //     //   'numerical'    the values are numbers. Spacing is real, so a rate per unit
+        //     //                  is meaningful. Needs `unit` below.
+        //     //   'datetime'     the values are dates. Needs `format`, and `locale` if the
+        //     //                  month names are not English. Measured in days.
+        //     //   'categorical'  the values are labels in an order you give. Rank only —
+        //     //                  no rate can be fitted, and no unit may be set.
+        //     kind = 'numerical'
+        //
+        //     // numerical only, and required for it. One of:
+        //     //   millisecond second minute hour        exact durations
+        //     //   day week month year                   calendar
+        //     //   generation passage cycle              counts
+        //     //   step                                  evenly spaced in something unnamed
+        //     unit = 'generation'
+        //
+        //     // datetime only. java.time patterns — yyyy or uuuu year, MM month digits,
+        //     // MMM short name, MMMM full name, dd day, HH 24-hour, hh with a for 12-hour.
+        //     // 07/03/2024 is a valid date under dd/MM/yyyy AND MM/dd/yyyy, four months
+        //     // apart, so this is asked for rather than guessed. The verification report
+        //     // prints the dates it read, as ISO, in the order it will use them — read it.
+        //     format = 'dd/MM/yyyy'
+        //
+        //     // datetime only. The language month and weekday names are written in.
+        //     // Only affects reading; what gets published is ISO either way.
+        //     locale = 'en'
+        //
+        //     // categorical only. The order of the levels, exactly as the metadata spells
+        //     // them. Without it they are sorted ALPHABETICALLY, which puts T10 between T1
+        //     // and T2, and 'post' before 'pre'.
+        //     order = ['pre', 'post']
+        // }
+
+        // TIME SERIES — which pools are one thing measured repeatedly.
+        //
+        // series {
+        //     // The variables that identify a series. Left empty it is every exp_ variable
+        //     // except time. SET IT if one of your exp_ columns is recorded AT each
+        //     // timepoint — a temperature, a census — because that varies within a series
+        //     // and would split every one of them into singletons.
+        //     by = ['exp_population', 'exp_replicate']
+        //
+        //     // Which of those index REPEATS rather than naming a condition. Both take any
+        //     // number of columns — two lanes crossed with three sequencing runs is
+        //     // technicalRep = ['exp_lane', 'exp_seqrun'], six technical replicates each.
+        //     //
+        //     // The two are not interchangeable. Biological replicates are independent
+        //     // repeats of one condition and are where degrees of freedom come from;
+        //     // technical replicates are one biological unit measured more than once and
+        //     // carry none. Calling the second the first is pseudo-replication.
+        //     //
+        //     // A key column named in neither is a CONDITION — what is being compared.
+        //     // Nothing is guessed, and the verification report prints every key column
+        //     // under its role so a column in the wrong place is visible.
+        //     biologicalRep = ['exp_replicate']
+        //     technicalRep  = ['exp_lane']
+        //
+        //     // What to do when a series does not cover every timepoint.
+        //     //
+        //     //   'fail'       refuse, naming what is missing            (the default)
+        //     //   'drop'       leave the incomplete series out
+        //     //   'keepLeft'   cut the timeline back to the points every series shares,
+        //     //                from the START
+        //     //   'keepRight'  the same, from the END
+        //     //
+        //     // keepLeft and keepRight shorten the TIMELINE, not each series, so what comes
+        //     // out is comparable across series. Neither fills a gap in: no value is ever
+        //     // carried forward or invented.
+        //     incomplete = 'fail'
+        // }
+
         // A MODULE'S OWN SETTINGS go in a scope named after it, inside this one. What a module
         // has is listed in its section of the manual, and a key it does not have is refused
         // rather than ignored - so a misspelling stops the run instead of leaving the module

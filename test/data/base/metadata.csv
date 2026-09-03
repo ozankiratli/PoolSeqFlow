@@ -1,4 +1,4 @@
-SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,exp_population,exp_timepoint
+SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,exp_population,exp_time
 TestSample1,TestSample1,Lib1,ILLUMINA,Unit1,Pop1,T1
 TestSample2,TestSample2,Lib1,ILLUMINA,Unit1,Pop1,T2
 TestSample3,TestSample3,Lib1,ILLUMINA,Unit1,Pop2,T1

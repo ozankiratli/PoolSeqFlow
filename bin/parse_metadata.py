@@ -65,7 +65,7 @@ PARAM_COLUMNS = {
 # An experimental variable. Open where RG_ and param_ are closed: there is no list to check a
 # name against, so nothing here can catch a misspelling.
 EXPERIMENTAL_PREFIX = "exp_"
-TIME_VARIABLE = "exp_timepoint"
+TIME_VARIABLE = "exp_time"
 
 # Claimed and unused. Every column carrying it is refused.
 RESERVED_PREFIX = "pt_"

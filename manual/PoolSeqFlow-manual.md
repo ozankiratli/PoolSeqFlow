@@ -1423,7 +1423,7 @@ Replacing a command with an absolute path makes the pipeline use a system instal
 Three of its columns change your results. The rest are yours, and the pipeline never interprets them.
 
 ```csv
-SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,param_poolSize,exp_population,exp_timepoint,sequencing_run
+SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,param_poolSize,exp_population,exp_time,sequencing_run
 Sample1T1Rep1,Sample1T1,Lib1,ILLUMINA,Unit1,50,Pop1,T1,Run1
 Sample1T1Rep2,Sample1T1,Lib1,ILLUMINA,Unit2,50,Pop1,T1,Run2
 Sample1T2Rep1,Sample1T2,Lib1,ILLUMINA,Unit1,50,Pop1,T2,Run1
@@ -1462,7 +1462,7 @@ An `exp_` column says what an experimental variable was for each pool: `exp_popu
 
 Two conventions and one rule:
 
-- **`exp_timepoint` is time.** A module that plots or models a trajectory looks for it under that name unless you point it elsewhere.
+- **`exp_time` is time**, and it is the one variable the analysis layer treats specially — see [The time axis](#the-time-axis). A project that has an `exp_time` column must say how to read it or every analysis refuses.
 - **The prefix is open.** Unlike `RG_` and `param_` there is no list to check a name against, so `exp_tiempoint` is a new variable rather than an error. Nothing can catch that for you; the verification report prints the variables it found at the start of every analysis, which is where you will see it.
 - **An `exp_` column describes the POOL, not the row.** Rows sharing an `RG_Sample` are one pool — their reads are merged and their depths added into one column of every published table — so they must give the same value for every `exp_` column, and **an analysis refuses a file where they disagree**, naming the column, the pool and each value. A blank cell means no value, which is a third answer rather than agreement with either.
 
@@ -2424,7 +2424,244 @@ Everything the analysis layer takes:
 |---|---|---|
 | `analysis.runs` | Which of your runs this invocation covers | [below](#analysis-runs) |
 | `analysis.folderName` | Which folder under `Analysis/Results` it writes to | [Output Layout](#analysis-folder-name) |
+| `analysis.timeVar.*` | How the time column is read and ordered | [below](#the-time-axis) |
+| `analysis.series.*` | Which pools are one thing measured repeatedly | [below](#time-series) |
 | `analysis.<module>.*` | One module's own settings | [below](#module-settings) |
+
+A scope you write only part of keeps the rest of its defaults — `timeVar { kind = 'numerical' }` still takes `column` from `exp_time`. A key a scope does not have is refused, naming the ones it does.
+
+### The time axis { #the-time-axis }
+
+Time is the one experimental variable whose **order** carries meaning, and every way of getting it wrong is silent: the plot renders, the slope has a sign, and nothing says the sequence was backwards. So it is declared rather than guessed.
+
+**If your metadata has an `exp_time` column, `analysis.timeVar.kind` is required** and every analysis refuses until it is set. There is no auto-detection on purpose: `20240307` reads as a number as readily as a date, which keeps the *order* right and makes every *interval* nonsense.
+
+```groovy
+params {
+    analysis {
+        timeVar {
+            column = 'exp_time'      // must be an exp_ column
+            kind   = 'numerical'     // numerical | datetime | categorical
+            unit   = 'generation'
+        }
+    }
+}
+```
+
+`column` must name an `exp_` column. Only those are checked for agreeing across the rows of one pool, and pointing time at an unprefixed column would let a single pool carry two timepoints with nothing to stop it.
+
+#### `kind` is a measurement scale, not a sort order
+
+| `kind` | ordered by | spacing | a module may |
+|---|---|---|---|
+| `numerical` | the number | **real** | fit a rate — per generation, per day |
+| `datetime` | the parsed date | **real**, in days | fit a rate per day |
+| `categorical` | `order`, else alphabetically | **none** | rank and sequence only — **not** a rate |
+
+Each level gets a `position`: the number itself for `numerical`, days from the earliest for `datetime`, and **nothing at all** for `categorical`. That absence is what lets a module refuse to fit a slope against an axis that has no spacing, instead of doing it anyway.
+
+#### `unit`, required for `numerical`
+
+The numbers are distances, so a rate is meaningful and has to be labelled — `0.003 per unit` is not an answer. One of:
+
+| | |
+|---|---|
+| exact durations | `millisecond` `second` `minute` `hour` |
+| calendar | `day` `week` `month` `year` |
+| counts | `generation` `passage` `cycle` |
+| unnamed | `step` — evenly spaced in something you have not named |
+
+`step` is the escape: `1, 2, 5` under `step` still means the second gap is three times the first. If the numbers are only ranks with no spacing at all, that is `categorical`, not `step`.
+
+**A `unit` on `categorical` time is refused.** Setting one asserts a spacing that categorical time does not have; if the spacing is real, the kind is `numerical`. `month` and `year` are calendar units and not fixed durations — 28 to 31 days, 365 or 366 — which costs nothing here because the position stays in your unit and is never converted.
+
+#### `order`, for `categorical`
+
+```groovy
+timeVar { kind = 'categorical'; order = ['pre', 'during', 'post'] }
+```
+
+Matching is exact: `Pre` and `pre` are different. A level in your metadata that `order` does not include is **refused**, naming it. An entry in `order` that no pool has is **allowed** and reported — a timepoint you have planned but not yet sequenced is an ordinary state.
+
+**Without `order` the levels are sorted alphabetically**, and alphabetical is wrong more often than it is right:
+
+| values | alphabetical gives | you meant |
+|---|---|---|
+| `T1 T2 T10` | `T1 T10 T2` | `T1 T2 T10` |
+| `baseline week2 week12` | `baseline week12 week2` | `baseline week2 week12` |
+| `pre post` | `post pre` | `pre post` |
+
+When alphabetical is in use, PoolSeqFlow compares it against a sort that reads embedded digits as numbers, and **warns when the two disagree** — that catches the first two rows above. It cannot catch `pre`/`post`: there is nothing in those strings to disagree about, and no software can know which came first. **That one is yours**, and the defence is that the verification report prints the levels in the order it will use them, immediately above your results.
+
+#### `format` and `locale`, for `datetime`
+
+`07/03/2024` is a valid date under `dd/MM/yyyy` and under `MM/dd/yyyy`, and the two are four months apart. The pattern is asked for because no software can tell which you meant.
+
+Patterns are `java.time`'s. The letters you will actually use:
+
+| letter | means | example |
+|---|---|---|
+| `uuuu` / `yyyy` | four-digit year | `2024` |
+| `uu` / `yy` | two-digit year — **always 2000–2099** | `26` → 2026 |
+| `MM` | month as two digits | `03` |
+| `M` | month as one or two digits | `3` |
+| `MMM` | short month name | `Mar` |
+| `MMMM` | full month name | `March` |
+| `dd` | day as **exactly two** digits | `07` |
+| `d` | day as one or two digits | `7` or `07` |
+| `HH` | hour, **24-hour clock** | `14` |
+| `hh` | hour, **12-hour clock — requires `a`** | `02` |
+| `mm` | minute | `30` |
+| `ss` | second | `00` |
+| `a` | AM/PM marker | `PM`, `pm` |
+| `'text'` | literal text, in single quotes | `d 'de' MMMM 'de' yyyy` |
+
+**The failures, explicitly.** Each of these was measured, and each is a real way to lose an afternoon:
+
+- **`hh` without `a` is refused.** `hh:mm` on afternoon samples has no way to know they are afternoon. PoolSeqFlow stops rather than reading `02:30 PM` as half past two in the morning — twelve hours early on every one of them. Write `hh:mm a`, or `HH:mm` for a 24-hour clock.
+- **`dd` does not accept a one-digit day.** `2024-03-7` fails under `yyyy-MM-dd` and works under `yyyy-MM-d`. `d` accepts both `7` and `07`, so prefer it if your file is inconsistent.
+- **An impossible date is refused, never corrected.** `2024-02-31` stops the run naming the value. A lenient parser would quietly make it `2024-02-29`, which then sorts perfectly and is not the date anybody wrote.
+- **`yyyy` and `uuuu` both work.** They differ only for dates before year 1, which yours are not.
+- **Two-digit years are this century.** `yy` reads `69` as 2069, not 1969. Write four digits.
+- **Month names are case-insensitive.** `12 JUN 26`, `12 Jun 26` and `12 jun 26` all read under `dd MMM yy`.
+- **Time zones are not supported.** Dates are read as local, without an offset. If your values carry one, strip it.
+- **A pattern with no date is refused.** A time of day alone has no order across days.
+
+`locale` is the language your month names are written in — it defaults to `en` and only matters for `MMM`, `MMMM` and `a`. A numeric pattern like `yyyy-MM-dd` never needs it.
+
+```groovy
+timeVar { kind = 'datetime'; format = 'd MMMM yyyy'; locale = 'fr' }   // 5 décembre 2011
+```
+
+`de` reads `5. Dezember 2011`, `tr` reads `5 Aralık 2011`, `ja` reads `2011年12月5日`. A tag this Java does not know is **refused by name** rather than silently falling back to English. The locale affects only *reading*: what gets published is the ISO date and a number, so a project written in French produces output identical to one written in English.
+
+#### What the report tells you, and why to read it
+
+Two mistakes are impossible to catch — an ambiguous date pattern, and a categorical order with no lexical clue. The defence is that every run prints what it did, in the order it will use, immediately above the results:
+
+```
+TIME VARIABLE:         exp_time, datetime, 'dd/MM/yyyy' (fr)
+TIME VARIABLE:             2024-03-07T00:00  2024-04-11T00:00   (2 levels)
+```
+
+Someone who meant July 3rd sees `2024-03-07` and catches it in one glance. That line is doing more work than any check in this program.
+
+### Time series { #time-series }
+
+A trajectory needs more than an order: it needs to know which pools are **one thing measured repeatedly**. A series is the pools that share every identifying variable and differ only in time.
+
+```groovy
+params {
+    analysis {
+        series {
+            by            = ['exp_treatment', 'exp_replicate', 'exp_lane']
+            biologicalRep = ['exp_replicate']
+            technicalRep  = ['exp_lane']
+            incomplete    = 'fail'
+        }
+    }
+}
+```
+
+**`by` defaults to every `exp_` variable except time**, and the report always prints the key it used. Set it explicitly when one of your `exp_` columns is recorded **at** each timepoint rather than identifying what is being followed — a cage temperature, a census count. Such a column differs *within* a series, so leaving it in the key splits every series into singletons and the design dissolves with no error at all.
+
+#### Replicates: which repeats are independent { #replicates }
+
+"Replicate" covers two things that are handled in two different places and have **opposite statistical standing**.
+
+**Technical replicates** are one biological sample measured more than once — two lanes, two libraries, a second sequencing run for validation. They are not independent, and treating them as though they were is pseudo-replication. PoolSeqFlow supports both ways of handling them, and **either is a valid choice**:
+
+- **Merge them.** Give the rows the same `RG_Sample`. The pipeline pools their reads and adds their depths, and they become one column of every published table. Anything that differs between those rows — the lane, the run — then goes in an unprefixed column, because it is no longer an experimental variable for that pool.
+- **Keep them apart.** Give the rows different `RG_Sample` values, so they stay distinct pools, and an `exp_lane` column that tells them apart is then a perfectly good experimental variable. Name it in `technicalRep`.
+
+**Biological replicates** are independent repeats of the same condition — two cages of flies under one selection regime. They carry drift, they are the strata a test conditions on, and they are where degrees of freedom come from. Give them an `exp_` column and name it in `biologicalRep`.
+
+**Both settings take any number of columns.** Two lanes crossed with three sequencing runs is `technicalRep = ['exp_lane', 'exp_seqrun']` and six technical replicates per unit; nested and crossed designs both work, because forming the unit drops all of those columns either way.
+
+That gives three levels, each derived once and available to every module:
+
+| | what it is | formed by |
+|---|---|---|
+| series | one measurable trajectory | the full key |
+| **unit** | **the independent biological unit** | dropping the `technicalRep` columns |
+| condition | what is being compared | dropping the `biologicalRep` columns too |
+
+**A module that counts degrees of freedom or chooses strata reads units, never series.** A key column named in neither list is a condition, which is the default and the common case.
+
+Nothing is guessed. `biologicalRep` and `technicalRep` both default to empty, and a test that needs independent replicates refuses by name rather than inventing them.
+
+#### The mistake to watch for
+
+The report prints **every key column under exactly one role**:
+
+```
+SERIES:                conditions   exp_treatment
+SERIES:                biological   exp_replicate
+SERIES:                technical    exp_lane, exp_seqrun
+SERIES:                    2 conditions, 3 biological replicates each, 6 technical
+SERIES:                    36 series over 4 timepoints, from 6 independent units
+```
+
+Read those three lines. A technical column left out of `technicalRep` is read as a **condition** — one treatment silently becomes several, and a test is handed strata that are the same DNA. Nothing can detect that, for the same reason nothing can detect `dd/MM` against `MM/dd`: both readings are internally consistent. Printing the partition is the whole defence.
+
+The counts are per unit and given as a range when they vary, because a design where one sample was sequenced twice for validation and the rest once is perfectly ordinary and a single number would be a plausible-looking lie.
+
+**And a design PoolSeqFlow cannot see through:** three cages sequenced on two lanes each, with the lanes neither merged nor declared technical but labelled `exp_replicate = 1..6`, has three independent units and claims six. The frame reports what you declared. The line `6 pools from 6 libraries` — where a merged design would say `from 12` — is the number to check.
+
+#### When a series is missing a timepoint
+
+`analysis.series.incomplete` decides, and it defaults to `fail` because a ragged panel analysed as a complete one is a wrong answer that looks like a right one.
+
+| | |
+|---|---|
+| `fail` | refuse, naming each series and the timepoints it lacks |
+| `drop` | leave the incomplete series out, named in the report |
+| `keepLeft` | cut the timeline back to the longest run of points **every** series covers, from the start |
+| `keepRight` | the same, from the end |
+
+`keepLeft` and `keepRight` shorten the **timeline**, not each series individually, so every series that survives covers the same points and they remain comparable. Worked through, with `T = g0 g5 g10 g15 g20`:
+
+```
+        g0  g5  g10 g15 g20
+  A      ●   ●   ●   ●   ●     a cage crashes late
+  B      ●   ●   ●   ●   ●
+  C      ●   ●   ●   ·   ·
+keepLeft  └───────────┘        -> g0 g5 g10, all three complete
+keepRight                      -> nothing: no suffix C covers.  REFUSED
+```
+
+```
+        g0  g5  g10 g15 g20
+  A      ●   ●   ●   ●   ●     a replicate joins late
+  C      ·   ·   ●   ●   ●
+keepRight        └───────┘     -> g10 g15 g20
+keepLeft                       -> nothing: C has no g0.  REFUSED
+```
+
+```
+        g0  g5  g10 g15 g20
+  A      ●   ●   ●   ●   ●     a hole in the middle
+  B      ●   ●   ·   ●   ●
+keepLeft  └───────┘            -> g0 g5     (discards g15 g20, which B has)
+keepRight             └───┘    -> g15 g20   (discards g0 g5,   which B has)
+```
+
+That last one is the case worth thinking about: **both work and they keep different data.** The choice is early drift against late response — a scientific one, not a mechanical one, and picking the wrong one silently answers a different question.
+
+If a truncation leaves a **single** timepoint, that is reported loudly: every series then has one measurement and there is no time axis at all. `drop` is usually what such a design wanted.
+
+**None of the four fills a gap in.** No value is carried forward, backward or interpolated. Imputing an allele frequency fabricates a measurement that everything downstream then weights by a sequencing depth nobody observed.
+
+#### What always refuses
+
+Four things are structural rather than preferences, and no setting turns them off:
+
+- **Two pools with the same key at the same timepoint.** The series is then not a function of time. What to do depends on which kind they are: give them an `exp_` column and declare it in [`biologicalRep` or `technicalRep`](#replicates) if they are genuinely separate measurements, or give the rows the same `RG_Sample` if they are one pool sequenced twice that you meant to merge.
+- **`by` naming the time column**, a column that is not an `exp_` column, or one your metadata does not have.
+- **Two series that would carry the same label.**
+- **Two spellings of one point in time** — `5 December 2011` and `05 December 2011`, or `1` and `1.0`. Which level a pool belongs to would have no answer.
+
+A pool whose `exp_time` cell is **blank** joins no series. It is counted and named in the report, and whether that matters is the module's to say — a project can legitimately hold one pool that was sampled once.
 
 ### A module's own settings { #module-settings }
 
