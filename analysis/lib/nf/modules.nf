@@ -32,6 +32,7 @@ def builtinModules() {
             contract: contractVersion(),
             needs   : [],
             gates   : [],
+            outputs : [],
             builtin : true,
         ],
     ]
@@ -84,6 +85,7 @@ def readManifest(Object dir) {
              contract: "${parsed.contract}".toString(),
              needs   : parsed.needs ?: [],
              gates   : parsed.gates ?: [],
+             outputs : parsed.outputs ?: [],
              builtin : false,
              dir     : "${dir}".toString(),
              entry   : "${entry}".toString() ]

@@ -8,6 +8,7 @@ nextflow.enable.dsl=2
 
 include { verificationRecordName } from './paths.nf'
 include { citationShell } from './citations.nf'
+include { readmeShell } from './outputs.nf'
 
 // What counts as the script that produced a result, by extension: R, and the shell, Python and
 // Julia a module may drive it from.
@@ -34,6 +35,7 @@ process InstallResults {
     script_list = scriptSuffixes().collect { s -> "*.${s}" }.join(', ')
     // Written into the STAGE, so the citations arrive in the same rename as the analysis.
     citations = citationShell("${target.module}", '$STAGE')
+    readme = readmeShell("${target.module}", target, '$STAGE')
     """
     set -eo pipefail
 
@@ -62,6 +64,9 @@ process InstallResults {
         echo "PUBLISHING ${target.label}: Nothing was published and the folder is untouched." >&2
         exit 1
     fi
+
+    # Every file the module said it would publish is here, or nothing is published.
+    ${readme}
 
     # What this analysis was produced with, beside the analysis itself.
     ${citations}

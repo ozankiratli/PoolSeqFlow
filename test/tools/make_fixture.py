@@ -262,12 +262,13 @@ def main():
     # feature and has its own case; making it the fixture's default would change every
     # column count in the suite to exercise something one test can exercise directly.
     #
-    # population/timepoint are design columns. They carry what used to be crammed into the
-    # DS field as Pop1_T1_Rep1, and the pipeline never reads them - which is the point of
-    # having them here: the suite runs with design columns present.
+    # exp_population/exp_timepoint are experimental variables. They carry what used to be
+    # crammed into the DS field as Pop1_T1_Rep1, and no pipeline step reads them - which is the
+    # point of having them here: the suite runs with a design present, and the analysis layer
+    # has one to summarise.
     with open(os.path.join(out, "metadata.csv"), "w") as fh:
         fh.write("SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,"
-                 "population,timepoint\n")
+                 "exp_population,exp_timepoint\n")
         for s in range(n_s):
             name = f"{args.prefix}{s + 1}"
             pop, tp = s // 2 + 1, s % 2 + 1

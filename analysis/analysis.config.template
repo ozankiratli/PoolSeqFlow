@@ -56,5 +56,17 @@ params {
         // Under multiRun, each results directory gets its own folder inside this one, named
         // as the pipeline named it - Results/<folderName>/Shared_1, and so on.
         folderName = ''
+
+        // A MODULE'S OWN SETTINGS go in a scope named after it, inside this one. What a module
+        // has is listed in its section of the manual, and a key it does not have is refused
+        // rather than ignored - so a misspelling stops the run instead of leaving the module
+        // running on a default you did not choose.
+        //
+        //     basicstats {
+        //         chromosomes = ['chr2L', 'chr3R']
+        //     }
+        //
+        // Inside `analysis`, always. A scope written at the top level of this file is read as
+        // a change to the settings that produced your results, and every analysis refuses.
     }
 }

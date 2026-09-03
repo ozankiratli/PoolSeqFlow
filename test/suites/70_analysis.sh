@@ -69,7 +69,7 @@ analysis_baseline_multi() {
 # files and never opens them, so empty ones answer exactly the question the count asks.
 analysis_plant_results() {
     local out="$1" name
-    mkdir -p "$out/Frequencies" "$out/VCF" "$out/Ready" "$out/Reports"
+    mkdir -p "$out/Frequencies" "$out/VCF" "$out/Ready" "$out/Reports" "$out/Reports/Depth"
     for name in Test_snp Test_indel; do
         : > "$out/Frequencies/${name}_freq.tsv"
         : > "$out/Frequencies/${name}_depth.tsv"
@@ -78,6 +78,7 @@ analysis_plant_results() {
     for name in 1 2 3 4 5 6; do
         : > "$out/Ready/TestSample${name}_ready.bam"
         : > "$out/Ready/TestSample${name}_ready.bam.bai"
+        : > "$out/Reports/Depth/TestSample${name}_depth_histogram.tsv"
     done
 }
 
@@ -198,7 +199,8 @@ test_the_analysis_layer_ships_with_the_release() {
              analysis/frame.config analysis/frame.version analysis/citations.json \
              analysis/analysis.config.template \
              analysis/lib/nf/paths.nf analysis/lib/nf/plan.nf analysis/lib/nf/modules.nf \
-             analysis/lib/nf/results.nf analysis/lib/nf/store.nf analysis/lib/nf/citations.nf; do
+             analysis/lib/nf/results.nf analysis/lib/nf/store.nf analysis/lib/nf/citations.nf \
+             analysis/lib/nf/design.nf analysis/lib/nf/outputs.nf; do
         assert_file "$REPO_ROOT/$f" "$f must ship"
     done
     assert_contains "$(cat "$REPO_ROOT/PoolSeqFlow")" "lib analysis install" \
@@ -263,6 +265,10 @@ test_the_defaults_carry_what_a_module_run_has_no_other_source_for() {
     assert_contains "$cfg" 'PATH="${System.getenv(' "bin/ on the task PATH"
     assert_contains "$cfg" 'conda.enabled = true' "conda, which every analysis module needs"
     assert_contains "$cfg" 'resourceLimits' "and the ceiling on what a task may ask for"
+    # The wrapper exports it into the launching shell, which is the task's environment only
+    # under the local executor.
+    assert_contains "$cfg" 'POOLSEQFLOW_HOME="${System.getenv(' \
+        "and the installation, for a task that does not inherit the launching shell"
 }
 
 # The frame's version reaches a module or nothing does: Nextflow reads a nextflow.config beside
@@ -440,6 +446,22 @@ workflow {
     assert_status 0 "$status" "a module naming only itself should run"
     assert_contains "$(analysis_output)" "PROBE requires depths" \
         "the required classes come from the module's manifest, which main.nf never repeats"
+}
+
+# resultsTargets() marks a class required by asking whether the manifest's `needs` contains its
+# name, so a name no class answers to used to pass verification with that check silently absent -
+# the module then started with the files it said it could not run without unaccounted for.
+test_a_module_needing_an_unknown_artifact_class_refuses() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    analysis_install_module probe \
+        '{"name":"probe","version":"0.1.0","contract":"freq-1","summary":"reads nothing that exists","needs":["frequencies","pileups"]}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" probe)
+    assert_status 1 "$status" "a manifest naming a class the frame has no answer for must stop the run"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "pileups" "the refusal names the class that does not exist"
+    assert_contains "$out" "bams, depths, frequencies, histograms, vcf" \
+        "and lists every class a module can name"
 }
 
 test_a_manifest_missing_a_field_refuses() {
@@ -723,6 +745,97 @@ test_each_results_directory_gets_its_own_folder_under_a_multi_run() {
 }
 
 # ---------------------------------------------------------------------------------------
+# The experimental design, and the one thing the frame refuses about it.
+
+# Writes a metadata file into a sandbox's project directory, replacing the fixture's.
+analysis_write_metadata() {
+    printf '%s\n' "$2" > "$1/main/metadata.csv"
+}
+
+# EVERY analysis records the design the project was in, so a project whose design contradicts
+# itself publishes nothing - not only the analyses that read one. The refusal is at DAG-build,
+# ahead of the identity check, so it is what a case sees even when it has also moved the
+# metadata the guard watches.
+test_a_pool_whose_rows_disagree_on_an_experimental_column_refuses() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_timepoint
+TestSample1,PoolA,T1
+TestSample2,PoolA,T2'
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "one pool with two timepoints is not a design"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "the pool 'PoolA' is given more than one exp_timepoint" \
+        "the refusal names the column and the pool"
+    assert_contains "$out" "'T1' on TestSample1" "and which row said what"
+    assert_contains "$out" "'T2' on TestSample2" "for both of them"
+    assert_contains "$out" "is not an experimental variable" \
+        "and tells the user what belongs in an unprefixed column instead"
+}
+
+# A blank cell means no value, which is a third answer rather than agreement with either - the
+# same rule param_poolSize follows.
+test_a_blank_experimental_cell_is_a_disagreement() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_treatment
+TestSample1,PoolA,control
+TestSample2,PoolA,'
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a blank cell must not pass as agreement"
+    assert_contains "$(analysis_output)" "'(blank)' on TestSample2" \
+        "and the refusal says which row left it empty"
+}
+
+# exp_ columns refine no step's identity, so two runs reading DIFFERENT metadata files still
+# produce the same tables and share one results directory. The check runs across a target's
+# members for exactly that reason: neither file disagrees with itself.
+test_two_runs_sharing_a_directory_are_checked_against_each_other() {
+    analysis_ready multi || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_timepoint
+TestSample1,PoolA,T1'
+    printf '%s\n' 'SampleID,RG_Sample,exp_timepoint' 'TestSample1,PoolA,T2' \
+        > "$ANALYSIS_SB/main/metadata_b.csv"
+    cat > "$ANALYSIS_SB/main/runs.csv" <<'TABLE'
+RunID,annotate,metadataFile
+lenient_a,true,metadata.csv
+lenient_b,true,metadata_b.csv
+TABLE
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "two runs in one directory must agree about the pool they share"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "the pool 'PoolA' is given more than one exp_timepoint" \
+        "even though neither file disagrees with itself"
+}
+
+test_the_verification_report_states_the_design() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "the fixture's design is consistent"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "EXPERIMENTAL DESIGN:       Output: 6 pools from 6 libraries" \
+        "the report counts the pools and the libraries merged into them"
+    assert_contains "$report" "exp_population (3 levels), exp_timepoint (2 levels)" \
+        "and names each variable with how many levels it has"
+}
+
+# A project with no exp_ columns and one whose metadata was never copied both have no design,
+# and they are not the same thing - the second is a project set up somewhere the CSV is not.
+test_the_report_tells_no_design_from_no_metadata() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,population
+TestSample1,PoolA,Pop1'
+    run_analysis "$ANALYSIS_SB" verify > /dev/null
+    assert_contains "$(analysis_report "$ANALYSIS_SB")" "1 pools, no exp_ columns" \
+        "an unprefixed column is not an experimental variable"
+
+    analysis_ready single || return
+    rm -f "$ANALYSIS_SB/main/metadata.csv"
+    run_analysis "$ANALYSIS_SB" verify > /dev/null
+    assert_contains "$(analysis_report "$ANALYSIS_SB")" "no metadata rows" \
+        "and a missing file says so rather than reporting an empty design"
+}
+
+# ---------------------------------------------------------------------------------------
 # Against published results.
 
 test_verify_counts_what_the_pipeline_published() {
@@ -735,6 +848,9 @@ test_verify_counts_what_the_pipeline_published() {
     assert_contains "$report" "depth tables       2" "and the depths beside them"
     assert_contains "$report" "ready BAMs         6" "one per sample"
     assert_contains "$report" "called VCF         1" "and the cohort's VCF"
+    # The one class that does not sit at a top-level dir.output key. It is reached through
+    # dir.output.report.depth, so a lookup that cannot follow a dotted name reports it MISSING.
+    assert_contains "$report" "depth histograms   6" "the step 5 histograms, one per sample"
 }
 
 # The pipeline's dag, trace, timeline and report are the record of the run that produced
@@ -791,6 +907,158 @@ test_a_module_reads_the_library_from_its_own_directory() {
         "the module is told where the published tables are"
     assert_contains "$out" "PROBE writes $ANALYSIS_SB/main/Analysis/Results/probe" \
         "and where its own results go"
+}
+
+# The histograms class is the only one that does not sit at a top-level dir.output key: it is
+# reached through dir.output.report.depth.
+ANALYSIS_HISTOGRAM_MAIN='nextflow.enable.dsl=2
+
+include { analysisPlan } from '"'"'../../lib/nf/plan.nf'"'"'
+
+workflow {
+    analysisPlan('"'"'probe'"'"').targets.each { target ->
+        println "PROBE histograms ${target.classes.histograms.dir}"
+        println "PROBE frequencies ${target.classes.frequencies.dir}"
+        println "PROBE required " + target.classes.findAll { k, v -> v.required }.keySet().sort().join(",")
+    }
+}'
+
+test_the_depth_histograms_resolve_through_a_nested_key() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    analysis_install_module probe "$ANALYSIS_PROBE_MANIFEST" "$ANALYSIS_HISTOGRAM_MAIN"
+    local status; status=$(run_module "$ANALYSIS_SB" probe)
+    assert_status 0 "$status" "a module asking for the histograms should run"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "PROBE histograms $ANALYSIS_SB/store/Output/Reports/Depth" \
+        "the step 5 histograms sit under Reports, not beside the tables"
+    assert_contains "$out" "PROBE required frequencies" \
+        "and a class the manifest does not name is present without being required"
+}
+
+# A histogram belongs to the step 5 variant, and vcffilter.minDP and annotate branch the plan at
+# steps 7 and 8 - so all three runs share one step 5 ancestor and the two results directories are
+# told about the same histograms.
+test_targets_that_branch_after_step_5_share_one_histogram_directory() {
+    analysis_ready multi || return
+    analysis_install_module probe "$ANALYSIS_PROBE_MANIFEST" "$ANALYSIS_HISTOGRAM_MAIN"
+    local status; status=$(run_module "$ANALYSIS_SB" probe)
+    assert_status 0 "$status" "the module should run over both directories"
+    local out histograms frequencies
+    out=$(analysis_output)
+    histograms=$(printf '%s\n' "$out" | sed -n 's|^PROBE histograms ||p' | sort -u)
+    frequencies=$(printf '%s\n' "$out" | sed -n 's|^PROBE frequencies ||p' | sort -u)
+    assert_count 1 "$(printf '%s\n' "$histograms" | wc -l)" \
+        "both targets read the histograms of the one step 5 variant they share"
+    assert_count 2 "$(printf '%s\n' "$frequencies" | wc -l)" \
+        "while their step 7 tables are two different directories"
+    assert_contains "$histograms" "/Reports/Depth" "and the shared directory is the depth report's"
+}
+
+# A module declares its whole scope's defaults in ONE call and gets the whole scope back. A
+# per-call fallback could refuse nothing: `chromosome` for `chromosomes` would take the default,
+# and the module would plot nothing with nothing said about it.
+ANALYSIS_SETTINGS_MAIN='nextflow.enable.dsl=2
+
+include { moduleSettings } from '"'"'../../lib/nf/paths.nf'"'"'
+
+workflow {
+    def settings = moduleSettings('"'"'probe'"'"', [chromosomes: [], minReads: 2])
+    println "PROBE chromosomes ${settings.chromosomes}"
+    println "PROBE minReads ${settings.minReads}"
+}'
+
+test_a_module_setting_defaults_when_the_project_sets_none() {
+    analysis_ready single || return
+    analysis_install_module probe "$ANALYSIS_PROBE_MANIFEST" "$ANALYSIS_SETTINGS_MAIN"
+    local status; status=$(run_module "$ANALYSIS_SB" probe)
+    assert_status 0 "$status" "a module with no settings file should run"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "PROBE chromosomes []" "an unset key is the module's own default"
+    assert_contains "$out" "PROBE minReads 2" "for every key in the scope"
+}
+
+test_a_module_setting_is_taken_from_the_module_config() {
+    analysis_ready single || return
+    analysis_install_module probe "$ANALYSIS_PROBE_MANIFEST" "$ANALYSIS_SETTINGS_MAIN"
+    cat > "$ANALYSIS_SB/main/probe.config" <<'CFG'
+params {
+    analysis {
+        probe {
+            chromosomes = ['chr2L', 'chr3R']
+        }
+    }
+}
+CFG
+    local status; status=$(run_module "$ANALYSIS_SB" probe)
+    assert_status 0 "$status" "a module reading its own config should run"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "PROBE chromosomes [chr2L, chr3R]" "the project's value wins"
+    assert_contains "$out" "PROBE minReads 2" "and the keys it did not set keep the default"
+}
+
+test_an_unknown_module_setting_refuses() {
+    analysis_ready single || return
+    analysis_install_module probe "$ANALYSIS_PROBE_MANIFEST" "$ANALYSIS_SETTINGS_MAIN"
+    cat > "$ANALYSIS_SB/main/probe.config" <<'CFG'
+params {
+    analysis {
+        probe {
+            chromosome = ['chr2L']
+        }
+    }
+}
+CFG
+    local status; status=$(run_module "$ANALYSIS_SB" probe)
+    assert_status 1 "$status" "a misspelled key must not be answered with the default"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "does not have: chromosome" "the refusal names the key"
+    assert_contains "$out" "It has: chromosomes, minReads" "and lists the ones it has"
+}
+
+# A top-level scope reaches the recorded manifest, and the identity check reads it as a setting
+# added since the results were produced - so every analysis refuses, and the message is about a
+# changed project rather than about the file the user just wrote.
+test_a_module_scope_written_at_the_top_level_says_so() {
+    analysis_ready single || return
+    analysis_install_module probe "$ANALYSIS_PROBE_MANIFEST" "$ANALYSIS_SETTINGS_MAIN"
+    cat > "$ANALYSIS_SB/main/probe.config" <<'CFG'
+params {
+    probe {
+        chromosomes = ['chr2L']
+    }
+}
+CFG
+    local status; status=$(run_module "$ANALYSIS_SB" probe)
+    assert_status 1 "$status" "a top-level module scope must be refused where it is written"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "params.probe is set at the top level" "the refusal names what is wrong"
+    assert_contains "$out" "belong inside the analysis scope" "and where the scope belongs"
+}
+
+test_the_report_echoes_the_module_settings_the_project_set() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    analysis_install_module probe "$ANALYSIS_PROBE_MANIFEST" "$ANALYSIS_SETTINGS_MAIN"
+    run_analysis "$ANALYSIS_SB" probe > /dev/null
+    assert_contains "$(analysis_report "$ANALYSIS_SB")" \
+        "MODULE SETTINGS:       none set - probe runs on its own defaults" \
+        "a module with nothing set says so"
+
+    cat > "$ANALYSIS_SB/main/probe.config" <<'CFG'
+params {
+    analysis {
+        probe {
+            chromosomes = ['chr2L']
+        }
+    }
+}
+CFG
+    rm -rf "$ANALYSIS_SB/main/Analysis/Results"
+    run_analysis "$ANALYSIS_SB" probe > /dev/null
+    assert_contains "$(analysis_report "$ANALYSIS_SB")" \
+        "MODULE SETTINGS:       analysis.probe.chromosomes = ['chr2L']" \
+        "and one with a setting has it echoed as it was written"
 }
 
 # The verification and the module compute the same partition from the same function, so a
@@ -984,6 +1252,84 @@ test_a_module_publishes_what_it_produced() {
         "the record that cleared the folder travels with the analysis it let run"
     assert_eq "analysis of Output" "$(cat "$folder/result.tsv" 2>/dev/null)" \
         "the file's contents, not a link into a work directory cleanup has removed"
+}
+
+# ---------------------------------------------------------------------------------------
+# What a published folder says about how to read itself.
+
+ANALYSIS_LINKED_MANIFEST='{ "name": "writer", "version": "0.1.0", "contract": "freq-1",
+  "summary": "publish one analysis and say where it is explained", "needs": ["frequencies"],
+  "outputs": [ { "file": "result.tsv", "summary": "the analysis",
+                 "anchor": "output-layout" } ] }'
+
+# A published number is not always a measurement, and a table cell cannot say which it is. The
+# README is one mechanism for every module, so no module invents its own way of saying it.
+test_a_published_folder_carries_a_readme_linking_every_file_to_the_manual() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    analysis_install_module writer "$ANALYSIS_LINKED_MANIFEST" "$ANALYSIS_WRITER_MAIN"
+    local status; status=$(analysis_run_module writer)
+    assert_status 0 "$status" "the writer module should run"
+
+    local readme; readme=$(cat "$ANALYSIS_SB/main/Analysis/Results/writer/README.md" 2>/dev/null)
+    assert_contains "$readme" '`result.tsv`' "the module's own output is listed"
+    assert_contains "$readme" "PoolSeqFlow-manual.md#output-layout" \
+        "linked to the section its manifest named"
+    assert_contains "$readme" '`0_verify_analysis.txt`' "and so is what every analysis carries"
+    assert_contains "$readme" "PoolSeqFlow-manual.md#citing-the-tools-it-runs" \
+        "with the frame's own anchors rendered by the same mechanism"
+}
+
+# The anchor is checked against the manual this release ships, while the DAG is built, so a
+# manifest promising a section that does not exist stops before any compute.
+test_a_module_naming_an_anchor_the_manual_lacks_refuses() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    analysis_install_module writer \
+        '{"name":"writer","version":"0.1.0","contract":"freq-1","summary":"points nowhere",
+          "needs":["frequencies"],
+          "outputs":[{"file":"result.tsv","anchor":"how-to-read-a-thing-that-is-not-written"}]}' \
+        "$ANALYSIS_WRITER_MAIN"
+    local status; status=$(run_analysis "$ANALYSIS_SB" writer)
+    assert_status 1 "$status" "a link nobody can follow must stop the run"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "how-to-read-a-thing-that-is-not-written" "the refusal names the anchor"
+    assert_contains "$out" "PoolSeqFlow-manual.md" "and the file it was looked for in"
+}
+
+# A module published separately has no section in this manual to point at, so it gives a full
+# url instead - which is the half of F0c that a first-party-only design would have missed.
+test_a_module_may_link_out_of_the_manual_entirely() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    analysis_install_module writer \
+        '{"name":"writer","version":"0.1.0","contract":"freq-1","summary":"published elsewhere",
+          "needs":["frequencies"],
+          "outputs":[{"file":"result.tsv","summary":"the analysis",
+                      "url":"https://example.org/writer/#results"}]}' \
+        "$ANALYSIS_WRITER_MAIN"
+    local status; status=$(analysis_run_module writer)
+    assert_status 0 "$status" "a url needs no heading in this manual"
+    assert_contains "$(cat "$ANALYSIS_SB/main/Analysis/Results/writer/README.md" 2>/dev/null)" \
+        "https://example.org/writer/#results" "and is rendered as given"
+}
+
+# Declaring an output is a promise about what the folder will hold. Checked in the STAGE, like
+# the script check beside it, so a module that breaks it publishes nothing.
+test_a_module_that_does_not_publish_what_it_declared_publishes_nothing() {
+    analysis_ready single || return
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    analysis_install_module writer \
+        '{"name":"writer","version":"0.1.0","contract":"freq-1","summary":"promises a table",
+          "needs":["frequencies"],
+          "outputs":[{"file":"frequencies.tsv","summary":"never produced","anchor":"output-layout"}]}' \
+        "$ANALYSIS_WRITER_MAIN"
+    local status; status=$(analysis_run_module writer)
+    assert_status 1 "$status" "an undelivered output must fail the publish"
+    assert_contains "$(analysis_output)" "declares it publishes 'frequencies.tsv'" \
+        "naming what was promised"
+    assert_no_file "$ANALYSIS_SB/main/Analysis/Results/writer/result.tsv" \
+        "and nothing is published, so the folder stays as the verification left it"
 }
 
 # THE HALF THAT WILL REGRESS. A module that fails must leave the folder as the verification

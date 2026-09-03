@@ -915,7 +915,7 @@ The detector declines deliberately when the deep population is too large to call
 
 ![A pile-up at 20000x outweighing the real coverage at 200x, left uncapped](assets/depth-hill-dominant.svg)
 
-Four fifths of the covered genome is at 20000× and one fifth at 200×. Which of those is the artefact cannot be read off a depth histogram, and capping at 500 would truncate most of a real genome on a guess. PoolSeqFlow reports it and does nothing. If you know which population is real, `param_capMaxDepth` in `metadata.csv` sets that sample's ceiling by hand — see [Metadata](#the-four-kinds-of-column).
+Four fifths of the covered genome is at 20000× and one fifth at 200×. Which of those is the artefact cannot be read off a depth histogram, and capping at 500 would truncate most of a real genome on a guess. PoolSeqFlow reports it and does nothing. If you know which population is real, `param_capMaxDepth` in `metadata.csv` sets that sample's ceiling by hand — see [Metadata](#kinds-of-metadata-column).
 
 **The knob.**
 
@@ -1423,22 +1423,22 @@ Replacing a command with an absolute path makes the pipeline use a system instal
 Three of its columns change your results. The rest are yours, and the pipeline never interprets them.
 
 ```csv
-SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,param_poolSize,population,timepoint,replicate
-Sample1T1Rep1,Sample1T1,Lib1,ILLUMINA,Unit1,50,Pop1,T1,1
-Sample1T1Rep2,Sample1T1,Lib1,ILLUMINA,Unit1,50,Pop1,T1,2
-Sample1T2Rep1,Sample1T2,Lib1,ILLUMINA,Unit1,50,Pop1,T2,1
-Sample1T2Rep2,Sample1T2,Lib1,ILLUMINA,Unit1,50,Pop1,T2,2
-Sample2T1Rep1,Sample2T1,Lib1,ILLUMINA,Unit1,40,Pop2,T1,1
-Sample2T1Rep2,Sample2T1,Lib1,ILLUMINA,Unit1,40,Pop2,T1,2
-Sample2T2Rep1,Sample2T2,Lib1,ILLUMINA,Unit1,40,Pop2,T2,1
-Sample2T2Rep2,Sample2T2,Lib1,ILLUMINA,Unit1,40,Pop2,T2,2
+SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,param_poolSize,exp_population,exp_timepoint,sequencing_run
+Sample1T1Rep1,Sample1T1,Lib1,ILLUMINA,Unit1,50,Pop1,T1,Run1
+Sample1T1Rep2,Sample1T1,Lib1,ILLUMINA,Unit2,50,Pop1,T1,Run2
+Sample1T2Rep1,Sample1T2,Lib1,ILLUMINA,Unit1,50,Pop1,T2,Run1
+Sample1T2Rep2,Sample1T2,Lib1,ILLUMINA,Unit2,50,Pop1,T2,Run2
+Sample2T1Rep1,Sample2T1,Lib1,ILLUMINA,Unit1,40,Pop2,T1,Run1
+Sample2T1Rep2,Sample2T1,Lib1,ILLUMINA,Unit2,40,Pop2,T1,Run2
+Sample2T2Rep1,Sample2T2,Lib1,ILLUMINA,Unit1,40,Pop2,T2,Run1
+Sample2T2Rep2,Sample2T2,Lib1,ILLUMINA,Unit2,40,Pop2,T2,Run2
 ```
 
-*Eight FASTQ pairs, four distinct `RG_Sample` values — this file produces a VCF with **four** columns: `Sample1T1`, `Sample1T2`, `Sample2T1`, `Sample2T2`. Each pool was sequenced twice, so its two rows share an `RG_Sample` and repeat that pool's `param_poolSize`. The last three columns are the author's own.*
+*Eight FASTQ pairs, four distinct `RG_Sample` values — this file produces a VCF with **four** columns: `Sample1T1`, `Sample1T2`, `Sample2T1`, `Sample2T2`. Each pool was sequenced twice, so its two rows share an `RG_Sample` and repeat that pool's `param_poolSize` and its `exp_` values. `sequencing_run` is what differs between those two rows, which is why it carries no prefix.*
 
 `PoolSeqFlow init` does not write this file, because its content is your experiment and a copied one would describe someone else's. It leaves `metadata.csv.example` beside you to write it from — the same table with every column explained in comments. Blank lines and lines beginning with `#` are ignored, so those comments can stay in the file you keep. A value containing a comma must be quoted: `"Pop1, coastal"`.
 
-### The four kinds of column
+### The five kinds of column { #kinds-of-metadata-column }
 
 The **name** of a column is what decides how it is treated. There is no second schema to keep in step with it.
 
@@ -1447,11 +1447,28 @@ The **name** of a column is what decides how it is treated. There is no second s
 | `SampleID` | **Required and unique.** Matched against the sample name `readPattern` takes from your FASTQ filenames, and becomes the read group's `ID` in the BAM |
 | `RG_*` | A read-group tag. Eight are known, listed below. A blank cell omits that tag rather than writing an empty one |
 | `param_*` | A setting from `parameters.config`, overridden for these samples only. Four are known: `param_poolSize`, `param_capMaxDepth`, `param_adapter1`, `param_adapter2`. A blank cell means "use the global value" |
-| anything else | Yours. Population, timepoint, replicate, phenotype, collection site, a measurement from another experiment — whatever this study needs recorded |
+| `exp_*` | An experimental variable, read by [analysis modules](#the-experimental-design) and by no pipeline step. Any name you like after the prefix |
+| anything else | Yours. A lane, a batch, a collection site, a note, a measurement from another experiment — whatever this study needs recorded |
 
 **`RG_` and `param_` are closed lists, and an unrecognised one is refused rather than ignored.** For `RG_` that stops a typo quietly losing a tag. For `param_` the reason is sharper: a `param_` column the pipeline did not recognise would be a setting you had written down, could see in your own file, and that was never applied to anything.
 
-Everything else is free. **You can add, remove and edit your own columns without invalidating results you already have** — the change guard does not look at them. That freedom is a large part of why the file exists. It holds for now; once the analysis layer arrives, the columns it reads will begin to matter.
+**`pt_` is reserved and every column carrying it is refused.** It has no meaning yet. Refusing it now is what lets a later release give it one without changing what a file you write today means.
+
+Everything else is free. **You can add, remove and edit your own columns — `exp_` ones included — without invalidating results you already have.** The change guard does not look at them, so no analysis you have already published stops being valid because you named a variable better.
+
+### The experimental design { #the-experimental-design }
+
+An `exp_` column says what an experimental variable was for each pool: `exp_population`, `exp_treatment`, `exp_generation`. Analysis modules read them and the pipeline does not, so adding them changes nothing about your results and makes them describable.
+
+Two conventions and one rule:
+
+- **`exp_timepoint` is time.** A module that plots or models a trajectory looks for it under that name unless you point it elsewhere.
+- **The prefix is open.** Unlike `RG_` and `param_` there is no list to check a name against, so `exp_tiempoint` is a new variable rather than an error. Nothing can catch that for you; the verification report prints the variables it found at the start of every analysis, which is where you will see it.
+- **An `exp_` column describes the POOL, not the row.** Rows sharing an `RG_Sample` are one pool — their reads are merged and their depths added into one column of every published table — so they must give the same value for every `exp_` column, and **an analysis refuses a file where they disagree**, naming the column, the pool and each value. A blank cell means no value, which is a third answer rather than agreement with either.
+
+That last rule is the one that catches people, and the fix is always the same: what differs *between* two rows of one pool — the lane, the batch, the sequencing run, the extraction date — is not an experimental variable. Record it in a column with no prefix.
+
+The refusal is a hard one, and it stops **every** analysis rather than only the ones that read a design. Each published analysis records the design the project was in at the time; a project whose design contradicts itself has nothing true to record.
 
 #### The read-group tags
 
@@ -2075,7 +2092,7 @@ capBAM {
 | positive `N` | Every sample is capped at `N`, measured or not |
 | `0` | No capping at all — the BAMs reach the pileup as step 4 left them |
 
-`param_capMaxDepth` in `metadata.csv` overrides this for a single sample and takes the same three values, which is the way to handle one library that needs a different answer from the rest — see [Metadata](#the-four-kinds-of-column).
+`param_capMaxDepth` in `metadata.csv` overrides this for a single sample and takes the same three values, which is the way to handle one library that needs a different answer from the rest — see [Metadata](#kinds-of-metadata-column).
 
 **Nothing is deleted.** A position deeper than the ceiling is truncated to it on the way into the pileup, and the sample's ready BAM is untouched on disk. Reads are dropped whole rather than trimmed, so a pair may lose one mate.
 
@@ -2407,6 +2424,25 @@ Everything the analysis layer takes:
 |---|---|---|
 | `analysis.runs` | Which of your runs this invocation covers | [below](#analysis-runs) |
 | `analysis.folderName` | Which folder under `Analysis/Results` it writes to | [Output Layout](#analysis-folder-name) |
+| `analysis.<module>.*` | One module's own settings | [below](#module-settings) |
+
+### A module's own settings { #module-settings }
+
+A module's settings go in a scope named after it, **inside** `analysis`:
+
+```groovy
+params {
+    analysis {
+        basicstats {
+            chromosomes = ['chr2L', 'chr3R']
+        }
+    }
+}
+```
+
+What a module has is listed in its own section of this manual, and the defaults are the module's own. **A key it does not have is refused, naming what it does have** — so `chromosome` for `chromosomes` stops the run rather than leaving the module quietly running on a default you did not choose. The verification report echoes every setting you did write, as you wrote it.
+
+Inside `analysis`, always. A scope written at the top level of a configuration file becomes part of the record this project is checked against, and every analysis would then refuse with a message about a changed project rather than about the file you just wrote — so that mistake is caught and named where it happens.
 
 ### Which runs to analyse { #analysis-runs }
 
@@ -2479,6 +2515,20 @@ Everything the analysis layer produces goes under `Analysis/` — on `mainDir` w
 `Analysis/Results` holds one folder per analysis, named by [`folderName`](#analysis-folder-name).
 
 **Every published analysis carries the script that produced it.** That is a guarantee of the layer rather than a convention module authors are asked to follow: an analysis handed over without one is refused, nothing is published, and the folder is left exactly as it was. So a result you find in `Analysis/Results` can always be regenerated, and the folder also holds the verification record that cleared it — which names the module, its version, the runs it covered and the configuration it was assembled from.
+
+**And a `README.md` that says how to read what is in the folder.** { #analysis-readme } Every module declares, for each file it publishes, the section of this manual that explains it; the frame renders one table from those declarations and from what every analysis carries anyway:
+
+```markdown
+| File | What it is | Explained at |
+|---|---|---|
+| `design.tsv`             | one row per pool, the experimental design | [#the-experimental-design](...) |
+| `0_verify_analysis.txt`  | the checks that cleared this folder       | [#verification](...)           |
+| `CITATIONS.md`           | the software this analysis used           | [#citing-the-tools-it-runs](...) |
+```
+
+It links into the copy of this manual installed with the release that produced the folder, so the explanation you follow is the one that was true at the time. The point is the numbers a table cannot explain for itself: a figure that is a bound rather than a measurement, or an estimate carrying an assumption, reads as neither unless something beside it says so.
+
+A module that declares a file and then does not publish it is refused, and a module whose declared section does not exist in the manual is refused before it starts — a link nobody can follow being worse than none.
 
 ### Naming an analysis { #analysis-folder-name }
 

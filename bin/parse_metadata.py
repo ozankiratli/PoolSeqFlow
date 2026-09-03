@@ -7,7 +7,7 @@ Exit 0 and print a JSON array of sample records; exit 1 and print every problem 
 stderr; exit 2 for a usage mistake, so a caller can tell "your file is wrong" from "you
 called me wrong".
 
-FOUR KINDS OF COLUMN, and the prefix is what separates them:
+FIVE KINDS OF COLUMN, and the prefix is what separates them:
 
     SampleID        required. Joins to the sample id derived from the FASTQ file names, and
                     becomes the read group's ID.
@@ -15,7 +15,13 @@ FOUR KINDS OF COLUMN, and the prefix is what separates them:
                     is refused.
     param_*         a per-sample override of a pipeline parameter, by the table below. Also a
                     closed list, refused the same way.
+    exp_*           an experimental variable. An OPEN list: any name after the prefix is
+                    accepted, so exp_tiempoint is a variable and not an error. Recorded, never
+                    read by steps 0-8.
     anything else   design metadata. Recorded, never read by steps 0-8.
+
+pt_* IS RESERVED AND REFUSED. It has no meaning yet, and every pt_ column is refused so that
+one can be given to it later without changing what a file written today means.
 
 PARAM_POOLSIZE IS KEYED BY RG_Sample, NOT BY SampleID. Rows sharing an RG_Sample are one pool
 and become one VCF column, which carries one sensitivity, so those rows must agree on the size
@@ -55,6 +61,14 @@ PARAM_COLUMNS = {
     "param_adapter1": "trim_galore.adapter1",
     "param_adapter2": "trim_galore.adapter2",
 }
+
+# An experimental variable. Open where RG_ and param_ are closed: there is no list to check a
+# name against, so nothing here can catch a misspelling.
+EXPERIMENTAL_PREFIX = "exp_"
+TIME_VARIABLE = "exp_timepoint"
+
+# Claimed and unused. Every column carrying it is refused.
+RESERVED_PREFIX = "pt_"
 
 # The param_ columns with rules of their own, beyond being recognised.
 POOL_SIZE = "param_poolSize"
@@ -127,6 +141,20 @@ def check(path):
                 f"'param_{column}' if you mean to override {PARAM_COLUMNS['param_' + column]} "
                 f"for these samples. As written it would be recorded as design metadata and "
                 f"never acted on."
+            )
+        elif column.startswith(RESERVED_PREFIX):
+            errors.append(
+                f"line {header_line}: '{column}' uses the {RESERVED_PREFIX} prefix, which is "
+                f"reserved and carries no meaning yet. Every {RESERVED_PREFIX} column is "
+                f"refused so that one can be given to it later without changing what a file "
+                f"written today means. Drop the prefix and it becomes a column that is "
+                f"recorded and never interpreted."
+            )
+        elif column == EXPERIMENTAL_PREFIX:
+            errors.append(
+                f"line {header_line}: '{EXPERIMENTAL_PREFIX}' is the prefix with no variable "
+                f"name after it. Write {EXPERIMENTAL_PREFIX}<name> - {TIME_VARIABLE}, "
+                f"{EXPERIMENTAL_PREFIX}treatment - or drop the prefix."
             )
         if column:
             seen[column] = seen.get(column, 0) + 1

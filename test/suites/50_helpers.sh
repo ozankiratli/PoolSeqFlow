@@ -760,6 +760,37 @@ A1,counted twice,Pop1
     assert_status 0 "$PM_STATUS" "this is the user's own column"
 }
 
+# exp_ is the first OPEN prefix. RG_ and param_ are closed lists and that is what lets them
+# catch a typo; here there is no list, so a misspelling is a variable rather than an error.
+test_metadata_accepts_any_experimental_variable() {
+    pm 'SampleID,exp_timepoint,exp_treatment,exp_tiempoint
+A1,T1,control,T1
+'
+    assert_status 0 "$PM_STATUS" "an exp_ name is checked against nothing"
+}
+
+# The prefix with nothing after it names no variable, and is the one exp_ mistake a closed
+# list would have caught.
+test_metadata_rejects_a_bare_experimental_prefix() {
+    pm 'SampleID,exp_
+A1,T1
+'
+    assert_status 1 "$PM_STATUS" "exp_ alone should be refused"
+    assert_contains "$PM_ERR" "no variable name after it" "saying what is missing"
+    assert_contains "$PM_ERR" "exp_timepoint" "and showing the shape of one"
+}
+
+# pt_ is claimed for a later release and refused today, so that giving it a meaning then does
+# not change what a file written now means.
+test_metadata_rejects_the_reserved_phenotype_prefix() {
+    pm 'SampleID,pt_wingspan
+A1,12
+'
+    assert_status 1 "$PM_STATUS" "a reserved prefix must be refused while it is unused"
+    assert_contains "$PM_ERR" "reserved" "saying so"
+    assert_contains "$PM_ERR" "Drop the prefix" "and what to do instead"
+}
+
 # ---------------------------------------------------------------- citations --
 
 # Writes both citation files into a scratch directory and echoes it. Runs against the real

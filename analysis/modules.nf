@@ -48,6 +48,19 @@ def moduleReportLines(String module) {
     return lines
 }
 
+// What the report says about the module's own settings: what the project set, as it wrote it. The
+// defaults belong to the module and the frame does not have them, so nothing here fills one in.
+def moduleSettingLines(String module) {
+    def scope = params.containsKey('analysis') && params.analysis instanceof Map ? params.analysis : [:]
+    def mine = scope.containsKey(module) && scope[module] instanceof Map ? scope[module] : [:]
+    if (mine.isEmpty()) {
+        return ["MODULE SETTINGS:       none set - ${module} runs on its own defaults".toString()]
+    }
+    return mine.keySet().sort().collect { key ->
+        "MODULE SETTINGS:       analysis.${module}.${key} = ${renderSetting(mine[key])}".toString()
+    }
+}
+
 // What the report says about where this invocation writes.
 def outputReportLines(String module) {
     def named = "${analysisSetting('folderName') ?: ''}".trim()

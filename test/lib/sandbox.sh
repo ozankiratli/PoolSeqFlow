@@ -57,8 +57,10 @@ make_pipeline_sandbox() {
     mkdir -p "$sb/install" "$sb/main" "$sb/store"
     # install/ too: it carries citations.json, which a run reads at the end. Copied whole
     # rather than by file, so the next thing added there is present without a change here.
+    # manual/ is in PAYLOAD_ITEMS as well: a published analysis links each file it holds to a
+    # section of it, and the frame checks those anchors against the installed copy.
     cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$REPO_ROOT"/lib "$REPO_ROOT"/analysis \
-          "$REPO_ROOT"/install "$sb/install"/
+          "$REPO_ROOT"/install "$REPO_ROOT"/manual "$sb/install"/
     cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/dryrun.nf "$REPO_ROOT"/analysis.nf \
        "$REPO_ROOT"/nextflow.config "$sb/install"/
     # The wrapper, so cases can exercise clean/reset against a real project instead of

@@ -585,3 +585,39 @@ for step, names in sorted(declared.items()):
         fail_case "folders in stepParameterMap() but not in stepFolders():"$'\n'"$missing"
     fi
 }
+
+# Every published analysis links each file it holds to the section of the manual that says how to
+# read it. A dead link is silent - the folder is written, the anchor is wrong, and nobody finds
+# out until they follow it. Authored on one side and verified from the other, the way the step
+# parameter map is.
+test_every_declared_manual_anchor_exists() {
+    local out
+    out=$(cd "$REPO_ROOT" && python3 - <<'PY'
+import json, pathlib, re, sys
+sys.path.insert(0, "dev/scripts")
+import build_docs
+
+have = set()
+for line in pathlib.Path("manual/PoolSeqFlow-manual.md").read_text(encoding="utf-8").splitlines():
+    heading = build_docs.HEADING.match(line)
+    if heading:
+        have.add(build_docs.heading_anchor(heading.group(2)))
+
+# The frame's own outputs, and then every module installed in this checkout.
+declared = [("analysis/lib/nf/outputs.nf", a) for a in
+            re.findall(r"anchor\s*:\s*'([^']+)'",
+                       pathlib.Path("analysis/lib/nf/outputs.nf").read_text(encoding="utf-8"))]
+for path in sorted(pathlib.Path("analysis/modules").glob("*/manifest.json")):
+    for entry in json.loads(path.read_text(encoding="utf-8")).get("outputs", []):
+        if entry.get("anchor"):
+            declared.append((str(path), entry["anchor"]))
+
+if not declared:
+    print("no anchors were declared anywhere, so this case checked nothing")
+for where, anchor in declared:
+    if anchor not in have:
+        print("%s: #%s is not a heading of the manual" % (where, anchor))
+PY
+)
+    assert_eq "" "$out" "every declared manual anchor must exist:"$'\n'"$out"
+}

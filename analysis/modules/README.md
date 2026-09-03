@@ -4,7 +4,7 @@ One directory per module, named exactly as the module is named. Each holds at le
 
 | File | What |
 |---|---|
-| `manifest.json` | `name`, `version`, `contract`, `summary`, and optionally `needs` and `gates` |
+| `manifest.json` | `name`, `version`, `contract`, `summary`, and optionally `needs`, `gates` and `outputs` |
 | `main.nf` | the module's own Nextflow pipeline |
 | `citations.json` | the methods and packages your module should be cited with |
 
@@ -66,6 +66,11 @@ The classes `needs` may name:
 | `depths` | `*_depth.tsv`, one row per site, counts in REF-then-ALT order | step 7 |
 | `vcf` | the called VCF | step 6 |
 | `bams` | `*_ready.bam`, cleaned and indexed | step 4 |
+| `histograms` | `*_depth_histogram.tsv`, one per library, genome-wide | step 5 |
+
+A name no class answers to is refused while the DAG is built. Without that it would simply never be checked: a class is marked required by asking whether `needs` contains its name, which cannot notice a name that belongs to nothing.
+
+**`histograms` may legitimately be absent from a sound project**, so weigh whether yours truly cannot run without it. A module that needs them should degrade per library and name the ones it had none for, rather than averaging over the survivors.
 
 ### Reading a published result
 
@@ -76,7 +81,7 @@ The classes `needs` may name:
 
 ### Configuration
 
-11. **Every setting you add lives inside the `analysis` scope.** A new **top-level** `params` key makes every analysis run refuse: it reaches the recorded manifest, and the identity check reads it as a parameter the results were not produced with.
+11. **Every setting you add lives inside the `analysis` scope**, in a sub-scope named after your module. `moduleSettings('yourname', [chromosomes: [], minReads: 2])` takes your whole scope's defaults and returns the whole scope, with a key the defaults do not have refused by name. Ask for the scope once and read the map; there is no per-key call with a fallback, because one could not refuse anything — a misspelling would take the default and your module would produce nothing with nothing said about it. A **top-level** `params` key is caught and named where it is written: it reaches the recorded manifest, and the identity check would otherwise read it as a parameter the results were not produced with and refuse every analysis in the project.
 12. **A module ships no configuration file.** `PoolSeqFlow analysis` assembles the three layers; you document the settings your module reads, and the user writes them into `<module>.config`.
 
 ### Writing your own results
@@ -86,6 +91,8 @@ The classes `needs` may name:
 15. **Emit the script that produced each result** into the folder beside it, in the same set of files you hand `PublishResults`. A result nobody can regenerate is the reproducibility gap this whole layer exists to close, so this one is **enforced, not asked**: publishing an analysis that carries no `*.R`, `*.r`, `*.Rmd`, `*.rmd`, `*.sh`, `*.py` or `*.jl` fails the run, names what you did produce, and publishes nothing. The folder is left exactly as the verification cleared it, so the retry is not refused.
 
 15b. **Carry your own `citations.json`. It is required, like `manifest.json` and `main.nf`.** Every published analysis gets `CITATIONS.md` and `references.bib` written into its folder, in the same rename as the result. The frame contributes PoolSeqFlow, Nextflow and R; **the method your module implements and the R packages it uses are yours to declare**, because you are published separately and the frame cannot hold a list of citations for modules that do not exist yet. At the very least, name the libraries you call — a user cannot credit a package they never learn they depended on. The shape is `analysis/citations.json`'s, one entry per reference, keyed however you like; an entry naming `"r_package": "vegan"` has its version asked of R at run time rather than taken from what the environment pins, so it stays correct if someone repointed it. A directory without the file is refused at DAG-build time, before the verification clears a results folder, exactly as a missing `main.nf` is, and `modules install` refuses an archive that lacks one.
+
+15c. **Declare an `outputs` entry for every file you publish, and say where it is explained.** Each is `{"file": "design.tsv", "summary": "one row per pool", "anchor": "the-experimental-design"}` — `file` may be a glob, `summary` is the one-line description the reader gets, and `anchor` names a heading of the manual this release ships. A module published separately has nowhere in that manual to point and gives `"url"` instead, in full. The frame renders one `README.md` from every module's declarations plus what every analysis carries anyway, so a folder found months later says how to read itself and no module invents its own way of saying it. Two things are checked for you: an `anchor` no heading answers to is refused before your module starts, and a `file` you declared and did not publish fails the publish with nothing written. **This is where a number that is not a measurement gets said to be one** — a bound, an estimate with an assumption behind it, a figure whose meaning changes with a setting. A table cell cannot carry that sentence and a `summary` plus a link can.
 
 ### Sharing what you derive
 

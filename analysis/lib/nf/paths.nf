@@ -28,6 +28,43 @@ def analysisSetting(String key) {
     return scope.containsKey(key) ? scope[key] : defaults[key]
 }
 
+// Every setting one module has, as the project set them over the module's own defaults.
+//
+// The module passes its whole scope's defaults and gets the whole scope back. A key the defaults
+// do not have is refused, and a key they have that the project did not set takes the default.
+def moduleSettings(String module, Map defaults) {
+    if (params.containsKey(module)) {
+        throw new IllegalArgumentException(
+            "params.${module} is set at the top level of a configuration file, and a module's " +
+            "settings belong inside the analysis scope:\n" +
+            "    analysis {\n" +
+            "        ${module} {\n" +
+            "            // ...\n" +
+            "        }\n" +
+            "    }\n" +
+            "A top-level key reaches the manifest this project is checked against, so every " +
+            "analysis would report it as a setting added since the results were produced and " +
+            "refuse to run.")
+    }
+
+    def scope = params.containsKey('analysis') && params.analysis instanceof Map ? params.analysis : [:]
+    def mine = scope.containsKey(module) && scope[module] instanceof Map ? scope[module] : [:]
+
+    def unknown = mine.keySet().collect { key -> "${key}".toString() }
+                      .findAll { key -> !defaults.containsKey(key) }
+    if (!unknown.isEmpty()) {
+        throw new IllegalArgumentException(
+            "analysis.${module} is given ${unknown.size() == 1 ? 'a setting' : 'settings'} the " +
+            "module '${module}' does not have: ${unknown.join(', ')}\n" +
+            "It has: ${defaults.keySet().sort().join(', ')}.")
+    }
+
+    // containsKey and not a truthiness test: an empty list is a value the user wrote.
+    return defaults.collectEntries { key, fallback ->
+        [ key, mine.containsKey(key) ? mine[key] : fallback ]
+    }
+}
+
 // The analysis frame's own version, from analysis/frame.version in the installation.
 //
 // Not workflow.manifest.version: that is the PIPELINE release, which 0_verify_analysis.nf

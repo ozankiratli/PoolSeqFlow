@@ -7,20 +7,39 @@
 nextflow.enable.dsl=2
 
 include { runDefinitions; resolveParameters } from '../../../scripts/resolve_parameters.nf'
-include { variantPlan; runToken } from '../../../scripts/variants.nf'
+include { variantPlan; runToken; dig } from '../../../scripts/variants.nf'
 include { analysisSetting; renderSetting; targetResultsDir; installDir } from './paths.nf'
 include { moduleNeeds } from './modules.nf'
+include { checkTargetDesign; designSummary } from './design.nf'
+include { checkModuleOutputs; moduleOutputs } from './outputs.nf'
 
 // The published files a module can read. `step` is the step that produced the class, and
-// therefore whose variant owns the directory it was promoted into; `subdir` is the key under
-// dir.output naming that directory.
+// therefore whose variant owns the directory it was promoted into; `subdir` is a dotted name
+// under dir.output naming that directory.
 def artifactClasses() {
     return [
-        frequencies: [ step: 7, subdir: 'freq',  pattern: '*_freq.tsv',  label: 'frequency tables' ],
-        depths     : [ step: 7, subdir: 'freq',  pattern: '*_depth.tsv', label: 'depth tables' ],
-        vcf        : [ step: 6, subdir: 'vcf',   pattern: '*.vcf',       label: 'called VCF' ],
-        bams       : [ step: 4, subdir: 'ready', pattern: '*_ready.bam', label: 'ready BAMs' ],
+        frequencies: [ step: 7, subdir: 'freq',         pattern: '*_freq.tsv',            label: 'frequency tables' ],
+        depths     : [ step: 7, subdir: 'freq',         pattern: '*_depth.tsv',           label: 'depth tables' ],
+        vcf        : [ step: 6, subdir: 'vcf',          pattern: '*.vcf',                 label: 'called VCF' ],
+        bams       : [ step: 4, subdir: 'ready',        pattern: '*_ready.bam',           label: 'ready BAMs' ],
+        histograms : [ step: 5, subdir: 'report.depth', pattern: '*_depth_histogram.tsv', label: 'depth histograms' ],
     ]
+}
+
+// The classes a module's manifest asks for, checked against the classes there are.
+// resultsTargets() asks only whether `needs` contains each class it knows, so a name no class
+// answers to is never asked about at all and nothing else would notice it.
+def checkModuleNeeds(String module, List needs) {
+    def known = artifactClasses().keySet()
+    def unknown = needs.collect { need -> "${need}".toString() }.findAll { need -> !known.contains(need) }
+    if (unknown.isEmpty()) return
+
+    throw new IllegalArgumentException(
+        "the module '${module}' declares it needs ${unknown.size() == 1 ? 'an artifact class' : 'artifact classes'} " +
+        "the analysis layer does not publish: ${unknown.join(', ')}\n" +
+        "The classes a module can name are: ${known.sort().join(', ')}\n" +
+        "Correct the 'needs' list in the module's manifest.json, or install a release whose " +
+        "analysis layer publishes what it asks for.")
 }
 
 // The runs this invocation covers, from analysis.runs. `all` is a keyword and a list is always
@@ -77,7 +96,10 @@ def directoryLabel(Map variant) {
 // One entry per results directory the selected runs produced, and where each artifact class sits
 // inside it. Two runs whose tables are the same file share a directory and are covered once.
 // `needs` names the classes the module cannot run without.
-def resultsTargets(Map plan, List selected, String module, List needs) {
+//
+// The design is summarised over ALL the directory's members and not only the selected ones: the
+// tables hold a column per pool of every run that produced them.
+def resultsTargets(Map plan, List runDefs, List selected, String module, List needs) {
     def wanted = selected.collect { run -> run.runId }
     return plan.variants[7]
         .findAll { variant -> variant.members.any { member -> wanted.contains(member) } }
@@ -85,12 +107,22 @@ def resultsTargets(Map plan, List selected, String module, List needs) {
         .collect { variant ->
             def classes = artifactClasses().collectEntries { name, spec ->
                 def owner = ancestorAt(plan, variant.members, spec.step)
+                def dir = dig(owner.dir.output, spec.subdir)
+                if (dir == null) {
+                    throw new IllegalStateException(
+                        "the artifact class '${name}' sits at dir.output.${spec.subdir}, which this " +
+                        "project's parameters do not define. artifactClasses() and the dir.subpath " +
+                        "block in parameters.config have to name the same directories.")
+                }
                 [ name, [ label   : spec.label,
                           pattern : spec.pattern,
-                          dir     : "${owner.dir.output[spec.subdir]}".toString(),
+                          dir     : "${dir}".toString(),
                           required: needs.contains(name) ] ]
             }
             def label = directoryLabel(variant)
+            def rows = runDefs.findAll { run -> variant.members.contains(run.runId) }
+                              .collectMany { run -> run.metadata }
+            checkTargetDesign(label, rows)
             return [ label   : label,
                      module  : module,
                      dir     : "${variant.dir.outputs}".toString(),
@@ -98,6 +130,7 @@ def resultsTargets(Map plan, List selected, String module, List needs) {
                      selected: variant.members.findAll { member -> wanted.contains(member) }
                                               .collect { member -> runToken(member) },
                      classes : classes,
+                     design  : designSummary(rows),
                      results : targetResultsDir(module, label) ]
         }
 }
@@ -115,8 +148,11 @@ def analysisPlan(String module) {
     params.dir.bin = "${installDir()}/bin".toString()
     def runDefs = runDefinitions()
     resolveParameters()
+    def needs = moduleNeeds(module)
+    checkModuleNeeds(module, needs)
+    checkModuleOutputs(module, moduleOutputs(module))
     def selected = selectedRuns(runDefs)
     return [ runs    : runDefs,
              selected: selected,
-             targets : resultsTargets(variantPlan(runDefs), selected, module, moduleNeeds(module)) ]
+             targets : resultsTargets(variantPlan(runDefs), runDefs, selected, module, needs) ]
 }
