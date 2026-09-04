@@ -912,25 +912,6 @@ TestSample2,PoolB,25,Pop1,T2'
         "and the one that sets param_poolSize is measured and reported on its own"
 }
 
-# poolSize is NOT part of what decides whether two runs share step 7, so two runs that set
-# filterFalsePositives.sensitivity themselves agree there and can still disagree about how many
-# individuals a pool holds. One of them filtered the tables and the directory does not say which.
-test_runs_sharing_a_directory_must_agree_on_a_pool_size() {
-    analysis_ready multi || return
-    cat > "$ANALYSIS_SB/main/runs.csv" <<'TABLE'
-RunID,poolSize,filterFalsePositives.sensitivity
-small,100,0.0025
-large,200,0.0025
-TABLE
-    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
-    assert_status 1 "$status" "one directory cannot hold two answers about a pool's size"
-    local out; out=$(analysis_output)
-    assert_contains "$out" "is given more than one size by the runs" "the refusal says what happened"
-    assert_contains "$out" "'100' by small" "and which run said what"
-    assert_contains "$out" "'200' by large" "for both of them"
-    assert_contains "$out" "param_poolSize in each run's metadata" "and how to settle it"
-}
-
 # ---------------------------------------------------------------------------------------
 # The time axis. Every failure here is silent when it is not caught: the plot renders, the
 # slope has a sign, and nothing says the order was wrong.

@@ -390,6 +390,61 @@ test_fixture_generator_is_deterministic() {
         || fail_case "regenerating the fixture with the default seed did not reproduce test/data/base"
 }
 
+# Every parameter one step file reads, INCLUDING the ones it reads through a helper.
+#
+# poolSize reached step 7 only as poolSizeArgument(run) -> poolSizes(run) -> run.poolSize, so a
+# grep of the step file alone never saw it and it went undeclared in stepParameterMap(). Two runs
+# of different pool sizes then shared one results directory and the tables of one were filtered at
+# the other's thresholds. Helpers are followed to any depth, since that chain is two deep.
+step_parameter_reads() {
+    python3 - "$1" <<'READS'
+import glob, os, re, sys
+
+step_file = sys.argv[1]
+scripts = os.path.dirname(os.path.abspath(step_file))
+all_source = "\n".join(open(p, encoding="utf-8").read()
+                       for p in sorted(glob.glob(os.path.join(scripts, "*.nf"))))
+
+READ = re.compile(r"run\.([A-Za-z_][A-Za-z0-9_.]*)")
+# A helper handed the run map. Nextflow's own take it too, and read nothing.
+CALL = re.compile(r"\b([a-z][A-Za-z0-9_]*)\s*\(\s*run\b")
+SKIP = {"val", "tuple", "path", "file", "println"}
+COMMENT = re.compile(r"//[^\n]*")
+
+
+def body_of(name):
+    found = re.search(r"^def %s\s*\(" % re.escape(name), all_source, re.M)
+    if not found:
+        return ""
+    start = all_source.find("{", found.end())
+    if start < 0:
+        return ""
+    depth, i = 0, start
+    while i < len(all_source):
+        if all_source[i] == "{":
+            depth += 1
+        elif all_source[i] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    return all_source[start:i]
+
+
+text = COMMENT.sub("", open(step_file, encoding="utf-8").read())
+names = set(READ.findall(text))
+pending, seen = set(CALL.findall(text)) - SKIP, set()
+while pending:
+    name = pending.pop()
+    seen.add(name)
+    body = COMMENT.sub("", body_of(name))
+    names |= set(READ.findall(body))
+    pending |= set(CALL.findall(body)) - SKIP - seen
+
+print("\n".join(sorted(name.rstrip(".") for name in names if name.rstrip("."))))
+READS
+}
+
 # THE PARAMETER MAP AGAINST THE SOURCE IT DESCRIBES.
 #
 # stepParameterMap() in scripts/variants.nf decides which runs may share a step's work, and
@@ -418,6 +473,14 @@ test_step_parameter_map_covers_what_each_step_reads() {
     # sharing is the identity of what is found there rather than the string itself.
     local indirect='^(reference|referenceFa|referenceFile|referencePath|gff|gffFile|gffPath|metadataPath|snpEff\.db)$'
 
+    # The same, for what a step reads through a helper rather than by name. `metadata` is the
+    # parsed rows, and the map names the COLUMNS each step depends on in metadataColumnsPerStep()
+    # instead - the rows carry more than any step reads. `trim_galore.quality` is read only to
+    # rebuild trim_galore.options for a row that sets both adapters, and options is declared;
+    # step 0 refuses the one case where the two come apart, which is a pinned options string with
+    # per-sample adapters under it.
+    local through='^(metadata(\..*)?|trim_galore\.quality)$'
+
     for step in 2 3 4 5 6 7 8; do
         file=$(ls "$REPO_ROOT"/scripts/${step}_*.nf 2>/dev/null | head -1)
         [ -n "$file" ] || { fail_case "no source file for step $step"; continue; }
@@ -444,8 +507,8 @@ body = re.sub(r"//[^\n]*", "", text[start.end() - 1:i])
 print("\n".join(sorted(set(re.findall(r"'"'"'([^'"'"']*)'"'"'", body)))))
 ' "$variants")
 
-        reads=$(grep -o 'run\.[A-Za-z_][A-Za-z0-9_.]*' "$file" | sed 's/^run\.//; s/\.$//' \
-                | sort -u | grep -Ev "$excluded" | grep -Ev "$indirect")
+        reads=$(step_parameter_reads "$file" \
+                | grep -Ev "$excluded" | grep -Ev "$indirect" | grep -Ev "$through")
 
         while read -r name; do
             [ -n "$name" ] || continue

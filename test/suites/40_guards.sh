@@ -744,6 +744,63 @@ test_the_resolver_reproduces_what_the_config_computed() {
     assert_contains "$out" "RUN null storageDir=$sb/store"           "and no run subdirectory"
 }
 
+# A DERIVED VALUE THE PROJECT PINNED IS USED AS WRITTEN, which the manual promises and the
+# resolver used to break. deriveRunPaths() recomputed the config's derivations unconditionally,
+# and for a single run that can only ever discard a hand-written value: every input it reads is
+# the one the config already used, so the recomputation reproduces the config's own answer in
+# every other case.
+#
+# It is silent when it goes wrong. The run carries 1/(2*diploidy*poolSize) while the config beside
+# the results says 0.001, and both look like ordinary numbers.
+#
+# All three of the values it derives, in one project: they are the whole set that is not a path,
+# and the paths cannot be pinned at all - dir.outputs and dir.logs carry the run id.
+test_a_pinned_derived_value_survives_the_resolver() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status out
+    sb=$(make_pipeline_sandbox "rundefs-pinned")
+    write_sandbox_config "$sb" \
+        's|^        sensitivity .*|        sensitivity     = 0.001|' \
+        's|^    referenceFa .*|    referenceFa     = "unpacked.fasta"|' \
+        's|^        db .*|        db              = "custom.gff"|'
+    status=$(run_definitions_only "$sb")
+    assert_status 0 "$status" "a pinned derived value should resolve; see $sb/run.out"
+    out=$(cat "$sb/run.out")
+
+    assert_contains "$out" "RUN null filterFalsePositives.sensitivity=0.001" \
+        "the run must carry what the project wrote"
+    assert_contains "$out" "AGREE filterFalsePositives.sensitivity" \
+        "and agree with the config it was read from"
+    assert_contains "$out" "RUN null referenceFa=unpacked.fasta" "the same for a filename"
+    assert_contains "$out" "AGREE referenceFa" "which the config also states"
+    assert_contains "$out" "RUN null snpEff.db=custom.gff" "and for the database name"
+    assert_contains "$out" "AGREE snpEff.db" "which the config also states"
+}
+
+# The other half of the same property: a project that pins nothing must still have every one of
+# them derived. A pin test that answers yes too readily leaves a run carrying a stale value, which
+# is the failure the case above cannot see.
+test_an_unpinned_derived_value_is_still_derived_per_run() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status out
+    sb=$(multirun_sandbox "rundefs-unpinned" 'RunID,poolSize,referenceFile,gffFile
+base,,,
+other,25,other.fasta.gz,other.gff.gz
+')
+    status=$(run_definitions_only "$sb")
+    assert_status 0 "$status" "the table should resolve; see $sb/run.out"
+    out=$(cat "$sb/run.out")
+
+    assert_contains "$out" "RUN base filterFalsePositives.sensitivity=0.0025" "the base run derives"
+    assert_contains "$out" "RUN other filterFalsePositives.sensitivity=0.01" \
+        "and a row setting poolSize re-derives from its own"
+    assert_contains "$out" "RUN other referenceFa=other.fasta" \
+        "a row setting referenceFile re-derives the decompressed name"
+    assert_contains "$out" "RUN other snpEff.db=other.gff" "and the database name follows its GFF"
+}
+
 # Step 1 writes to mainDir, which every run shares, so two runs naming one reference resolve
 # to one set of output paths. Building it once would give one of them a dictionary made to the
 # other's settings, and nothing downstream could detect that. Building it twice is not an
@@ -927,6 +984,32 @@ b" "$(cat "$members" 2>/dev/null)" "Shared_1 should record the pair that formed 
 c" "$(cat "$members" 2>/dev/null)" "the members file follows the grouping the plan describes"
     assert_contains "$(cat "$sb/store/Output/.multirun.csv")" "b,30" \
         "while the stored table still holds what produced the results, so the failure repeats"
+}
+
+# WHAT STEP 7 FILTERS WITH HAS TO BE IN STEP 7'S IDENTITY, and poolSize was not.
+#
+# The filter derives each pool's threshold from poolSize and diploidy, and a pool whose
+# param_poolSize cell is blank takes the run's own poolSize. Only the derived sensitivity stood
+# for it in the identity, so a project pinning sensitivity by hand made two runs of different
+# pool sizes agree at step 7 and share one results directory - which then held one run's tables
+# filtered at the other's thresholds, with nothing in the folder saying so.
+test_a_pinned_sensitivity_does_not_merge_runs_of_different_pool_sizes() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status report
+    sb=$(multirun_sandbox "pinned-sensitivity" 'RunID,poolSize,filterFalsePositives.sensitivity
+small,100,0.0025
+large,200,0.0025
+')
+    status=$(run_verify_only "$sb")
+    assert_status 0 "$status" "pinning a derived value is allowed; see $sb/run.out"
+    report=$(cat "$sb/store/Output/small/Reports/0_verify_environment.txt")
+
+    assert_contains "$report" "small belongs to small alone" \
+        "the run whose pools are one size filters for itself"
+    assert_contains "$report" "large belongs to large alone" "and so does the other"
+    assert_no_file "$sb/store/Output/Shared_1/Frequencies" \
+        "and neither writes its tables into what they share"
 }
 
 # A PER-SAMPLE CAP THAT DIVIDES NOTHING IS A WRONG NUMBER, NOT AN ERROR.

@@ -6,7 +6,7 @@
 
 nextflow.enable.dsl=2
 
-include { poolSizes; poolSizeColumn } from '../../../scripts/metadata.nf'
+include { poolSizes } from '../../../scripts/metadata.nf'
 include { runToken } from '../../../scripts/variants.nf'
 
 // One pool's detection limit: the frequency below which the false-positive filter took a call to
@@ -24,52 +24,35 @@ def shownSensitivity(double value) {
 }
 
 // A plain function, not a local closure: the strict parser rejects calling one by name.
-def poolSizeRefusal(String label, String pool, Map byValue) {
+//
+// Step 7's identity names poolSize, diploidy and every param_poolSize cell, so runs that hold a
+// pool to different sizes never share a results directory. Reaching either throw means
+// stepParameterMap() no longer names one of them.
+def figureConflict(String label, String what, Map byValue) {
     def stated = byValue.sort { a, b -> a.key <=> b.key }
-        .collect { size, runs -> "'${size}' by ${runs.join(', ')}" }
+        .collect { value, runs -> "'${value}' for ${runs.join(', ')}" }
         .join(', ')
-    return new IllegalArgumentException(
-        "the pool '${pool}' is given more than one size by the runs whose results are in one\n" +
-        "directory: ${stated}.\n" +
-        "Those runs produced ONE set of tables, filtered against ONE of these sizes, and\n" +
-        "nothing in the directory records which. Every frequency in it is read against how\n" +
-        "many chromosomes the pool holds, so the analysis stops here rather than choose.\n" +
-        "\n" +
-        "A blank ${poolSizeColumn()} cell takes the run's own poolSize, and poolSize is not part of\n" +
-        "what decides whether two runs share step 7: two runs that set\n" +
-        "filterFalsePositives.sensitivity themselves agree there and can still disagree here.\n" +
-        "\n" +
-        "Give the pool a ${poolSizeColumn()} in each run's metadata, or give each run a storageDir\n" +
-        "of its own so that neither reads the other's tables.\n" +
-        "\n" +
-        "Results directory: ${label}")
+    return new IllegalStateException(
+        "the runs whose results are in ${label} disagree about ${what}: ${stated}. " +
+        "Step 7 filters with the pool sizes and the ploidy and its identity names both, so runs " +
+        "that disagree about either get results of their own. The plan and the run table " +
+        "disagree about which runs share work.")
 }
 
 // The one diploidy the runs of a results directory were filtered under.
-//
-// Step 7's identity includes diploidy, so runs that disagree about it never share a directory:
-// reaching the throw means stepParameterMap() no longer names it.
 def targetDiploidy(String label, List members) {
     def byValue = [:]
     members.each { run -> byValue.get("${run.diploidy}".toString(), []) << runToken(run.runId) }
-
-    if (byValue.size() > 1) {
-        def stated = byValue.sort { a, b -> a.key <=> b.key }
-            .collect { value, runs -> "'${value}' for ${runs.join(', ')}" }
-            .join(', ')
-        throw new IllegalStateException(
-            "the runs whose results are in ${label} disagree about diploidy: ${stated}. " +
-            "The plan and the run table disagree about which runs share work.")
-    }
+    if (byValue.size() > 1) throw figureConflict(label, 'diploidy', byValue)
     return (byValue.keySet() as List)[0] as Integer
 }
 
 // One entry per pool of a results directory, ordered by pool, holding the figures every
 // frequency published there is read against.
 //
-// `members` are the run definitions the directory covers, checked against each other the way the
-// design is: a run whose param_poolSize cell is blank gives the pool its own poolSize, and two
-// runs can share a results directory while their poolSize differs.
+// `members` are the run definitions the directory covers, and the sizes they give are checked
+// against each other: a run whose param_poolSize cell is blank gives the pool its own poolSize,
+// which is a second place two members can differ.
 def poolFigures(String label, List members) {
     def byPool = [:]
     members.each { run ->
@@ -82,7 +65,7 @@ def poolFigures(String label, List members) {
 
     def diploidy = targetDiploidy(label, members)
     return byPool.sort { a, b -> a.key <=> b.key }.collect { pool, byValue ->
-        if (byValue.size() > 1) throw poolSizeRefusal(label, pool, byValue)
+        if (byValue.size() > 1) throw figureConflict(label, "the size of pool '${pool}'", byValue)
         def size = (byValue.keySet() as List)[0] as Integer
         [ pool       : pool,
           size       : size,

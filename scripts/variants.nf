@@ -37,11 +37,14 @@ def stepParameterMap() {
                         'dir.subpath.vcf'],
              publish : [] ],
 
-        // `diploidy` is read directly: the filter computes each pool's own threshold from it.
+        // `poolSize` and `diploidy` are read directly: the filter derives each pool's own
+        // threshold from them, and a blank param_poolSize cell takes the run's poolSize. The
+        // sensitivity derived from them cannot stand in for them - pinned by hand, it lets two
+        // runs of different pool sizes share one results directory.
         7: [ artifact: ['vcffilter.minDP', 'vcffilter.minQUAL',
                         'filterFalsePositives.sensitivity',
                         'filterFalsePositives.sampleThreshold',
-                        'diploidy',
+                        'poolSize', 'diploidy',
                         'vcf.fileName', 'dir.subpath.vcf', 'dir.subpath.freq'],
              publish : [] ],
 

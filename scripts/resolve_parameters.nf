@@ -154,10 +154,42 @@ def setDotted(Map p, String dotted, Object value) {
     else                                 scope[leaf] = value
 }
 
+// The three values parameters.config derives that are not paths, for one parameter map.
+def derivedSensitivity(Map p) {
+    return 1.0 / (2 * p.diploidy * p.poolSize)
+}
+
+def derivedReferenceFa(Map p) {
+    return p.referenceFile.replace('.gz', '')
+}
+
+def derivedSnpEffDb(Map p) {
+    return p.gffFile.replace('.gz', '')
+}
+
+// Whether the project wrote one of them by hand instead of leaving parameters.config to compute
+// it. A pinned value is used exactly as written; a derived one follows each run's own inputs.
+//
+// The config always computes these keys, so absence cannot mark a default the way it does for
+// what deriveInto() fills - what marks one is the value agreeing with the derivation. Against the
+// GLOBAL parameters and never a run's: a run whose row set an input carries the value the config
+// computed for the old one, which is a value to re-derive and not a pin.
+def sensitivityIsPinned() {
+    return params.filterFalsePositives.sensitivity != derivedSensitivity(params)
+}
+
+def referenceFaIsPinned() {
+    return params.referenceFa != derivedReferenceFa(params)
+}
+
+def snpEffDbIsPinned() {
+    return params.snpEff.db != derivedSnpEffDb(params)
+}
+
 // The derivations that live in parameters.config, recomputed for one run: config interpolation
 // runs once at parse time, against one set of values.
 def deriveRunPaths(Map p) {
-    p.referenceFa = p.referenceFile.replace('.gz', '')
+    if (!referenceFaIsPinned()) p.referenceFa = derivedReferenceFa(p)
 
     p.dir.data         = "${p.mainDir}/${p.dataSource}"
     p.dir.references   = "${p.mainDir}/Reference"
@@ -183,8 +215,8 @@ def deriveRunPaths(Map p) {
     p.gff           = "${p.dir.dictionaries}/${p.gffFile.replace('.gz', '')}"
     p.reads         = "${p.dir.data}/${p.readPattern}"
 
-    p.filterFalsePositives.sensitivity = 1.0 / (2 * p.diploidy * p.poolSize)
-    p.snpEff.db = p.gffFile.replace('.gz', '')
+    if (!sensitivityIsPinned()) p.filterFalsePositives.sensitivity = derivedSensitivity(p)
+    if (!snpEffDbIsPinned()) p.snpEff.db = derivedSnpEffDb(p)
 
     // Read once and carried; no consumer re-reads the CSV. Per run, because metadataFile may
     // itself be varied.
