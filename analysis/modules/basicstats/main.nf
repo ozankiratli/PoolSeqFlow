@@ -34,7 +34,7 @@ def settingDefaults() {
 
 // The compiled path is the default: every analysis environment carries a compiler, because
 // conda's r-base depends on one. `nocpp` after the module name turns it off for one run, and
-// analysis.basicstats.usecpp turns it off for a project.
+// analysis.modules.basicstats.usecpp turns it off for a project.
 def useCompiled(Map settings) {
     if (params.containsKey('nocpp')) return false
     return settings.usecpp as boolean

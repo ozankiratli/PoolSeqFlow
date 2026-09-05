@@ -8,7 +8,7 @@ nextflow.enable.dsl=2
 
 include { runDefinitions; resolveParameters } from '../../../scripts/resolve_parameters.nf'
 include { variantPlan; runToken; dig } from '../../../scripts/variants.nf'
-include { analysisSetting; renderSetting; targetResultsDir; installDir } from './paths.nf'
+include { analysisSetting; checkAnalysisScope; renderSetting; targetResultsDir; installDir } from './paths.nf'
 include { moduleNeeds } from './modules.nf'
 include { checkTargetDesign; designSummary } from './design.nf'
 include { poolFigures } from './pools.nf'
@@ -145,6 +145,10 @@ def resultsTargets(Map plan, List runDefs, List selected, String module, List ne
 // The two calls are ordered: runDefinitions() copies each run's own parameters before
 // resolveParameters() fills the computed ones in.
 def analysisPlan(String module) {
+    // Before anything reads a setting: a reader asks for the key it wants by name, so a key the
+    // layer does not have is never asked about and the project silently runs under a default it
+    // did not choose.
+    checkAnalysisScope()
     // runDefinitions() calls a helper in bin/, so where bin/ is has to be settled before it.
     // parameters.config sets dir.bin beside the entry script, which for a module is the module.
     params.dir.bin = "${installDir()}/bin".toString()

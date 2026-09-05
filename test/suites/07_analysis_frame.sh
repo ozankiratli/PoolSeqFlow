@@ -217,8 +217,9 @@ test_the_analysis_settings_default_without_a_config_block() {
     assert_contains "$paths" 'if (!scope.containsKey(key)) return defaults[key]' \
         "and a key the project did not set falls back to it"
     # Nextflow REPLACES a nested map rather than merging into it, so a project writing one
-    # sub-key would otherwise lose every other default in that scope.
-    assert_contains "$paths" 'return defaults[key] + written' \
+    # sub-key would otherwise lose every other default in that scope. One merge for every scope,
+    # so metadata, timeVar, series and phenotype cannot drift apart on it.
+    assert_contains "$paths" 'return defaults + written' \
         "while a scope the project set only part of keeps the rest of its defaults"
 }
 

@@ -160,7 +160,7 @@ if (isTRUE(OPTS$usecpp)) {
 }
 if (OPTS$workers > 1) {
     if (!requireNamespace("doFuture", quietly = TRUE)) {
-        stop("basicstats.R: analysis.basicstats.workers is ", OPTS$workers,
+        stop("basicstats.R: analysis.modules.basicstats.workers is ", OPTS$workers,
              " and doFuture is not installed. Install it, or set workers to 1.")
     }
     library(doFuture)
@@ -343,7 +343,7 @@ available <- intersect(chrom_levels, unique(snp$CHROM))
 
 if (length(named) == 0) {
     cat("basicstats: no depth plot was drawn. Name the sequences you want in ",
-        "analysis.basicstats.chromosomes:\n", sep = "")
+        "analysis.modules.basicstats.chromosomes:\n", sep = "")
     for (chrom in available) {
         cat("basicstats:     ", chrom, " (", sum(snp$CHROM == chrom), " called SNP sites)\n",
             sep = "")
@@ -351,14 +351,14 @@ if (length(named) == 0) {
 } else {
     unknown <- setdiff(named, available)
     if (length(unknown) > 0) {
-        stop("basicstats.R: analysis.basicstats.chromosomes names ",
+        stop("basicstats.R: analysis.modules.basicstats.chromosomes names ",
              paste(unknown, collapse = ", "), ", which the depth table has no called site on. ",
              "It has: ", paste(available, collapse = ", "), ". A sequence with no surviving ",
              "variant is invisible here and cannot be told from one your reference does not ",
              "have, so this is refused rather than drawn empty.")
     }
     if (!requireNamespace("ggplot2", quietly = TRUE)) {
-        stop("basicstats.R: analysis.basicstats.chromosomes asks for a plot and ggplot2 is not ",
+        stop("basicstats.R: analysis.modules.basicstats.chromosomes asks for a plot and ggplot2 is not ",
              "installed. Install it, or set chromosomes to an empty list.")
     }
 

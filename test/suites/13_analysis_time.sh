@@ -25,7 +25,7 @@ test_a_kind_with_no_time_column_refuses() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population
 TestSample1,PoolA,Pop1'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a setting that cannot apply must be refused where it is written"
     assert_contains "$(analysis_output)" "has no exp_time column" "naming the column it looked for"
@@ -35,7 +35,7 @@ TestSample1,PoolA,Pop1'
 # carry two timepoints with nothing to stop it.
 test_a_time_column_outside_the_prefix_refuses() {
     analysis_ready single || return
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { column = 'timepoint'; kind = 'categorical' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { column = 'timepoint'; kind = 'categorical' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "the time variable has to be an exp_ column"
     assert_contains "$(analysis_output)" "has to be an exp_ column" "and the refusal says why"
@@ -44,7 +44,7 @@ test_a_time_column_outside_the_prefix_refuses() {
 # A numerical axis is an interval scale, so a rate is meaningful and has to be labelled.
 test_numerical_time_requires_a_unit() {
     analysis_ready single || return
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "numerical time with no unit must stop"
     local out; out=$(analysis_output)
@@ -56,7 +56,7 @@ test_numerical_time_requires_a_unit() {
 # categorical time does not have.
 test_a_unit_on_categorical_time_refuses() {
     analysis_ready single || return
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; unit = 'generation' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; unit = 'generation' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a spacing categorical time does not have must not be asserted"
     assert_contains "$(analysis_output)" "categorical time is an order and nothing more" \
@@ -71,7 +71,7 @@ test_numerical_time_orders_by_number_not_by_string() {
 TestSample1,PoolA,Pop1,1
 TestSample2,PoolB,Pop1,10
 TestSample3,PoolC,Pop1,2'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
         series { by = ['exp_population'] }"
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     local report; report=$(analysis_report "$ANALYSIS_SB")
@@ -89,7 +89,7 @@ test_alphabetical_time_warns_when_a_number_sort_disagrees() {
 TestSample1,PoolA,Pop1,T1
 TestSample2,PoolB,Pop1,T10
 TestSample3,PoolC,Pop1,T2'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     local report; report=$(analysis_report "$ANALYSIS_SB")
     assert_contains "$report" "alphabetical order" "the note says which order was used"
@@ -99,7 +99,7 @@ TestSample3,PoolC,Pop1,T2'
 
 test_an_explicit_order_that_misses_a_level_refuses() {
     analysis_ready single || return
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1'] }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1'] }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a level with nowhere to go must stop the run"
     assert_contains "$(analysis_output)" "does not include 'T2'" "naming the level it left out"
@@ -113,7 +113,7 @@ test_datetime_time_parses_and_positions_in_days() {
     analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
 TestSample1,PoolA,Pop1,07/03/2024
 TestSample2,PoolB,Pop1,11/04/2024'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'dd/MM/yyyy' }
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'dd/MM/yyyy' }
         series { by = ['exp_population'] }"
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     local report; report=$(analysis_report "$ANALYSIS_SB")
@@ -130,7 +130,7 @@ test_a_yyyy_pattern_is_accepted() {
     analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_time
 TestSample1,PoolA,2024-03-07
 TestSample2,PoolB,2024-04-11'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'yyyy-MM-dd' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'yyyy-MM-dd' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 0 "$status" "the pattern everyone writes has to work"
 }
@@ -142,7 +142,7 @@ test_an_impossible_date_refuses_rather_than_being_corrected() {
     analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_time
 TestSample1,PoolA,2024-02-31
 TestSample2,PoolB,2024-04-11'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'yyyy-MM-dd' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'yyyy-MM-dd' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "31 February must not become 29 February"
     assert_contains "$(analysis_output)" "2024-02-31" "and the refusal names the value"
@@ -155,7 +155,7 @@ test_a_month_name_is_read_in_the_projects_own_locale() {
     analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_time
 TestSample1,PoolA,5 décembre 2011
 TestSample2,PoolB,7 mars 2012'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'd MMMM yyyy'; locale = 'fr' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'd MMMM yyyy'; locale = 'fr' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 0 "$status" "French month names should read under locale fr"
     assert_contains "$(analysis_report "$ANALYSIS_SB")" "2011-12-05T00:00  2012-03-07T00:00" \
@@ -166,7 +166,7 @@ TestSample2,PoolB,7 mars 2012'
 # month names, which then refuses every value with a message about the value.
 test_an_unknown_locale_is_refused_by_name() {
     analysis_ready single || return
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'yyyy-MM-dd'; locale = 'xx' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'yyyy-MM-dd'; locale = 'xx' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a locale this Java does not have must be named as the problem"
     assert_contains "$(analysis_output)" "not a locale this Java knows" \

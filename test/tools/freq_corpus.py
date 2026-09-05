@@ -62,7 +62,7 @@ PLOIDY = 2
 N_CHROM = PLOIDY * POOL_SIZE
 SENSITIVITY = 1.0 / (2 * PLOIDY * POOL_SIZE)
 
-# The default of analysis.basicstats.minReads: the alternate reads a pool needs before a site
+# The default of analysis.modules.basicstats.minReads: the alternate reads a pool needs before a site
 # counts as segregating for it, whatever the depth.
 MIN_READS = 2
 

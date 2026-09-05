@@ -142,6 +142,28 @@ def metadataChecks(Map plan) {
             pools[pool] << "${row.SampleID}".toString()
         }
 
+        // Pool-level columns whose rows disagree. Reported and never refused: no step reads one,
+        // so nothing the pipeline computes depends on it, and what a disagreement MEANS is the
+        // analysis layer's to decide - a contradiction on exp_ and pt_, an ordinary circumstance
+        // on cov_. Silence would leave a mistyped treatment to be found by an analysis months on.
+        def disagreeing = []
+        pools.keySet().sort().each { pool ->
+            def poolRows = variant.metadata.findAll { row -> "${row.RG_Sample}".toString() == pool }
+            def columns = []
+            poolRows.each { row -> row.keySet().each { key ->
+                def name = "${key}".toString()
+                if (name ==~ /^(exp|pt|cov)_.+/ && !columns.contains(name)) columns << name
+            } }
+            columns.each { column ->
+                def seen = poolRows.collect { row -> "${row[column] ?: ''}".toString() }.unique()
+                if (seen.size() > 1) {
+                    disagreeing << [ pool  : pool,
+                                     column: column,
+                                     seen  : seen.sort().collect { v -> v ?: '(blank)' } ]
+                }
+            }
+        }
+
         return [checkKey    : variant.variantKey,
                 runId       : variant.runId,
                 storageDir  : variant.storageDir,
@@ -154,6 +176,7 @@ def metadataChecks(Map plan) {
                 pooled      : pools.findAll { _pool, ids -> ids.size() > 1 }
                                    .collect { pool, ids -> [pool: pool, ids: ids.sort()] }
                                    .sort { a, b -> a.pool <=> b.pool },
+                disagreeing : disagreeing,
                 // Only the pools that set param_poolSize.
                 poolOverrides: variant.metadata
                                    .findAll { row -> row[poolSizeColumn()] }
@@ -425,6 +448,16 @@ process CheckMetadataFile {
         : (["    log_message \"METADATA CHECK:        pools sized in the metadata file, the rest ${check.globalPoolSize}:\""] +
            check.poolOverrides.collect { entry ->
                "    log_message \"METADATA CHECK:            ${entry.pool} is ${entry.size} individuals\"" }).join('\n')
+    // Reported and never a FAIL: no step reads these columns, so the run is sound whatever they
+    // say, and only an analysis can judge what a disagreement means.
+    disagreeBlock = check.disagreeing.isEmpty()
+        ? '    :'
+        : (['    log_message "METADATA CHECK:        these pool-level columns differ between the rows of one pool:"'] +
+           check.disagreeing.collect { entry ->
+               "    log_message \"METADATA CHECK:            ${entry.pool} ${entry.column}: ${entry.seen.join(', ')}\"" } +
+           ['    log_message "METADATA CHECK:        No step reads them, so this run is unaffected and the values"',
+            '    log_message "METADATA CHECK:        are recorded as written. An analysis refuses a disagreeing exp_"',
+            '    log_message "METADATA CHECK:        or pt_ column; a cov_ one is reported as having no single value."']).join('\n')
     // The one combination a per-sample adapter cannot be honoured in.
     adapterBlock = (check.optionsPinned && !check.adapterOverrides.isEmpty())
         ? (['    log_message "METADATA CHECK:        these samples set param_adapter1/param_adapter2, but this run pins"',
@@ -528,6 +561,9 @@ ${poolBlock}
 
         # And how many individuals each column stands for.
 ${sizeBlock}
+
+        # Pool-level columns whose rows disagree. A note, never a failure.
+${disagreeBlock}
 
 ${adapterBlock}
 

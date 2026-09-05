@@ -590,7 +590,7 @@ diff parameters.config.bak parameters.config          # see what changed, then r
 
 **`projectDir` is now `storageDir`.** A straight rename, and your value is carried over — note that `projectDir` is also a name Nextflow defines for itself, which is why it could not stay.
 
-**`RGTags.csv` is replaced by `metadata.csv`.** This one is not a rename and cannot be migrated: the old file held raw SAM read-group tags and nothing else, while the new one has three kinds of column and carries your pool sizes as well. `migrate_config` reports `rgTagsFile` as no longer used, tells you to move the file, and prints a note saying plainly that the two are not the same file under a new name — but rewriting it into the new schema is yours to do. Start from `$POOLSEQFLOW_HOME/metadata.csv.template`, which documents every column, and read [Metadata](#metadata). **Until `metadata.csv` exists the run stops at step 0**, so this is not a step you can defer. It is also the change that buys the most: the experiment itself — populations, timepoints, replicates — finally has somewhere to live.
+**`RGTags.csv` is replaced by `metadata.csv`.** This one is not a rename and cannot be migrated: the old file held raw SAM read-group tags and nothing else, while the new one has [seven kinds of column](#kinds-of-metadata-column) and carries your pool sizes as well. `migrate_config` reports `rgTagsFile` as no longer used, tells you to move the file, and prints a note saying plainly that the two are not the same file under a new name — but rewriting it into the new schema is yours to do. Start from `$POOLSEQFLOW_HOME/metadata.csv.template`, which documents every column, and read [Metadata](#metadata). **Until `metadata.csv` exists the run stops at step 0**, so this is not a step you can defer. It is also the change that buys the most: the experiment itself — populations, timepoints, replicates — finally has somewhere to live.
 
 **The depth ceiling moved, and your old value is deliberately not carried.** In 2.2.0 `bcftools.maxDepth = 2000` was the only depth control there was: one number for every pileup in the run. From 3.0, step 5 measures a ceiling for each sample from its own depth histogram and step 6 applies it to the BAM before calling, so a sample is capped where its own coverage says to rather than at one number for the whole cohort — see [Depth capping](#depth-capping). `variantCall.maxDepth` is now a second ceiling on top of that one and ships as `0`, which `mpileup` reads as no limit at all.
 
@@ -1425,22 +1425,24 @@ Replacing a command with an absolute path makes the pipeline use a system instal
 Three of its columns change your results. The rest are yours, and the pipeline never interprets them.
 
 ```csv
-SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,param_poolSize,exp_population,exp_time,sequencing_run
-Sample1T1Rep1,Sample1T1,Lib1,ILLUMINA,Unit1,50,Pop1,T1,Run1
-Sample1T1Rep2,Sample1T1,Lib1,ILLUMINA,Unit2,50,Pop1,T1,Run2
-Sample1T2Rep1,Sample1T2,Lib1,ILLUMINA,Unit1,50,Pop1,T2,Run1
-Sample1T2Rep2,Sample1T2,Lib1,ILLUMINA,Unit2,50,Pop1,T2,Run2
-Sample2T1Rep1,Sample2T1,Lib1,ILLUMINA,Unit1,40,Pop2,T1,Run1
-Sample2T1Rep2,Sample2T1,Lib1,ILLUMINA,Unit2,40,Pop2,T1,Run2
-Sample2T2Rep1,Sample2T2,Lib1,ILLUMINA,Unit1,40,Pop2,T2,Run1
-Sample2T2Rep2,Sample2T2,Lib1,ILLUMINA,Unit2,40,Pop2,T2,Run2
+SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,param_poolSize,exp_population,exp_time,pt_resistance,cov_temperature,sequencing_run
+Sample1T1Rep1,Sample1T1,Lib1,ILLUMINA,Unit1,50,Pop1,T1,susceptible,21.5,Run1
+Sample1T1Rep2,Sample1T1,Lib1,ILLUMINA,Unit2,50,Pop1,T1,susceptible,21.5,Run2
+Sample1T2Rep1,Sample1T2,Lib1,ILLUMINA,Unit1,50,Pop1,T2,resistant,22.1,Run1
+Sample1T2Rep2,Sample1T2,Lib1,ILLUMINA,Unit2,50,Pop1,T2,resistant,22.1,Run2
+Sample2T1Rep1,Sample2T1,Lib1,ILLUMINA,Unit1,40,Pop2,T1,susceptible,18.0,Run1
+Sample2T1Rep2,Sample2T1,Lib1,ILLUMINA,Unit2,40,Pop2,T1,susceptible,18.0,Run2
+Sample2T2Rep1,Sample2T2,Lib1,ILLUMINA,Unit1,40,Pop2,T2,resistant,19.4,Run1
+Sample2T2Rep2,Sample2T2,Lib1,ILLUMINA,Unit2,40,Pop2,T2,resistant,19.4,Run2
 ```
 
-*Eight FASTQ pairs, four distinct `RG_Sample` values — this file produces a VCF with **four** columns: `Sample1T1`, `Sample1T2`, `Sample2T1`, `Sample2T2`. Each pool was sequenced twice, so its two rows share an `RG_Sample` and repeat that pool's `param_poolSize` and its `exp_` values. `sequencing_run` is what differs between those two rows, which is why it carries no prefix.*
+*Eight FASTQ pairs, four distinct `RG_Sample` values — this file produces a VCF with **four** columns: `Sample1T1`, `Sample1T2`, `Sample2T1`, `Sample2T2`. Each pool was sequenced twice, so its two rows share an `RG_Sample` and repeat everything that belongs to the pool.*
+
+*Read the columns left to right and they group: what the sample **is**, what the **pipeline** should do with it, what was **set** (`exp_`), what was **measured as the response** (`pt_`), what was **measured alongside** (`cov_`), and last `sequencing_run` — which differs between the two rows of a pool, and so carries no prefix at all.*
 
 `PoolSeqFlow init` does not write this file, because its content is your experiment and a copied one would describe someone else's. It leaves `metadata.csv.example` beside you to write it from — the same table with every column explained in comments. Blank lines and lines beginning with `#` are ignored, so those comments can stay in the file you keep. A value containing a comma must be quoted: `"Pop1, coastal"`.
 
-### The five kinds of column { #kinds-of-metadata-column }
+### The seven kinds of column { #kinds-of-metadata-column }
 
 The **name** of a column is what decides how it is treated. There is no second schema to keep in step with it.
 
@@ -1449,14 +1451,18 @@ The **name** of a column is what decides how it is treated. There is no second s
 | `SampleID` | **Required and unique.** Matched against the sample name `readPattern` takes from your FASTQ filenames, and becomes the read group's `ID` in the BAM |
 | `RG_*` | A read-group tag. Eight are known, listed below. A blank cell omits that tag rather than writing an empty one |
 | `param_*` | A setting from `parameters.config`, overridden for these samples only. Four are known: `param_poolSize`, `param_capMaxDepth`, `param_adapter1`, `param_adapter2`. A blank cell means "use the global value" |
-| `exp_*` | An experimental variable, read by [analysis modules](#the-experimental-design) and by no pipeline step. Any name you like after the prefix |
-| anything else | Yours. A lane, a batch, a collection site, a note, a measurement from another experiment — whatever this study needs recorded |
+| `exp_*` | An experimental variable — something you **set**. Read by [analysis modules](#the-experimental-design) and by no pipeline step. Any name you like after the prefix |
+| `pt_*` | A phenotype — something you **measured** on the pool, and the thing being tested against. Also read only by analysis modules, and also open. See [The phenotype](#the-phenotype) |
+| `cov_*` | A covariate — measured on the pool, but neither set nor the response. A cage temperature, an altitude, a collection site. See [Covariates](#covariates) |
+| anything else | Yours. A lane, a batch, a note, a measurement from another experiment — whatever this study needs recorded |
 
 **`RG_` and `param_` are closed lists, and an unrecognised one is refused rather than ignored.** For `RG_` that stops a typo quietly losing a tag. For `param_` the reason is sharper: a `param_` column the pipeline did not recognise would be a setting you had written down, could see in your own file, and that was never applied to anything.
 
-**`pt_` is reserved and every column carrying it is refused.** It has no meaning yet. Refusing it now is what lets a later release give it one without changing what a file you write today means.
+**`exp_`, `pt_` and `cov_` are three prefixes because only `exp_` identifies a series.** The analysis layer works out which pools are one thing measured repeatedly from your `exp_` columns. A trait value differs from pool to pool, and so does a cage temperature — either one recorded as an `exp_` column would split every series into single timepoints, **quietly**, because a design with no repeated measurements is a legal design. Keeping them apart is what stops that, structurally, rather than by remembering a setting.
 
-Everything else is free. **You can add, remove and edit your own columns — `exp_` ones included — without invalidating results you already have.** The change guard does not look at them, so no analysis you have already published stops being valid because you named a variable better.
+**All three describe the POOL.** What differs between two rows of one pool — the lane, the run, the technician who handled one library — takes no prefix, and **not because it does not matter**. Once two libraries' reads are merged into one column, nothing downstream can attribute a read to the row it came from, so a row-level factor is not something the analysis layer has yet to support: it is unrecoverable. Record it unprefixed for the record. If every library of a pool *does* share one — one technician per pool — then it is pool-level after all, and it is a `cov_`.
+
+Everything else is free. **You can add, remove and edit your own columns — `exp_` and `pt_` ones included — without invalidating results you already have.** The change guard does not look at them, so no analysis you have already published stops being valid because you named a variable better.
 
 ### The experimental design { #the-experimental-design }
 
@@ -2427,25 +2433,58 @@ Everything the analysis layer takes:
 |---|---|---|
 | `analysis.runs` | Which of your runs this invocation covers | [below](#analysis-runs) |
 | `analysis.folderName` | Which folder under `Analysis/Results` it writes to | [Output Layout](#analysis-folder-name) |
-| `analysis.timeVar.*` | How the time column is read and ordered | [below](#the-time-axis) |
-| `analysis.series.*` | Which pools are one thing measured repeatedly | [below](#time-series) |
-| `analysis.<module>.*` | One module's own settings | [below](#module-settings) |
+| `analysis.metadata.missingValueEncoding` | What a cell means when it is not a value — `NA` and its spellings | [below](#missing-values) |
+| `analysis.metadata.timeVar.*` | How the time column is read and ordered | [below](#the-time-axis) |
+| `analysis.metadata.series.*` | Which pools are one thing measured repeatedly | [below](#time-series) |
+| `analysis.metadata.phenotype.*` | Which `pt_` column a module associates things with, and how to read it | [below](#the-phenotype) |
+| `analysis.metadata.covariates.*` | What each `cov_` column holds, so a module can compute with it | [below](#covariates) |
+| `analysis.modules.<module>.*` | One module's own settings | [below](#module-settings) |
+
+**The two extra levels are namespaces, and they earn their place.** `analysis.metadata` holds everything that says how `metadata.csv` is read; `analysis.modules` holds one scope per installed module. Keeping them apart means a module called `series` cannot read the frame's series settings, and it lets each level **refuse a key it does not have** — without which `analysis { timevar { … } }`, with a small `v`, would sit in your file unread while the project ran on defaults you never chose.
 
 A scope you write only part of keeps the rest of its defaults — `timeVar { kind = 'numerical' }` still takes `column` from `exp_time`. A key a scope does not have is refused, naming the ones it does.
+
+### Missing values { #missing-values }
+
+A **blank cell always means "no value"**, everywhere, with no setting required. `analysis.metadata.missingValueEncoding` is for the *other* spellings of it — the ones your export wrote.
+
+```groovy
+params {
+    analysis {
+        metadata {
+            missingValueEncoding = ['NA', 'N/A', '-']
+        }
+    }
+}
+```
+
+Each entry is matched **whole**, so `NA` does not catch `NAive`. `*` stands for any run of characters and `?` for exactly one, so `na_*` catches `na_lost` and `na_dead`.
+
+**Matching is case sensitive, and that is deliberate.** `NA` does not catch `na`; list both if your file has both. Folding case would be convenient right up to the project whose population codes include `na`, where it would silently delete a real level and leave a smaller design with no error attached. No setting can tell those two situations apart, so the safe one is the default.
+
+**It applies to `exp_` and `pt_` columns only** — the ones the analysis layer reads. Read-group tags and `param_` overrides were consumed by the pipeline long before any of this, and changing what they mean now would say a completed run had been configured differently than it was.
+
+**An entry that would match everything is refused.** `'*'` on its own would turn every experimental and phenotype cell in the project into a blank, leaving an analysis with no design and nothing to say so.
+
+**And every cell it blanks is named in the verification report.** This is the setting most able to remove data quietly: a pattern wider than you meant produces fewer levels, shorter series and dropped pools, none of which is an error anywhere downstream. The report lists each cell, its column and its pool, so a wrong pattern shows up as a list you did not expect rather than as a result you cannot explain.
+
+Two consequences worth knowing. A pool whose rows say `NA` on one and nothing at all on another **agrees** once `NA` is declared, where before the encoding it would have been refused as a contradiction. And because these columns are recorded and never acted on by the pipeline, adding or changing this setting never invalidates results you already have.
 
 ### The time axis { #the-time-axis }
 
 Time is the one experimental variable whose **order** carries meaning, and every way of getting it wrong is silent: the plot renders, the slope has a sign, and nothing says the sequence was backwards. So it is declared rather than guessed.
 
-**If your metadata has an `exp_time` column, `analysis.timeVar.kind` is required** and every analysis refuses until it is set. There is no auto-detection on purpose: `20240307` reads as a number as readily as a date, which keeps the *order* right and makes every *interval* nonsense.
+**If your metadata has an `exp_time` column, `analysis.metadata.timeVar.kind` is required** and every analysis refuses until it is set. There is no auto-detection on purpose: `20240307` reads as a number as readily as a date, which keeps the *order* right and makes every *interval* nonsense.
 
 ```groovy
 params {
     analysis {
-        timeVar {
-            column = 'exp_time'      // must be an exp_ column
-            kind   = 'numerical'     // numerical | datetime | categorical
-            unit   = 'generation'
+        metadata {
+            timeVar {
+                column = 'exp_time'      // must be an exp_ column
+                kind   = 'numerical'     // numerical | datetime | categorical
+                unit   = 'generation'
+            }
         }
     }
 }
@@ -2556,11 +2595,13 @@ A trajectory needs more than an order: it needs to know which pools are **one th
 ```groovy
 params {
     analysis {
-        series {
-            by            = ['exp_treatment', 'exp_replicate', 'exp_lane']
-            biologicalRep = ['exp_replicate']
-            technicalRep  = ['exp_lane']
-            incomplete    = 'fail'
+        metadata {
+            series {
+                by            = ['exp_treatment', 'exp_replicate', 'exp_lane']
+                biologicalRep = ['exp_replicate']
+                technicalRep  = ['exp_lane']
+                incomplete    = 'fail'
+            }
         }
     }
 }
@@ -2613,7 +2654,7 @@ The counts are per unit and given as a range when they vary, because a design wh
 
 #### When a series is missing a timepoint
 
-`analysis.series.incomplete` decides, and it defaults to `fail` because a ragged panel analysed as a complete one is a wrong answer that looks like a right one.
+`analysis.metadata.series.incomplete` decides, and it defaults to `fail` because a ragged panel analysed as a complete one is a wrong answer that looks like a right one.
 
 | | |
 |---|---|
@@ -2673,8 +2714,10 @@ A module's settings go in a scope named after it, **inside** `analysis`:
 ```groovy
 params {
     analysis {
-        basicstats {
-            minReads = 3
+        modules {
+            basicstats {
+                minReads = 3
+            }
         }
     }
 }
@@ -2683,6 +2726,125 @@ params {
 What a module has is listed in its own section of this manual, and the defaults are the module's own. **A key it does not have is refused, naming what it does have** — so `chromosome` for `chromosomes` stops the run rather than leaving the module quietly running on a default you did not choose. The verification report echoes every setting you did write, as you wrote it.
 
 Inside `analysis`, always. A scope written at the top level of a configuration file becomes part of the record this project is checked against, and every analysis would then refuse with a message about a changed project rather than about the file you just wrote — so that mistake is caught and named where it happens.
+
+### The phenotype { #the-phenotype }
+
+A `pt_` column records something **measured on the pool** — a trait value, a resistance score, a case/control status. No pipeline step reads one. A module that associates allele frequencies with a phenotype reads exactly one of them, and which one is yours to name.
+
+```groovy
+params {
+    analysis {
+        metadata {
+            phenotype {
+                column = 'pt_wingspan'
+                kind   = 'quantitative'
+            }
+        }
+    }
+}
+```
+
+**It has to be a `pt_` column, and that is a rule rather than a convention.** `pt_` columns are checked for agreeing across the rows of one pool, exactly as `exp_` ones are — so naming any other column would let one pool carry two phenotype values with nothing to stop it. Anything outside the prefix is refused by name.
+
+#### `kind` is a measurement scale, declared and never detected { #phenotype-kind }
+
+| `kind` | What the column holds | `levels` | What a module may fit |
+|---|---|---|---|
+| `quantitative` | a measurement. Every value must parse as a number | refused | a slope, signed |
+| `binary` | **presence and absence** — affected or not. Exactly two levels | **required** | a signed effect, and case/control methods |
+| `ordinal` | groups whose **order** means something and whose spacing does not | **required** | a trend across the order |
+| `nominal` | groups with **no order** | **required** | a comparison between groups, and no trend |
+
+Nothing is inferred, for the same reason `analysis.metadata.timeVar.kind` is not: `0` and `1` read as numbers as readily as they encode two groups, and which of `case` and `control` you mean by *affected* is not in your file at all.
+
+**`binary` is not "the two-group case".** It is a claim that one level is the *absence* of the other — affected or unaffected, resistant or susceptible — which is what makes a design a case/control design rather than a comparison of two arbitrary groups. Two groups that are neither, such as coastal and inland or two host plants, are **`nominal` with two levels**. The published result records which you declared.
+
+**`ordinal` and `nominal` are two kinds because they permit different things.** Scoring low/medium/high as 0/1/2 and fitting a slope asserts that low→medium is the same distance as medium→high, which an ordinal scale does not claim. Treating it as unordered instead throws the ordering away and loses the power to see a trend at all. So you say which you have, and the module fits accordingly.
+
+For a `nominal` phenotype the frame carries **no number at all** for each pool — only which group it is in. That is deliberate, and it is the same mechanism [categorical time](#the-time-axis) uses when it sets `position` to null: it makes *"you may not fit a rate on this"* something a module can check rather than something its author has to remember. Wing types `spotted`, `striped` and `curly` have an index each, and a slope fitted on that index would assert curly is twice as far from spotted as striped is.
+
+#### Counts, percentages, and what is not a phenotype kind { #phenotype-not-kinds }
+
+**Counts and percentages are `quantitative`.** A phenotype is a *predictor*, and a predictor carries no distributional assumption — that a bristle count is really Poisson changes nothing here.
+
+**A trait that varies WITHIN a pool is not a nominal phenotype, it is a composition.** If a pool is 30% spotted, 50% striped and 20% curly, its phenotype is not "striped" — labelling it by the majority morph discards the other 70%. Record it as one quantitative column per morph, `pt_spotted = 0.3` and so on, and analyse them one at a time. **`nominal` is correct only when each pool was built homogeneous for the trait**, which is a real design but a different one.
+
+**Two kinds that are real and are not supported**, named here so that nobody declares one by accident:
+
+- **Circular** measurements — time of day of eclosion, a direction. 359° and 1° are two degrees apart, and any linear fit on them is simply wrong. Nothing in the values reveals it, so this cannot be refused for you: do not declare a circular phenotype `quantitative`.
+- **Censored** measurements — time to death where some individuals survived. This needs survival analysis, which no module here does.
+
+#### `levels` decides the sign of every result { #phenotype-levels }
+
+For `binary`, `levels` names the two values **in order, as `[absent, present]`**.
+
+```groovy
+phenotype {
+    column = 'pt_status'
+    kind   = 'binary'
+    levels = ['unaffected', 'affected']
+}
+```
+
+**Write those the wrong way round and every effect reported against the phenotype has the opposite sign.** `['affected', 'unaffected']` is just as legal, produces no error, and inverts the entire result. Nothing in your data says which you meant.
+
+For `ordinal` the order **is** the scale, so it carries the same weight. For `nominal` it only sets which group the others are reported against, and a comparison between groups does not depend on that choice — which is the one case here where getting the order wrong costs you nothing.
+
+**A level no pool has is kept, not refused.** A group you have not sequenced yet is legitimate, so the run continues and the report names the unused level. A misspelling looks exactly the same, which is why that line is worth reading.
+
+There is no check that can catch this, and pretending otherwise would be worse than saying so. What you get instead is the same defence the time levels get: **the verification report prints every pool's value as you wrote it beside the number it became**, and the published folder's `README.md` repeats it.
+
+```
+PHENOTYPE:             pt_status, binary, 'control' = 0 and 'case' = 1
+PHENOTYPE:                 Pool1  case -> 1.0
+PHENOTYPE:                 Pool2  control -> 0.0
+```
+
+Read those two lines before you read any result. They are where a reversed encoding becomes visible.
+
+#### Blanks, and one phenotype at a time { #phenotype-blanks }
+
+**A blank cell is no value, not a third group.** The pool is named in the report and carried into the design, and a module that needs a phenotype drops that pool from its fit and says so. Recording what your project was is the frame's job; deciding what can be fitted is the module's.
+
+**If every pool has the same value** there is nothing to associate anything with, and the report says so. A module that fits against it refuses rather than reporting an effect of zero as a finding.
+
+**A group holding one pool is reported too.** It contributes no within-group variance, so any comparison against it rests on that single pool — legitimate, occasionally unavoidable, and not something a table of group means shows you.
+
+You can record as many `pt_` columns as you like — `analysis.metadata.phenotype.column` chooses one. To analyse several, run the module once per phenotype with [`analysis.folderName`](#analysis-folder-name) set, so each result lands in a folder of its own and says which phenotype produced it. That is deliberately not a list: a folder holding three answers under one name is a folder nobody can cite.
+
+### Covariates { #covariates }
+
+A `cov_` column records something **measured on the pool that you neither set nor are testing against** — a cage temperature, an altitude, a collection site, a technician when every library of a pool shares one. It is the third pool-level prefix and it exists for one mechanical reason: an `exp_` column identifies a time series, so a temperature recorded at each timepoint would leave every series a single point long. A `cov_` column is never a series key, so adding one cannot do that.
+
+**Declaring a covariate is optional.** Undeclared, it is recorded, checked for agreeing across the rows of its pool, and printed in the verification report like any other pool-level column. Declaring it gives it a **scale**, so a module can compute with it:
+
+```groovy
+params {
+    analysis {
+        metadata {
+            covariates {
+                cov_temperature {
+                    kind = 'quantitative'
+                }
+                cov_site {
+                    kind   = 'nominal'
+                    levels = ['coastal', 'inland', 'montane']
+                }
+            }
+        }
+    }
+}
+```
+
+The kinds are the phenotype's — `quantitative`, `binary`, `ordinal`, `nominal` — and they mean [the same things](#phenotype-kind), including that a `nominal` covariate carries no number a module could fit a slope on. The report names any `cov_` column you recorded and did not declare, because "kept for the record" and "forgot to declare it" look identical in the file.
+
+#### Nothing is adjusted for, and that is the honest position { #covariates-not-adjusted }
+
+**PoolSeqFlow does not correct any result for a covariate, and will not in 3.0.0.** The reason is arithmetic rather than ambition: *n* is the number of **pools**, typically six to twenty, so a model that spends a degree of freedom on a covariate has almost none left for the effect you came for.
+
+What declaring one buys instead is that the value **travels with the result**. The verification report and every published folder's `README.md` carry each pool's covariate value beside its phenotype, so a reader can see that the high-phenotype pools were also the warm ones. That is the confounding you would otherwise have no way to suspect — and seeing it is worth more than an adjustment you cannot afford to fit.
+
+If a covariate turns out to explain your result, the answer is a better design, not a bigger model.
 
 ### Which runs to analyse { #analysis-runs }
 
@@ -2972,8 +3134,10 @@ One file per sequence you name, one panel per pool, a point per called site.
 ```groovy
 params {
     analysis {
-        basicstats {
-            chromosomes = ['chr2L', 'chr3R']
+        modules {
+            basicstats {
+                chromosomes = ['chr2L', 'chr3R']
+            }
         }
     }
 }
@@ -2990,12 +3154,14 @@ params {
 ```groovy
 params {
     analysis {
-        basicstats {
-            minReads    = 2         // alternate reads before a site counts as segregating
-            binSize     = 100000    // sites handed to one worker at a time
-            workers     = 0         // 0 means the cores Nextflow gave the task
-            usecpp      = true      // the compiled path, above
-            chromosomes = []        // sequences to draw a depth plot for
+        modules {
+            basicstats {
+                minReads    = 2         // alternate reads before a site counts as segregating
+                binSize     = 100000    // sites handed to one worker at a time
+                workers     = 0         // 0 means the cores Nextflow gave the task
+                usecpp      = true      // the compiled path, above
+                chromosomes = []        // sequences to draw a depth plot for
+            }
         }
     }
 }
@@ -3012,7 +3178,7 @@ PoolSeqFlow analysis basicstats          # compiled, the default
 PoolSeqFlow analysis basicstats nocpp    # plain R, for one run
 ```
 
-For a whole project, `analysis.basicstats.usecpp = false` in `basicstats.config` does the same thing permanently.
+For a whole project, `analysis.modules.basicstats.usecpp = false` in `basicstats.config` does the same thing permanently.
 
 **The analysis environment already has a compiler.** Conda's `r-base` depends on one — GCC on Linux, clang on macOS — because R needs a toolchain to build packages from source, so an environment built by `PoolSeqFlow analysis install` can compile on every platform this ships to. That is why the compiled path is the default rather than something to opt into.
 
@@ -3827,7 +3993,7 @@ PoolSeqFlow analysis basicstats nocpp
 
 #### `doFuture is not installed`
 
-The module was asked for more than one worker and cannot go parallel. Either install it into the analysis environment, or set `analysis.basicstats.workers = 1`. It does not quietly run on one worker instead: a run that took a different path than the one you asked for is a run whose timings mean nothing.
+The module was asked for more than one worker and cannot go parallel. Either install it into the analysis environment, or set `analysis.modules.basicstats.workers = 1`. It does not quietly run on one worker instead: a run that took a different path than the one you asked for is a run whose timings mean nothing.
 
 #### A pool holds one chromosome
 

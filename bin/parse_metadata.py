@@ -7,7 +7,7 @@ Exit 0 and print a JSON array of sample records; exit 1 and print every problem 
 stderr; exit 2 for a usage mistake, so a caller can tell "your file is wrong" from "you
 called me wrong".
 
-FIVE KINDS OF COLUMN, and the prefix is what separates them:
+SEVEN KINDS OF COLUMN, and the prefix is what separates them:
 
     SampleID        required. Joins to the sample id derived from the FASTQ file names, and
                     becomes the read group's ID.
@@ -15,13 +15,23 @@ FIVE KINDS OF COLUMN, and the prefix is what separates them:
                     is refused.
     param_*         a per-sample override of a pipeline parameter, by the table below. Also a
                     closed list, refused the same way.
-    exp_*           an experimental variable. An OPEN list: any name after the prefix is
-                    accepted, so exp_tiempoint is a variable and not an error. Recorded, never
-                    read by steps 0-8.
+    exp_*           an experimental variable - something the experiment SET. An OPEN list: any
+                    name after the prefix is accepted, so exp_tiempoint is a variable and not
+                    an error. Recorded, never read by steps 0-8.
+    pt_*            a phenotype MEASURED on the pool - the thing being tested against. Also
+                    open, and also never read by steps 0-8.
+    cov_*           a covariate measured on the pool: neither set nor the response. A cage
+                    temperature, an altitude, a collection site. Open, and never read here.
     anything else   design metadata. Recorded, never read by steps 0-8.
 
-pt_* IS RESERVED AND REFUSED. It has no meaning yet, and every pt_ column is refused so that
-one can be given to it later without changing what a file written today means.
+exp_, pt_ AND cov_ ARE THREE PREFIXES BECAUSE ONLY exp_ IDENTIFIES A SERIES. The analysis layer
+works out which pools are one thing measured repeatedly from the exp_ columns; a trait value or a
+temperature differs from pool to pool, so either one admitted there would leave every series a
+single timepoint long - quietly, because a design with no repeated measurement is a legal design.
+
+All three describe the POOL. What differs between two rows of one pool - the lane, the run, the
+technician who handled one library - takes no prefix, and not because it does not matter: the
+reads are merged, so nothing downstream can attribute one to the row it came from.
 
 PARAM_POOLSIZE IS KEYED BY RG_Sample, NOT BY SampleID. Rows sharing an RG_Sample are one pool
 and become one VCF column, which carries one sensitivity, so those rows must agree on the size
@@ -67,8 +77,9 @@ PARAM_COLUMNS = {
 EXPERIMENTAL_PREFIX = "exp_"
 TIME_VARIABLE = "exp_time"
 
-# Claimed and unused. Every column carrying it is refused.
-RESERVED_PREFIX = "pt_"
+# A phenotype measured on the pool, and a covariate measured alongside it. Open, like exp_.
+PHENOTYPE_PREFIX = "pt_"
+COVARIATE_PREFIX = "cov_"
 
 # The param_ columns with rules of their own, beyond being recognised.
 POOL_SIZE = "param_poolSize"
@@ -98,18 +109,21 @@ def rows_of(path):
 
 def check(path):
     errors = []
+    # Reported and not refused: the caller exits 0 with these on stderr. They are facts about the
+    # file that no pipeline step acts on, so a run is sound whatever they say.
+    warnings = []
 
     try:
         rows = rows_of(path)
     except FileNotFoundError:
-        return None, [f"{path}: no such file"]
+        return None, [f"{path}: no such file"], []
     except OSError as exc:
-        return None, [f"{path}: {exc.strerror}"]
+        return None, [f"{path}: {exc.strerror}"], []
     except csv.Error as exc:
-        return None, [f"{path}: could not be read as CSV: {exc}"]
+        return None, [f"{path}: could not be read as CSV: {exc}"], []
 
     if not rows:
-        return None, [f"{path}: is empty (only blank lines and comments)"]
+        return None, [f"{path}: is empty (only blank lines and comments)"], []
 
     header_line, header = rows[0]
     body = rows[1:]
@@ -142,19 +156,23 @@ def check(path):
                 f"for these samples. As written it would be recorded as design metadata and "
                 f"never acted on."
             )
-        elif column.startswith(RESERVED_PREFIX):
-            errors.append(
-                f"line {header_line}: '{column}' uses the {RESERVED_PREFIX} prefix, which is "
-                f"reserved and carries no meaning yet. Every {RESERVED_PREFIX} column is "
-                f"refused so that one can be given to it later without changing what a file "
-                f"written today means. Drop the prefix and it becomes a column that is "
-                f"recorded and never interpreted."
-            )
         elif column == EXPERIMENTAL_PREFIX:
             errors.append(
                 f"line {header_line}: '{EXPERIMENTAL_PREFIX}' is the prefix with no variable "
                 f"name after it. Write {EXPERIMENTAL_PREFIX}<name> - {TIME_VARIABLE}, "
                 f"{EXPERIMENTAL_PREFIX}treatment - or drop the prefix."
+            )
+        elif column == PHENOTYPE_PREFIX:
+            errors.append(
+                f"line {header_line}: '{PHENOTYPE_PREFIX}' is the prefix with no phenotype "
+                f"name after it. Write {PHENOTYPE_PREFIX}<name> - {PHENOTYPE_PREFIX}wingspan, "
+                f"{PHENOTYPE_PREFIX}resistance - or drop the prefix."
+            )
+        elif column == COVARIATE_PREFIX:
+            errors.append(
+                f"line {header_line}: '{COVARIATE_PREFIX}' is the prefix with no covariate "
+                f"name after it. Write {COVARIATE_PREFIX}<name> - {COVARIATE_PREFIX}temperature, "
+                f"{COVARIATE_PREFIX}site - or drop the prefix."
             )
         if column:
             seen[column] = seen.get(column, 0) + 1
@@ -271,8 +289,40 @@ def check(path):
                     f"answer rather than agreement with either."
                 )
 
+    # --- pool-level columns whose rows disagree ---
+    #
+    # A WARNING AND NOT AN ERROR. The pipeline reads none of these columns, so nothing it computes
+    # depends on them and refusing here would stop a run over a fact about the metadata alone. The
+    # analysis layer decides what a disagreement means: a contradiction for exp_ and pt_, an
+    # ordinary circumstance for cov_, which is allowed to vary within a pool.
+    #
+    # Reported rather than passed over, because a run that says nothing is a run where a typo in a
+    # treatment name is discovered by an analysis, months later.
+    by_pool = {}
+    for lineno, fields in body:
+        row = dict(zip(header, fields))
+        pool = row.get("RG_Sample") or row.get(SAMPLE_ID, "")
+        for column in header:
+            if column.startswith((EXPERIMENTAL_PREFIX, PHENOTYPE_PREFIX, COVARIATE_PREFIX)):
+                by_pool.setdefault((pool, column), {}).setdefault(row.get(column, ""), []).append(lineno)
+
+    for (pool, column), by_value in sorted(by_pool.items()):
+        if len(by_value) > 1:
+            stated = ", ".join(
+                f"'{value or '(blank)'}' on line{'s' if len(lines) > 1 else ''} "
+                f"{', '.join(str(n) for n in lines)}"
+                for value, lines in sorted(by_value.items())
+            )
+            warnings.append(
+                f"RG_Sample '{pool}' is given more than one {column}: {stated}. Rows sharing an "
+                f"RG_Sample are one pool. No pipeline step reads this column, so the run is "
+                f"unaffected and the values are recorded as written - but an analysis will "
+                f"refuse a disagreeing exp_ or pt_ column, and will report a cov_ one as having "
+                f"no single value for this pool."
+            )
+
     if errors:
-        return None, errors
+        return None, errors, warnings
 
     # --- the records themselves ---
     #
@@ -284,7 +334,7 @@ def check(path):
         if not record.get("RG_Sample"):
             record["RG_Sample"] = record[SAMPLE_ID]
         records.append(record)
-    return records, []
+    return records, [], warnings
 
 
 def main(argv):
@@ -292,12 +342,19 @@ def main(argv):
         print(f"Usage: {argv[0].split('/')[-1]} <csv-path>", file=sys.stderr)
         return 2
 
-    records, errors = check(argv[1])
+    records, errors, warnings = check(argv[1])
     if errors:
         print(f"{argv[1]}: cannot be used as a sample metadata file.", file=sys.stderr)
         for message in errors:
             print(f"  {message}", file=sys.stderr)
         return 1
+
+    # stderr and exit 0: the caller reads the records off stdout either way, and step 0 reports
+    # these in the context of the project rather than of the file.
+    if warnings:
+        print(f"{argv[1]}: usable, with notes.", file=sys.stderr)
+        for message in warnings:
+            print(f"  {message}", file=sys.stderr)
 
     json.dump(records, sys.stdout)
     sys.stdout.write("\n")

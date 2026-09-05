@@ -132,6 +132,29 @@ def readmeDesignLines(Map target) {
         lines << ''
         lines << "    ${design.time.levels.collect { level -> level.shown }.join('  ')}"
     }
+    if (design?.phenotype != null) {
+        def phenotype = design.phenotype
+        def how = 'quantitative'
+        if (phenotype.kind == 'binary') {
+            how = "binary, with `${phenotype.levels[0]}` as absent and `${phenotype.levels[1]}` as present"
+        }
+        else if (phenotype.kind == 'ordinal') {
+            how = "ordinal, in this order: ${phenotype.levels.collect { level -> "`${level}`" }.join(' < ')}"
+        }
+        else if (phenotype.kind == 'nominal') {
+            how = "nominal and unordered: ${phenotype.levels.collect { level -> "`${level}`" }.join(', ')}"
+        }
+        lines << ''
+        lines << '## The phenotype'
+        lines << ''
+        lines << "`${phenotype.column}`, ${how}. Every pool's value as this analysis read it:"
+        lines << ''
+        phenotype.values.each { entry ->
+            def became = !entry.shown ? '(no value)'
+                : (entry.value == null ? "group ${entry.group}" : "${entry.value}")
+            lines << "    ${entry.pool}  ${entry.shown ?: '(blank)'} -> ${became}".toString()
+        }
+    }
     if (design?.warnings) {
         lines << ''
         lines << '## Read these before the numbers'

@@ -57,95 +57,204 @@ params {
         // as the pipeline named it - Results/<folderName>/Shared_1, and so on.
         folderName = ''
 
-        // THE TIME AXIS. Set this whenever your metadata has an exp_time column — a project
-        // that has one and does not say how to read it is refused, because time is the one
-        // variable whose ORDER changes what a result means and it is never guessed.
+        // HOW YOUR METADATA FILE IS READ. Everything in here describes metadata.csv rather than
+        // this invocation, and none of it changes what the pipeline computed — exp_ and pt_
+        // columns are recorded and never acted on, so results you already have stay valid.
         //
-        // timeVar {
-        //     // Which column holds time. Must be an exp_ column: only those are checked for
-        //     // agreeing across the rows of one pool.
-        //     column = 'exp_time'
-        //
-        //     // How to read it. Required. One of:
-        //     //
-        //     //   'numerical'    the values are numbers. Spacing is real, so a rate per unit
-        //     //                  is meaningful. Needs `unit` below.
-        //     //   'datetime'     the values are dates. Needs `format`, and `locale` if the
-        //     //                  month names are not English. Measured in days.
-        //     //   'categorical'  the values are labels in an order you give. Rank only —
-        //     //                  no rate can be fitted, and no unit may be set.
-        //     kind = 'numerical'
-        //
-        //     // numerical only, and required for it. One of:
-        //     //   millisecond second minute hour        exact durations
-        //     //   day week month year                   calendar
-        //     //   generation passage cycle              counts
-        //     //   step                                  evenly spaced in something unnamed
-        //     unit = 'generation'
-        //
-        //     // datetime only. java.time patterns — yyyy or uuuu year, MM month digits,
-        //     // MMM short name, MMMM full name, dd day, HH 24-hour, hh with a for 12-hour.
-        //     // 07/03/2024 is a valid date under dd/MM/yyyy AND MM/dd/yyyy, four months
-        //     // apart, so this is asked for rather than guessed. The verification report
-        //     // prints the dates it read, as ISO, in the order it will use them — read it.
-        //     format = 'dd/MM/yyyy'
-        //
-        //     // datetime only. The language month and weekday names are written in.
-        //     // Only affects reading; what gets published is ISO either way.
-        //     locale = 'en'
-        //
-        //     // categorical only. The order of the levels, exactly as the metadata spells
-        //     // them. Without it they are sorted ALPHABETICALLY, which puts T10 between T1
-        //     // and T2, and 'post' before 'pre'.
-        //     order = ['pre', 'post']
-        // }
+        // A key this scope does not have is refused by name. That is the point of the scope: a
+        // reader asks for the setting it wants, so `timevar` with a small v would otherwise sit
+        // in your file unread while the project ran on defaults you did not choose.
+        metadata {
+            // WHAT A CELL MEANS WHEN IT IS NOT A VALUE. A blank cell always means "no value";
+            // this is for the other spellings of it.
+            //
+            //     []                          blank cells only                   (the default)
+            //     ['NA']                      R's, and most exports'
+            //     ['NA', 'N/A', 'na', '-']    several
+            //     ['na_*']                    a wildcard: * is any run, ? is one character
+            //
+            // Matched WHOLE and CASE SENSITIVELY, so 'NA' does not catch 'na' — list both if
+            // your file has both. That is deliberate: a level genuinely called `na` has to stay
+            // a level, and no setting can tell the two apart for you.
+            //
+            // Applies to exp_ and pt_ columns, which are the only ones the analysis layer reads.
+            // An entry that would match everything is refused rather than obeyed, and the
+            // verification report names every cell this turned into a blank — read that line,
+            // because a pattern wider than you meant removes values and leaves no error behind.
+            missingValueEncoding = []
 
-        // TIME SERIES — which pools are one thing measured repeatedly.
-        //
-        // series {
-        //     // The variables that identify a series. Left empty it is every exp_ variable
-        //     // except time. SET IT if one of your exp_ columns is recorded AT each
-        //     // timepoint — a temperature, a census — because that varies within a series
-        //     // and would split every one of them into singletons.
-        //     by = ['exp_population', 'exp_replicate']
-        //
-        //     // Which of those index REPEATS rather than naming a condition. Both take any
-        //     // number of columns — two lanes crossed with three sequencing runs is
-        //     // technicalRep = ['exp_lane', 'exp_seqrun'], six technical replicates each.
-        //     //
-        //     // The two are not interchangeable. Biological replicates are independent
-        //     // repeats of one condition and are where degrees of freedom come from;
-        //     // technical replicates are one biological unit measured more than once and
-        //     // carry none. Calling the second the first is pseudo-replication.
-        //     //
-        //     // A key column named in neither is a CONDITION — what is being compared.
-        //     // Nothing is guessed, and the verification report prints every key column
-        //     // under its role so a column in the wrong place is visible.
-        //     biologicalRep = ['exp_replicate']
-        //     technicalRep  = ['exp_lane']
-        //
-        //     // What to do when a series does not cover every timepoint.
-        //     //
-        //     //   'fail'       refuse, naming what is missing            (the default)
-        //     //   'drop'       leave the incomplete series out
-        //     //   'keepLeft'   cut the timeline back to the points every series shares,
-        //     //                from the START
-        //     //   'keepRight'  the same, from the END
-        //     //
-        //     // keepLeft and keepRight shorten the TIMELINE, not each series, so what comes
-        //     // out is comparable across series. Neither fills a gap in: no value is ever
-        //     // carried forward or invented.
-        //     incomplete = 'fail'
-        // }
+            // THE TIME AXIS. Set this whenever your metadata has an exp_time column — a project
+            // that has one and does not say how to read it is refused, because time is the one
+            // variable whose ORDER changes what a result means and it is never guessed.
+            //
+            // timeVar {
+            //     // Which column holds time. Must be an exp_ column: only those are checked for
+            //     // agreeing across the rows of one pool.
+            //     column = 'exp_time'
+            //
+            //     // How to read it. Required. One of:
+            //     //
+            //     //   'numerical'    the values are numbers. Spacing is real, so a rate per unit
+            //     //                  is meaningful. Needs `unit` below.
+            //     //   'datetime'     the values are dates. Needs `format`, and `locale` if the
+            //     //                  month names are not English. Measured in days.
+            //     //   'categorical'  the values are labels in an order you give. Rank only —
+            //     //                  no rate can be fitted, and no unit may be set.
+            //     kind = 'numerical'
+            //
+            //     // numerical only, and required for it. One of:
+            //     //   millisecond second minute hour        exact durations
+            //     //   day week month year                   calendar
+            //     //   generation passage cycle              counts
+            //     //   step                                  evenly spaced in something unnamed
+            //     unit = 'generation'
+            //
+            //     // datetime only. java.time patterns — yyyy or uuuu year, MM month digits,
+            //     // MMM short name, MMMM full name, dd day, HH 24-hour, hh with a for 12-hour.
+            //     // 07/03/2024 is a valid date under dd/MM/yyyy AND MM/dd/yyyy, four months
+            //     // apart, so this is asked for rather than guessed. The verification report
+            //     // prints the dates it read, as ISO, in the order it will use them — read it.
+            //     format = 'dd/MM/yyyy'
+            //
+            //     // datetime only. The language month and weekday names are written in.
+            //     // Only affects reading; what gets published is ISO either way.
+            //     locale = 'en'
+            //
+            //     // categorical only. The order of the levels, exactly as the metadata spells
+            //     // them. Without it they are sorted ALPHABETICALLY, which puts T10 between T1
+            //     // and T2, and 'post' before 'pre'.
+            //     order = ['pre', 'post']
+            // }
 
-        // A MODULE'S OWN SETTINGS go in a scope named after it, inside this one. What a module
-        // has is listed in its section of the manual, and a key it does not have is refused
-        // rather than ignored - so a misspelling stops the run instead of leaving the module
-        // running on a default you did not choose.
+            // TIME SERIES — which pools are one thing measured repeatedly.
+            //
+            // series {
+            //     // The variables that identify a series. Left empty it is every exp_ variable
+            //     // except time. SET IT if one of your exp_ columns is recorded AT each
+            //     // timepoint — a temperature, a census — because that varies within a series
+            //     // and would split every one of them into singletons.
+            //     by = ['exp_population', 'exp_replicate']
+            //
+            //     // Which of those index REPEATS rather than naming a condition. Both take any
+            //     // number of columns — two lanes crossed with three sequencing runs is
+            //     // technicalRep = ['exp_lane', 'exp_seqrun'], six technical replicates each.
+            //     //
+            //     // The two are not interchangeable. Biological replicates are independent
+            //     // repeats of one condition and are where degrees of freedom come from;
+            //     // technical replicates are one biological unit measured more than once and
+            //     // carry none. Calling the second the first is pseudo-replication.
+            //     //
+            //     // A key column named in neither is a CONDITION — what is being compared.
+            //     // Nothing is guessed, and the verification report prints every key column
+            //     // under its role so a column in the wrong place is visible.
+            //     biologicalRep = ['exp_replicate']
+            //     technicalRep  = ['exp_lane']
+            //
+            //     // What to do when a series does not cover every timepoint.
+            //     //
+            //     //   'fail'       refuse, naming what is missing            (the default)
+            //     //   'drop'       leave the incomplete series out
+            //     //   'keepLeft'   cut the timeline back to the points every series shares,
+            //     //                from the START
+            //     //   'keepRight'  the same, from the END
+            //     //
+            //     // keepLeft and keepRight shorten the TIMELINE, not each series, so what comes
+            //     // out is comparable across series. Neither fills a gap in: no value is ever
+            //     // carried forward or invented.
+            //     incomplete = 'fail'
+            // }
+
+            // THE PHENOTYPE — what was MEASURED on each pool, for a module that associates
+            // something with it.
+            //
+            // It has to be a pt_ column. Those are the ones checked for agreeing across the rows
+            // of one pool, which is what stops a pool carrying two values at once. An exp_ column
+            // is what you SET; a pt_ column is what came out.
+            //
+            // Record as many pt_ columns as you like and analyse one at a time — set folderName
+            // so each analysis lands somewhere of its own.
+            //
+            // phenotype {
+            //     column = 'pt_wingspan'
+            //
+            //     // WHAT KIND OF SCALE IT IS. Never guessed — 0 and 1 read as numbers as readily
+            //     // as they encode two groups, and no file says which of 'case' and 'control' is
+            //     // the affected one.
+            //     //
+            //     //   'quantitative'  a measurement. Every value must parse as a number. Counts
+            //     //                   and percentages are this too.
+            //     //   'binary'        PRESENCE and ABSENCE — affected or not, resistant or not.
+            //     //                   Exactly two levels, as [absent, present].
+            //     //   'ordinal'       groups whose ORDER means something and whose spacing does
+            //     //                   not: low, medium, high.
+            //     //   'nominal'       groups with no order: spotted, striped, curly.
+            //     //
+            //     // Two groups that are not an absence and a presence — coastal and inland, two
+            //     // host plants — are 'nominal', not 'binary'.
+            //     kind = 'quantitative'
+            //
+            //     // REQUIRED for binary, ordinal and nominal; refused for quantitative.
+            //     //
+            //     // For 'binary' the order is [absent, present] and it decides the SIGN of every
+            //     // effect reported against it — write it the wrong way round and every result
+            //     // reverses, with nothing in the data to tell you.
+            //     // For 'ordinal' the order IS the scale.
+            //     // For 'nominal' the order only sets which group others are reported against.
+            //     //
+            //     // A level no pool has is kept and reported, not an error: a group you have not
+            //     // sequenced yet is legitimate. A misspelling looks exactly the same, so read
+            //     // that line of the verification report.
+            //     levels = ['unaffected', 'affected']
+            // }
+
+            // COVARIATES — what was MEASURED alongside, and is neither set nor the response.
+            // A cage temperature, an altitude, a collection site, a technician when every
+            // library of a pool shares one.
+            //
+            // A cov_ column has its own prefix so that adding one CANNOT dissolve your time
+            // series: exp_ columns identify a series, and a temperature recorded at each
+            // timepoint would leave every series a single point long. cov_ columns are checked
+            // for agreeing across the rows of a pool and are never a series key.
+            //
+            // Declaring one is optional. Undeclared, it is recorded, checked and reported like
+            // any other pool-level column. Declared, it also gets a scale, so a module can
+            // compute with it — the kinds are the phenotype's and mean the same things.
+            //
+            // NOTHING IS ADJUSTED FOR. With six or twenty pools there are no degrees of freedom
+            // to spend on a covariate, so what this buys is that the value is on the record and
+            // in the report: a reader can see that the high-phenotype pools were also the warm
+            // ones, which is the confounding nobody would otherwise suspect.
+            //
+            // covariates {
+            //     cov_temperature {
+            //         kind = 'quantitative'
+            //     }
+            //     cov_site {
+            //         kind   = 'nominal'
+            //         levels = ['coastal', 'inland', 'montane']
+            //     }
+            // }
+            //
+            // What differs BETWEEN two rows of one pool — the lane, the run, the technician who
+            // handled one library — is NOT a covariate and cannot be made one. The reads are
+            // merged, so no analysis can attribute one to the row it came from. Record it in an
+            // unprefixed column; it is kept and never interpreted.
+
+        }
+
+        // A MODULE'S OWN SETTINGS go in a scope named after the module, inside `modules`. What
+        // each module has is listed in its section of the manual, and a key it does not have is
+        // refused rather than ignored - so a misspelling stops the run instead of leaving the
+        // module running on a default you did not choose.
         //
+        // modules {
         //     basicstats {
         //         chromosomes = ['chr2L', 'chr3R']
         //     }
+        // }
+        //
+        // The extra level is what keeps module names and the settings above in separate
+        // namespaces: a module called `series` or `metadata` would otherwise read one of them.
         //
         // Inside `analysis`, always. A scope written at the top level of this file is read as
         // a change to the settings that produced your results, and every analysis refuses.

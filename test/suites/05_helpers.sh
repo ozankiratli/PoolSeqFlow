@@ -782,15 +782,55 @@ A1,T1
     assert_contains "$PM_ERR" "exp_time" "and showing the shape of one"
 }
 
-# pt_ is claimed for a later release and refused today, so that giving it a meaning then does
-# not change what a file written now means.
-test_metadata_rejects_the_reserved_phenotype_prefix() {
+# pt_ was refused while it was unused, so that giving it a meaning would not change what a file
+# written earlier meant. It has one now: a phenotype measured on the pool. The value is carried
+# through verbatim, like exp_, and no step reads it.
+test_metadata_accepts_a_phenotype_column() {
     pm 'SampleID,pt_wingspan
+A1,12.4
+'
+    assert_status 0 "$PM_STATUS" "a phenotype column is accepted: $PM_ERR"
+    assert_contains "$(cat "$HELPERS_DIR/metadata.json")" '"pt_wingspan": "12.4"' \
+        "and reaches the pipeline verbatim"
+}
+
+# A POOL-LEVEL COLUMN THAT DISAGREES IS A NOTE HERE, NOT A REFUSAL. No pipeline step reads an
+# exp_, pt_ or cov_ column, so nothing the run computes depends on one and stopping the run over
+# it would be refusing work for a fact about the metadata alone. What a disagreement MEANS is the
+# analysis layer's to decide, and it decides differently per prefix. Silence is the thing to
+# avoid: it leaves a mistyped treatment to be discovered by an analysis months later.
+test_metadata_warns_when_a_pool_level_column_disagrees() {
+    pm 'SampleID,RG_Sample,cov_technician,exp_treatment
+A1,PoolA,Ada,control
+A2,PoolA,Grace,control
+'
+    assert_status 0 "$PM_STATUS" "a disagreement must not stop the pipeline"
+    assert_contains "$PM_ERR" "usable, with notes" "it is reported as a note"
+    assert_contains "$PM_ERR" "more than one cov_technician" "naming the column and the pool"
+    assert_contains "$PM_ERR" "'Ada' on line 2" "and which row said what"
+    assert_contains "$(cat "$HELPERS_DIR/metadata.json")" '"cov_technician": "Grace"' \
+        "and every row still reaches the pipeline as written"
+}
+
+# An exp_ column that agrees is the ordinary case and must produce no note at all.
+test_metadata_is_quiet_when_pool_level_columns_agree() {
+    pm 'SampleID,RG_Sample,exp_treatment
+A1,PoolA,control
+A2,PoolA,control
+'
+    assert_status 0 "$PM_STATUS" "rows that agree are the ordinary case"
+    assert_eq "" "$PM_ERR" "and say nothing"
+}
+
+# The prefix with nothing after it, which the exp_ case above refuses for the same reason: a
+# bare prefix is a column with no name, not a phenotype called "".
+test_metadata_rejects_the_bare_phenotype_prefix() {
+    pm 'SampleID,pt_
 A1,12
 '
-    assert_status 1 "$PM_STATUS" "a reserved prefix must be refused while it is unused"
-    assert_contains "$PM_ERR" "reserved" "saying so"
-    assert_contains "$PM_ERR" "Drop the prefix" "and what to do instead"
+    assert_status 1 "$PM_STATUS" "pt_ alone should be refused"
+    assert_contains "$PM_ERR" "no phenotype name after it" "saying what is missing"
+    assert_contains "$PM_ERR" "pt_wingspan" "and showing the shape of one"
 }
 
 # ---------------------------------------------------------------- citations --

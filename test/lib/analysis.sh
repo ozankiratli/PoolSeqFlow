@@ -61,8 +61,7 @@ ANALYSIS_TIME_BLOCK="        timeVar {
         }"
 
 analysis_write_time_config() {
-    printf 'params {\n    analysis {\n%s\n    }\n}\n' "$ANALYSIS_TIME_BLOCK" \
-        > "$1/main/analysis.config"
+    analysis_write_metadata_config "$1" "$ANALYSIS_TIME_BLOCK"
 }
 
 # A single-run project whose identity the pipeline has recorded. Step 0 alone writes
@@ -208,16 +207,18 @@ analysis_install_module() {
     printf '{}\n' > "$dir/citations.json"
 }
 
-# Write the project's analysis.config with one run selection in it.
+# Write the project's analysis.config with one run selection in it. The time block goes inside
+# `metadata` with the rest of the settings that say how the metadata file is read; at the analysis
+# level it is a key that scope does not have, and every module refuses before it starts.
 analysis_select() {
-    printf 'params {\n    analysis {\n        runs = %s\n%s\n    }\n}\n' "$1" "$ANALYSIS_TIME_BLOCK" \
-        > "$ANALYSIS_SB/main/analysis.config"
+    printf 'params {\n    analysis {\n        runs = %s\n        metadata {\n%s\n        }\n    }\n}\n' \
+        "$1" "$ANALYSIS_TIME_BLOCK" > "$ANALYSIS_SB/main/analysis.config"
 }
 
 # The same for the results folder name.
 analysis_folder_name() {
-    printf 'params {\n    analysis {\n        folderName = %s\n%s\n    }\n}\n' "$1" "$ANALYSIS_TIME_BLOCK" \
-        > "$ANALYSIS_SB/main/analysis.config"
+    printf 'params {\n    analysis {\n        folderName = %s\n        metadata {\n%s\n        }\n    }\n}\n' \
+        "$1" "$ANALYSIS_TIME_BLOCK" > "$ANALYSIS_SB/main/analysis.config"
 }
 
 # What the last analysis invocation printed, refusals included. A refusal happens while the
@@ -254,11 +255,13 @@ analysis_write_metadata() {
 # The time axis. Every failure here is silent when it is not caught: the plot renders, the
 # slope has a sign, and nothing says the order was wrong.
 # Replaces the baseline's analysis.config with an `analysis` scope of the case's own.
-analysis_write_analysis_config() {
+analysis_write_metadata_config() {
     cat > "$1/main/analysis.config" <<CFG
 params {
     analysis {
+        metadata {
 $2
+        }
     }
 }
 CFG

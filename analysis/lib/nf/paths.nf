@@ -11,20 +11,93 @@ nextflow.enable.dsl=2
 def analysisDefaults() {
     return [ runs      : 'all',   // 'all' is a keyword; a list is always run names.
              folderName: '',      // Empty means the module's own name.
+             // How to read the metadata file. Everything here describes the project's own
+             // records rather than this invocation.
+             metadata  : metadataDefaults(),
+             // One scope per installed module, named after it. Open, so it has no defaults of
+             // its own - moduleSettings() checks a module's scope against that module's list.
+             modules   : [:] ]
+}
+
+// The settings that say how the metadata file is read.
+//
+// A module name cannot collide with one of these, and a misspelling here is refused rather than
+// ignored: both follow from these living in a scope of their own.
+def metadataDefaults() {
+    return [ // Cells that mean "no value" beyond an empty one. Matched whole, case sensitively,
+             // with * and ? as wildcards. Empty means only a blank cell is missing.
+             missingValueEncoding: [],
              // The time axis. Empty kind means the project has not declared one.
              timeVar   : [ column: 'exp_time', kind: '', unit: '', order: [], format: '', locale: 'en' ],
              // What a repeated measurement is. Empty `by` means every exp_ variable but time; a
              // key column in neither replicate list is a condition.
-             series    : [ by: [], biologicalRep: [], technicalRep: [], incomplete: 'fail' ] ]
+             series    : [ by: [], biologicalRep: [], technicalRep: [], incomplete: 'fail' ],
+             // The phenotype to analyse against. Empty column means none is declared; a project
+             // may record several pt_ columns and analyse one at a time under its own
+             // folderName. `levels` names the groups of a categorical scale.
+             phenotype : [ column: '', kind: '', levels: [] ],
+             // What a cov_ column holds, one scope per column: `kind` and, for a categorical
+             // scale, `levels`. Open, because the columns are the project's own. A cov_ column
+             // left out is recorded and reported; declaring one gives it a typed value.
+             covariates: [:] ]
 }
 
-// One of those settings, as the project set it or as it defaults. The scope may not exist:
-// analysis.config carries only what the user chose to write.
+// The `analysis` scope as the project wrote it. It may not exist at all: analysis.config carries
+// only what the user chose to write.
+def analysisScope() {
+    return params.containsKey('analysis') && params.analysis instanceof Map ? params.analysis : [:]
+}
+
+// One scope's settings, merged key by key over its defaults, refusing a key the scope does not
+// have.
 //
-// A NESTED scope is merged key by key. Nextflow replaces a map rather than merging into it, so a
-// project writing only `analysis { timeVar { kind = 'numerical' } }` would otherwise get a map
-// holding kind and nothing else - and the time column would default to nothing rather than to
-// exp_time, failing as "no time column" on a project that plainly has one.
+// Nextflow REPLACES a map rather than merging into it, so a project writing only
+// `timeVar { kind = 'numerical' }` would otherwise get a map holding kind and nothing else - and
+// the time column would default to nothing rather than to exp_time, failing as "no time column"
+// on a project that plainly has one.
+def mergeScope(String path, Map defaults, Object written) {
+    if (!(written instanceof Map)) {
+        throw new IllegalArgumentException(
+            "${path} is a scope holding ${defaults.keySet().sort().join(', ')}, and this project " +
+            "sets it to a single value.\n" +
+            "Write it as a block:\n" +
+            "    ${path} {\n        ${defaults.keySet().sort().first()} = ...\n    }")
+    }
+    def unknown = written.keySet().collect { name -> "${name}".toString() }
+                         .findAll { name -> !defaults.containsKey(name) }
+    if (!unknown.isEmpty()) {
+        throw new IllegalArgumentException(
+            "${path} is given ${unknown.size() == 1 ? 'a setting' : 'settings'} it does not have: " +
+            "${unknown.join(', ')}\n" +
+            "It has: ${defaults.keySet().sort().join(', ')}.")
+    }
+    return defaults + written
+}
+
+// Every key the project wrote under `analysis`, checked before any of them is read.
+//
+// Nothing else would notice a misspelling: a reader asks for the key it wants by name, so
+// `analysis { timevar { ... } }` sits unread and the project runs under defaults it did not
+// choose. Called once from analysisPlan(), ahead of any compute.
+def checkAnalysisScope() {
+    def scope = analysisScope()
+    def defaults = analysisDefaults()
+    def unknown = scope.keySet().collect { name -> "${name}".toString() }
+                       .findAll { name -> !defaults.containsKey(name) }
+    if (!unknown.isEmpty()) {
+        throw new IllegalArgumentException(
+            "the analysis scope is given ${unknown.size() == 1 ? 'a setting' : 'settings'} the " +
+            "analysis layer does not have: ${unknown.join(', ')}\n" +
+            "It has: ${defaults.keySet().sort().join(', ')}.\n" +
+            "A module's settings go in analysis.modules.<name>, and how the metadata file is read " +
+            "goes in analysis.metadata.")
+    }
+    if (scope.containsKey('metadata')) {
+        mergeScope('analysis.metadata', metadataDefaults(), scope.metadata)
+    }
+}
+
+// One of the analysis layer's own settings, as the project set it or as it defaults.
 def analysisSetting(String key) {
     def defaults = analysisDefaults()
     if (!defaults.containsKey(key)) {
@@ -32,30 +105,37 @@ def analysisSetting(String key) {
             "analysis.${key} is not a setting the analysis layer has. It has: " +
             "${defaults.keySet().sort().join(', ')}.")
     }
-    def scope = params.containsKey('analysis') && params.analysis instanceof Map ? params.analysis : [:]
+    def scope = analysisScope()
     // containsKey and not a truthiness test: an empty list is a value the user wrote, and
     // selectedRuns() refuses it by name.
     if (!scope.containsKey(key)) return defaults[key]
+    if (!(defaults[key] instanceof Map)) return scope[key]
+    return mergeScope("analysis.${key}", defaults[key], scope[key])
+}
 
-    def written = scope[key]
-    if (!(defaults[key] instanceof Map)) return written
-
-    if (!(written instanceof Map)) {
-        throw new IllegalArgumentException(
-            "analysis.${key} is a scope holding ${defaults[key].keySet().sort().join(', ')}, " +
-            "and this project sets it to a single value.\n" +
-            "Write it as\n" +
-            "    analysis {\n        ${key} {\n            ${defaults[key].keySet().sort().first()} = ...\n        }\n    }")
+// One of the settings that say how the metadata file is read.
+def metadataSetting(String key) {
+    def defaults = metadataDefaults()
+    if (!defaults.containsKey(key)) {
+        throw new IllegalStateException(
+            "analysis.metadata.${key} is not a setting the analysis layer has. It has: " +
+            "${defaults.keySet().sort().join(', ')}.")
     }
-    def unknown = written.keySet().collect { name -> "${name}".toString() }
-                         .findAll { name -> !defaults[key].containsKey(name) }
-    if (!unknown.isEmpty()) {
+    def scope = analysisScope()
+    def written = scope.containsKey('metadata')
+        ? mergeScope('analysis.metadata', defaults, scope.metadata) : defaults
+    if (!(defaults[key] instanceof Map)) return written[key]
+    // An empty default map is an OPEN namespace - covariates are named after the project's own
+    // columns, so there is no list to check them against here. Whatever reads it does its own
+    // checking, against the columns the metadata actually has.
+    if (defaults[key].isEmpty()) {
+        if (written[key] instanceof Map) return written[key]
         throw new IllegalArgumentException(
-            "analysis.${key} is given ${unknown.size() == 1 ? 'a setting' : 'settings'} the " +
-            "analysis layer does not have: ${unknown.join(', ')}\n" +
-            "It has: ${defaults[key].keySet().sort().join(', ')}.")
+            "analysis.metadata.${key} is set to a single value, and it is a scope holding one " +
+            "block per column.")
     }
-    return defaults[key] + written
+    if (written[key].is(defaults[key])) return defaults[key]
+    return mergeScope("analysis.metadata.${key}", defaults[key], written[key])
 }
 
 // Every setting one module has, as the project set them over the module's own defaults.
@@ -68,8 +148,10 @@ def moduleSettings(String module, Map defaults) {
             "params.${module} is set at the top level of a configuration file, and a module's " +
             "settings belong inside the analysis scope:\n" +
             "    analysis {\n" +
-            "        ${module} {\n" +
-            "            // ...\n" +
+            "        modules {\n" +
+            "            ${module} {\n" +
+            "                // ...\n" +
+            "            }\n" +
             "        }\n" +
             "    }\n" +
             "A top-level key reaches the manifest this project is checked against, so every " +
@@ -77,15 +159,26 @@ def moduleSettings(String module, Map defaults) {
             "refuse to run.")
     }
 
-    def scope = params.containsKey('analysis') && params.analysis instanceof Map ? params.analysis : [:]
-    def mine = scope.containsKey(module) && scope[module] instanceof Map ? scope[module] : [:]
+    def scope = analysisScope()
+    // A module's own scope, one level down. The nesting is what keeps a module named `series` or
+    // `metadata` from reading a setting of the frame's.
+    def installed = scope.containsKey('modules') && scope.modules instanceof Map ? scope.modules : [:]
+    if (scope.containsKey('modules') && !(scope.modules instanceof Map)) {
+        throw new IllegalArgumentException(
+            "analysis.modules is set to a single value, and it is the scope every module's own " +
+            "settings sit inside.\n" +
+            "Write it as\n    analysis {\n        modules {\n            ${module} {\n" +
+            "                // ...\n            }\n        }\n    }")
+    }
+    def mine = installed.containsKey(module) && installed[module] instanceof Map
+        ? installed[module] : [:]
 
     def unknown = mine.keySet().collect { key -> "${key}".toString() }
                       .findAll { key -> !defaults.containsKey(key) }
     if (!unknown.isEmpty()) {
         throw new IllegalArgumentException(
-            "analysis.${module} is given ${unknown.size() == 1 ? 'a setting' : 'settings'} the " +
-            "module '${module}' does not have: ${unknown.join(', ')}\n" +
+            "analysis.modules.${module} is given ${unknown.size() == 1 ? 'a setting' : 'settings'} " +
+            "the module '${module}' does not have: ${unknown.join(', ')}\n" +
             "It has: ${defaults.keySet().sort().join(', ')}.")
     }
 

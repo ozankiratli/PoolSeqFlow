@@ -46,7 +46,7 @@
     },
     {
       "file": "depth_*.png",
-      "summary": "depth along each sequence you named in analysis.basicstats.chromosomes, one panel per pool, at the called sites",
+      "summary": "depth along each sequence you named in analysis.modules.basicstats.chromosomes, one panel per pool, at the called sites",
       "anchor": "basicstats-depth-plots",
       "optional": true
     },

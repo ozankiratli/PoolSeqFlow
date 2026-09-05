@@ -52,12 +52,14 @@ def moduleReportLines(String module) {
 // defaults belong to the module and the frame does not have them, so nothing here fills one in.
 def moduleSettingLines(String module) {
     def scope = params.containsKey('analysis') && params.analysis instanceof Map ? params.analysis : [:]
-    def mine = scope.containsKey(module) && scope[module] instanceof Map ? scope[module] : [:]
+    def installed = scope.containsKey('modules') && scope.modules instanceof Map ? scope.modules : [:]
+    def mine = installed.containsKey(module) && installed[module] instanceof Map
+        ? installed[module] : [:]
     if (mine.isEmpty()) {
         return ["MODULE SETTINGS:       none set - ${module} runs on its own defaults".toString()]
     }
     return mine.keySet().sort().collect { key ->
-        "MODULE SETTINGS:       analysis.${module}.${key} = ${renderSetting(mine[key])}".toString()
+        "MODULE SETTINGS:       analysis.modules.${module}.${key} = ${renderSetting(mine[key])}".toString()
     }
 }
 

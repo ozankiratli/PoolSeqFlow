@@ -16,7 +16,7 @@ test_two_pools_at_one_timepoint_in_one_series_refuse() {
     analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
 TestSample1,PoolA,Pop1,T1
 TestSample2,PoolB,Pop1,T1'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a series has to be a function of time"
     local out; out=$(analysis_output)
@@ -26,7 +26,7 @@ TestSample2,PoolB,Pop1,T1'
 
 test_a_series_key_naming_the_time_column_refuses() {
     analysis_ready single || return
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }
         series { by = ['exp_time'] }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "time cannot identify what is being followed through time"
@@ -40,7 +40,7 @@ test_an_incomplete_series_refuses_by_default() {
 TestSample1,PoolA,Pop1,T1
 TestSample2,PoolB,Pop1,T2
 TestSample3,PoolC,Pop2,T1'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "fail is the default and this panel is ragged"
     local out; out=$(analysis_output)
@@ -54,7 +54,7 @@ test_drop_leaves_the_incomplete_series_out() {
 TestSample1,PoolA,Pop1,T1
 TestSample2,PoolB,Pop1,T2
 TestSample3,PoolC,Pop2,T1'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }
         series { incomplete = 'drop' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 0 "$status" "drop should proceed on what is complete"
@@ -76,7 +76,7 @@ TestSample5,PoolE,Pop2,2'
 
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$metadata"
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
         series { incomplete = 'keepLeft' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 0 "$status" "keepLeft should keep the shared start"
@@ -87,7 +87,7 @@ TestSample5,PoolE,Pop2,2'
     # The same panel from the other end: Pop2 has no third point, so there is no shared suffix.
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$metadata"
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
         series { incomplete = 'keepRight' }"
     status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "keepRight has nothing to keep here"
@@ -102,7 +102,7 @@ TestSample1,PoolA,Pop1,1
 TestSample2,PoolB,Pop1,2
 TestSample3,PoolC,Pop1,3
 TestSample4,PoolD,Pop2,1'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
         series { incomplete = 'keepLeft' }"
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     assert_contains "$(analysis_report "$ANALYSIS_SB")" "SINGLE point" \
@@ -117,7 +117,7 @@ test_a_pool_with_no_time_value_is_counted_and_excluded() {
 TestSample1,PoolA,Pop1,T1
 TestSample2,PoolB,Pop1,T2
 TestSample3,PoolC,Pop2,'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 0 "$status" "a pool without a timepoint is not an error"
     assert_contains "$(analysis_report "$ANALYSIS_SB")" "have no exp_time and are in no series: PoolC" \
@@ -129,7 +129,7 @@ TestSample3,PoolC,Pop2,'
 # plainly has one.
 test_a_partly_written_scope_keeps_the_rest_of_its_defaults() {
     analysis_ready single || return
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 0 "$status" "column should still default to exp_time"
     assert_contains "$(analysis_report "$ANALYSIS_SB")" "TIME VARIABLE:         exp_time, categorical" \
@@ -138,7 +138,7 @@ test_a_partly_written_scope_keeps_the_rest_of_its_defaults() {
 
 test_an_unknown_key_in_a_nested_scope_refuses() {
     analysis_ready single || return
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; ordering = ['T1'] }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; ordering = ['T1'] }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a misspelled sub-key must not be ignored"
     local out; out=$(analysis_output)
@@ -151,7 +151,7 @@ test_an_unknown_key_in_a_nested_scope_refuses() {
 test_technical_replicates_roll_up_into_independent_units() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_REPLICATE_METADATA"
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
         series {
             biologicalRep = ['exp_rep']
             technicalRep  = ['exp_lane', 'exp_seqrun']
@@ -173,7 +173,7 @@ test_technical_replicates_roll_up_into_independent_units() {
 test_every_key_column_is_printed_under_a_role() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_REPLICATE_METADATA"
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
         series {
             biologicalRep = ['exp_rep']
             technicalRep  = ['exp_lane']
@@ -187,7 +187,7 @@ test_every_key_column_is_printed_under_a_role() {
 
 test_a_replicate_column_outside_the_series_key_refuses() {
     analysis_ready single || return
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
         series { biologicalRep = ['exp_cage'] }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "naming a column that identifies nothing must stop the run"
@@ -200,7 +200,7 @@ test_a_replicate_column_outside_the_series_key_refuses() {
 test_a_column_named_as_both_kinds_of_replicate_refuses() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_REPLICATE_METADATA"
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
         series {
             biologicalRep = ['exp_rep', 'exp_lane']
             technicalRep  = ['exp_lane']
@@ -222,7 +222,7 @@ S3,P3,control,1,L2,T1
 S4,P4,control,1,L2,T2
 S5,P5,control,2,L1,T1
 S6,P6,control,2,L1,T2'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
         series {
             biologicalRep = ['exp_rep']
             technicalRep  = ['exp_lane']
@@ -240,7 +240,7 @@ test_the_duplicate_pool_refusal_offers_both_remedies() {
     analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
 TestSample1,PoolA,Pop1,T1
 TestSample2,PoolB,Pop1,T1'
-    analysis_write_analysis_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
+    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "two pools at one point is still a refusal"
     local out; out=$(analysis_output)

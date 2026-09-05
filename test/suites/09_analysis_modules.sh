@@ -223,8 +223,10 @@ test_a_module_setting_is_taken_from_the_module_config() {
     cat > "$ANALYSIS_SB/main/probe.config" <<'CFG'
 params {
     analysis {
-        probe {
-            chromosomes = ['chr2L', 'chr3R']
+        modules {
+            probe {
+                chromosomes = ['chr2L', 'chr3R']
+            }
         }
     }
 }
@@ -242,8 +244,10 @@ test_an_unknown_module_setting_refuses() {
     cat > "$ANALYSIS_SB/main/probe.config" <<'CFG'
 params {
     analysis {
-        probe {
-            chromosome = ['chr2L']
+        modules {
+            probe {
+                chromosome = ['chr2L']
+            }
         }
     }
 }
@@ -287,8 +291,10 @@ test_the_report_echoes_the_module_settings_the_project_set() {
     cat > "$ANALYSIS_SB/main/probe.config" <<'CFG'
 params {
     analysis {
-        probe {
-            chromosomes = ['chr2L']
+        modules {
+            probe {
+                chromosomes = ['chr2L']
+            }
         }
     }
 }
@@ -296,7 +302,7 @@ CFG
     rm -rf "$ANALYSIS_SB/main/Analysis/Results"
     run_analysis "$ANALYSIS_SB" probe > /dev/null
     assert_contains "$(analysis_report "$ANALYSIS_SB")" \
-        "MODULE SETTINGS:       analysis.probe.chromosomes = ['chr2L']" \
+        "MODULE SETTINGS:       analysis.modules.probe.chromosomes = ['chr2L']" \
         "and one with a setting has it echoed as it was written"
 }
 
