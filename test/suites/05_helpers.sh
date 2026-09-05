@@ -1,5 +1,7 @@
 #!/bin/bash
 # Unit coverage for the bin/ helpers, called directly rather than through a pipeline run.
+# cost: static
+# covers: bin/
 #
 # These need no conda environment and no fixture, so they run even under --fast. Until now
 # the helpers were exercised only end to end, which meant their edge cases - the ones that
@@ -334,7 +336,7 @@ r1,10
 }
 
 test_multirun_rejects_a_ragged_row() {
-    mr 'RunID,poolSize,diploidy
+    mr 'RunID,poolSize,ploidy
 r1,10
 '
     assert_status 1 "$MR_STATUS" "a short row is a mistake, not an inherit"
@@ -459,7 +461,7 @@ ffp_sites()   { grep -v '^#' "$HELPERS_DIR/out.vcf" 2>/dev/null | cut -f1,2,4,5 
 ffp_save()    { cp "$HELPERS_DIR/out.vcf" "$HELPERS_DIR/$1.vcf"; }
 
 # THE INERTNESS PROOF, and the only test that ties the two copies of the sensitivity equation
-# together. resolve_parameters.nf computes 1/(2*diploidy*poolSize) in Groovy for the flat -s;
+# together. resolve_parameters.nf computes 1/(2*ploidy*poolSize) in Groovy for the flat -s;
 # the script computes it in awk for each -p pool. Give every pool the global size and the two
 # must select the same records, or one of them is wrong.
 test_filter_fp_per_pool_sizes_match_the_flat_sensitivity() {
@@ -539,7 +541,7 @@ test_filter_fp_ignores_a_pool_size_for_a_sample_not_in_the_vcf() {
 
 # -p carries sizes, so without ploidy it cannot become a threshold. Defaulting to 2 would
 # silently halve or double every threshold on a non-diploid organism.
-test_filter_fp_requires_diploidy_alongside_pool_sizes() {
+test_filter_fp_requires_ploidy_alongside_pool_sizes() {
     ffp_ready || return 0
     ffp -t 0.2 -s 0.0025 -p "$FFP_ALL100"
     [ "$FFP_STATUS" -eq 0 ] && fail_case "pool sizes without ploidy should be refused"

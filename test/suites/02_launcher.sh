@@ -1,5 +1,8 @@
 #!/bin/bash
 # The ./PoolSeqFlow wrapper's environment handling, against a stub conda.
+# cost: static
+# covers: PoolSeqFlow lib/wrapper_lib.sh lib/tool_version.sh install/check_install.sh
+# covers: install/check_analysis_install.sh
 #
 # These run entirely against the fake conda in lib/sandbox.sh. Nothing here creates,
 # activates or removes a real environment: a test suite that could delete an operator's
@@ -493,6 +496,34 @@ test_a_builtin_module_runs_the_verifier_alone() {
     assert_count 1 "$(grep -c '^run ' "$LAUNCHER_NEXTFLOW_LOG")" "one run, and no second"
     assert_contains "$(cat "$LAUNCHER_NEXTFLOW_LOG")" "--module verify" \
         "the verifier is the whole of it"
+}
+
+# `nocpp` reaches the MODULE run and not the verifier. recordedManifest() keeps every
+# top-level parameter, so a verifier run carrying one would read the project as having gained a
+# setting since its results were produced and refuse every analysis in it.
+test_the_module_flag_reaches_the_module_and_not_the_verifier() {
+    LAUNCHER_STORE_MODULE=probe
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" probe nocpp
+    unset LAUNCHER_STORE_MODULE
+    assert_status 0 "$LAUNCHER_STATUS" "a module should take the flag: $LAUNCHER_OUTPUT"
+    assert_not_contains "$(sed -n 1p "$LAUNCHER_NEXTFLOW_LOG")" "--nocpp" \
+        "the verifier must not be given it"
+    assert_contains "$(sed -n 2p "$LAUNCHER_NEXTFLOW_LOG")" "--nocpp" \
+        "and the module must be"
+}
+
+# A word the wrapper does not know used to be dropped in silence, so a typo ran the module
+# with its defaults and said nothing.
+test_a_word_a_module_run_does_not_know_is_refused() {
+    LAUNCHER_STORE_MODULE=probe
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" probe nocpu
+    assert_status 1 "$LAUNCHER_STATUS" "a misspelled flag should stop the run"
+    assert_contains "$LAUNCHER_OUTPUT" "nocpu" "naming the word it did not know"
+    assert_eq "" "$(cat "$LAUNCHER_NEXTFLOW_LOG" 2>/dev/null)" "and nothing should have run"
+
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" probe nocpp extra
+    unset LAUNCHER_STORE_MODULE
+    assert_status 1 "$LAUNCHER_STATUS" "two words after a module should be refused"
 }
 
 # Both invocations are assembled from one array, so they cannot drift apart - but a second

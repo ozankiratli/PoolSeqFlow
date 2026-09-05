@@ -27,6 +27,11 @@ Project/            export-ignore
 # be checked against a known dataset, kept out of releases because a user never runs it.
 test/               export-ignore
 
+# The same, for the cases a module ships with itself. They are the module's and travel with it
+# when it is published on its own; inside the pipeline tarball they are what test/ is - files a
+# user has no way to run and no reason to.
+analysis/modules/*/test/    export-ignore
+
 # The module catalogue, which `modules available` and `modules install` read over the network
 # from this branch. A copy inside a tarball would be a second answer to what can be installed,
 # frozen on the day the release was built, and modules are published after it.

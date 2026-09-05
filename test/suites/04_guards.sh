@@ -1,5 +1,10 @@
 #!/bin/bash
 # The step 0 change guards: what invalidates existing outputs and what merely gets recorded.
+# cost: jvm
+# covers: scripts/0_verify_environment.nf scripts/resolve_parameters.nf scripts/variants.nf
+# covers: scripts/metadata.nf bin/parse_metadata.py bin/parse_multirun.py
+# covers: bin/classify_manifest.sh
+# covers: poolseqflow.nf
 #
 # These run step 0 alone rather than the whole pipeline, so they are cheap. What they are
 # about is the distinction the parameter check draws between a value the user changed and a
@@ -750,7 +755,7 @@ test_the_resolver_reproduces_what_the_config_computed() {
 # the one the config already used, so the recomputation reproduces the config's own answer in
 # every other case.
 #
-# It is silent when it goes wrong. The run carries 1/(2*diploidy*poolSize) while the config beside
+# It is silent when it goes wrong. The run carries 1/(2*ploidy*poolSize) while the config beside
 # the results says 0.001, and both look like ordinary numbers.
 #
 # All three of the values it derives, in one project: they are the whole set that is not a path,
@@ -988,7 +993,7 @@ c" "$(cat "$members" 2>/dev/null)" "the members file follows the grouping the pl
 
 # WHAT STEP 7 FILTERS WITH HAS TO BE IN STEP 7'S IDENTITY, and poolSize was not.
 #
-# The filter derives each pool's threshold from poolSize and diploidy, and a pool whose
+# The filter derives each pool's threshold from poolSize and ploidy, and a pool whose
 # param_poolSize cell is blank takes the run's own poolSize. Only the derived sensitivity stood
 # for it in the identity, so a project pinning sensitivity by hand made two runs of different
 # pool sizes agree at step 7 and share one results directory - which then held one run's tables

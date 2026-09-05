@@ -1,5 +1,7 @@
 #!/bin/bash
 # End-to-end runs against the committed fixture. The slow suite; --fast skips it.
+# cost: pipeline
+# covers: poolseqflow.nf scripts/ nextflow.config bin/
 #
 # One full run is shared by the cases that only inspect its results, because a run costs
 # about a minute and there is no reason to pay for it more than once. Cases that need a
@@ -66,7 +68,7 @@ test_frequency_table_columns_follow_the_metadata_order() {
 # THE ONE THING THE UNIT TESTS CANNOT SEE: that the pool sizes are read off the real metadata
 # file in a real run.
 #
-# bin/filterFalsePositives.sh is covered case by case in 50_helpers, but every one of those
+# bin/filterFalsePositives.sh is covered case by case in 05_helpers, but every one of those
 # calls it directly with a -p string written by the test. This reads the step 0 report from the
 # run that already happened, so it costs nothing, and it fails if poolSizes() stops resolving
 # the fallback to the global poolSize or stops being reported at all.
@@ -542,7 +544,7 @@ test_fastqc_zips_are_promoted_but_htmls_go_straight_to_storage() {
 # E1q reachable a second way, when the pair is promoted between the volumes.
 #
 # Runs against a copy of the finished project, so the cost is a run of skips rather than a
-# fresh analysis. Copying is safe for the same reason 40_guards relies on it: the stored
+# fresh analysis. Copying is safe for the same reason 04_guards relies on it: the stored
 # manifest excludes mainDir, storageDir and every dir.* entry, so it still matches after the
 # move. This also exercises the other half of E1p - the rebuilt sample's aligned BAM has been
 # promoted, so Align has to find it in permanent storage rather than where it wrote it.

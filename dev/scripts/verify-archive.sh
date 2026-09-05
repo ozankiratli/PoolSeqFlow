@@ -46,13 +46,16 @@ done
 # as well as out of the archive, and the check would pass. So an export-ignore fails here until
 # it is named in this list too.
 excluded='docs/ .github/ mkdocs.yml .gitignore .gitattributes dev/ Project/ test/
-          analysis/modules-index.tsv'
+          analysis/modules/*/test/ analysis/modules-index.tsv'
 
 # Whether one tracked path is meant to reach the archive at all.
 ships() {
     local path="$1" pat
     for pat in $excluded; do
         case "$pat" in
+            # A pattern holding a wildcard is matched as one, so a rule can cover every module
+            # without naming any of them. Tested first: these also end in a slash.
+            *'*'*) case "$path" in $pat*) return 1 ;; esac ;;
             */) case "$path" in "$pat"*) return 1 ;; esac ;;
             *)  if [ "$path" = "$pat" ]; then return 1; fi ;;
         esac
@@ -75,6 +78,13 @@ done <<< "$(git ls-tree -r --name-only "$REF")"
 # Repository furniture must NOT ship: the other half of .gitattributes' export-ignore.
 for f in docs .github mkdocs.yml .gitignore .gitattributes dev Project; do
     [ ! -e "$root/$f" ] || fail "should have been export-ignored: $f"
+done
+
+# The same for a module's own cases, which no wildcard above would have caught: `ships` only
+# says a path need not be there, and a rule that stopped working would go unnoticed without
+# somebody looking for the file.
+for d in "$root"/analysis/modules/*/test; do
+    [ ! -e "$d" ] || fail "should have been export-ignored: ${d#$root/}"
 done
 
 # Compiled Python must not ship. Checked here and not by the executable-bit loop below, which a

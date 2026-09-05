@@ -1,5 +1,8 @@
 #!/bin/bash
 # bin/config_migrate.sh, against configs written for earlier releases.
+# cost: static
+# covers: bin/config_migrate.sh parameters.config.template metadata.csv.template
+# covers: multi-run.csv.example
 #
 # A rename is the case that matters here. Without an entry in the script's rename table it
 # is two unrelated events - one DROPPED, one NEW - and the user silently gets the template
@@ -78,6 +81,17 @@ test_vcffilter_rename_still_carries_over() {
                         -e 's|^    vcffilter {|    vcftools {|'
     assert_status 0 "$MIGRATE_STATUS" "migration should succeed"
     assert_eq "99" "$(migrated_value minDP)" "the user's minDP should survive the rename"
+}
+
+# The 3.0 rename diploidy -> ploidy. It sets the frequency floor, so a tetraploid project that
+# lost the value would silently be filtered at a diploid's threshold - half of every real
+# singleton, on a config the migration reported as successful.
+test_ploidy_carries_over_from_diploidy() {
+    migrate_config_with -e 's|^    ploidy .*|    diploidy        = 4|'
+    assert_status 0 "$MIGRATE_STATUS" "migration should succeed"
+    assert_eq "4" "$(migrated_value ploidy)" \
+        "the old diploidy value should end up in ploidy"
+    assert_contains "$MIGRATE_OUTPUT" "ploidy" "the report should mention the new name"
 }
 
 # The 3.0 scope renames: samtools -> cleanBAM, bcftools -> variantCall. Whole scopes moved, so
