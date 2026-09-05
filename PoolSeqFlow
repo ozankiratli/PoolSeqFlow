@@ -51,7 +51,8 @@ usage() {
 
 # The analysis layer's own words, shown when `analysis` arrives without one.
 usage_analysis() {
-    echo "Usage: $0 analysis {install|check|modules <command>|<module>|complete|version|cite|uninstall}"
+    echo "Usage: $0 analysis {install|check|modules <command>|<module> [nocpp]|complete|version|cite|uninstall}"
+    echo "  nocpp    run the module's plain-R path, where it has both. Slower, and needs no compiler."
     exit 1
 }
 
@@ -438,7 +439,9 @@ list_modules() {
     if [ "$found" -eq 0 ]; then
         echo "    none"
         echo ""
-        echo "A release ships none. Modules are installed separately, one directory each."
+        echo "A release ships modules of its own into this directory, so an empty store means"
+        echo "they were removed. Reinstall this release to put them back; anything else is"
+        echo "installed separately, one directory each."
         return 0
     fi
     echo ""
@@ -892,7 +895,7 @@ populate_project() {
     echo "Next:"
     echo "  1. put your reads in Data/ and your reference in Reference/"
     echo "  2. edit parameters.config - mainDir, storageDir, readPattern, referenceFile,"
-    echo "     poolSize and diploidy at minimum"
+    echo "     poolSize and ploidy at minimum"
     echo "  3. write metadata.csv, which says what your samples are. Start from"
     echo "     metadata.csv.example: it explains every column and what merges two rows"
     echo "     into one pool."
@@ -1411,6 +1414,23 @@ EOF
                         usage_analysis
                         ;;
                 esac
+                # The one word a module run takes. It selects an implementation and never
+                # changes a number, so it is a flag here rather than a setting in a file.
+                MODULE_FLAGS=()
+                case "${#ANALYSIS_ARGS[@]}" in
+                    0) ;;
+                    1)
+                        if [ "${ANALYSIS_ARGS[0]}" != "nocpp" ]; then
+                            echo "ERROR: 'analysis $ANALYSIS_COMMAND' does not take '${ANALYSIS_ARGS[0]}'." >&2
+                            usage_analysis
+                        fi
+                        MODULE_FLAGS=(--nocpp)
+                        ;;
+                    *)
+                        echo "ERROR: 'analysis $ANALYSIS_COMMAND' takes at most one further word." >&2
+                        usage_analysis
+                        ;;
+                esac
                 require_analysis_install
                 require_project_config
                 require_analysis_env
@@ -1450,7 +1470,10 @@ EOF
                     echo ""
                     echo "Running $ANALYSIS_COMMAND in $(pwd)..."
                     echo ""
-                    nextflow run "$MODULE_DIR/main.nf" "${CONFIGS[@]}"
+                    # The flag reaches the module and not analysis.nf: recordedManifest() keeps
+                    # every top-level parameter, so a run of it carrying one would read as a
+                    # setting added since the results were produced and refuse the project.
+                    nextflow run "$MODULE_DIR/main.nf" "${CONFIGS[@]}" "${MODULE_FLAGS[@]+"${MODULE_FLAGS[@]}"}"
                     wait
                 fi
                 conda deactivate

@@ -35,6 +35,10 @@ def frameOutputs() {
         [ file   : 'references.bib',
           summary: 'the same list as BibTeX',
           anchor : 'citing-the-tools-it-runs' ],
+        [ file    : 'report.pdf',
+          summary : 'every result in this folder in one document, each under its own file name',
+          anchor  : 'analysis-report',
+          optional: true ],
     ]
 }
 
@@ -153,8 +157,12 @@ def readmeText(String module, Map target, List outputs) {
                  '| File | What it is | Explained at |',
                  '|---|---|---|']
 
+    // An optional output is named whether or not this run produced one: a reader who finds no
+    // plot here needs to know that a setting decides it, and a table listing only what happens
+    // to be present cannot tell them.
     (outputs + frameOutputs()).each { output ->
-        lines << "| `${output.file}` | ${output.summary ?: ''} | ${outputLink(output)} |".toString()
+        def what = "${output.summary ?: ''}${output.optional ? ' *(only when the setting that produces it is set)*' : ''}"
+        lines << "| `${output.file}` | ${what} | ${outputLink(output)} |".toString()
     }
 
     lines.addAll(readmeDesignLines(target))
@@ -173,6 +181,10 @@ def readmeShell(String module, Map target, String dest) {
 
     def lines = []
     outputs.each { output ->
+        // An output a module produces only under a setting - a plot of the chromosomes you
+        // named, and none when you named none. It is declared so the README can say what it
+        // would be and when it appears, and its absence is not a broken module.
+        if (output.optional) return
         // The declared name may be a glob, so the test counts what it matched.
         lines << "MATCHED=\$(find \"${dest}\" -maxdepth 1 -name '${output.file}' | wc -l)"
         lines << "if [ \"\$MATCHED\" -eq 0 ]; then"

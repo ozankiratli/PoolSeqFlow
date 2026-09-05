@@ -1,7 +1,7 @@
 // What the pipeline was told about each pool of a results directory: how many individuals went
 // into it, how many chromosomes that is, and the smallest frequency the tables it produced carry.
 //
-// A module reads these off its target. `poolSizes()` and `diploidy` belong to the pipeline's own
+// A module reads these off its target. `poolSizes()` and `ploidy` belong to the pipeline's own
 // scripts, which a module does not import - the library is what reads the pipeline.
 
 nextflow.enable.dsl=2
@@ -11,8 +11,8 @@ include { runToken } from '../../../scripts/variants.nf'
 
 // One pool's detection limit: the frequency below which the false-positive filter took a call to
 // be error. Mirrored by SENS[name] in bin/filterFalsePositives.sh, which is what filtered.
-def poolSensitivity(int diploidy, int size) {
-    return 1.0d / (2 * diploidy * size)
+def poolSensitivity(int ploidy, int size) {
+    return 1.0d / (2 * ploidy * size)
 }
 
 // A sensitivity for a report: three significant figures, never in scientific notation.
@@ -25,7 +25,7 @@ def shownSensitivity(double value) {
 
 // A plain function, not a local closure: the strict parser rejects calling one by name.
 //
-// Step 7's identity names poolSize, diploidy and every param_poolSize cell, so runs that hold a
+// Step 7's identity names poolSize, ploidy and every param_poolSize cell, so runs that hold a
 // pool to different sizes never share a results directory. Reaching either throw means
 // stepParameterMap() no longer names one of them.
 def figureConflict(String label, String what, Map byValue) {
@@ -39,11 +39,11 @@ def figureConflict(String label, String what, Map byValue) {
         "disagree about which runs share work.")
 }
 
-// The one diploidy the runs of a results directory were filtered under.
-def targetDiploidy(String label, List members) {
+// The one ploidy the runs of a results directory were filtered under.
+def targetPloidy(String label, List members) {
     def byValue = [:]
-    members.each { run -> byValue.get("${run.diploidy}".toString(), []) << runToken(run.runId) }
-    if (byValue.size() > 1) throw figureConflict(label, 'diploidy', byValue)
+    members.each { run -> byValue.get("${run.ploidy}".toString(), []) << runToken(run.runId) }
+    if (byValue.size() > 1) throw figureConflict(label, 'ploidy', byValue)
     return (byValue.keySet() as List)[0] as Integer
 }
 
@@ -63,15 +63,15 @@ def poolFigures(String label, List members) {
     }
     if (byPool.isEmpty()) return []
 
-    def diploidy = targetDiploidy(label, members)
+    def ploidy = targetPloidy(label, members)
     return byPool.sort { a, b -> a.key <=> b.key }.collect { pool, byValue ->
         if (byValue.size() > 1) throw figureConflict(label, "the size of pool '${pool}'", byValue)
         def size = (byValue.keySet() as List)[0] as Integer
         [ pool       : pool,
           size       : size,
-          diploidy   : diploidy,
-          nChrom     : diploidy * size,
-          sensitivity: poolSensitivity(diploidy, size) ]
+          ploidy     : ploidy,
+          nChrom     : ploidy * size,
+          sensitivity: poolSensitivity(ploidy, size) ]
     }
 }
 
@@ -96,12 +96,12 @@ def poolReportLines(List targets) {
         lines << "POOL SIZES:            ${target.label}".toString()
         if (groups.size() == 1) {
             def first = pools[0]
-            lines << ("POOL SIZES:                diploidy ${first.diploidy}, ${counted} of " +
+            lines << ("POOL SIZES:                ploidy ${first.ploidy}, ${counted} of " +
                       "${first.size} individuals - ${first.nChrom} chromosomes, " +
                       "frequencies above ${shownSensitivity(first.sensitivity)}").toString()
         }
         else {
-            lines << "POOL SIZES:                diploidy ${pools[0].diploidy}, ${counted}".toString()
+            lines << "POOL SIZES:                ploidy ${pools[0].ploidy}, ${counted}".toString()
             groups.each { _size, entries ->
                 lines << "POOL SIZES:                    ${poolGroupLine(entries)}".toString()
             }

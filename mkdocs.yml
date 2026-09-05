@@ -156,6 +156,7 @@ nav:
       - Configuration: analysis/configuration.md
       - Verification: analysis/verification.md
       - Output: analysis/output.md
+      - Modules: analysis/modules.md
   - Pipeline:
       - pipeline/index.md
       - Steps: pipeline/steps.md
@@ -163,5 +164,6 @@ nav:
       - Directory Layout: pipeline/directories.md
   - Reference:
       - Troubleshooting: reference/troubleshooting.md
+      - Bibliography: reference/bibliography.md
       - Changelog: reference/changelog.md
       - Citation & License: reference/citation.md

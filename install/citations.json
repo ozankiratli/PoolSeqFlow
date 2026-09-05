@@ -1,16 +1,22 @@
 {
   "_comment": [
-    "Citations for the software a run invokes. bin/write_citations.py turns this into",
-    "CITATIONS.md and references.bib beside the results, listing only what that run used.",
+    "Citations for the software a run invokes. THIS FILE IS THE ONE TO EDIT: it compiles to",
+    "citations.json beside it, and bin/write_citations.py turns that into the CITATIONS.md and",
+    "references.bib written beside a user's results, listing only what that run actually used.",
     "",
-    "Keys match params.software, plus nextflow, python and poolseqflow. 'when' says what has",
-    "to be true for the tool to be invoked; absent means always.",
+    "Compile with dev/scripts/bib2citations.py, which also documents the fields that are not",
+    "bibliographic. 00_static fails when the two files disagree.",
     "",
-    "Entries with no paper carry a url instead, and are emitted as @misc. Tools that exist but",
-    "are not citable in their own right - unzip, the JVM - are listed with cite: false so that",
-    "the omission is recorded here rather than looking like an oversight."
+    "Slots match params.software, plus nextflow, python and poolseqflow; where a slot differs",
+    "from the BibTeX key, `id` names it. 'when' says what has to be true for the tool to be",
+    "invoked, and absent means always.",
+    "",
+    "Entries with no paper carry a url instead and are @misc. Tools that exist but are not",
+    "citable in their own right - unzip, the JVM - carry cite = {false} with a reason, so the",
+    "omission is recorded here rather than looking like an oversight.",
+    "",
+    "GENERATED from references.bib beside this file. Do not edit it: dev/scripts/bib2citations.py overwrites it, and 00_static fails when the two differ."
   ],
-
   "poolseqflow": {
     "name": "PoolSeqFlow",
     "type": "software",
@@ -21,7 +27,6 @@
     "url": "https://github.com/ozankiratli/PoolSeqFlow",
     "note": "Cite the version DOI of the release you ran, not the concept DOI."
   },
-
   "nextflow": {
     "name": "Nextflow",
     "type": "article",
@@ -29,13 +34,12 @@
     "authors": "Di Tommaso, Paolo and Chatzou, Maria and Floden, Evan W. and Barja, Pablo Prieto and Palumbo, Emilio and Notredame, Cedric",
     "title": "Nextflow enables reproducible computational workflows",
     "journal": "Nature Biotechnology",
-    "year": "2017",
     "volume": "35",
     "number": "4",
     "pages": "316--319",
+    "year": "2017",
     "doi": "10.1038/nbt.3820"
   },
-
   "bwa": {
     "name": "BWA",
     "type": "article",
@@ -43,30 +47,33 @@
     "authors": "Li, Heng and Durbin, Richard",
     "title": "Fast and accurate short read alignment with Burrows-Wheeler transform",
     "journal": "Bioinformatics",
-    "year": "2009",
     "volume": "25",
     "number": "14",
     "pages": "1754--1760",
+    "year": "2009",
     "doi": "10.1093/bioinformatics/btp324"
   },
-
   "samtools": {
     "name": "SAMtools and BCFtools",
     "type": "article",
     "key": "danecek2021samtools",
-    "tools": {"samtools": "SAMtools", "bcftools": "BCFtools"},
+    "tools": {
+      "samtools": "SAMtools",
+      "bcftools": "BCFtools"
+    },
+    "also": [
+      "li2011snpcalling"
+    ],
     "authors": "Danecek, Petr and Bonfield, James K. and Liddle, Jennifer and Marshall, John and Ohan, Valeriu and Pollard, Martin O. and Whitwham, Andrew and Keane, Thomas and McCarthy, Shane A. and Davies, Robert M. and Li, Heng",
     "title": "Twelve years of SAMtools and BCFtools",
     "journal": "GigaScience",
-    "year": "2021",
     "volume": "10",
     "number": "2",
     "pages": "giab008",
+    "year": "2021",
     "doi": "10.1093/gigascience/giab008",
-    "also": ["li2011snpcalling"],
     "note": "One paper covers both. The multiallelic calling model is described separately."
   },
-
   "_bcftools_model": {
     "name": "BCFtools variant calling model",
     "type": "article",
@@ -75,13 +82,12 @@
     "authors": "Li, Heng",
     "title": "A statistical framework for SNP calling, mutation discovery, association mapping and population genetical parameter estimation from sequencing data",
     "journal": "Bioinformatics",
-    "year": "2011",
     "volume": "27",
     "number": "21",
     "pages": "2987--2993",
+    "year": "2011",
     "doi": "10.1093/bioinformatics/btr509"
   },
-
   "vcftools": {
     "name": "VCFtools",
     "type": "article",
@@ -89,13 +95,12 @@
     "authors": "Danecek, Petr and Auton, Adam and Abecasis, Goncalo and Albers, Cornelis A. and Banks, Eric and DePristo, Mark A. and Handsaker, Robert E. and Lunter, Gerton and Marth, Gabor T. and Sherry, Stephen T. and McVean, Gilean and Durbin, Richard",
     "title": "The variant call format and VCFtools",
     "journal": "Bioinformatics",
-    "year": "2011",
     "volume": "27",
     "number": "15",
     "pages": "2156--2158",
+    "year": "2011",
     "doi": "10.1093/bioinformatics/btr330"
   },
-
   "cutadapt": {
     "name": "Cutadapt",
     "type": "article",
@@ -103,13 +108,12 @@
     "authors": "Martin, Marcel",
     "title": "Cutadapt removes adapter sequences from high-throughput sequencing reads",
     "journal": "EMBnet.journal",
-    "year": "2011",
     "volume": "17",
     "number": "1",
     "pages": "10--12",
+    "year": "2011",
     "doi": "10.14806/ej.17.1.200"
   },
-
   "bamtools": {
     "name": "BamTools",
     "type": "article",
@@ -117,13 +121,12 @@
     "authors": "Barnett, Derek W. and Garrison, Erik K. and Quinlan, Aaron R. and Stromberg, Michael P. and Marth, Gabor T.",
     "title": "BamTools: a C++ API and toolkit for analyzing and managing BAM files",
     "journal": "Bioinformatics",
-    "year": "2011",
     "volume": "27",
     "number": "12",
     "pages": "1691--1692",
+    "year": "2011",
     "doi": "10.1093/bioinformatics/btr174"
   },
-
   "snpEff": {
     "name": "SnpEff",
     "type": "article",
@@ -132,13 +135,12 @@
     "authors": "Cingolani, Pablo and Platts, Adrian and Wang, Le Lily and Coon, Melissa and Nguyen, Tung and Wang, Luan and Land, Susan J. and Lu, Xiangyi and Ruden, Douglas M.",
     "title": "A program for annotating and predicting the effects of single nucleotide polymorphisms, SnpEff: SNPs in the genome of Drosophila melanogaster strain w1118; iso-2; iso-3",
     "journal": "Fly",
-    "year": "2012",
     "volume": "6",
     "number": "2",
     "pages": "80--92",
+    "year": "2012",
     "doi": "10.4161/fly.19695"
   },
-
   "fastqc": {
     "name": "FastQC",
     "type": "software",
@@ -148,7 +150,6 @@
     "url": "https://www.bioinformatics.babraham.ac.uk/projects/fastqc/",
     "note": "No accompanying paper; cite the software."
   },
-
   "trim_galore": {
     "name": "Trim Galore",
     "type": "software",
@@ -158,7 +159,6 @@
     "url": "https://github.com/FelixKrueger/TrimGalore",
     "note": "No accompanying paper; cite the software. It wraps Cutadapt, which is cited separately."
   },
-
   "python": {
     "name": "Python",
     "type": "software",
@@ -168,15 +168,17 @@
     "url": "https://www.python.org/",
     "note": "Used by the pipeline's helper scripts."
   },
-
   "java": {
     "name": "Java runtime",
+    "type": "misc",
+    "key": "java",
     "cite": false,
     "reason": "A runtime for FastQC and SnpEff rather than a tool with its own method; those two are cited instead."
   },
-
   "unzip": {
     "name": "unzip",
+    "type": "misc",
+    "key": "unzip",
     "cite": false,
     "reason": "A general-purpose archive utility with no bearing on the method."
   }

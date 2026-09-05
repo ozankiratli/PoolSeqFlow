@@ -38,3 +38,28 @@ dependencies:
   - r-optparse
   - r-jsonlite
   - r-matrix
+  # A module may hand its per-site work out in bins. %dofuture% supersedes %dopar%, and both
+  # foreach and future come with it.
+  - r-dofuture
+  # The compiled path a module offers where it has one. r-base brings the toolchain Rcpp drives
+  # - GCC on Linux, clang on macOS - so this adds Rcpp and not a compiler.
+  - r-rcpp
+  # The PDF report the frame writes beside every published analysis. knitr runs the R that
+  # fills the document in, pandoc turns the result into a PDF.
+  #
+  # PANDOC IS NAMED HERE rather than left to arrive with r-rmarkdown, which is where it would
+  # otherwise come from. And the report is knitted and then handed to pandoc, rather than
+  # rendered by rmarkdown::pdf_document: that output format is bound to LaTeX and ignores a
+  # --pdf-engine argument, so it builds on a machine that has TeX and fails on one that does
+  # not, which is the wrong way round for a failure to be discovered.
+  - r-rmarkdown
+  - r-knitr
+  - pandoc
+  # The engine pandoc hands the document to. Pandoc's own default is LaTeX, which is a gigabyte
+  # and more; typst is one binary and does the same job here. It is pinned rather than found on
+  # the machine, or a report would build wherever a developer happens to have TeX and nowhere
+  # else.
+  - typst
+  # Reading a published PNG back so it can be placed in that report, and joining PDFs.
+  - r-png
+  - qpdf

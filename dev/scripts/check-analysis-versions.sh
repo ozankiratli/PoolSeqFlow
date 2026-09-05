@@ -117,6 +117,11 @@ if [ -d analysis/modules ]; then
     for dir in analysis/modules/*/; do
         [ -f "${dir}manifest.json" ] || continue
         name=$(basename "$dir")
+        # A manifest that is not in HEAD yet is a module being added, and its version is new by
+        # construction - there is no earlier one it could have failed to move from. Without this
+        # every new module reports as behind, because `git diff HEAD` says nothing at all about
+        # an untracked file.
+        git cat-file -e "HEAD:${dir}manifest.json" 2>/dev/null || continue
         if dirty "$dir" && ! git diff HEAD -- "${dir}manifest.json" | grep -q '^+.*"version"'; then
             report "module '$name' changed and its manifest version did not" \
                 "bump it: dev/scripts/bump-analysis-version.sh module $name"

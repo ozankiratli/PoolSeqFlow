@@ -156,7 +156,7 @@ def setDotted(Map p, String dotted, Object value) {
 
 // The three values parameters.config derives that are not paths, for one parameter map.
 def derivedSensitivity(Map p) {
-    return 1.0 / (2 * p.diploidy * p.poolSize)
+    return 1.0 / (2 * p.ploidy * p.poolSize)
 }
 
 def derivedReferenceFa(Map p) {

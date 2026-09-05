@@ -23,7 +23,7 @@ committed file says nothing about the machine that made it. Nothing else was tou
 | no sample has `DP=0` | a division-by-zero case has to be constructed, not found here |
 | lowest non-zero ALT fraction is **0.012048** | this is the number that decides whether a sensitivity bites |
 
-That last row is the one to keep in mind. Sensitivity is `1 / (2 * diploidy * poolSize)`, so
+That last row is the one to keep in mind. Sensitivity is `1 / (2 * ploidy * poolSize)`, so
 the default `poolSize = 100` gives `0.0025` — below every non-zero fraction in the file, which
 is why the default filter drops records on the sample-count clause rather than on sensitivity.
 A test that wants a per-pool threshold to actually change the outcome needs a pool small enough

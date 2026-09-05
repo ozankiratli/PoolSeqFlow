@@ -1,0 +1,89 @@
+% Works the manual cites and no run invokes: prior art, the alternatives, and the software a
+% result here might be compared against. Nothing reads this at run time and it compiles to no
+% citations.json - what a run should be cited with lives in install/, analysis/ and each
+% module's own references.bib, and every one of those is quotable here too.
+%
+% dev/scripts/build_docs.py compiles the manual's Bibliography from whichever entries the
+% manual actually cites, across all four files. A `[@key]` in the prose is expanded in place to
+% a link, so an entry nothing cites is left out and a citation with no entry fails the build.
+%
+% `group` names the heading an entry appears under. `note` is the sentence saying what it is
+% doing here, which is the whole value of the page - a bare list of papers is a search away.
+
+@article{futschik2010markers,
+  group   = {Estimating from pooled reads},
+  authors = {Futschik, Andreas and Schl{\"o}tterer, Christian},
+  title   = {The Next Generation of Molecular Markers From Massively Parallel Sequencing of Pooled DNA Samples},
+  journal = {Genetics},
+  volume  = {186},
+  number  = {1},
+  pages   = {207--218},
+  year    = {2010},
+  doi     = {10.1534/genetics.110.114397},
+  note    = {The estimator theory PoPoolation is built on, and the first treatment of unbiased pi and theta_W from pooled reads. Read it before deciding that a pooled estimate can be computed the way an individually-genotyped one is.},
+}
+
+@article{kolaczkowski2011clinal,
+  group   = {Estimating from pooled reads},
+  authors = {Kolaczkowski, Bryan and Kern, Andrew D. and Holloway, Alisha K. and Begun, David J.},
+  title   = {Genomic Differentiation Between Temperate and Tropical Australian Populations of Drosophila melanogaster},
+  journal = {Genetics},
+  volume  = {187},
+  number  = {1},
+  pages   = {245--260},
+  year    = {2011},
+  doi     = {10.1534/genetics.110.123059},
+  note    = {One of the first genome-scale Pool-seq studies, and where its sampling properties are worked through from first principles - n chromosomes drawn from the population and sequenced to depth m, kept as two parameters rather than compressed into one. Worth reading precisely because it does not take the shortcut every effective-sample-size heuristic since has taken.},
+}
+
+@article{koboldt2009varscan,
+  group   = {Other software for pooled sequencing},
+  authors = {Koboldt, Daniel C. and Chen, Ken and Wylie, Todd and Larson, David E. and McLellan, Michael D. and Mardis, Elaine R. and Weinstock, George M. and Wilson, Richard K. and Ding, Li},
+  title   = {VarScan: variant detection in massively parallel sequencing of individual and pooled samples},
+  journal = {Bioinformatics},
+  volume  = {25},
+  number  = {17},
+  pages   = {2283--2285},
+  year    = {2009},
+  doi     = {10.1093/bioinformatics/btp373},
+  note    = {Pooled variant calling as a thing that can be done at all - SNPs and indels detected from pooled reads at a frequency threshold, which is the premise every tool on this page rests on. PoolSeqFlow calls with BCFtools and applies its own per-pool threshold.},
+}
+
+@article{kofler2011popoolation,
+  group   = {Other software for pooled sequencing},
+  authors = {Kofler, Robert and Orozco-terWengel, Pablo and De Maio, Nicola and Pandey, Ram Vinay and Nolte, Viola and Futschik, Andreas and Kosiol, Carolin and Schl{\"o}tterer, Christian},
+  title   = {PoPoolation: A Toolbox for Population Genetic Analysis of Next Generation Sequencing Data from Pooled Individuals},
+  journal = {PLoS ONE},
+  volume  = {6},
+  number  = {1},
+  pages   = {e15925},
+  year    = {2011},
+  doi     = {10.1371/journal.pone.0015925},
+  note    = {pi, theta_W and Tajima's D from a single pool, computed from a pileup rather than from called variants. Numbers from PoPoolation and from here will not generally be equal, and multiallelic sites are the largest single reason: the classical estimators it implements are defined over two alleles, where PoolSeqFlow's diversity sums over every allele at the site.},
+}
+
+@article{kofler2011popoolation2,
+  group   = {Other software for pooled sequencing},
+  authors = {Kofler, Robert and Pandey, Ram Vinay and Schl{\"o}tterer, Christian},
+  title   = {PoPoolation2: identifying differentiation between populations using sequencing of pooled DNA samples (Pool-Seq)},
+  journal = {Bioinformatics},
+  volume  = {27},
+  number  = {24},
+  pages   = {3435--3436},
+  year    = {2011},
+  doi     = {10.1093/bioinformatics/btr589},
+  note    = {F_ST, Fisher's exact test and the Cochran-Mantel-Haenszel test between pools.},
+}
+
+@article{fabian2012latitudinal,
+  group   = {Where these methods have been used},
+  authors = {Fabian, Daniel K. and Kapun, Martin and Nolte, Viola and Kofler, Robert and Schmidt, Paul S. and Schl{\"o}tterer, Christian and Flatt, Thomas},
+  title   = {Genome-wide patterns of latitudinal differentiation among populations of Drosophila melanogaster from North America},
+  journal = {Molecular Ecology},
+  volume  = {21},
+  number  = {19},
+  pages   = {4748--4769},
+  year    = {2012},
+  doi     = {10.1111/j.1365-294X.2012.05731.x},
+  note    = {An early large Pool-seq study, and a worked example of what these estimators are for: pi, theta_W and Tajima's D from PoPoolation and F_ST from PoPoolation2, across populations on a cline. Useful for seeing how the numbers are reported and argued from, rather than only how they are computed.},
+}

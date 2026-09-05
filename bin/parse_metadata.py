@@ -234,7 +234,7 @@ def check(path):
             errors.append(
                 f"line {lineno}: {POOL_SIZE} '{size}' is not a whole number of individuals. "
                 f"It is how many individuals went into the pool, and sensitivity is "
-                f"1 / (2 * diploidy * {POOL_SIZE}). Leave it blank to use the global poolSize."
+                f"1 / (2 * ploidy * {POOL_SIZE}). Leave it blank to use the global poolSize."
             )
 
         # -1, 0 and any positive depth are all valid, so only the shape is checked.

@@ -20,6 +20,12 @@ module's `gates`, and keys any intermediate's name on the value. That rule is in
 the machine, so they must not need a package the analysis environment pins. A module's own R
 may use `data.table` and `ggplot2` freely.
 
+A derivation with a compiled form keeps that form in `../cpp/` under the same name, and the R
+here stays the reference the compiled one is judged against — never a wrapper that dispatches
+to it. `../cpp/` needs Rcpp and a compiler on the machine, which is why nothing here may reach
+for it, and a module that offers the compiled path asks for it explicitly and refuses when it
+cannot be built.
+
 **One file per function.** A module declares which it sources, and the publish concatenates
 exactly those into one file that ships beside the result — so a published folder carries the
 code that computed its numbers, not a driver that refers to code the reader does not have.

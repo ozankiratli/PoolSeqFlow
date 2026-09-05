@@ -43,6 +43,11 @@ import sys
 import unicodedata
 from pathlib import Path
 
+# The BibTeX reader lives beside this script and is the only one in the repository. Two would
+# be two grammars, and the entries it reads reach a user's methods section either way.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bib2citations  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[2]
 MANUAL = REPO / "manual" / "PoolSeqFlow-manual.md"
 DOCS = REPO / "docs"
@@ -58,6 +63,28 @@ HTML_ANCHOR = re.compile(r'(href=")(#[^"]*)(")')
 # An image is written as the manual itself reads it, `assets/…` beside the manual. Every page
 # but the home page is emitted one directory down, so the path has to move with it.
 MD_IMAGE = re.compile(r"(!\[[^\]]*\]\(\s*)(assets/)")
+
+# A citation in the prose, expanded in place into a link to the group it is filed under. Not
+# followed by `(`, which is an ordinary link whose text happens to start with an @ - a GitHub
+# handle, say - and which expansion would otherwise claim as a citation key.
+CITE = re.compile(r"\[@([A-Za-z0-9_:.\-]+)\](?!\()")
+# The same citation once expanded. Both forms are read, so compiling is idempotent: the key
+# survives in the link, and a bibliography rebuilt from an already-expanded manual is the same.
+CITED = re.compile(r"\[([^\]]*)\]\(#ref-([A-Za-z0-9_:.\-]+)\)")
+BIB_START = "<!-- generated: bibliography -->\n"
+BIB_END = "<!-- end generated -->"
+
+# The headings the bibliography is divided into, in the order they appear. Authored, so that
+# adding a group is a decision someone made rather than a side effect of a new `group` value.
+BIBLIOGRAPHY_GROUPS = (
+    "The statistics PoolSeqFlow computes",
+    "Estimating from pooled reads",
+    "Other software for pooled sequencing",
+    "Where these methods have been used",
+)
+
+# The accents the references use, as combining marks. `{\"o}` is one letter to a reader.
+ACCENTS = {'"': "̈", "'": "́", "`": "̀", "^": "̂", "~": "̃"}
 
 
 class ManualError(Exception):
@@ -294,6 +321,156 @@ def render_nav(home: Page, sections: list[Section]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def reference_files() -> list[Path]:
+    """Every references.bib: what a run cites, plus the manual's own context-only entries."""
+    found = [MANUAL.parent / "references.bib",
+             REPO / "install" / "references.bib",
+             REPO / "analysis" / "references.bib"]
+    found += sorted((REPO / "analysis" / "modules").glob("*/references.bib"))
+    return [path for path in found if path.exists()]
+
+
+def load_references() -> dict[str, dict[str, str]]:
+    """Every entry by its BibTeX key. A key defined twice is a citation that means two things."""
+    entries: dict[str, dict[str, str]] = {}
+    for path in reference_files():
+        try:
+            _comment, parsed = bib2citations.parse(path.read_text(encoding="utf-8"))
+        except bib2citations.BibError as error:
+            raise ManualError(f"{path.relative_to(REPO)}: {error}") from error
+        for _kind, key, fields in parsed:
+            if key in entries:
+                raise ManualError(f"@{key} is defined in two references.bib files")
+            entries[key] = dict(fields)
+    return entries
+
+
+def detex(text: str) -> str:
+    """A BibTeX-escaped name as it should read. `Schl{\\"o}tterer` is one word to a person."""
+    def one(match: re.Match[str]) -> str:
+        return unicodedata.normalize("NFC", match.group(2) + ACCENTS[match.group(1)])
+    return re.sub(r"\{\\([\"'`^~])\s*\{?(\w)\}?\}", one, text).replace("{", "").replace("}", "")
+
+
+def format_authors(entry: dict[str, str]) -> str:
+    """`Nei, M.`, `Futschik, A. & Schlötterer, C.`, and so on for the whole list."""
+    people = []
+    for name in [a.strip() for a in entry.get("authors", "").split(" and ") if a.strip()]:
+        surname, _, given = detex(name).partition(",")
+        initials = " ".join(f"{part[0]}." for part in given.split() if part)
+        people.append(f"{surname}, {initials}" if initials else surname)
+    if len(people) > 1:
+        return ", ".join(people[:-1]) + " & " + people[-1]
+    return people[0] if people else ""
+
+
+def short_cite(entry: dict[str, str], suffix: str = "") -> str:
+    """What `[@key]` reads as in the prose: `Nei 1973`, `Kofler et al. 2011a`."""
+    surnames = [detex(a).split(",")[0].strip()
+                for a in entry.get("authors", "").split(" and ") if a.strip()]
+    if len(surnames) > 2:
+        who = f"{surnames[0]} et al."
+    elif surnames:
+        who = " & ".join(surnames)
+    else:
+        who = entry.get("name", "")
+    year = entry.get("year", "") + suffix
+    return f"{who} {year}".strip()
+
+
+def disambiguate(cited: set[str], refs: dict[str, dict[str, str]]) -> dict[str, str]:
+    """A suffix per key, so two papers by one author in one year are told apart.
+
+    `Kofler et al. 2011` names PoPoolation and PoPoolation2 both, which is no citation at all.
+    The suffix is assigned by BibTeX key, so it is the same on every rebuild.
+    """
+    by_label: dict[str, list[str]] = {}
+    for key in sorted(cited):
+        by_label.setdefault(short_cite(refs[key]), []).append(key)
+    suffixes: dict[str, str] = {}
+    for keys in by_label.values():
+        for index, key in enumerate(keys):
+            suffixes[key] = chr(ord("a") + index) if len(keys) > 1 else ""
+    return suffixes
+
+
+def format_entry(key: str, entry: dict[str, str], suffix: str = "") -> list[str]:
+    """One bibliography item: a heading carrying its anchor, the reference, and what it is
+    doing here. A heading because that is the only thing the manual takes an anchor from, and
+    an anchor because a citation has to expand into a link that still names its key - otherwise
+    compiling twice would find no citations the second time."""
+    where = f"*{entry['journal']}*" if entry.get("journal") else entry.get("publisher", "")
+    volume = entry.get("volume", "")
+    if volume and entry.get("number"):
+        volume += f"({entry['number']})"
+    locus = ", ".join(part for part in (volume, entry.get("pages", "").replace("--", "–")) if part)
+    year = f" ({entry['year']})." if entry.get("year") else "."
+    head = f"**{format_authors(entry)}**{year} {detex(entry.get('title', ''))}."
+    tail = " ".join(part for part in (where, locus) if part)
+    if tail:
+        head += f" {tail}."
+    if entry.get("doi"):
+        head += f" [{entry['doi']}](https://doi.org/{entry['doi']})"
+    elif entry.get("url"):
+        head += f" <{entry['url']}>"
+    lines = [f"#### {short_cite(entry, suffix)} {{ #ref-{key} }}", "", head]
+    if entry.get("note"):
+        lines.append(f": {entry['note']}")
+    return lines
+
+
+def compile_bibliography(text: str, refs: dict[str, dict[str, str]]) -> str:
+    """Expand every `[@key]` and rewrite the generated block between the bibliography markers.
+
+    The manual is what ships and what a person reads offline, so the compiled form has to live
+    in it - the same arrangement mkdocs.yml's nav is in, and checked the same way.
+    """
+    cited = {m.group(1) for m in CITE.finditer(text)} | {m.group(2) for m in CITED.finditer(text)}
+    unknown = sorted(cited - set(refs))
+    if unknown:
+        raise ManualError("cited with no entry in any references.bib: @" + ", @".join(unknown))
+
+    grouped: dict[str, list[str]] = {}
+    for key in cited:
+        group = refs[key].get("group")
+        if not group:
+            raise ManualError(f"@{key} is cited but its entry names no `group`")
+        if group not in BIBLIOGRAPHY_GROUPS:
+            raise ManualError(
+                f"@{key} is in group {group!r}, which is not one of the headings "
+                f"build_docs.py knows: " + ", ".join(BIBLIOGRAPHY_GROUPS))
+        grouped.setdefault(group, []).append(key)
+
+    suffixes = disambiguate(cited, refs)
+
+    def link(key: str) -> str:
+        return f"[{short_cite(refs[key], suffixes[key])}](#ref-{key})"
+
+    # Both forms are rewritten, so what a citation READS as is generated too: an entry whose
+    # year moves, or which needs an a/b suffix it did not need before, updates everywhere.
+    text = CITE.sub(lambda m: link(m.group(1)), text)
+    text = CITED.sub(lambda m: link(m.group(2)), text)
+
+    body: list[str] = []
+    for group in BIBLIOGRAPHY_GROUPS:
+        if group not in grouped:
+            continue
+        body += ["", f"### {group}", ""]
+        for index, key in enumerate(sorted(grouped[group],
+                                           key=lambda k: (refs[k].get("year", ""), k))):
+            if index:
+                body.append("")
+            body += format_entry(key, refs[key], suffixes[key])
+
+    start, marker, rest = text.partition(BIB_START)
+    if not marker:
+        raise ManualError(f"no `{BIB_START}` marker to write the bibliography into")
+    _old, end_marker, after = rest.partition(BIB_END)
+    if not end_marker:
+        raise ManualError(f"no `{BIB_END}` marker closing the bibliography")
+    return start + BIB_START + "\n".join(body).rstrip("\n") + "\n\n" + BIB_END + after
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -304,7 +481,22 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        pages, sections = parse(MANUAL.read_text())
+        source = MANUAL.read_text()
+        compiled = compile_bibliography(source, load_references())
+    except ManualError as error:
+        print(f"{MANUAL.relative_to(REPO)}: {error}", file=sys.stderr)
+        return 1
+    if compiled != source:
+        if args.check:
+            print(f"{MANUAL.relative_to(REPO)}: the Bibliography is out of date with the "
+                  f"references.bib files, or a [@key] is unexpanded", file=sys.stderr)
+            print("run: python3 dev/scripts/build_docs.py", file=sys.stderr)
+            return 1
+        MANUAL.write_text(compiled)
+        source = compiled
+
+    try:
+        pages, sections = parse(source)
         owner = index_anchors(pages)
         rendered = {page.path: render(page, owner) for page in pages}
     except ManualError as error:

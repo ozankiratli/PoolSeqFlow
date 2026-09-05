@@ -150,7 +150,7 @@ process FilterPotentialFalsePositives {
 
     // EVERY pool, named, including those taking the global poolSize.
     pool_sizes = poolSizeArgument(run)
-    diploidy = run.diploidy
+    ploidy = run.ploidy
 
     dir_log = "${run.dir.logs}/7_vcf2freq"
 
@@ -189,7 +189,7 @@ process FilterPotentialFalsePositives {
 
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Filtering possible false positives..."
         filterFalsePositives.sh -v ${vcf} -t ${threshold} -s ${sensitivity} \\
-            -p "${pool_sizes}" -d ${diploidy} -b ${run.software.bcftools} > "\$TMP_FILE"
+            -p "${pool_sizes}" -d ${ploidy} -b ${run.software.bcftools} > "\$TMP_FILE"
 
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Order might change after filtering, reordering alleles again..."
         MajorAlleleToRef.py "\$TMP_FILE" "${filterfp_vcf}"

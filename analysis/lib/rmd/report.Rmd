@@ -1,0 +1,66 @@
+```{r setup, include = FALSE}
+# The PDF the frame writes beside every published analysis: every result it holds, each under
+# the name of the file it came from.
+#
+# Knitted to markdown and handed to pandoc, never rendered by rmarkdown::pdf_document - that
+# output format is bound to LaTeX and ignores --pdf-engine, so it succeeds wherever somebody
+# happens to have TeX and fails everywhere else.
+#
+# The spec is written by analysis/lib/nf/report.nf and names the published folder, what
+# produced it, and every file the module declared with the summary it declared. Nothing here
+# knows what any particular module computes.
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+spec <- jsonlite::fromJSON(Sys.getenv("POOLSEQFLOW_REPORT_SPEC"), simplifyVector = FALSE)
+folder <- spec$folder
+
+# A table is shown in full up to this many rows. Past it the head is shown and the count said
+# out loud: a report that silently stops at row forty is a report that lies about the data.
+ROW_CAP <- 40
+```
+
+# `r spec$label`: `r spec$module`
+
+Produced by PoolSeqFlow `r spec$release`, module `r spec$module` v`r spec$version`,
+analysis frame `r spec$frame`, on `r format(Sys.time(), "%Y-%m-%d %H:%M")`.
+
+Read from `r spec$source`.
+
+```{r contents}
+rows <- do.call(rbind, lapply(spec$outputs, function(o) data.frame(
+    File = sprintf("`%s`", o$file), What = o$summary %||% "", stringsAsFactors = FALSE)))
+knitr::kable(rows, caption = "What this folder holds")
+```
+
+```{r results = "asis"}
+`%||%` <- function(a, b) if (is.null(a)) b else a
+
+for (output in spec$outputs) {
+    matched <- Sys.glob(file.path(folder, output$file))
+    if (length(matched) == 0) next          # an optional output this run did not produce
+    for (path in sort(matched)) {
+        name <- basename(path)
+        # A typst raw block, not \newpage: pandoc passes LaTeX commands only to LaTeX and
+        # drops this one in silence, so the report would run together with nothing to show it.
+        cat("\n\n```{=typst}\n#pagebreak()\n```\n\n## ", name, "\n\n", sep = "")
+        if (!is.null(output$summary)) cat("*", output$summary, "*\n\n", sep = "")
+
+        if (grepl("[.]tsv$", name)) {
+            table <- utils::read.delim(path, check.names = FALSE, colClasses = "character")
+            shown <- utils::head(table, ROW_CAP)
+            print(knitr::kable(shown))
+            if (nrow(table) > ROW_CAP) {
+                cat("\n\n", nrow(shown), " of ", nrow(table),
+                    " rows. The whole table is in `", name, "`.\n", sep = "")
+            }
+        } else if (grepl("[.]png$", name)) {
+            # Scaled to the text width rather than placed at its own size. A module sizes a
+            # figure for looking at on its own; at that size the heading above it is pushed
+            # onto the previous page and the figure arrives with nothing saying which file it
+            # is, which is the one thing this report exists to do.
+            cat("\n![](", path, "){width=90%}\n", sep = "")
+        } else {
+            cat("\nNot rendered here - read `", name, "` itself.\n", sep = "")
+        }
+    }
+}
+```

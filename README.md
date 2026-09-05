@@ -70,7 +70,7 @@ cd PoolSeqFlow-*/
 mkdir -p /path/to/project && cd /path/to/project
 ./PoolSeqFlow init
 #    then edit parameters.config: mainDir, storageDir, readPattern,
-#    referenceFile, poolSize, diploidy
+#    referenceFile, poolSize, ploidy
 
 # 4. Run — this is also the resume command
 ./PoolSeqFlow run

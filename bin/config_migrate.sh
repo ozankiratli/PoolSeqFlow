@@ -86,6 +86,7 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
         if (k == "vcffilter.minDP")   return "vcftools.minDP"
         if (k == "vcffilter.minQUAL") return "vcftools.minQUAL"
         if (k == "storageDir")        return "projectDir"
+        if (k == "ploidy")            return "diploidy"
         # Whole-scope renames: every field follows its prefix, so none is listed by name.
         old = k
         if (sub(/^cleanBAM\./, "samtools.", old))    return old

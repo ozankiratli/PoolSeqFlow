@@ -267,7 +267,7 @@ It copies `parameters.config` for you because that is a settings file you edit i
 
 Finished results do not go here. They go to `storageDir`, which has to be a different directory. See [Requirements](#getting-started).
 
-Then edit `parameters.config`: `mainDir`, `storageDir`, `readPattern`, `referenceFile`, `poolSize` and `diploidy` at minimum. The reference and the annotation may be gzipped or plain — the pipeline takes either and unpacks what it needs into `Reference/Dictionaries/`.
+Then edit `parameters.config`: `mainDir`, `storageDir`, `readPattern`, `referenceFile`, `poolSize` and `ploidy` at minimum. The reference and the annotation may be gzipped or plain — the pipeline takes either and unpacks what it needs into `Reference/Dictionaries/`.
 
 Analysing one set of reads under several parameter sets — two reference genomes, say? Run `PoolSeqFlow init_multi` instead. It does everything `init` does, switches `multiRun` on, and copies `multi-run.csv.example` into the project. It does not write the run table itself, for the same reason it does not write `metadata.csv`.
 
@@ -349,7 +349,7 @@ params {
     referenceFile = 'reference.fasta.gz'          // reference genome, in mainDir/Reference
     gffFile       = 'reference.gff.gz'            // annotation (only if annotate = true)
     poolSize      = 50                            // individuals per pool
-    diploidy      = 2                             // ploidy of your organism
+    ploidy        = 2                             // copies of the genome per individual
     annotate      = true                          // run SnpEff annotation (step 8)
 }
 ```
@@ -360,7 +360,7 @@ params {
 | `storageDir` | Where finished results are kept. **A different directory from `mainDir`**, and the pipeline refuses to start otherwise: the two are storage tiers, and outputs move from the first to the second as each step that needs them completes. |
 | `readPattern` | Must match **both** mates with a `{1,2}` group. If your files end `_1.fastq.gz`/`_2.fastq.gz`, write `"*_{1,2}.fastq.gz"`. |
 | `poolSize` | Individuals in **one** pool, not the total across pools. Sets the smallest allele frequency worth believing — see [The Filter Chain](#where-s-comes-from). If your pools differ in size, give each its own value in `metadata.csv`; this setting is the default for any that do not. |
-| `diploidy` | Ploidy of the organism: `2` for diploid, `1` for haploid, `4` for tetraploid. |
+| `ploidy` | Ploidy of the organism: `2` for diploid, `1` for haploid, `4` for tetraploid. |
 | `annotate` | `false` skips step 8 and makes `gffFile` unnecessary. |
 
 !!! warning "Set these through the file, never the command line"
@@ -635,7 +635,7 @@ These are structural assumptions. If your data does not match, the pipeline will
 |---|---|---|
 | Paired-end Illumina reads | `readPattern` matches an `R1`/`R2` pair; step 4 requires properly-paired alignments (`0x2`) | Single-end data will not survive the pairing filter |
 | One reference genome per run | Variant calling is a single joint `bcftools mpileup` over all BAMs | Samples on different references cannot be called together. Running one set of reads *against* several references is a different thing, and supported — that is what a run table is for |
-| One ploidy per run | `diploidy` sets the detection threshold for every pool in the run | Split the work into runs, each with its own `diploidy` — see [below](#sequences-with-a-different-ploidy) |
+| One ploidy per run | `ploidy` sets the detection threshold for every pool in the run | Split the work into runs, each with its own `ploidy` — see [below](#sequences-with-a-different-ploidy) |
 | Several comparable pools per run | The false-positive filter keeps a variant only if a **fraction of samples** support it | A single-sample run needs `sampleThreshold` reconsidered — see [below](#single-sample-runs) |
 | A reference FASTA, and a GFF if you annotate | `referenceFile`, `gffFile` | Either may be gzipped or plain; the pipeline takes both and unpacks what it needs |
 | Compute and storage reachable from one process | `mainDir` and `storageDir` can be on different filesystems, and both must be mounted | Cloud object storage without a filesystem mount is not supported |
@@ -652,9 +652,9 @@ That is a scope decision, not an omission: the statistics you want depend entire
 
 Pool size feeds the sensitivity threshold:
 
-$$f_{\min} = \frac{1}{2 \times \text{diploidy} \times \text{poolSize}}$$
+$$f_{\min} = \frac{1}{2 \times \text{ploidy} \times \text{poolSize}}$$
 
-A pool holds $\text{diploidy} \times \text{poolSize}$ chromosomes, so a single one of them represents a frequency of $1/(\text{diploidy} \times \text{poolSize})$; the threshold is set at half that. A pool of 10 and a pool of 500 therefore have very different limits, and judging both at one threshold is either too permissive for the small pool or too strict for the large one.
+A pool holds $\text{ploidy} \times \text{poolSize}$ chromosomes, so a single one of them represents a frequency of $1/(\text{ploidy} \times \text{poolSize})$; the threshold is set at half that. A pool of 10 and a pool of 500 therefore have very different limits, and judging both at one threshold is either too permissive for the small pool or too strict for the large one.
 
 **So give each pool its own.** `param_poolSize` in `metadata.csv` is a column of pool sizes, and each pool's threshold is computed from its own. Because the size describes the pool rather than the row, rows sharing an `RG_Sample` must agree on it, and a blank cell means the global `poolSize` rather than agreement with anything.
 
@@ -662,17 +662,17 @@ The global `poolSize` in `parameters.config` stays as the default for any pool t
 
 #### Sequences with a different ploidy
 
-`diploidy` applies to a whole run, and it belongs to the sequence rather than to the sample: a diploid animal carries a haploid mitochondrial genome, and one threshold cannot be right for both.
+`ploidy` applies to a whole run, and it belongs to the sequence rather than to the sample: a diploid animal carries a haploid mitochondrial genome, and one threshold cannot be right for both.
 
-**Separate them into runs.** A [run table](#multi-run) can vary any parameter, so give the nuclear chromosomes and the organellar sequences their own references and their own `diploidy`:
+**Separate them into runs.** A [run table](#multi-run) can vary any parameter, so give the nuclear chromosomes and the organellar sequences their own references and their own `ploidy`:
 
 ```csv
-RunID,referenceFile,gffFile,diploidy
+RunID,referenceFile,gffFile,ploidy
 nuclear,chromosomes.fasta.gz,chromosomes.gff.gz,2
 mitochondrial,mito.fasta.gz,mito.gff.gz,1
 ```
 
-Both runs read the same FASTQ files, and the work they share — trimming and quality control — is done once rather than twice. Changing `diploidy` re-derives that run's sensitivity threshold automatically, so there is nothing else to keep in step.
+Both runs read the same FASTQ files, and the work they share — trimming and quality control — is done once rather than twice. Changing `ploidy` re-derives that run's sensitivity threshold automatically, so there is nothing else to keep in step.
 
 The same argument applies to anything else whose copy number differs from the nuclear genome: chloroplast sequences, and unplaced scaffolds whose ploidy you are not confident about. Splitting them out costs one row in the table and makes each threshold defensible.
 
@@ -856,7 +856,7 @@ If you are trying to work out why a variant you expected is missing, read this p
 | 3 | Pileup filter | Reads at a position | Low mapping quality, low base quality; optionally caps depth again | `variantCall.baseQualMin`, `variantCall.varQualMin`, `variantCall.maxDepth` |
 | 4 | Variant calling | Sites | Non-variant sites | `variantCall.callOptions` |
 | 5 | Major-allele normalisation | Allele order | Nothing — it rewrites | — |
-| 6 | False-positive filter | Alternate alleles | Alleles without cross-sample support | `poolSize` or `param_poolSize`, `diploidy`, `filterFalsePositives.sampleThreshold` |
+| 6 | False-positive filter | Alternate alleles | Alleles without cross-sample support | `poolSize` or `param_poolSize`, `ploidy`, `filterFalsePositives.sampleThreshold` |
 | 7 | Depth & quality filter | Sites | Sites where any sample is under-covered, and low-QUAL sites | `vcffilter.minDP`, `vcffilter.minQUAL` |
 | 8 | SNP/INDEL split | Sites | Splits into two files; nothing is lost | — |
 | 9 | Frequency conversion | — | Nothing | — |
@@ -1003,7 +1003,7 @@ At least `M` samples show it at or above **their own** threshold `S`
 
 where, for a given pool,
 
-$$S = \frac{1}{2 \times \text{diploidy} \times \text{poolSize}}
+$$S = \frac{1}{2 \times \text{ploidy} \times \text{poolSize}}
 \qquad
 M = n_{\text{samples}} \times \text{sampleThreshold}$$
 
@@ -1029,9 +1029,9 @@ These are provenance, written beside the data they were applied to. Note that th
 
 #### Where S comes from
 
-A pool of `poolSize` individuals at ploidy `diploidy` contains $\text{diploidy} \times \text{poolSize}$ chromosomes, so a single chromosome carries a frequency of $1 / (\text{diploidy} \times \text{poolSize})$. The extra factor of two puts `S` at **half** that — a true singleton clears the threshold with margin rather than sitting exactly on it, which matters because the observed fraction of a singleton is itself noisy.
+A pool of `poolSize` individuals, each carrying `ploidy` copies of the genome, contains $\text{ploidy} \times \text{poolSize}$ chromosomes, so a single chromosome carries a frequency of $1 / (\text{ploidy} \times \text{poolSize})$. The extra factor of two puts `S` at **half** that — a true singleton clears the threshold with margin rather than sitting exactly on it, which matters because the observed fraction of a singleton is itself noisy.
 
-| `poolSize` | `diploidy` | One chromosome is | `S` (threshold) |
+| `poolSize` | `ploidy` | One chromosome is | `S` (threshold) |
 |---|---|---|---|
 | 10 | 2 | 0.0500 | 0.0250 |
 | 25 | 2 | 0.0200 | 0.0100 |
@@ -1041,7 +1041,7 @@ A pool of `poolSize` individuals at ploidy `diploidy` contains $\text{diploidy} 
 
 Larger pools give a smaller `S`, so the filter admits rarer alleles — appropriately, since a larger pool really can contain rarer ones.
 
-Each pool can be set to get its own row of that table. `param_poolSize` in `metadata.csv` can set the size per pool, and any pool without one falls back to the global `poolSize`. `diploidy` can be set per run rather than per pool, so a design mixing ploidies is split into runs — see [Sequences with a different ploidy](#sequences-with-a-different-ploidy).
+Each pool can be set to get its own row of that table. `param_poolSize` in `metadata.csv` can set the size per pool, and any pool without one falls back to the global `poolSize`. `ploidy` can be set per run rather than per pool, so a design mixing ploidies is split into runs — see [Sequences with a different ploidy](#sequences-with-a-different-ploidy).
 
 #### Where M comes from
 
@@ -1107,7 +1107,7 @@ Work from the outside in. A variant lost at stage 1 cannot be recovered by loose
 | Depth plateaus at one number in one sample | 2 | That sample's `Reports/Depth/` report — a measured ceiling was applied |
 | Depth plateaus at the same number in every sample | 3 | `variantCall.maxDepth`, or `capBAM.maxDepth` set to a fixed depth |
 | A sample you expected to be capped was not | 2 | Its `Reports/Depth/` report says why; `param_capMaxDepth` overrules it |
-| Low-frequency alleles absent everywhere | 6 | `poolSize`, or `param_poolSize` for the pool in question, and `diploidy` |
+| Low-frequency alleles absent everywhere | 6 | `poolSize`, or `param_poolSize` for the pool in question, and `ploidy` |
 | Low-frequency alleles absent from one pool only | 6 | That pool's `param_poolSize` — a size set too low raises its threshold alone |
 | Alleles present in one pool only, absent from output | 6 | `filterFalsePositives.sampleThreshold` |
 | Whole sites missing despite good depth | 7 | `vcffilter.minQUAL` |
@@ -1275,8 +1275,8 @@ Change one of these and your output changes. Step 0 records them and **refuses t
 
 | Parameter | Effect | Page |
 |---|---|---|
-| `poolSize` | Individuals per pool; sets the minimum credible allele frequency. Can be set per pool in `metadata.csv` | [Filtering & Frequency](#poolsize-and-diploidy) |
-| `diploidy` | Ploidy; same threshold. Can be set per run | [Filtering & Frequency](#poolsize-and-diploidy) |
+| `poolSize` | Individuals per pool; sets the minimum credible allele frequency. Can be set per pool in `metadata.csv` | [Filtering & Frequency](#poolsize-and-ploidy) |
+| `ploidy` | Ploidy; same threshold. Can be set per run | [Filtering & Frequency](#poolsize-and-ploidy) |
 | `filterFalsePositives.sampleThreshold` | Fraction of samples that must support an allele | [Filtering & Frequency](#samplethreshold) |
 | `capBAM.maxDepth` | The depth ceiling put on each BAM. Can be set per sample in `metadata.csv` | [Variant Calling](#capping-each-bam) |
 | `variantCall.*` | Pileup and calling behaviour, including a flat depth cap on top of the measured one | [Variant Calling](#variant-calling) |
@@ -1330,7 +1330,7 @@ Step 0 does not refuse a change to these, because your results do not depend on 
 
 #### Do not edit: derived values
 
-A large part of `parameters.config` is computed. The `cores` block derives every tool's thread count from `threads`; the `dir` block builds every path from `mainDir` and `storageDir`; `filterFalsePositives.sensitivity` is computed from `poolSize` and `diploidy`; `snpEff.db` is derived from `gffFile`.
+A large part of `parameters.config` is computed. The `cores` block derives every tool's thread count from `threads`; the `dir` block builds every path from `mainDir` and `storageDir`; `filterFalsePositives.sensitivity` is computed from `poolSize` and `ploidy`; `snpEff.db` is derived from `gffFile`.
 
 Beyond those, eight named values are assembled from the filenames and roots you set. They appear in the config as ordinary assignments, so they can be overridden — but each has an input that is the thing you actually mean to change:
 
@@ -1394,7 +1394,7 @@ Two runs can only differ in a `param_*` value by using **different metadata file
 In rough order of how expensive it is to get wrong:
 
 1. **`metadata.csv`** — which FASTQ pairs share an `RG_Sample`. Wrong here means valid results that answer a different question, and fixing it invalidates every BAM. [→](#rg_sample-decides-what-counts-as-a-sample)
-2. **`poolSize` and `diploidy`** — these set the frequency floor. `poolSize` can be given per pool in `metadata.csv`, and `diploidy` applies to a whole run. [→](#poolsize-and-diploidy)
+2. **`poolSize` and `ploidy`** — these set the frequency floor. `poolSize` can be given per pool in `metadata.csv`, and `ploidy` applies to a whole run. [→](#poolsize-and-ploidy)
 3. **`filterFalsePositives.sampleThreshold`** — decides whether alleles seen in few pools survive. The default removes them. [→](#samplethreshold)
 4. **`capBAM.maxDepth`** — leave it at `-1` unless you know your libraries need otherwise. It is the one item here you can safely decide *after* the first run, because the depth reports tell you what it did. [→](#capping-each-bam)
 5. **`threads`** — must fit the machine, or the run fails at submission. [→](#resources)
@@ -1519,7 +1519,7 @@ The pooling that was worked out is printed before any compute is spent, so a mis
 
 `param_poolSize` is how many individuals went into a pool, and it sets that column's detection limit:
 
-$$S = \frac{1}{2 \times \text{diploidy} \times \text{poolSize}}$$
+$$S = \frac{1}{2 \times \text{ploidy} \times \text{poolSize}}$$
 
 A pool of 10 and a pool of 500 have very different limits, so giving the whole run one number judges the small pool at the large one's resolution. The column exists so each pool can be judged at its own — see [Where S comes from](#where-s-comes-from).
 
@@ -1637,7 +1637,7 @@ reference_b,reference_b.fasta.gz,reference_b.gff.gz,30
 
 ### Setting a value the pipeline would compute
 
-Some parameters are derived from others — `filterFalsePositives.sensitivity` from `poolSize` and `diploidy`, `variantCall.mpileupOptions` from the four `bcftools` values, the whole `cores` ladder from `threads`. Varying either end of that relationship is allowed, and the two behave differently.
+Some parameters are derived from others — `filterFalsePositives.sensitivity` from `poolSize` and `ploidy`, `variantCall.mpileupOptions` from the four `bcftools` values, the whole `cores` ladder from `threads`. Varying either end of that relationship is allowed, and the two behave differently.
 
 **Set an input and the computed value follows it.** A run with `poolSize = 200` gets the sensitivity that a pool of 200 implies; one with `trim_galore.quality = 30` gets trimming options built around 30. You do not have to keep the derived values in step by hand.
 
@@ -2169,25 +2169,25 @@ The order is fixed — stages 5 to 9 of [The Filter Chain](#the-chain-at-a-glanc
 
 | Parameter | What it does |
 |---|---|
-| `poolSize`, `diploidy` | Set the smallest allele frequency worth believing, which is what the false-positive filter tests against. Both can be set per sample or per run |
+| `poolSize`, `ploidy` | Set the smallest allele frequency worth believing, which is what the false-positive filter tests against. Both can be set per sample or per run |
 | `filterFalsePositives.sampleThreshold` | Removes alternate alleles without support across enough samples. The filter that makes the pipeline pool-aware, and the one most worth understanding before changing anything |
 | `vcffilter.minDP`, `vcffilter.minQUAL` | Remove whole sites that are too shallow in any one sample, or too poorly called |
 | `vcf.fileName` | Removes nothing — it names the files this step writes |
 
-`filterFalsePositives.sensitivity` is **computed** from `poolSize` and `diploidy` rather than set, and can be overridden per sample in `metadata.csv` — see [Metadata](#metadata) for the per-sample form.
+`filterFalsePositives.sensitivity` is **computed** from `poolSize` and `ploidy` rather than set, and can be overridden per sample in `metadata.csv` — see [Metadata](#metadata) for the per-sample form.
 
 For the stage-by-stage account with counts, read [The Filter Chain](#the-filter-chain).
 
-### `poolSize` and `diploidy`
+### `poolSize` and `ploidy`
 
 ```groovy
 poolSize = 50    // individuals in one pool
-diploidy = 2     // ploidy of the organism
+ploidy   = 2     // copies of the genome per individual
 ```
 
 These two are the pipeline's most consequential settings. They are not used to model anything — they set the **minimum credible allele frequency**:
 
-$$S = \frac{1}{2 \times \text{diploidy} \times \text{poolSize}}$$
+$$S = \frac{1}{2 \times \text{ploidy} \times \text{poolSize}}$$
 
 An alternate allele must reach `S` in a sample for that sample to count as supporting it.
 
@@ -2195,7 +2195,7 @@ An alternate allele must reach `S` in a sample for that sample to count as suppo
 
 **The factor of two is deliberate.** A pool of 50 diploids holds 100 chromosomes, so one chromosome is frequency 0.01. `S` comes out at 0.005 — half of that — so a genuine singleton clears the threshold with margin rather than sitting exactly on it. The observed fraction of a singleton is itself noisy, and a threshold placed exactly at the expected value would reject half of them.
 
-| `poolSize` | `diploidy` | One chromosome is | `S` |
+| `poolSize` | `ploidy` | One chromosome is | `S` |
 |---|---|---|---|
 | 10 | 2 | 0.0500 | 0.0250 |
 | 25 | 2 | 0.0200 | 0.0100 |
@@ -2207,7 +2207,7 @@ An alternate allele must reach `S` in a sample for that sample to count as suppo
 
 **If your pools differ in size**, give each one its own `param_poolSize` in `metadata.csv` and every column is judged at its own threshold. The global `poolSize` here stays as the default for pools that do not state one. See [Pool size belongs to the pool](#pool-size-belongs-to-the-pool).
 
-**`diploidy` applies to a whole run.** It describes the sequence rather than the sample, so a diploid animal's haploid mitochondrial genome belongs in a separate run with its own value — see [Sequences with a different ploidy](#sequences-with-a-different-ploidy).
+**`ploidy` applies to a whole run.** It describes the sequence rather than the sample, so a diploid animal's haploid mitochondrial genome belongs in a separate run with its own value — see [Sequences with a different ploidy](#sequences-with-a-different-ploidy).
 
 ### `sampleThreshold`
 
@@ -2375,8 +2375,9 @@ Modules in this release:
 | Module | What it does |
 |---|---|
 | `verify` | Reports what the analysis layer can see, and produces nothing |
+| `basicstats` | What is in your published tables, per pool — see [Shipped Modules](#shipped-modules) |
 
-That is the only one a release ships. Modules are installed separately from the pipeline and published on their own timetable, so what this layer can do grows without the pipeline changing version.
+Those are the ones a release ships. Every other module is installed separately from the pipeline and published on its own timetable, so what this layer can do grows without the pipeline changing version.
 
 ### The modules installed here { #analysis-modules }
 
@@ -2673,7 +2674,7 @@ A module's settings go in a scope named after it, **inside** `analysis`:
 params {
     analysis {
         basicstats {
-            chromosomes = ['chr2L', 'chr3R']
+            minReads = 3
         }
     }
 }
@@ -2740,12 +2741,12 @@ A frequency in a published table is read against how many chromosomes the pool h
 
 ```text
 POOL SIZES:            Output
-POOL SIZES:                diploidy 2, 6 pools of 100 individuals - 200 chromosomes, frequencies above 0.0025
+POOL SIZES:                ploidy 2, 6 pools of 100 individuals - 200 chromosomes, frequencies above 0.0025
 ```
 
-Those are the pipeline's own `poolSize` and `diploidy`, per pool: a pool whose rows set `param_poolSize` holds that many individuals and every other pool holds `poolSize` of them. The chromosome count is `diploidy × poolSize`, and the detection limit is `1 / (2 × diploidy × poolSize)` — the frequency below which step 7's false-positive filter took a call to be error rather than a rare allele, explained in [The Filter Chain](#where-s-comes-from). Pools of one size share a line; a pool of its own size gets one, because its chromosome count and its detection limit both move with it.
+Those are the pipeline's own `poolSize` and `ploidy`, per pool: a pool whose rows set `param_poolSize` holds that many individuals and every other pool holds `poolSize` of them. The chromosome count is `ploidy × poolSize`, and the detection limit is `1 / (2 × ploidy × poolSize)` — the frequency below which step 7's false-positive filter took a call to be error rather than a rare allele, explained in [The Filter Chain](#where-s-comes-from). Pools of one size share a line; a pool of its own size gets one, because its chromosome count and its detection limit both move with it.
 
-**Runs that hold a pool to different sizes never share a results directory.** `poolSize`, `param_poolSize` and `diploidy` are all part of what decides whether two runs share step 7's work ([Multi-run](#multi-run)), so each run's tables are filtered against its own sizes and land under its own name. The analysis layer checks the sizes across a directory's runs regardless, and stops if it ever finds two: a directory whose tables were filtered against two different pool sizes has no answer to what a frequency in it means.
+**Runs that hold a pool to different sizes never share a results directory.** `poolSize`, `param_poolSize` and `ploidy` are all part of what decides whether two runs share step 7's work ([Multi-run](#multi-run)), so each run's tables are filtered against its own sizes and land under its own name. The analysis layer checks the sizes across a directory's runs regardless, and stops if it ever finds two: a directory whose tables were filtered against two different pool sizes has no answer to what a frequency in it means.
 
 ## Output Layout
 <!--@ page: output | nav: Output -->
@@ -2766,7 +2767,11 @@ Everything the analysis layer produces goes under `Analysis/` — on `mainDir` w
 
 `Analysis/Results` holds one folder per analysis, named by [`folderName`](#analysis-folder-name).
 
+### The script that produced it { #analysis-script }
+
 **Every published analysis carries the script that produced it.** That is a guarantee of the layer rather than a convention module authors are asked to follow: an analysis handed over without one is refused, nothing is published, and the folder is left exactly as it was. So a result you find in `Analysis/Results` can always be regenerated, and the folder also holds the verification record that cleared it — which names the module, its version, the runs it covered and the configuration it was assembled from.
+
+**It carries the shared library it used, folded in.** A module sources functions the analysis layer provides — effective sample size, gene diversity, the harmonic means — and what is published is those functions and the module's own code in one file, stamped with the frame version that defined them. A driver that merely `source()`s code the reader does not have would satisfy the letter of the guarantee and none of its point.
 
 **And a `README.md` that says how to read what is in the folder.** { #analysis-readme } Every module declares, for each file it publishes, the section of this manual that explains it; the frame renders one table from those declarations and from what every analysis carries anyway:
 
@@ -2781,6 +2786,18 @@ Everything the analysis layer produces goes under `Analysis/` — on `mainDir` w
 It links into the copy of this manual installed with the release that produced the folder, so the explanation you follow is the one that was true at the time. The point is the numbers a table cannot explain for itself: a figure that is a bound rather than a measurement, or an estimate carrying an assumption, reads as neither unless something beside it says so.
 
 A module that declares a file and then does not publish it is refused, and a module whose declared section does not exist in the manual is refused before it starts — a link nobody can follow being worse than none.
+
+### One PDF of the whole analysis { #analysis-report }
+
+**Every published folder also carries `report.pdf`: every result in it, in one document, each under the name of the file it came from.** Tables are rendered as tables, figures as figures, and the heading above each is the file name — so a number you want to work with can always be traced back to the file that holds it.
+
+It is a **capability of the layer, not of any module**. A module already declares what it publishes and what each file is, because the `README.md` is built from those declarations; the report is built from the same ones. So a module gets a report without writing a line of code for it, and so does a module somebody else wrote.
+
+What it is not is a substitute for the files. A table longer than forty rows is shown to forty and says so, and the figures are the same images that sit beside it. **Everything in the report is in the folder; the folder is what you compute from.**
+
+**A report that cannot be built does not stop the analysis being published.** The reason is printed and the folder is complete without it — every number was already a file. That is the opposite of how the other publishing checks behave, and deliberately so: a missing script or an undeclared output means the analysis is not what it claims to be, where a missing report means only that a convenience is absent.
+
+Building it needs `pandoc` and `typst`, both pinned in the analysis environment. If you are running a module's script by hand rather than through `PoolSeqFlow analysis`, neither will be on your path and no report is written.
 
 ### Naming an analysis { #analysis-folder-name }
 
@@ -2825,6 +2842,195 @@ When they do **not** agree, the command stops and moves nothing. One of the two 
 The cost of a working cycle is therefore one transfer, not two — which matters when `storageDir` is billed per operation, as on S3 or a tape-backed archive. What it costs instead is disk on the working volume, and that is what the discard reclaims.
 
 **Do not run it while a module is running.** The two would be moving the same folders in opposite directions, and neither checks for the other.
+
+## Shipped Modules
+<!--@ page: modules | nav: Modules -->
+
+Most modules are installed separately. These are the ones a release carries, so they are available the moment the analysis environment exists, and their versions move on the pipeline's timetable rather than a catalogue's.
+
+### `basicstats` { #basicstats }
+
+What is in your published tables, per pool. It is the module to run first: everything it reports is a description of the data rather than a test of anything, and the numbers it prints are the ones every other module weights by.
+
+```bash
+PoolSeqFlow analysis basicstats
+```
+
+It reads the frequency and depth tables, and it needs your `metadata.csv` — the pool sizes, the ploidy and the experimental design all come from the project as the pipeline recorded it. A project whose metadata file was never copied across is refused rather than described as having no design.
+
+#### `design.tsv` — one row per pool { #basicstats-design }
+
+| Column | What |
+|---|---|
+| `pool` | the `RG_Sample` a column of every published table is named after |
+| `libraries` | the `SampleID`s merged into it, `;`-separated — one for most pools, more where reads were merged |
+| `n_libraries` | how many, so a merged pool is visible without reading the list |
+| one per `exp_` column | that pool's value for each of your experimental variables, in the order `metadata.csv` gives them; blank where the cell was |
+| `pool_size` | individuals in the pool: its `param_poolSize`, or the project's `poolSize` where that cell was blank |
+| `ploidy` | copies of the genome per individual, from `parameters.config` |
+| `n_chrom` | `ploidy × pool_size`, the number of chromosomes sampled. **This is the only place ploidy enters any statistic here** |
+| `detection_limit` | `1 / (2 × ploidy × pool_size)` — the frequency below which step 7's filter took a call to be error. Not a property of this analysis: it is what already happened to the tables, repeated here so the numbers beside it can be read against it |
+
+Nothing in this file is estimated. It is the design the results were produced under, printed where an analysis can be read against it — which is the point, because a frequency means nothing without the pool size it was read from.
+
+**A pool of one chromosome is refused**, and it is the only combination that is. A single haploid genome has no segregating sites, and the correction every diversity estimate here applies divides by `n_eff - 1`, which is zero there. Correct `ploidy`, or that pool's `param_poolSize`.
+
+#### `sites.tsv` — what the pipeline called { #basicstats-sites }
+
+One row per sequence per kind of variant. It carries no pool, because it is a property of the tables rather than of any one column.
+
+| Column | What |
+|---|---|
+| `chrom` | the sequence, **in the order the tables give them** — never sorted, so `chr10` sits where your reference puts it rather than between `chr1` and `chr2` |
+| `kind` | `snp` or `indel`. Step 7 publishes the two as separate tables and nothing here pools them |
+| `sites` | rows of the depth table: **records, not alleles**. A record carrying three alleles is one site |
+| `alleles` | rows of the *frequency* table: one per allele including the reference, so a triallelic site contributes three |
+
+A sequence with no surviving variants has no row here at all, and is indistinguishable from one your reference does not have. That is a limit of reading the published tables: they hold what was called, and nothing records what was looked at and found invariant.
+
+#### `depth.tsv` — depth at the called sites { #basicstats-depth }
+
+One row per pool per sequence, over the **SNP** table.
+
+| Column | What |
+|---|---|
+| `pool`, `chrom` | which pool, which sequence |
+| `sites` | SNP sites on that sequence |
+| `depth_mean`, `depth_median` | the ordinary summaries of that pool's depth |
+| `depth_harmonic` | the harmonic mean, which is the one every effective sample size below is computed from |
+
+**A pool's depth at a site is the sum of its cell in the depth table** — the reads supporting any allele there, after step 7's depth, quality and false-positive filters. It is not coverage, and it is not what `Output/Reports/Depth` measured: the sites here are the ones that survived calling, every one of them carries at least `vcffilter.minDP` reads in **every** sample by construction, and mapping and base quality minima applied to the pileup that they did not. The two numbers are not one quantity measured twice, and this one is always the larger.
+
+#### `diversity.tsv` — gene diversity and effective sample size { #basicstats-diversity }
+
+One row per pool, over the called SNP sites of the whole project.
+
+| Column | What |
+|---|---|
+| `pool` | the `RG_Sample` |
+| `n_chrom` | `ploidy × pool_size`, as in [`design.tsv`](#basicstats-design) |
+| `sites` | the called SNP sites |
+| `segregating` | how many of them are segregating **for this pool**, by the rule below |
+| `depth_harmonic` | the harmonic mean of this pool's depth over those sites |
+| `n_eff_harmonic` | the pool's effective sample size over them, from `depth_harmonic` |
+| `h_sum` | the **numerator**: the sum over sites of the corrected gene diversity |
+| `pi_per_called_site` | `h_sum` divided by the sites that contributed a value to it. That is `sites`, unless a cell of the depth table was missing — which a published table cannot hold, since `vcffilter.minDP` removes a site where any sample falls short |
+
+**The diversity is Nei's, over every allele at a site**, corrected for the pool's effective sample size at that site:
+
+$$\hat\pi = \frac{1}{\text{sites}}\sum_{\text{sites}} \frac{n_{\text{eff}}}{n_{\text{eff}} - 1}\left(1 - \sum_j p_j^2\right), \qquad n_{\text{eff}} = \frac{n_{\text{chrom}} \cdot d}{n_{\text{chrom}} + d - 1}$$
+
+Not `2p(1-p)`: that form assumes two alleles and a privileged reference, so a triallelic site has to be collapsed or dropped before it can be used. $1 - \sum_j p_j^2$ needs no such choice, is defined for any number of alleles, and reduces to `2p(1-p)` where there are two. See [Nei 1973](#ref-nei1973diversity) for the statistic, [Ferretti et al. 2013](#ref-ferretti2013pool) for why a pooled estimate needs correcting at all, and [Hivert et al. 2018](#ref-hivert2018poolseq) for the effective sample size — including which of the two forms in circulation this is.
+
+**`h_sum` and `sites` are published, and the ratio is published beside them, because the ratio is the part that is contestable.** Per-site diversity summed over the sites that were *called* is not the same as per-base diversity over the sites that were *callable*, and our tables hold only the former. A project's real π is `h_sum` over the number of positions that could have produced a call, which needs a per-position pass over the ready BAMs that no module does yet. `pi_per_called_site` is therefore an **upper bound** on π and will typically be far above it — invariant sites are missing from the denominator entirely. Quote `h_sum` and the count, not the ratio, unless you mean per called site and say so.
+
+**Our number will not match PoPoolation's or poolfstat's on a project with triallelic sites, and the reason is deliberate.** [Kofler et al. 2011a](#ref-kofler2011popoolation) implements estimators defined over two alleles, and poolfstat's reader skips multiallelic records outright; the diversity here sums over every allele the site has. On a strictly biallelic project the two agree. On a viral quasispecies, where the three- and four-allele sites are the signal, discarding them discards the result.
+
+**A site is segregating for a pool when an allele other than that pool's own major one reaches `max(detection_limit, minReads / depth)`.** Two limbs, because either alone is wrong: `detection_limit` is `1 / (2 × ploidy × pool_size)`, which at any ordinary depth is below one read and so admits every sequencing error; `minReads / depth` alone stops discriminating once the pool is large enough that one chromosome is rarer than a couple of reads. The crossover is at `depth = minReads / detection_limit`. The pool's **own** major allele and not the cohort's: a pool fixed for whatever the cohort calls alternate is not segregating, and reading the majority off the reference column would report that it is.
+
+#### `neff.tsv` — effective sample size, at two levels and from two sources { #basicstats-neff }
+
+How many independent chromosomes a frequency read off this data is actually worth. Everything else the analysis layer will ever weight by is this number, so it is reported at every level the data supports rather than collapsed to one.
+
+| Column | What |
+|---|---|
+| `level` | `library` — one sequencing run, your `SampleID`; or `pool` — one column of the published tables, your `RG_Sample` |
+| `id` | the library or the pool |
+| `pool` | the pool it belongs to, so a library row can be read against its pool's |
+| `source` | `histogram` — every position the library covered, from step 5; `called` — the sites that survived filtering, from the depth table |
+| `positions` | how many positions that figure was measured over |
+| `depth_harmonic` | the harmonic mean depth over them |
+| `n_chrom`, `n_eff` | the chromosomes sampled, and what they are worth at that depth |
+| `estimate` | `exact`, or `lower_bound` — see below |
+
+**The two sources are not one quantity measured twice, and `called` is always the larger.** Five things separate them: the histogram is measured before the depth ceiling and the calls after it; `samtools stats` counts every spanning read where the pileup applied a mapping and base quality minimum; a histogram counts positions where the depth table sums `AD`; every called site carries at least `vcffilter.minDP` reads **in every sample** by construction, which censors the low end away; and a site had to be variable to be called at all. Compare a pool's two rows to see how much the filter chain concentrated the data — do not treat their difference as error.
+
+**There is no `library` row from the `called` source, and there cannot be.** The published tables carry one column per `RG_Sample`, so a merged pool's libraries are already summed inside them and nothing can separate them again. Per-library figures come from the histograms or from nowhere.
+
+##### A merged pool's genome-wide figure is a lower bound { #basicstats-neff-bound }
+
+When two libraries were merged into one pool, its depth at a position is their depths **added** — and the harmonic mean of that sum cannot be recovered from the two histograms. Adding the histograms would assume the libraries are independent across positions, which is false and errs *optimistic*. So the module adds the parts' harmonic means instead, and marks the row `lower_bound`.
+
+That is sound rather than arbitrary: the harmonic mean is concave and homogeneous of degree one, therefore superadditive, so $H(a+b) \ge H(a) + H(b)$ always. Measured over 100,000 positions:
+
+| the libraries | H(a) | H(b) | H(a) + H(b) | true H(a+b) |
+|---|---|---|---|---|
+| exactly proportional | 29.98 | 17.99 | **47.97** | 47.97 |
+| realistically correlated | 29.88 | 17.37 | **47.25** | 47.94 |
+| independent (unrealistic) | 30.14 | 17.93 | **48.07** | 55.62 |
+
+Exact when the libraries cover positions in proportion to one another, about 1.4% conservative under realistic correlation, and never optimistic. **It understates precision, which is the safe direction** — a test weighted by it is conservative, not anti-conservative. It does assume the libraries covered the same positions, which is why each row carries the count it was measured over.
+
+A pool of one library is marked `exact`: there is nothing to add.
+
+**A pool with no histogram gets no row from that source, and none is guessed.** `DepthProfile` skips a sample whose ceiling is already decided, so a sound project can lack them; the run names those pools rather than averaging over the libraries that did have one.
+
+#### `depth_<sequence>.png` — depth along a sequence { #basicstats-depth-plots }
+
+One file per sequence you name, one panel per pool, a point per called site.
+
+```groovy
+params {
+    analysis {
+        basicstats {
+            chromosomes = ['chr2L', 'chr3R']
+        }
+    }
+}
+```
+
+**Nothing is drawn until you name something.** A genome has more sequences than anyone wants plots for, and which of them is worth looking at is your question rather than one this could answer for you. With the setting empty the run lists the candidates and their called-site counts, so a name can be copied straight into the file.
+
+**A named sequence with no called site is refused**, naming what the tables do have. A sequence on which nothing survived filtering is invisible in the published tables and cannot be told apart from one your reference does not contain, so an empty plot would be a claim the data does not support.
+
+**It is depth, not coverage, and the axis says so.** Every point is a site that was *called*; the gaps between them are sites the pipeline did not call, which is not the same as sites with no reads. A run of thin points is a stretch where calling was sparse — read it against `depth.tsv` for that sequence rather than as a coverage trace.
+
+#### What it can be set to { #basicstats-settings }
+
+```groovy
+params {
+    analysis {
+        basicstats {
+            minReads    = 2         // alternate reads before a site counts as segregating
+            binSize     = 100000    // sites handed to one worker at a time
+            workers     = 0         // 0 means the cores Nextflow gave the task
+            usecpp      = true      // the compiled path, above
+            chromosomes = []        // sequences to draw a depth plot for
+        }
+    }
+}
+```
+
+`minReads` is the only one that changes a number, and `chromosomes` is the only one that decides whether a file appears. `binSize`, `workers` and `usecpp` decide how the work is divided and which implementation does it: every combination of them produces the same output, which is what the test suite asserts by running the corpus through all of them and comparing the published tables byte for byte.
+
+#### The compiled path { #basicstats-compiled }
+
+The per-site work — splitting a cell, summing it, squaring the frequencies — is where the time goes on a large genome, and there are two implementations of it. **`site_diversity.cpp`, compiled on your machine, is the default and you do not have to ask for it.** The other is vectorised R, which needs nothing at all:
+
+```bash
+PoolSeqFlow analysis basicstats          # compiled, the default
+PoolSeqFlow analysis basicstats nocpp    # plain R, for one run
+```
+
+For a whole project, `analysis.basicstats.usecpp = false` in `basicstats.config` does the same thing permanently.
+
+**The analysis environment already has a compiler.** Conda's `r-base` depends on one — GCC on Linux, clang on macOS — because R needs a toolchain to build packages from source, so an environment built by `PoolSeqFlow analysis install` can compile on every platform this ships to. That is why the compiled path is the default rather than something to opt into.
+
+Both produce the same numbers, so the choice is only ever about time. Below a few million called sites there is nothing in it; on a genome running to tens of millions the compiled path is worth roughly forty times the vectorised one, and both are far ahead of computing site by site.
+
+`site_diversity.cpp` is published in the results folder whether or not the run used it, and the header of `basicstats.R` beside it names the path that produced the numbers, the bin size and the number of workers.
+
+##### When the compiled path will not build { #basicstats-compiled-fails }
+
+Having a compiler and being able to *use* it are two things. `Rcpp::sourceCpp` writes a source file, builds it, and then **executes** the result out of a temporary directory — so a machine that forbids executing from temporary storage fails here even with the toolchain installed. The usual causes:
+
+| What you see | Why |
+|---|---|
+| `The tools required to build C++ code for R were not found` | the environment is not activated, so its compiler is not on `PATH`. Run the module through `PoolSeqFlow analysis`, which activates it, rather than calling `Rscript` yourself |
+| `cannot open shared object file`, or a build that succeeds and then fails to load | `/tmp` mounted `noexec`, which is common on hardened clusters. Point `TMPDIR` at a filesystem you may execute from |
+| a permission error while compiling | a read-only home, or a read-only conda environment shared across users |
+
+**The run stops and says so; it never quietly drops to the other path.** A run that silently took a different implementation is a run whose timings mean nothing, and you would have no way to know which produced your numbers. Add `nocpp` and it will finish — slower, and with identical output.
 
 # Pipeline Overview
 <!--@ section: pipeline | nav: Pipeline -->
@@ -3104,7 +3310,7 @@ Five sub-steps in a serial chain, each deleting its input once its output is saf
 
 Sub-step 2 is the pool-aware core of the pipeline and is documented in full in [The Filter Chain](#6-false-positive-filter-step-7). The minimum credible frequency it enforces is
 
-$$f_{\min} = \frac{1}{2 \times \text{diploidy} \times \text{poolSize}}$$
+$$f_{\min} = \frac{1}{2 \times \text{ploidy} \times \text{poolSize}}$$
 
 but the test is not a plain cutoff in either direction. An allele must reach that frequency in a *fraction of samples*, which is what lets the threshold sit so low — and each sample is judged against **its own** pool's threshold, taken from `param_poolSize`, rather than against one number for the whole run.
 
@@ -3565,7 +3771,7 @@ Work outward through the chain — a read lost at alignment cannot be recovered 
 | Was it filtered at alignment? | `cleanBAM.mapq` (30 is strict), `cleanBAM.filter` |
 | Was the depth truncated? | That sample's `Output/Reports/Depth/` report, then `variantCall.maxDepth` |
 | Was it seen in too few pools? | `filterFalsePositives.sampleThreshold` — the default discards alleles found in one pool out of eight |
-| Below the frequency floor? | `poolSize`, `diploidy` |
+| Below the frequency floor? | `poolSize`, `ploidy` |
 | Site removed on quality? | `vcffilter.minQUAL` |
 
 [The Filter Chain →](#tuning-the-chain)
@@ -3609,9 +3815,105 @@ Correct — PoolSeqFlow does not use Nextflow's `-resume`, and the wrapper never
 
 If the interruption hit a cross-filesystem move, the partial copy was left under a temporary name rather than under the final one, so the step correctly runs again. That is the atomic move working.
 
+### An analysis module
+
+#### A module stops on a C++ compile
+
+`basicstats` computes its per-site work through a compiled function by default, and stops rather than falling back if it cannot build one. The commonest cause is calling `Rscript` yourself instead of going through `PoolSeqFlow analysis`, which activates the environment the compiler lives in; the next commonest is `/tmp` mounted `noexec`. Add `nocpp` to finish now — the numbers are identical — and see [When the compiled path will not build](#basicstats-compiled-fails) for the full list.
+
+```bash
+PoolSeqFlow analysis basicstats nocpp
+```
+
+#### `doFuture is not installed`
+
+The module was asked for more than one worker and cannot go parallel. Either install it into the analysis environment, or set `analysis.basicstats.workers = 1`. It does not quietly run on one worker instead: a run that took a different path than the one you asked for is a run whose timings mean nothing.
+
+#### A pool holds one chromosome
+
+Refused, and it is the only pool size that is. A single haploid genome has no segregating sites, and the correction every diversity estimate applies divides by `n_eff - 1`, which is zero there. Correct `ploidy`, or that pool's `param_poolSize`. [→](#basicstats-design)
+
 ### Getting help
 
 Include the failing step, the relevant `Logs/` excerpt and your `parameters.config` with paths redacted when opening an issue: [github.com/ozankiratli/PoolSeqFlow/issues](https://github.com/ozankiratli/PoolSeqFlow/issues)
+
+## Bibliography
+<!--@ page: bibliography | nav: Bibliography -->
+
+The work PoolSeqFlow is built on, and the work it can be read against.
+
+**This is not the list to cite for your results.** That one is written for you, per run, and names only what the run actually invoked — see [Citing the tools it runs](#citing-the-tools-it-runs). This page is the reading behind the choices: where an estimator comes from, why there is more than one version of it in circulation, and which other software would give a different number from the same reads.
+
+Everything below is compiled from the `references.bib` files in the installation, and holds exactly the entries this manual cites. A citation with no entry, or an entry filed under no heading, fails the build — so the page cannot fall behind the modules as they are added.
+
+A pooled allele frequency carries two rounds of sampling, and the correction for that is where implementations differ from one another most.
+
+!!! warning "There are two effective sample sizes, and they are one apart"
+
+    `n·d/(n + d − 1)` and `n·d/(n + d)` are both in circulation for a pool of `n` chromosomes read to depth `d`. **PoolSeqFlow uses the first**, which is the form implied by [Hivert et al. 2018](#ref-hivert2018poolseq)'s `D₂` — their sum of `(d + n − 1)/n` is the sum of `d/n_eff` under that form and no other.
+
+    They agree closely at high depth and diverge exactly where diversity estimates are most fragile: shallow coverage and small pools. At `n = 2, d = 2` the first gives 1.33 and the second 1.00. **If a number from this pipeline disagrees with one from other software, check which form the other used before concluding the data disagree.**
+
+    The second form is widely used and hard to attribute: [Kolaczkowski et al. 2011](#ref-kolaczkowski2011clinal) work the pooled sampling through with pool size and depth as separate parameters and define no combined quantity at all, and Gautier et al.'s "effective pool size" is a different measure again. PoolSeqFlow therefore states which form it uses rather than citing one for it.
+
+The diversity statistic itself is [Nei 1973](#ref-nei1973diversity), the correction it needs is argued in [Ferretti et al. 2013](#ref-ferretti2013pool), and the estimators most likely to be compared against these are [Kofler et al. 2011a](#ref-kofler2011popoolation) and [Kofler et al. 2011b](#ref-kofler2011popoolation2) — built on [Futschik & Schlötterer 2010](#ref-futschik2010markers), and applied at scale in [Fabian et al. 2012](#ref-fabian2012latitudinal). Pooled variant calling as a practice starts with [Koboldt et al. 2009](#ref-koboldt2009varscan).
+
+<!-- generated: bibliography -->
+
+### The statistics PoolSeqFlow computes
+
+#### Nei 1973 { #ref-nei1973diversity }
+
+**Nei, M.** (1973). Analysis of Gene Diversity in Subdivided Populations. *Proceedings of the National Academy of Sciences* 70(12), 3321–3323. [10.1073/pnas.70.12.3321](https://doi.org/10.1073/pnas.70.12.3321)
+: The diversity statistic this module reports, H = 1 - sum(p_i^2), summed over every allele at a site rather than over two. It is defined for any number of alleles, which is why a triallelic site needs no collapsing here.
+
+#### Ferretti et al. 2013 { #ref-ferretti2013pool }
+
+**Ferretti, L., Ramos-Onsins, S. E. & Pérez-Enciso, M.** (2013). Population genomics from pool sequencing. *Molecular Ecology* 22(22), 5561–5576. [10.1111/mec.12522](https://doi.org/10.1111/mec.12522)
+: Why a pooled estimate needs correcting at all: individuals are sampled into the pool and reads are sampled from the pool, so an allele frequency carries both, and the estimator has to account for the smaller of the two.
+
+#### Hivert et al. 2018 { #ref-hivert2018poolseq }
+
+**Hivert, V., Leblois, R., Petit, E. J., Gautier, M. & Vitalis, R.** (2018). Measuring Genetic Differentiation from Pool-seq Data. *Genetics* 210(1), 315–330. [10.1534/genetics.118.300900](https://doi.org/10.1534/genetics.118.300900)
+: The effective sample size this module weights by, n_eff = n*d / (n + d - 1) for a pool of n chromosomes read to depth d. The paper does not write it in that form - it defines D2 as the sum of (d + n - 1)/n, which is the sum of d / n_eff under this form and under no other. Its pools are parameterised by HAPLOID size, which is what leaves n_eff, and everything weighted by it, general over ploidy.
+
+### Estimating from pooled reads
+
+#### Futschik & Schlötterer 2010 { #ref-futschik2010markers }
+
+**Futschik, A. & Schlötterer, C.** (2010). The Next Generation of Molecular Markers From Massively Parallel Sequencing of Pooled DNA Samples. *Genetics* 186(1), 207–218. [10.1534/genetics.110.114397](https://doi.org/10.1534/genetics.110.114397)
+: The estimator theory PoPoolation is built on, and the first treatment of unbiased pi and theta_W from pooled reads. Read it before deciding that a pooled estimate can be computed the way an individually-genotyped one is.
+
+#### Kolaczkowski et al. 2011 { #ref-kolaczkowski2011clinal }
+
+**Kolaczkowski, B., Kern, A. D., Holloway, A. K. & Begun, D. J.** (2011). Genomic Differentiation Between Temperate and Tropical Australian Populations of Drosophila melanogaster. *Genetics* 187(1), 245–260. [10.1534/genetics.110.123059](https://doi.org/10.1534/genetics.110.123059)
+: One of the first genome-scale Pool-seq studies, and where its sampling properties are worked through from first principles - n chromosomes drawn from the population and sequenced to depth m, kept as two parameters rather than compressed into one. Worth reading precisely because it does not take the shortcut every effective-sample-size heuristic since has taken.
+
+### Other software for pooled sequencing
+
+#### Koboldt et al. 2009 { #ref-koboldt2009varscan }
+
+**Koboldt, D. C., Chen, K., Wylie, T., Larson, D. E., McLellan, M. D., Mardis, E. R., Weinstock, G. M., Wilson, R. K. & Ding, L.** (2009). VarScan: variant detection in massively parallel sequencing of individual and pooled samples. *Bioinformatics* 25(17), 2283–2285. [10.1093/bioinformatics/btp373](https://doi.org/10.1093/bioinformatics/btp373)
+: Pooled variant calling as a thing that can be done at all - SNPs and indels detected from pooled reads at a frequency threshold, which is the premise every tool on this page rests on. PoolSeqFlow calls with BCFtools and applies its own per-pool threshold.
+
+#### Kofler et al. 2011a { #ref-kofler2011popoolation }
+
+**Kofler, R., Orozco-terWengel, P., De Maio, N., Pandey, R. V., Nolte, V., Futschik, A., Kosiol, C. & Schlötterer, C.** (2011). PoPoolation: A Toolbox for Population Genetic Analysis of Next Generation Sequencing Data from Pooled Individuals. *PLoS ONE* 6(1), e15925. [10.1371/journal.pone.0015925](https://doi.org/10.1371/journal.pone.0015925)
+: pi, theta_W and Tajima's D from a single pool, computed from a pileup rather than from called variants. Numbers from PoPoolation and from here will not generally be equal, and multiallelic sites are the largest single reason: the classical estimators it implements are defined over two alleles, where PoolSeqFlow's diversity sums over every allele at the site.
+
+#### Kofler et al. 2011b { #ref-kofler2011popoolation2 }
+
+**Kofler, R., Pandey, R. V. & Schlötterer, C.** (2011). PoPoolation2: identifying differentiation between populations using sequencing of pooled DNA samples (Pool-Seq). *Bioinformatics* 27(24), 3435–3436. [10.1093/bioinformatics/btr589](https://doi.org/10.1093/bioinformatics/btr589)
+: F_ST, Fisher's exact test and the Cochran-Mantel-Haenszel test between pools.
+
+### Where these methods have been used
+
+#### Fabian et al. 2012 { #ref-fabian2012latitudinal }
+
+**Fabian, D. K., Kapun, M., Nolte, V., Kofler, R., Schmidt, P. S., Schlötterer, C. & Flatt, T.** (2012). Genome-wide patterns of latitudinal differentiation among populations of Drosophila melanogaster from North America. *Molecular Ecology* 21(19), 4748–4769. [10.1111/j.1365-294X.2012.05731.x](https://doi.org/10.1111/j.1365-294X.2012.05731.x)
+: An early large Pool-seq study, and a worked example of what these estimators are for: pi, theta_W and Tajima's D from PoPoolation and F_ST from PoPoolation2, across populations on a cline. Useful for seeing how the numbers are reported and argued from, rather than only how they are computed.
+
+<!-- end generated -->
 
 ## Changelog
 <!--@ page: changelog | include: CHANGELOG.md -->
@@ -3678,6 +3980,8 @@ Both are generated from the run that produced them, which makes them accurate in
 
 - **They carry the versions that actually ran**, asked of each tool at run time rather than read from the environment file. If you repointed a tool at a system installation with `params.software`, the version recorded is the one that did the work.
 - **They list only what the run invoked.** A run with `annotate = false` never calls SnpEff, so SnpEff is not in its citations — citing it would be claiming a step that did not happen.
+
+An analysis module adds its own: the statistic it implements as well as the packages it computes in, because a diversity estimate a reader cannot trace to a definition is one they cannot check. The reading behind those choices, including work this pipeline does **not** run but can be compared against, is in the [Bibliography](#bibliography).
 
 The tools a full run credits:
 

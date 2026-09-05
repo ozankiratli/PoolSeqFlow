@@ -41,7 +41,7 @@
 # Step 0 prints the pooling it worked out before any compute is spent.
 #
 # param_poolSize IS A PROPERTY OF THE POOL: how many individuals went into it. It sets that
-# pool's detection limit, sensitivity = 1 / (2 * diploidy * poolSize), so one number for the
+# pool's detection limit, sensitivity = 1 / (2 * ploidy * poolSize), so one number for the
 # whole run judges a pool of 10 at a pool of 500's resolution. Rows sharing an RG_Sample must
 # give the SAME value, and a blank cell counts as a different answer rather than as agreement.
 # Leave the column out and every pool uses the global poolSize.

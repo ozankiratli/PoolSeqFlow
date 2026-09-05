@@ -218,7 +218,7 @@ include { runDefinitions; resolveParameters } from './scripts/resolve_parameters
 // strict parser - "Statements cannot be mixed with script declarations" - and generated entry
 // scripts are not covered by `nextflow lint .`, so it fails at run time instead.
 def reportKeys() {
-    return ['poolSize', 'diploidy', 'filterFalsePositives.sensitivity',
+    return ['poolSize', 'ploidy', 'filterFalsePositives.sensitivity',
             'trim_galore.quality', 'trim_galore.options',
             'variantCall.maxDepth', 'variantCall.mpileupOptions',
             'threads', 'cores.bwa', 'referenceFile', 'referenceFa', 'reference', 'snpEff.db',

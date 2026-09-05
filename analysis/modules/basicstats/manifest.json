@@ -1,0 +1,64 @@
+{
+  "name": "basicstats",
+  "version": "20260904.001",
+  "contract": "freq-1",
+  "summary": "site counts, depth, effective pool size and gene diversity, per pool",
+  "needs": [
+    "frequencies",
+    "depths"
+  ],
+  "gates": [
+    "Depth is the sum of a pool's comma-separated cell in the depth table: reads supporting any allele at that site, after step 7's depth, quality and false-positive filters.",
+    "Every statistic is computed over CALLED SITES only. Sites the pipeline did not call are absent from the tables and are not counted as invariant.",
+    "Depth and diversity are computed over the SNP table alone. Indels are counted in sites.tsv and enter nothing else.",
+    "A spanning-deletion allele reaching the SNP table as a * or an X is one allele of that site like any other: it carries reads, so it carries frequency, and dropping it would renormalise the site to something no pool was sequenced at.",
+    "A merged pool's genome-wide effective size is a LOWER BOUND, not a measurement: the harmonic mean of summed depths cannot be recovered from its libraries' histograms, so the parts' harmonic means are added instead. neff.tsv marks every such row.",
+    "A site is segregating for a pool when an allele other than that pool's OWN major one reaches max(detection limit, minReads / depth). The cohort's major allele is not used: a pool fixed for what the cohort calls alternate is not segregating.",
+    "A pool of one chromosome is refused: the unbiased correction n_eff/(n_eff - 1) divides by zero there, and a single haploid genome has no segregating sites to measure.",
+    "Pool sizes and ploidy come from the project's metadata as the frame resolved them, not from anything this module infers.",
+    "Nothing is plotted until a sequence is named. A genome has more sequences than anyone wants plots for, and which of them is worth looking at is not something this module guesses."
+  ],
+  "outputs": [
+    {
+      "file": "design.tsv",
+      "summary": "one row per pool: its libraries, its experimental variables, its size and how many chromosomes that is",
+      "anchor": "basicstats-design"
+    },
+    {
+      "file": "sites.tsv",
+      "summary": "how many sites and alleles were called on each sequence, SNPs and indels apart",
+      "anchor": "basicstats-sites"
+    },
+    {
+      "file": "depth.tsv",
+      "summary": "each pool's depth at the called SNP sites of each sequence: mean, median and harmonic mean",
+      "anchor": "basicstats-depth"
+    },
+    {
+      "file": "neff.tsv",
+      "summary": "effective sample size per library and per pool, genome-wide and at the called sites; a merged pool's genome-wide figure is a lower bound and says so",
+      "anchor": "basicstats-neff"
+    },
+    {
+      "file": "diversity.tsv",
+      "summary": "each pool's gene diversity, effective sample size and segregating-site count over the called SNP sites",
+      "anchor": "basicstats-diversity"
+    },
+    {
+      "file": "depth_*.png",
+      "summary": "depth along each sequence you named in analysis.basicstats.chromosomes, one panel per pool, at the called sites",
+      "anchor": "basicstats-depth-plots",
+      "optional": true
+    },
+    {
+      "file": "basicstats.R",
+      "summary": "the script that produced everything here, with the shared library it sourced folded in",
+      "anchor": "analysis-script"
+    },
+    {
+      "file": "site_diversity.cpp",
+      "summary": "the compiled form of the per-site hot path, shipped whether or not this run used it; the header of basicstats.R says which path produced the numbers",
+      "anchor": "basicstats-compiled"
+    }
+  ]
+}

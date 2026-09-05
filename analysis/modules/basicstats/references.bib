@@ -1,0 +1,94 @@
+% What a basicstats analysis should be cited with: the statistics it computes and the R
+% packages it computes them in. Merged with PoolSeqFlow, Nextflow and R by the frame, and
+% written into every published folder as CITATIONS.md and references.bib.
+%
+% This file is the one to edit; it compiles to citations.json beside it with
+% dev/scripts/bib2citations.py, and 00_static fails when the two disagree.
+%
+% A 'note' says what the entry is cited FOR. A method is not a tool, so an entry for one
+% names no r_package and no version is asked of anything: what is credited is the estimator.
+% The three that do name an r_package have their versions asked of R at run time.
+%
+% Each note states exactly what this module takes from the paper, and says so where the form
+% used is implied by a paper rather than written in it. The reading behind these choices,
+% including the other effective sample size in circulation, is the manual's Bibliography -
+% which a static test keeps a superset of every DOI below.
+
+@article{nei1973diversity,
+  group   = {The statistics PoolSeqFlow computes},
+  id      = {nei1973},
+  name    = {Nei's gene diversity},
+  authors = {Nei, Masatoshi},
+  title   = {Analysis of Gene Diversity in Subdivided Populations},
+  journal = {Proceedings of the National Academy of Sciences},
+  volume  = {70},
+  number  = {12},
+  pages   = {3321--3323},
+  year    = {1973},
+  doi     = {10.1073/pnas.70.12.3321},
+  note    = {The diversity statistic this module reports, H = 1 - sum(p_i^2), summed over every allele at a site rather than over two. It is defined for any number of alleles, which is why a triallelic site needs no collapsing here.},
+}
+
+@article{ferretti2013pool,
+  group   = {The statistics PoolSeqFlow computes},
+  id      = {ferretti2013},
+  name    = {Population genomics from pool sequencing},
+  authors = {Ferretti, Luca and Ramos-Onsins, Sebastian E. and P{\'e}rez-Enciso, Miguel},
+  title   = {Population genomics from pool sequencing},
+  journal = {Molecular Ecology},
+  volume  = {22},
+  number  = {22},
+  pages   = {5561--5576},
+  year    = {2013},
+  doi     = {10.1111/mec.12522},
+  note    = {Why a pooled estimate needs correcting at all: individuals are sampled into the pool and reads are sampled from the pool, so an allele frequency carries both, and the estimator has to account for the smaller of the two.},
+}
+
+@article{hivert2018poolseq,
+  group   = {The statistics PoolSeqFlow computes},
+  id      = {hivert2018},
+  name    = {Effective sample size for Pool-seq},
+  authors = {Hivert, Valentin and Leblois, Rapha{\"e}l and Petit, Eric J. and Gautier, Mathieu and Vitalis, Renaud},
+  title   = {Measuring Genetic Differentiation from Pool-seq Data},
+  journal = {Genetics},
+  volume  = {210},
+  number  = {1},
+  pages   = {315--330},
+  year    = {2018},
+  doi     = {10.1534/genetics.118.300900},
+  note    = {The effective sample size this module weights by, n_eff = n*d / (n + d - 1) for a pool of n chromosomes read to depth d. The paper does not write it in that form - it defines D2 as the sum of (d + n - 1)/n, which is the sum of d / n_eff under this form and under no other. Its pools are parameterised by HAPLOID size, which is what leaves n_eff, and everything weighted by it, general over ploidy.},
+}
+
+@misc{rdatatable,
+  id        = {datatable},
+  name      = {data.table},
+  r_package = {data.table},
+  authors   = {Barrett, Tyson and Dowle, Matt and Srinivasan, Arun and Gorecki, Jan and Chirico, Michael and Hocking, Toby and Schwendinger, Benjamin and Krylov, Ivan},
+  title     = {data.table: Extension of `data.frame`},
+  url       = {https://CRAN.R-project.org/package=data.table},
+  note      = {Reads the published frequency and depth tables, which run to millions of rows.},
+}
+
+@misc{wickham2016ggplot2,
+  id        = {ggplot2},
+  name      = {ggplot2},
+  r_package = {ggplot2},
+  authors   = {Wickham, Hadley},
+  title     = {ggplot2: Elegant Graphics for Data Analysis},
+  publisher = {Springer-Verlag New York},
+  year      = {2016},
+  url       = {https://ggplot2.tidyverse.org},
+  note      = {Every figure this module draws.},
+}
+
+@article{ooms2014jsonlite,
+  id        = {jsonlite},
+  name      = {jsonlite},
+  r_package = {jsonlite},
+  authors   = {Ooms, Jeroen},
+  title     = {The jsonlite Package: A Practical and Consistent Mapping Between JSON Data and R Objects},
+  journal   = {arXiv:1403.2805 [stat.CO]},
+  year      = {2014},
+  url       = {https://arxiv.org/abs/1403.2805},
+  note      = {Reads the experimental design the frame resolved, which reaches this module as JSON.},
+}

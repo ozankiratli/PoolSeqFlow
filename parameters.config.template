@@ -22,7 +22,7 @@ params {
     readPattern     = "*_R{1,2}.fq.gz"
     referenceFile   = 'reference.fasta.gz'
     poolSize        = 100
-    diploidy        = 2
+    ploidy          = 2
     // One row per pair of FASTQ files. metadata.csv.template explains the columns; it
     // replaces RGTags.csv.
     metadataFile    = 'metadata.csv'
@@ -145,7 +145,7 @@ params {
     
     // Filter False Positives parameters
     filterFalsePositives {
-        sensitivity     = 1.0 / (2 * params.diploidy * params.poolSize)
+        sensitivity     = 1.0 / (2 * params.ploidy * params.poolSize)
         sampleThreshold = 0.2
     }   
 

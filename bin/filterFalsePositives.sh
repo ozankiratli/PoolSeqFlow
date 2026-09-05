@@ -7,23 +7,23 @@ VCF=""
 THRESHOLD=""
 SENSITIVITY=""
 POOLSIZES=""
-DIPLOIDY=""
+PLOIDY=""
 BCFTOOLS="bcftools"
 
 usage() {
-  echo "Usage: $0 -v <vcf-file> -t <threshold> -s <sensitivity> [-p <pool sizes> -d <diploidy>] [-b <bcftools-path>]"
+  echo "Usage: $0 -v <vcf-file> -t <threshold> -s <sensitivity> [-p <pool sizes> -d <ploidy>] [-b <bcftools-path>]"
   echo "Options:"
   echo "  -v <vcf-file>       Input VCF File (required)"
   echo "  -t <threshold>      Proportion of the samples to possess the rare allele (required)"
   echo "  -s <sensitivity>    The sensitivity level of the poolseq analysis, applied to every"
   echo "                      sample column. Used on its own when -p is not given."
-  echo "                      s = 1 / (2 * [DIPLOIDY] * [POOLSIZE per SAMPLE])"
+  echo "                      s = 1 / (2 * [PLOIDY] * [POOLSIZE per SAMPLE])"
   echo "  -p <pool sizes>     Per-pool sizes as 'Name=count,Name=count', where Name is the"
   echo "                      VCF's own sample column name. Each column then gets its own"
   echo "                      sensitivity from the formula above instead of the flat -s."
   echo "                      Requires -d. EVERY column must be named: a pool this does not"
   echo "                      mention is refused rather than quietly given the -s value."
-  echo "  -d <diploidy>       Ploidy of one individual, for the -p formula (required with -p)"
+  echo "  -d <ploidy>         Copies of the genome per individual, for the -p formula (with -p)"
   echo "  -b <bcftools-path>  The path for bcftools. Default: 'bcftools'"
   exit 1
 }
@@ -34,7 +34,7 @@ while getopts "v:t:s:p:d:b:" opt; do
     t) THRESHOLD="$OPTARG" ;;
     s) SENSITIVITY="$OPTARG" ;;
     p) POOLSIZES="$OPTARG" ;;
-    d) DIPLOIDY="$OPTARG" ;;
+    d) PLOIDY="$OPTARG" ;;
     b) BCFTOOLS="$OPTARG" ;;
     \?) echo "Error: Unknown flag -$OPTARG" >&2; usage ;;
     :) echo "Error: Flag -$OPTARG requires an argument" >&2; usage ;;
@@ -47,7 +47,7 @@ if [ -z "$VCF" ] || [ -z "$THRESHOLD" ] || [ -z "$SENSITIVITY" ]; then
 fi
 
 # -p carries sizes, not sensitivities, so it needs the ploidy to turn one into a threshold.
-if [ -n "$POOLSIZES" ] && [ -z "$DIPLOIDY" ]; then
+if [ -n "$POOLSIZES" ] && [ -z "$PLOIDY" ]; then
   echo "Error: -p needs -d, to turn a pool size into a sensitivity" >&2
   usage
 fi
@@ -64,7 +64,7 @@ MINSAMPLES=$(awk "BEGIN {printf \"%f\", $SAMPLENUMBER * $THRESHOLD}")
 # A column with no pool size is refused when -p was given, and takes -s when it was not.
 ${BCFTOOLS} norm -m - ${VCF} | \
 ${BCFTOOLS} view -i "INFO/AD[1]>0" | \
-awk -v pools="${POOLSIZES}" -v diploidy="${DIPLOIDY}" -v fallback="${SENSITIVITY}" \
+awk -v pools="${POOLSIZES}" -v ploidy="${PLOIDY}" -v fallback="${SENSITIVITY}" \
     -v minsamples="${MINSAMPLES}" '
 BEGIN {
     FS = OFS = "\t"
@@ -82,7 +82,7 @@ BEGIN {
             print "-p gives pool \"" name "\" a size of " size > "/dev/stderr"; exit 1
         }
         SIZE[name] = size
-        SENS[name] = 1 / (2 * diploidy * size)
+        SENS[name] = 1 / (2 * ploidy * size)
     }
 }
 /^##/ { print; next }

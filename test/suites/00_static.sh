@@ -1,5 +1,9 @@
 #!/bin/bash
 # Checks that need no data: syntax, release packaging, version consistency.
+# cost: static
+# covers: PoolSeqFlow install/ dev/scripts/ analysis/modules-index.tsv .gitattributes
+# covers: analysis/citations.json install/citations.json install/references.bib
+# covers: analysis/references.bib manual/references.bib
 
 # `nextflow lint` was brought to zero warnings during the post-2.2.0 audit. Held there
 # deliberately: once the count is zero a new warning is a signal rather than noise.
@@ -381,6 +385,48 @@ test_every_per_sample_parameter_names_a_real_parameter() {
         done
 }
 
+# EVERY citations.json IS GENERATED, and this is what stops one being edited by hand.
+#
+# A person edits the references.bib beside it, because entries are pasted from publishers and
+# BibTeX is the format they arrive in. The JSON is what write_citations.py reads inside every
+# published analysis - and a hand-edit there would be silently discarded the next time anyone
+# ran the compiler, taking a citation out of somebody's methods section with it.
+test_every_citations_file_matches_its_bibtex() {
+    local out status=0
+    out=$(python3 "$REPO_ROOT/dev/scripts/bib2citations.py" --check 2>&1) || status=$?
+    assert_status 0 "$status" "a citations.json is out of date with its .bib:"$'\n'"$out"
+}
+
+# THE BIBLIOGRAPHY IS A SUPERSET OF WHAT THE ANALYSIS LAYER CITES, and this is what keeps it
+# one. A module declares the method it implements in its own citations.json, which reaches the
+# user as CITATIONS.md beside their results; the manual's Bibliography is where the reading
+# behind that choice lives. A reference in one and not the other is a reader who can see a DOI
+# and not why it is there, and nothing else would notice.
+#
+# By DOI, because that is the identifier both sides carry and neither side formats. Entries
+# without one - an R package, mostly - are the tools table's business rather than this.
+test_every_analysis_citation_is_in_the_bibliography() {
+    local manual="$REPO_ROOT/manual/PoolSeqFlow-manual.md"
+    local missing file doi
+    missing=""
+    for file in "$REPO_ROOT"/analysis/citations.json "$REPO_ROOT"/analysis/modules/*/citations.json; do
+        [ -f "$file" ] || continue
+        while read -r doi; do
+            [ -n "$doi" ] || continue
+            grep -qF "$doi" "$manual" || missing="$missing  $doi (${file#$REPO_ROOT/})"$'\n'
+        done <<< "$(python3 -c '
+import json, sys
+data = json.load(open(sys.argv[1]))
+for key, entry in data.items():
+    if key.startswith("_") or not isinstance(entry, dict):
+        continue
+    if entry.get("doi"):
+        print(entry["doi"])
+' "$file")"
+    done
+    assert_eq "" "$missing" "cited by a module and absent from the manual's Bibliography:"$'\n'"$missing"
+}
+
 test_fixture_generator_is_deterministic() {
     local out
     out="$TEST_TMPDIR/fixture-determinism"
@@ -653,6 +699,191 @@ for step, names in sorted(declared.items()):
 # read it. A dead link is silent - the folder is written, the anchor is wrong, and nobody finds
 # out until they follow it. Authored on one side and verified from the other, the way the step
 # parameter map is.
+# A published analysis carries the shared library folded into the module's own script, and
+# libraryFiles() is the list that gets folded. Two ways for it to be wrong, and only one of them
+# is loud: a function the module CALLS and does not list breaks the run, while a function it
+# lists and never calls travels beside a result it did not compute - which is quiet, and is what
+# rule 15 exists to stop.
+test_a_module_publishes_the_library_it_calls() {
+    local out
+    out=$(cd "$REPO_ROOT" && python3 - <<'PY'
+import pathlib, re
+
+available = {p.stem for p in pathlib.Path("analysis/lib/R").glob("*.R")}
+
+for main in sorted(pathlib.Path("analysis/modules").glob("*/main.nf")):
+    block = re.search(r"def libraryFiles\(\)\s*\{(.*?)\n\}", main.read_text(encoding="utf-8"), re.S)
+    if not block:
+        continue
+    listed = [name[:-2] for name in re.findall(r"'([^']+\.R)'", block.group(1))]
+
+    source = main.parent / (main.parent.name + ".R")
+    if not source.exists():
+        print("%s: lists library files and has no %s to call them from" % (main, source.name))
+        continue
+    text = source.read_text(encoding="utf-8")
+    # A call, not a mention: the name followed by an open bracket, outside a comment.
+    called = {fn for fn in available
+              if re.search(r"^[^#\n]*\b%s\(" % re.escape(fn), text, re.M)}
+
+    for fn in sorted(called - set(listed)):
+        print("%s: calls %s() and does not list %s.R" % (source, fn, fn))
+    for fn in sorted(set(listed) - called):
+        print("%s: lists %s.R and %s never calls %s()" % (main, fn, source.name, fn))
+    for fn in sorted(set(listed) - available):
+        print("%s: lists %s.R, which analysis/lib/R does not have" % (main, fn))
+PY
+)
+    assert_eq "" "$out" "a module must publish exactly the library it calls:"$'\n'"$out"
+}
+
+# EVERY SOURCE FILE IS REACHED BY SOME SUITE.
+#
+# dev/scripts/select-tests.py answers "what should I run for this change" from what each suite
+# declares it runs, expanded through the include graph. A file no suite reaches has no answer,
+# and the tool falls back to running everything - correct, but it means the file is silently
+# outside every focused run, which is the failure this whole arrangement exists to prevent.
+#
+# It is checked here rather than left to the tool, because the tool only sees the files a
+# change happened to touch. This sees all of them.
+test_every_source_file_is_reached_by_a_suite() {
+    local out
+    out=$(cd "$REPO_ROOT" && python3 - <<'PY'
+import os, subprocess, sys
+sys.path.insert(0, "dev/scripts")
+import importlib.util
+spec = importlib.util.spec_from_file_location("sel", "dev/scripts/select-tests.py")
+sel = importlib.util.module_from_spec(spec); spec.loader.exec_module(sel)
+
+claims, edges, tracked = sel.suites(), sel.graph(), sel.sources()
+reached = set()
+for declared in claims.values():
+    reached |= sel.footprint(declared, edges, tracked)
+
+# What a change can land in and matters to a run. The manual, the notes and the suite itself
+# are not sources in this sense; the suite's own machinery is covered by EVERYTHING.
+SKIP = ("test/", "dev/", "manual/", "docs/", ".github/", ".claude/", ".tmp/")
+for path in sorted(tracked):
+    if path.startswith(SKIP) or os.path.splitext(path)[1] not in (
+            ".nf", ".sh", ".py", ".awk", ".R", ".Rmd", ".cpp"):
+        continue
+    if path not in reached:
+        print("  %s is reached by no suite" % path)
+PY
+)
+    assert_eq "" "$out" "every source file must be reached by some suite:"$'\n'"$out"
+}
+
+# A path a suite claims but that is not there any more. The claim then silently covers nothing,
+# and the suite stops being selected for the thing it was written to cover.
+test_every_path_a_suite_claims_exists() {
+    local suite name claim bad=""
+    for suite in "$REPO_ROOT"/test/suites/*.sh "$REPO_ROOT"/analysis/modules/*/test/*.sh; do
+        [ -f "$suite" ] || continue
+        name=$(basename "$suite" .sh)
+        while read -r claim; do
+            [ -n "$claim" ] || continue
+            [ -e "$REPO_ROOT/$claim" ] \
+                || bad="$bad"$'\n'"  $name claims $claim, which does not exist"
+        done < <(sed -n '1,16s/^# covers: *//p' "$suite" | tr ' ' '\n')
+    done
+    assert_eq "" "$bad" "every claimed path must exist:$bad"
+}
+
+# EVERY SUITE SAYS WHAT IT MAY COST, in one of three words.
+#
+# `--cost static` has to be trustworthy or nobody will use it, and an undeclared suite reads as
+# `pipeline` - safe, but silently outside every cheap run. A misspelt class is worse: it matches
+# no filter at all and the suite simply never runs.
+test_every_suite_declares_what_it_costs() {
+    local suite name declared bad=""
+    for suite in "$REPO_ROOT"/test/suites/*.sh "$REPO_ROOT"/analysis/modules/*/test/*.sh; do
+        [ -f "$suite" ] || continue
+        name=$(basename "$suite" .sh)
+        declared=$(sed -n '1,12s/^# cost: *//p' "$suite" | head -1)
+        case "$declared" in
+            static|jvm|pipeline) ;;
+            "") bad="$bad"$'\n'"  $name declares no cost" ;;
+            *)  bad="$bad"$'\n'"  $name declares '$declared', which is not static, jvm or pipeline" ;;
+        esac
+    done
+    assert_eq "" "$bad" "every suite must declare its cost:$bad"
+}
+
+# A `static` suite must complete with nothing installed, which is the whole promise of the
+# class. What breaks that is a case that BUILDS something - a baseline, a step-0 run, a module
+# invocation - because those have nothing to skip to. Asking `have_tools` and skipping is fine
+# and is how 00_static holds its own lint case.
+test_a_static_suite_builds_nothing() {
+    local suite name declared builder bad=""
+    for suite in "$REPO_ROOT"/test/suites/*.sh "$REPO_ROOT"/analysis/modules/*/test/*.sh; do
+        [ -f "$suite" ] || continue
+        declared=$(sed -n '1,12s/^# cost: *//p' "$suite" | head -1)
+        [ "$declared" = "static" ] || continue
+        name=$(basename "$suite" .sh)
+        # Held in a variable, and wrapped so that no forbidden name ever begins a line: the
+        # pattern below reads a name at the start of a statement as a call, and this case has
+        # to say the names out loud without being caught saying them.
+        local builders="analysis_ready analysis_writer_ready run_pipeline run_step0"
+        builders="$builders run_analysis run_module run_verify_only run_complete"
+        for builder in $builders; do
+            # In CALL position - at the start of a statement, or inside $( ) - so that this
+            # case's own list of the names does not count as calling them.
+            grep -qE "(^[[:space:]]*|\\\$\\()${builder}([[:space:]]|\\)|\$)" "$suite" \
+                && bad="$bad"$'\n'"  $name is declared static and calls $builder"
+        done
+    done
+    assert_eq "" "$bad" "a static suite must build nothing:$bad"
+}
+
+# EVERY HELPER A SUITE CALLS IS DEFINED SOMEWHERE IT CAN SEE.
+#
+# This is what a suite being SPLIT breaks: a case moves to a new file and the helper it calls
+# stays behind, or goes to a third file, and nothing says so until that case runs - which for
+# the analysis layer is half an hour away. Resolving the names statically costs a second and
+# catches the whole class.
+#
+# It cannot catch a case that depended on the ORDER cases ran in. Nothing static can; that is
+# what the suite itself is for.
+test_every_helper_a_suite_calls_is_defined() {
+    local out
+    out=$(cd "$REPO_ROOT" && python3 - <<'PY'
+import pathlib, re
+
+DEF = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\(\) \{", re.M)
+
+def defs(path):
+    return set(DEF.findall(pathlib.Path(path).read_text(encoding="utf-8")))
+
+# Everything sourced before any suite runs, and so visible to all of them.
+shared = set()
+for path in ["test/run_tests.sh", "test/lib/harness.sh", "test/lib/sandbox.sh",
+             "test/lib/analysis.sh"]:
+    shared |= defs(path)
+
+suites = sorted(pathlib.Path("test/suites").glob("*.sh"))
+suites += sorted(pathlib.Path(".").glob("analysis/modules/*/test/*.sh"))
+
+# Only names that ARE functions somewhere are looked for. A bare word in a heredoc is not a
+# call, and guessing which words are calls is what makes a checker like this cry wolf.
+elsewhere = {}
+for suite in suites:
+    for name in defs(suite):
+        elsewhere.setdefault(name, []).append(str(suite))
+
+for suite in suites:
+    here = defs(suite)
+    body = re.sub(r"^\s*#.*$", "", pathlib.Path(suite).read_text(encoding="utf-8"), flags=re.M)
+    for name, homes in sorted(elsewhere.items()):
+        if name in here or name in shared or name.startswith("test_"):
+            continue
+        if re.search(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(name), body):
+            print("%s: uses %s(), defined only in %s" % (suite, name, ", ".join(homes)))
+PY
+)
+    assert_eq "" "$out" "every helper a suite calls must be defined:"$'\n'"$out"
+}
+
 test_every_declared_manual_anchor_exists() {
     local out
     out=$(cd "$REPO_ROOT" && python3 - <<'PY'

@@ -9,6 +9,7 @@ nextflow.enable.dsl=2
 include { verificationRecordName } from './paths.nf'
 include { citationShell } from './citations.nf'
 include { readmeShell } from './outputs.nf'
+include { reportShell } from './report.nf'
 
 // What counts as the script that produced a result, by extension: R, and the shell, Python and
 // Julia a module may drive it from.
@@ -36,6 +37,7 @@ process InstallResults {
     // Written into the STAGE, so the citations arrive in the same rename as the analysis.
     citations = citationShell("${target.module}", '$STAGE')
     readme = readmeShell("${target.module}", target, '$STAGE')
+    report = reportShell("${target.module}", target, '$STAGE')
     """
     set -eo pipefail
 
@@ -70,6 +72,9 @@ process InstallResults {
 
     # What this analysis was produced with, beside the analysis itself.
     ${citations}
+
+    # One PDF of the whole folder, built last so it can see everything else in the stage.
+    ${report}
 
     if [ -d "\$DEST" ]; then
         HELD=\$(find "\$DEST" -mindepth 1 -maxdepth 1 ! -name '${keep}' | wc -l)
