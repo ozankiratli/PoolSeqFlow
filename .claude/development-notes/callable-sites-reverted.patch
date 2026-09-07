@@ -1,0 +1,489 @@
+diff --git a/manual/PoolSeqFlow-manual.md b/manual/PoolSeqFlow-manual.md
+index 82e8221..c64e9d3 100644
+--- a/manual/PoolSeqFlow-manual.md
++++ b/manual/PoolSeqFlow-manual.md
+@@ -1085,8 +1085,11 @@ Two files are written to `Output/Frequencies/`, named after `vcf.fileName`:
+ |---|---|
+ | `<name>_snp_freq.tsv` | Every surviving SNP site |
+ | `<name>_indel_freq.tsv` | Every surviving insertion or deletion site |
++| `<name>_snp_depth.tsv` | The read counts those SNP frequencies were computed from |
++| `<name>_indel_depth.tsv` | The same, for indels |
+ 
+-With the default `vcf.fileName = 'Test'` those are `Test_snp_freq.tsv` and `Test_indel_freq.tsv`.
++With the default `vcf.fileName = 'Test'` those are `Test_snp_freq.tsv`, `Test_indel_freq.tsv`
++and their two `_depth.tsv` counterparts.
+ 
+ #### Columns
+ 
+@@ -1135,6 +1138,21 @@ chr1   1000  A    T       0.05      0        0.1
+ 
+ Every column within one site sums to 1. A zero means the allele was not observed in that sample, not that the site was missing there.
+ 
++#### The depth tables { #depth-tables }
++
++`<name>_snp_depth.tsv` and `<name>_indel_depth.tsv` are the input that conversion was applied to: the same sites, holding **read counts instead of frequencies**. They are what the worked example above calls the AD columns, exactly as they came out of the VCF.
++
++**They are not the same shape as the frequency tables, and reading them as if they were is the mistake to avoid.** A depth table has **one row per site**, and each cell holds a comma-separated list of counts in `REF`-then-`ALT` order. The frequency table expands that into **one row per allele**. The worked example's site is a single row here:
++
++```text
++CHROM  POS   REF  ALT  TOTAL_AD     sample1    sample2
++chr1   1000  A    G,T  800,150,50   400,100,0  400,50,50
++```
++
++Two consequences. A depth table has fewer rows than its frequency table — one per site rather than one per allele. And its fourth column is headed `ALT`, listing only the alternates, where the frequency table's is `ALLELE` and names one allele per row including `REF`.
++
++Use these when a frequency alone is not enough: a frequency of 0.5 from 400 reads and one from 2 reads are the same number and very different evidence. They are also what the analysis layer reads to compute each site's effective sample size.
++
+ ### Reading the tables correctly
+ 
+ **`REF` is the major allele, not the reference genome's base.** Step 7 re-encodes each site so the most-read allele becomes `REF` ([why](#5-major-allele-normalisation-step-7)). This makes rows comparable across samples and runs, but it means `REF` will often disagree with the FASTA you supplied. If you need the assembly's base, take it from the assembly.
+@@ -1174,6 +1192,7 @@ Those two are the whole of it. Every VCF step 7 produces — `_sort`, `_sort_fp`
+ | `Coverage/<sample>_coverage_report.txt` | `samtools coverage` | Per-contig depth and breadth |
+ | `Depth/<sample>_depth_histogram.tsv` | `samtools stats` | The sample's whole depth distribution, one line per depth |
+ | `Depth/<sample>_depth_report.txt` | PoolSeqFlow | **The ceiling put on that sample, and why** |
++| `Callable/<sample>_callable.tsv.gz` | `samtools depth` | How many positions per window reached each depth — see [Callable sites](#callable-sites) |
+ | `Fastqc/<sample>/` | FastQC | Raw, trimmed and clipped read quality |
+ | `Trimming/<sample>/` | Trim Galore | How much was removed, and which adapter was detected |
+ | `snpeff_summary.html` | SnpEff | Variant effect summary, if annotation ran |
+@@ -1250,9 +1269,21 @@ Safe to tune between runs. Step 0 does not track them, precisely because they ca
+ | `multiRun`, `multiRunFile` | Whether to read a run table, and what it is called |
+ | `vcf.fileName` | Base name for the VCFs and frequency tables |
+ 
++#### Parameters that change a report, not a result
++
++A few change only what a published *report* contains, and nothing that flows onward:
++
++| Parameter | Effect | Page |
++|---|---|---|
++| `callable.binSize`, `.thresholds` | Window width and the depths counted in the callable track | [Callable sites](#callable-sites) |
++| `callable.minBaseQual`, `.minMapQual` | What counts as a covered position there. Derived from `variantCall` | [Callable sites](#callable-sites) |
++| `fastqc.options` | What FastQC reports on the clipped reads | [Trimming & Clipping](#trimming-clipping) |
++
++Step 0 does not refuse a change to these, because your results do not depend on them. It *does* refuse two runs of a table that **share a step and disagree** about one — only one of the values can have produced the single report sitting in the shared directory, so the run stops rather than publishing an ambiguous file.
++
+ #### Do not edit: derived values
+ 
+-A large part of `parameters.config` is computed. The `cores` block derives every tool's thread count from `threads`; the `dir` block builds every path from `mainDir` and `storageDir`; `filterFalsePositives.sensitivity` is computed from `poolSize` and `diploidy`; `snpEff.db` is derived from `gffFile`.
++A large part of `parameters.config` is computed. The `cores` block derives every tool's thread count from `threads`; the `dir` block builds every path from `mainDir` and `storageDir`; `filterFalsePositives.sensitivity` is computed from `poolSize` and `diploidy`; `snpEff.db` is derived from `gffFile`; `callable.minBaseQual` and `callable.minMapQual` follow the pileup's own quality thresholds.
+ 
+ Editing these by hand breaks the invariant that makes the pipeline predictable — that one number sizes the run, and one pair of paths places everything. Change the input, not the derivation.
+ 
+@@ -2326,18 +2357,37 @@ Output: `Output/Ready/<sample>_ready.bam` and `.bai`.
+ 
+ `scripts/5_reports.nf`
+ 
+-Three independent sub-steps per sample:
++Four independent sub-steps per sample:
+ 
+ | Sub-step | Command | Output |
+ |---|---|---|
+ | `AlignmentReport` | `bamtools stats` | `Output/Reports/Alignment/<sample>_alignment_report.txt` |
+ | `CoverageReport` | `samtools coverage` | `Output/Reports/Coverage/<sample>_coverage_report.txt` |
+ | `DepthProfile` | `samtools stats` | `Output/Reports/Depth/<sample>_depth_histogram.tsv` and `_depth_report.txt` |
++| `CallableSites` | `samtools depth` | `Output/Reports/Callable/<sample>_callable.tsv.gz` |
+ 
+ `DepthProfile` also decides the depth ceiling step 6 applies to that sample, which is why this step is no longer a leaf: it passes the BAM, its index and the chosen ceiling on to variant calling. It runs whatever `capBAM.maxDepth` is set to — the histogram is worth having even when nothing is capped, and the reports are what [step 6](#depth-capping) is judged by.
+ 
+ Reading the depth report on every run is the habit worth forming. The capped BAM step 6 builds is transient, so this file is the only record of which reads were actually called for that sample.
+ 
++#### Callable sites { #callable-sites }
++
++`CallableSites` records, for every window of the reference, **how many positions in it reached each of a set of depths**:
++
++```text
++chrom  bin_start  n_ge_1  n_ge_5  n_ge_10  n_ge_20  n_ge_50
++chr1   1          1000    998     991      940      612
++chr1   1001       1000    1000    997      983      877
++```
++
++Windows are `callable.binSize` bases wide (1000 by default), `bin_start` is 1-based, and a window with no coverage at all is simply absent. Positions are counted on the same terms variant calling would count them: `callable.minBaseQual` and `callable.minMapQual` default to the pileup's own thresholds, so a position counted here is one that could have contributed a call.
++
++**Why several depths rather than one.** "Callable" is a question about the analysis, not about the alignment — a diversity estimate might want 10×, a presence/absence question 1×. The pipeline records the distribution and leaves the cutoff to whoever is doing the statistics, which is the same reason it does not pick a `poolSize` for you.
++
++**What it is for.** Anything measured *per window* — nucleotide diversity, Watterson's θ, Tajima's D — is a count divided by the number of sites that could have contributed. The VCF holds variant sites only, so that denominator is not in it, and using the window's length instead assumes every base was sequenced. It was not, and the shortfall is largest exactly in the repetitive regions people care about. This file is the denominator.
++
++The counts are nested by construction: `n_ge_50` can never exceed `n_ge_20`. Read it with `zcat`.
++
+ ---
+ 
+ ### Step 6: Variant Calling
+@@ -2371,7 +2421,7 @@ Five sub-steps in a serial chain, each deleting its input once its output is saf
+ | 2 | `FilterPotentialFalsePositives` | Splits multiallelics, applies the cross-sample support test, rejoins, re-normalises |
+ | 3 | `DepthAndQualityFilter` | `bcftools view -e "FMT/DP<20"` then `vcftools --minQ 30` |
+ | 4 | `SplitSNPsAndINDELs` | Two vcftools passes into a SNP VCF and an INDEL VCF |
+-| 5 | `CalculateFrequencies` | Extracts `AD` and divides to frequencies; runs once per split file |
++| 5 | `CalculateFrequencies` | Extracts `AD`, publishes it as the depth table, then divides to frequencies; runs once per split file |
+ 
+ Sub-step 2 is the pool-aware core of the pipeline and is documented in full in [The Filter Chain](#6-false-positive-filter-step-7). The minimum credible frequency it enforces is
+ 
+@@ -2379,7 +2429,7 @@ $$f_{\min} = \frac{1}{2 \times \text{diploidy} \times \text{poolSize}}$$
+ 
+ but the test is not a plain cutoff in either direction. An allele must reach that frequency in a *fraction of samples*, which is what lets the threshold sit so low — and each sample is judged against **its own** pool's threshold, taken from `param_poolSize`, rather than against one number for the whole run.
+ 
+-Output: `Output/Frequencies/<name>_snp_freq.tsv` and `<name>_indel_freq.tsv`. Format: [Interpreting Results](#the-frequency-tables).
++Output: `Output/Frequencies/<name>_snp_freq.tsv` and `<name>_indel_freq.tsv`, each beside a `_depth.tsv` holding the read counts it was computed from. Formats: [Interpreting Results](#the-frequency-tables) and [The depth tables](#depth-tables).
+ 
+ ---
+ 
+@@ -2605,6 +2655,7 @@ Either reference file may be gzipped or plain.
+         ├── Alignment/
+         ├── Coverage/
+         ├── Depth/                # Depth histogram and chosen ceiling, per sample
++        ├── Callable/             # Positions per window reaching each depth, per sample
+         ├── Fastqc/<sample>/
+         ├── Trimming/<sample>/
+         ├── 0_verify_environment.txt
+diff --git a/parameters.config.template b/parameters.config.template
+index ef78982..e9e950a 100644
+--- a/parameters.config.template
++++ b/parameters.config.template
+@@ -112,6 +112,17 @@ params {
+         maxDepth        = -1
+     }
+ 
++    // Step 5: how many positions in each window reached each depth. The analysis layer uses
++    // this as the denominator for anything measured per window; nothing else reads it.
++    callable {
++        binSize         = 1000
++        thresholds      = "1,5,10,20,50"
++        // Taken from variantCall by default, so a position counts here exactly when variant
++        // calling would have counted it. Uncomment to count on different terms.
++        // minBaseQual  = 30
++        // minMapQual   = 30
++    }
++
+     // Step 6: how bcftools calls variants.
+     variantCall {
+         scaleMapQ       = 50
+@@ -192,6 +203,7 @@ params {
+                 align           = "${params.dir.subpath.reports}/Alignment"
+                 coverage        = "${params.dir.subpath.reports}/Coverage"
+                 depth           = "${params.dir.subpath.reports}/Depth"
++                callable        = "${params.dir.subpath.reports}/Callable"
+                 fastqc          = "${params.dir.subpath.reports}/Fastqc"
+                 trim            = "${params.dir.subpath.reports}/Trimming"
+             }
+@@ -211,6 +223,7 @@ params {
+                 align           = "${params.dir.outputs}/${params.dir.subpath.report.align}"
+                 coverage        = "${params.dir.outputs}/${params.dir.subpath.report.coverage}"
+                 depth           = "${params.dir.outputs}/${params.dir.subpath.report.depth}"
++                callable        = "${params.dir.outputs}/${params.dir.subpath.report.callable}"
+                 fastqc          = "${params.dir.outputs}/${params.dir.subpath.report.fastqc}"
+                 trim            = "${params.dir.outputs}/${params.dir.subpath.report.trim}"
+             }
+diff --git a/scripts/5_reports.nf b/scripts/5_reports.nf
+index 0d1a805..cc6e772 100644
+--- a/scripts/5_reports.nf
++++ b/scripts/5_reports.nf
+@@ -196,6 +196,60 @@ process DepthProfile {
+     """
+ }
+ 
++// How many positions in each window of the reference reached each depth. Nothing in this
++// pipeline reads it; the analysis layer takes it as the denominator for per-window statistics.
++process CallableSites {
++    tag { run.runId ? "${run.runId}:${pair_id}" : pair_id }
++
++    input:
++    tuple val(run), val(pair_id), path(ready_bam), path(ready_bai)
++
++    output:
++    tuple val(run), val(pair_id), path("${pair_id}_callable.tsv.gz"), emit: track
++
++    script:
++    track_file = "${pair_id}_callable.tsv.gz"
++    target_folder = "${run.dir.output.report.callable}"
++    target_track = "${target_folder}/${track_file}"
++    dir_log = "${run.dir.logs}/5_reports"
++
++    """
++    set -eo pipefail
++    if [ -f ${target_track} ]; then
++        echo "CALLABLE SITES ${ready_bam}: Found existing callable track"
++        echo "CALLABLE SITES ${ready_bam}: Found: ${target_track}"
++        echo "CALLABLE SITES ${ready_bam}: Creating symbolic link..."
++        ln -s ${target_track} .
++        echo "CALLABLE SITES ${ready_bam}: COMPLETED"
++    else
++        echo "CALLABLE SITES ${ready_bam}: Counting callable positions per ${run.callable.binSize} bases..."
++        # -q is base quality here and -Q is mapping quality, which is the opposite of the way
++        # bcftools mpileup spells the same two thresholds.
++        ${run.software.samtools} depth \
++            -q ${run.callable.minBaseQual} \
++            -Q ${run.callable.minMapQual} \
++            ${ready_bam} \
++            | callable_bins.awk -v binsize=${run.callable.binSize} \
++                                -v thresholds=${run.callable.thresholds} \
++            | gzip > ${track_file}
++
++        echo "CALLABLE SITES ${ready_bam}: Moving ${track_file} to ${target_folder}..."
++        mkdir -p ${target_folder}
++        atomic_mv.sh ${track_file} ${target_track}
++        echo "CALLABLE SITES ${ready_bam}: Creating symbolic link..."
++        ln -s ${target_track} .
++        echo "CALLABLE SITES ${ready_bam}: COMPLETED"
++    fi
++
++    mkdir -p ${dir_log}
++    {
++        echo ""
++        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
++        cat .command.log
++    } >> ${dir_log}/5_GenerateReports_s4_CallableSites_${pair_id}_nextflow.log
++    """
++}
++
+ workflow GenerateReports {
+     take:
+     ready_bams
+@@ -208,12 +262,15 @@ workflow GenerateReports {
+     AlignmentReport(ready_data)
+     CoverageReport(ready_data)
+     DepthProfile(ready_data)
++    CallableSites(ready_data)
+ 
+-    // All three reports for a sample, joined back to one item per (run, sample), carrying the
+-    // BAM, its index and the chosen ceiling.
++    // Every report for a sample, joined back to one item per (run, sample), carrying the BAM,
++    // its index and the chosen ceiling.
+     emit:
+     DepthProfile.out.profile
+         .join(AlignmentReport.out.report, by: [0, 1])
+         .join(CoverageReport.out.report, by: [0, 1])
+-        .map { run, pair_id, bam, bai, cap, _align, _coverage -> tuple(run, pair_id, bam, bai, cap) }
++        .join(CallableSites.out.track, by: [0, 1])
++        .map { run, pair_id, bam, bai, cap, _align, _coverage, _callable ->
++            tuple(run, pair_id, bam, bai, cap) }
+ }
+\ No newline at end of file
+diff --git a/scripts/7_vcf2freq.nf b/scripts/7_vcf2freq.nf
+index 369ff26..2e46517 100644
+--- a/scripts/7_vcf2freq.nf
++++ b/scripts/7_vcf2freq.nf
+@@ -429,13 +429,17 @@ process CalculateFrequencies {
+     freq_base = "${vcf.baseName.replace('_sort_fp_dq', '')}"
+     freq_file = "${freq_base}_freq.tsv"
+     target_freq_file = "${run.dir.output.freq}/${freq_file}"
++    // The read counts the frequencies are computed from. Published by absolute path, like step
++    // 5's reports: nothing in this pipeline consumes it.
++    depth_file = "${freq_base}_depth.tsv"
++    target_depth_file = "${run.dir.output.freq}/${depth_file}"
+     dir_log = "${run.dir.logs}/7_vcf2freq"
+ 
+     """
+     set -eo pipefail
+ 
+     echo "CALCULATE FREQUENCIES ${vcf}: Calculating Frequencies"
+-    if [ -f ${target_freq_file} ]; then
++    if [ -f ${target_freq_file} ] && [ -f ${target_depth_file} ]; then
+         echo "CALCULATE FREQUENCIES ${vcf}: Found existing frequency file."
+         echo "CALCULATE FREQUENCIES ${vcf}: Found: ${target_freq_file}"
+         echo "CALCULATE FREQUENCIES ${vcf}: Creating symbolic link..."
+@@ -443,10 +447,12 @@ process CalculateFrequencies {
+         echo "CALCULATE FREQUENCIES ${vcf}: COMPLETED"
+     else
+         echo "CALCULATE FREQUENCIES ${vcf}: Calculating frequencies for ${freq_file}..."
+-        createDepthFile.sh -v ${vcf} -b ${run.software.bcftools} | depth2freq.awk > ${freq_file}
+-        
++        createDepthFile.sh -v ${vcf} -b ${run.software.bcftools} > ${depth_file}
++        depth2freq.awk < ${depth_file} > ${freq_file}
++
+         echo "CALCULATE FREQUENCIES ${vcf}: Moving ${freq_file} to ${target_folder_freq}..."
+         mkdir -p ${target_folder_freq}
++        atomic_mv.sh ${depth_file} ${target_depth_file}
+         atomic_mv.sh ${freq_file} ${target_freq_file}
+         echo "CALCULATE FREQUENCIES ${vcf}: Creating symbolic link..."
+         ln -s ${target_freq_file} .
+diff --git a/scripts/resolve_parameters.nf b/scripts/resolve_parameters.nf
+index 3b11e40..6a6c208 100644
+--- a/scripts/resolve_parameters.nf
++++ b/scripts/resolve_parameters.nf
+@@ -35,6 +35,7 @@ def derivedParameterNames() {
+         'trim_galore.adapterOptions', 'trim_galore.options',
+         'bwa.options',
+         'variantCall.mpileupOptions',
++        'callable.minBaseQual', 'callable.minMapQual',
+         // Computed in parameters.config instead: their inputs are all top-level.
+         'referenceFa', 'referencePath', 'gffPath', 'metadataPath', 'multiRunPath',
+         'reference', 'gff', 'reads',
+@@ -83,6 +84,13 @@ def deriveInto(Map p) {
+     // -q is mapping quality and -Q is base quality; they are not interchangeable.
+     fill(p.variantCall, 'mpileupOptions',
+         "-B -C ${p.variantCall.scaleMapQ} -q ${p.variantCall.varQualMin} -Q ${p.variantCall.baseQualMin} -d ${p.variantCall.maxDepth} -a AD,DP,SP,INFO/AD -Ou")
++
++    // The pileup's own thresholds, so a position counts as callable exactly when variant
++    // calling would have counted it. SAMTOOLS SPELLS THEM THE OTHER WAY AROUND - `samtools
++    // depth -q` is base quality where `mpileup -q` is mapping quality - so step 5 swaps the
++    // flags, not these values.
++    fill(p.callable, 'minBaseQual', p.variantCall.baseQualMin)
++    fill(p.callable, 'minMapQual',  p.variantCall.varQualMin)
+ }
+ 
+ def resolveParameters() {
+diff --git a/scripts/variants.nf b/scripts/variants.nf
+index bcf8bcf..8612def 100644
+--- a/scripts/variants.nf
++++ b/scripts/variants.nf
+@@ -29,7 +29,10 @@ def stepParameterMap() {
+              publish : [] ],
+ 
+         // Step 5 decides each sample's depth cap, so the cap setting refines what it passes on.
+-        5: [ artifact: ['capBAM.maxDepth'], publish: [] ],
++        // The callable track is a side output nothing consumes, so it only has to be agreed on.
++        5: [ artifact: ['capBAM.maxDepth'],
++             publish : ['callable.binSize', 'callable.thresholds',
++                        'callable.minBaseQual', 'callable.minMapQual'] ],
+ 
+         6: [ artifact: ['variantCall.mpileupOptions', 'variantCall.callOptions', 'vcf.fileName',
+                         'dir.subpath.vcf'],
+@@ -59,7 +62,8 @@ def stepFolders() {
+         4: ['dir.subpath.ready'],
+         // Every step 5 report is published by absolute path, so none of these is a declared
+         // process output.
+-        5: ['dir.subpath.report.align', 'dir.subpath.report.coverage', 'dir.subpath.report.depth'],
++        5: ['dir.subpath.report.align', 'dir.subpath.report.coverage', 'dir.subpath.report.depth',
++            'dir.subpath.report.callable'],
+         6: ['dir.subpath.vcf'],
+         7: ['dir.subpath.vcf', 'dir.subpath.freq'],
+         // snpEff writes its summary straight into Reports/.
+diff --git a/test/suites/30_pipeline.sh b/test/suites/30_pipeline.sh
+index 8f2481f..0e3fa83 100644
+--- a/test/suites/30_pipeline.sh
++++ b/test/suites/30_pipeline.sh
+@@ -1129,3 +1129,67 @@ test_a_fixed_ceiling_caps_every_sample() {
+         fail_case "a capped BAM reached a storage root; it is meant to live and die inside step 6"
+     fi
+ }
++
++# THE COUNTS BEHIND EVERY PUBLISHED FREQUENCY. Until E4a the depth table existed only inside a
++# pipe and was thrown away, so nothing anywhere said how many reads a frequency was computed
++# from. The analysis layer needs it for n_eff, and a reader needs it to judge a frequency at all.
++test_the_depth_table_is_published_beside_the_frequencies() {
++    needs_run || return
++    local f="$PIPELINE_SB/store/Output/Frequencies"
++    assert_file "$f/Test_snp_depth.tsv"   "the SNP depth table should be published"
++    assert_file "$f/Test_indel_depth.tsv" "the INDEL depth table should be published"
++
++    # THE TWO TABLES ARE NOT THE SAME SHAPE, and reading them as if they were is the mistake
++    # this case exists to stop. The depth table is one row per SITE, each cell holding
++    # comma-separated read counts in REF-then-ALT order; depth2freq.awk expands that into one
++    # row per ALLELE. Same columns, different granularity.
++    assert_eq "$(head -1 "$f/Test_snp_freq.tsv" | tr '\t' '\n' | wc -l)" \
++              "$(head -1 "$f/Test_snp_depth.tsv" | tr '\t' '\n' | wc -l)" \
++              "depth and frequency tables should have the same column count"
++    assert_contains "$(head -1 "$f/Test_snp_depth.tsv")" "TOTAL_AD" "and the same header"
++
++    # Cells are counts, not frequencies: the first sample column of the first row is a list of
++    # whole numbers. A frequency here would mean the tee landed after the conversion.
++    local cell; cell=$(sed -n '2p' "$f/Test_snp_depth.tsv" | cut -f6)
++    printf '%s' "$cell" | grep -qE '^[0-9]+(,[0-9]+)*$' \
++        || fail_case "depth cells should be comma-separated read counts, got '$cell'"
++
++    # Every allele of every site reached the frequency table: one frequency row per allele,
++    # where a site's allele count is REF plus its comma-separated ALTs.
++    local alleles freq_rows
++    alleles=$(awk -F'\t' 'NR > 1 { n = split($4, a, ","); total += n + 1 } END { print total }' \
++              "$f/Test_snp_depth.tsv")
++    freq_rows=$(( $(wc -l < "$f/Test_snp_freq.tsv") - 1 ))
++    assert_eq "$alleles" "$freq_rows" \
++        "the two tables should describe the same sites and the same alleles"
++}
++
++# The denominator for anything measured per window. A window statistic divided by the window
++# LENGTH rather than by its callable sites is biased downward exactly where coverage is uneven.
++test_every_sample_gets_a_callable_track() {
++    needs_run || return
++    local dir="$PIPELINE_SB/store/Output/Reports/Callable" sample first
++    [ -d "$dir" ] || { fail_case "step 5 should publish callable tracks"; return; }
++    for sample in $(tail -n +2 "$PIPELINE_SB/main/metadata.csv" | cut -d, -f1); do
++        assert_file "$dir/${sample}_callable.tsv.gz" "$sample should have a callable track"
++    done
++
++    first=$(zcat "$dir/TestSample1_callable.tsv.gz" 2>/dev/null | head -1)
++    assert_contains "$first" "n_ge_1" "the header should name every threshold it counted"
++    assert_contains "$first" "n_ge_50" "including the last"
++    # Counts must fall as the threshold rises - they are nested sets, so anything else is a bug
++    # in the binner rather than a property of the data.
++    zcat "$dir/TestSample1_callable.tsv.gz" 2>/dev/null | awk -F'\t' '
++        NR > 1 { for (i = 4; i <= NF; i++) if ($i > $(i-1)) { print "row " NR; exit 1 } }' \
++        || fail_case "a higher depth threshold counted more positions than a lower one"
++}
++
++# Both producers run once per sample, not once per run and not once per invocation.
++test_the_two_producers_run_once_each() {
++    needs_run || return
++    assert_eq "6" "$(task_count "$PIPELINE_SB" "GenerateReports:CallableSites")" \
++        "the callable track is per sample"
++    # Two tables, SNP and INDEL, from the two CalculateFrequencies tasks.
++    assert_eq "2" "$(task_count "$PIPELINE_SB" "VCF2Frequencies:CalculateFrequencies")" \
++        "the depth table rides along with the frequency table, so no extra task"
++}
+diff --git a/test/suites/50_helpers.sh b/test/suites/50_helpers.sh
+index ef60928..4df4697 100644
+--- a/test/suites/50_helpers.sh
++++ b/test/suites/50_helpers.sh
+@@ -933,3 +933,64 @@ test_every_depth_decision_explains_itself() {
+     reason=$(python3 "$REPO_ROOT/bin/depth_cutoff.py" "$DC_CORPUS/hill-small.tsv" | sed -n 2p)
+     assert_contains "$reason" "rises again" "a capped one says what it found"
+ }
++
++# Bin the depths, count what reaches each threshold. Milliseconds here; a JVM start end to end.
++cb() {
++    printf '%s' "$1" > "$HELPERS_DIR/depth.txt"
++    CB_OUT=$("$REPO_ROOT/bin/callable_bins.awk" -v binsize="${2:-1000}" -v thresholds="${3:-1,5,10}" \
++             < "$HELPERS_DIR/depth.txt" 2>"$HELPERS_DIR/stderr")
++    CB_STATUS=$?
++    CB_ERR=$(cat "$HELPERS_DIR/stderr")
++}
++
++# THE DENOMINATOR HAS TO BE RIGHT OR EVERY WINDOWED STATISTIC IS WRONG BY A CONSTANT, and a
++# constant is exactly the kind of error that produces plausible numbers.
++test_callable_bins_counts_each_threshold_separately() {
++    helpers_sandbox
++    cb 'chr1	1	3
++chr1	2	12
++chr1	1000	7
++chr1	1001	30
++'
++    assert_status 0 "$CB_STATUS" "a well-formed depth stream should bin"
++    # Positions 1-1000 are one bin: depths 3, 12 and 7 -> three reach 1, two reach 5, one reaches 10.
++    assert_contains "$CB_OUT" "chr1	1	3	2	1" "the first bin should count each threshold"
++    # 1001 opens the next bin, and 30 reaches all three.
++    assert_contains "$CB_OUT" "chr1	1001	1	1	1" "a new bin should start at binsize + 1"
++    assert_contains "$CB_OUT" "n_ge_1	n_ge_5	n_ge_10" "the header should name the thresholds"
++}
++
++# A bin boundary off by one shifts every count into its neighbour, which no total would reveal.
++test_callable_bins_puts_boundaries_where_they_belong() {
++    helpers_sandbox
++    cb 'chr1	1000	9
++chr1	1001	9
++' 1000 5
++    assert_contains "$CB_OUT" "chr1	1	1" "position 1000 belongs to the bin starting at 1"
++    assert_contains "$CB_OUT" "chr1	1001	1" "position 1001 opens the next one"
++}
++
++# Each reference sequence restarts the binning; a shared bin would merge two chromosomes.
++test_callable_bins_restart_on_a_new_sequence() {
++    helpers_sandbox
++    cb 'chr1	5	9
++chr2	5	9
++' 1000 1
++    assert_count 2 "$(printf '%s\n' "$CB_OUT" | grep -c '	1	1$')" \
++        "each sequence should get its own bin starting at 1"
++}
++
++# Silence is the failure mode: an unusable setting that produced an empty track would read as a
++# genome with nothing callable in it, and every diversity statistic would divide by zero.
++test_callable_bins_refuses_settings_it_cannot_use() {
++    helpers_sandbox
++    cb 'chr1	1	9
++' 0 1
++    assert_status 2 "$CB_STATUS" "a binsize of zero is a usage mistake"
++    assert_contains "$CB_ERR" "binsize" "and should say which setting"
++
++    cb 'chr1	1	9
++' 1000 'x'
++    assert_status 2 "$CB_STATUS" "a non-numeric threshold is a usage mistake"
++    assert_contains "$CB_ERR" "threshold" "and should say which setting"
++}

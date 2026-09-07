@@ -26,7 +26,7 @@ Pool-seq sequences many individuals together in one library. You give up the abi
 That difference runs through every stage of this pipeline. A variant caller built for individuals wants to assign one of three genotypes per site; here there is no genotype to assign, only a ratio of read counts that has to survive intact from the pileup to the final table. PoolSeqFlow is built around keeping that ratio honest:
 
 - **No biallelic assumption.** Multiallelic sites are preserved through calling, filtering and conversion rather than being collapsed or dropped.
-- **Major-allele normalisation.** VCFs are re-encoded so the most frequent allele is the reference, which makes frequencies comparable across samples and runs.
+- **Major-allele normalization.** VCFs are re-encoded so the most frequent allele is the reference, which makes frequencies comparable across samples and runs.
 - **Pool-aware filtering.** The minimum credible frequency is derived from your pool size and ploidy, not from a fixed cutoff — see [The Filter Chain](#the-filter-chain).
 
 If you are weighing Pool-seq against individual sequencing, or checking whether your design fits what this pipeline assumes, start with [When to use PoolSeqFlow](#when-to-use-poolseqflow).
@@ -122,7 +122,7 @@ Each step is an independent Nextflow DSL2 module. Full detail in [Pipeline Steps
 
 **The run refuses to mix results from two settings.** Because steps skip on the existence of output files, an edited `parameters.config` or `metadata.csv` — or a different release of the pipeline — would otherwise leave one folder holding results produced under two configurations. Step 0 keeps a copy of each beside your results, compares them on every run, stops before any work happens, and names the outputs to delete. A version change is absolute: a project belongs to one release. [How →](#step-0-verify-environment)
 
-**One invocation, many parameter sets.** A run table lets you analyse the same reads against several references, or under several filter settings, in one go. Work the runs have in common — trimming, alignment, a reference dictionary — is done once rather than once per run, and only what genuinely diverges gets a directory of its own. A single run is unaffected and keeps its plain results tree. [How →](#multi-run)
+**One invocation, many parameter sets.** A run table lets you analyze the same reads against several references, or under several filter settings, in one go. Work the runs have in common — trimming, alignment, a reference dictionary — is done once rather than once per run, and only what genuinely diverges gets a directory of its own. A single run is unaffected and keeps its plain results tree. [How →](#multi-run)
 
 ---
 
@@ -160,7 +160,7 @@ Everything else is installed for you. `./PoolSeqFlow install` builds an isolated
 | SnpEff | 5.4.0c | Variant annotation (optional) |
 | OpenJDK | 25 | Runtime for FastQC, SnpEff and Nextflow |
 
-Pinning is deliberate. Pool-seq results depend on the exact behaviour of the pileup and filtering tools, and an unpinned environment would make two runs of the same config non-comparable.
+Pinning is deliberate. Pool-seq results depend on the exact behavior of the pileup and filtering tools, and an unpinned environment would make two runs of the same config non-comparable.
 
 #### Why not Windows
 
@@ -568,7 +568,7 @@ It also ends with a list of **files to move yourself**, and moves none of them. 
 
 One group in that list matters more than the rest. `.poolseqflow_params` and its neighbours are the records the change guard compares against — they are how "has anything changed since these results were produced" gets answered. Leave them behind and the next run finds no record, decides the project is new, and writes down your *current* configuration as though it had produced the results already on disk. The guard would then report that nothing has changed, having quietly stopped guarding.
 
-**Treat the migrated config as a starting point, not an answer.** Migration can only recognise a parameter that still exists *and still means the same thing*. A parameter whose behaviour changed while its value still looks like an ordinary number or string is carried across and is silently wrong. Always read the report, and compare afterwards.
+**Treat the migrated config as a starting point, not an answer.** Migration can only recognize a parameter that still exists *and still means the same thing*. A parameter whose behavior changed while its value still looks like an ordinary number or string is carried across and is silently wrong. Always read the report, and compare afterwards.
 
 ### The manual route
 
@@ -642,7 +642,7 @@ These are structural assumptions. If your data does not match, the pipeline will
 
 ### Where PoolSeqFlow ends
 
-PoolSeqFlow produces **allele frequency tables**. It deliberately stops there. It does not compute F~ST~, run CMH or other tests for allele frequency change, generate `sync`/`mpileup` formats for PoPoolation, call structural variants or copy number, or perform any population-genetic modelling.
+PoolSeqFlow produces **allele frequency tables**. It deliberately stops there. It does not compute F~ST~, run CMH or other tests for allele frequency change, generate `sync`/`mpileup` formats for PoPoolation, call structural variants or copy number, or perform any population-genetic modeling.
 
 That is a scope decision, not an omission: the statistics you want depend entirely on your design, and a per-site frequency table is the input nearly all of them take. Annotation via SnpEff is included because it operates per-variant and needs the same reference build the pipeline already indexed.
 
@@ -704,10 +704,67 @@ Only the last two need a [run table](#multi-run); everything above them is a sin
 
 The `RG_Sample` decision is the one most often got wrong by accident, because two FASTQ pairs from one pool look exactly like two ordinary samples. It is covered in full in [Metadata](#rg_sample-decides-what-counts-as-a-sample).
 
+## Scientific Rationale
+<!--@ page: scientific-rationale -->
+
+This page is about the **tools this pipeline chose and why**, not about pooled sequencing as a method. That method is established and well described elsewhere — see [Futschik & Schlötterer 2010](#ref-futschik2010markers) for the estimation problem and [Kofler et al. 2011a](#ref-kofler2011popoolation) for the toolkit most people met it through.
+
+What follows matters because a pooled allele frequency is a measurement, and every stage between the reads and that number can bias it. A choice that is harmless when you are calling genotypes in one individual is not necessarily harmless when the quantity of interest is a fraction.
+
+Every run writes its own `CITATIONS.md` and `references.bib` beside the results, listing the tools it actually invoked with the versions that ran. Those are the citations to use in a methods section; this page is the argument for the choices.
+
+### Trimming: Trim Galore, then cutadapt
+
+Trim Galore is an excellent adapter trimmer, and it is at its best when it is given the adapters rather than left to detect them. Its thread handling is the awkward part — `--cores N` runs rather more than N threads — which is why the pipeline works out the core allocation for you rather than passing a number straight through.
+
+Running cutadapt afterwards costs time the pipeline would otherwise save. It is worth it because trimming can leave the retained portion of a read skewed in base composition, and the clipping step exists to keep the A/T and G/C ratios near 1 across the length of the read. **For frequency estimation a compositional bias is not cosmetic** — it moves the numbers, and it moves them in a way nothing downstream can detect.
+
+### Alignment: bwa, with a fixed batch size
+
+bwa is the standard, and there is little to argue about. One detail is worth stating because it is easy to lose: the pipeline passes **`-K 10000000`**, which fixes how many input bases each batch processes regardless of the thread count. Without it, bwa's output depends on how many cores it was given, so the same reads aligned on two machines can differ. With it, the alignment is reproducible.
+
+### Cleaning and calling: samtools and bcftools, not GATK
+
+This is a considered preference rather than a default. Working through GATK and Picard in earlier versions of this pipeline, the read-group handling in particular was a recurring source of trouble; the samtools equivalents are less forgiving to use but they produce a cleaner result. Everything Picard was doing in the earlier pipelines, here is now samtools.
+
+The same goes for calling. Recent comparisons of germline callers put samtools/bcftools among the accurate ones and consistently the most efficient — short runtimes and low memory where the deep-learning callers need far more of both. That is the basis for using it here, and call quality matters more in this setting than it does when the output is a genotype: an allele frequency inherits every error in the underlying counts rather than rounding it away.
+
+**Those comparisons do not measure what this pipeline needs, and it is worth being clear about that.** They benchmark genotype calls on a single diploid individual against a truth set. This pipeline wants allele frequencies from a pool, and precision on a genotype call says little directly about the bias in a frequency derived from allele depths. The choice here rests on efficiency, on the `AD` handling being what the rest of the pipeline reads, and on long familiarity with the tool's failure modes — not on a benchmark that measured a different quantity.
+
+The cleaning step is deliberately strict: anything that is not a properly paired read is discarded. That costs a little depth, which is the right trade when the quantity being measured is a ratio.
+
+### Major-allele reassignment
+
+After calling, each site is re-polarized so that the reference allele is the one most common across the whole cohort, rather than whichever allele happened to be in the reference genome.
+
+The reason is that in pooled data **the reference allele carries no special status.** It is an accident of which individual was sequenced to build the assembly. Re-polarizing on cohort totals makes the frequency tables consistent with each other and stops downstream analyses from treating an arbitrary allele as a baseline. One consequence follows and is worth knowing: this is a property of the cohort, so a frequency from a six-pool run is not the same quantity as a frequency from a twelve-pool run.
+
+### Depth, and the false-positive filter
+
+These two are simple to state and take a moment to sit with.
+
+Each pool has a **detection limit** set by how many chromosomes went into it: `1 / (ploidy × poolSize)` is the smallest allele fraction that pool can physically produce — one chromosome out of all of them. The limit is set to half of this value, (`1 / (2 x ploidy × poolSize)`) as a statistical threshold. Anything below it is noise rather than a rare allele, because the pool contains nothing that could generate it.
+
+The filter therefore applies a threshold **per pool**, not one threshold for the whole file. A pool of ten individuals and a pool of a hundred have different resolutions, and judging both at the same cut-off either discards real variation in the large pool or keeps noise in the small one.
+
+Clearing that limit in one pool is not by itself a reason to keep a site, so a second choice sits beside it: **`sampleThreshold`**, the proportion of pools in which an allele has to clear its own detection limit before the site survives. It defaults to `0.2`, and it is converted to a count — with six pools, an allele must be detectable in at least two of them.
+
+**This one is deliberately yours to set, because the right value depends on what you are asking.** A high threshold keeps variation that is shared across the cohort and discards anything private to one population — which is correct if you are estimating differentiation over standing variation, and exactly wrong if you are looking for a sweep or a locally adapted allele, since the sites carrying your signal are the ones a high threshold removes first. A low threshold keeps those, and admits more noise with them. The default is permissive on purpose: it is easier to notice that a table is noisy than to notice that the site you were looking for was discarded before you saw it.
+
+The point that takes longer to absorb is that neither of these is a **confidence filter**. It is not saying an allele is probably wrong. It is saying that the experiment as designed could not have detected it, so a number reported there describes the sequencing rather than the population. Depths are recomputed alongside it because once the surviving allele set changes, the counts a frequency is derived from have to change with it.
+
+### Annotation: snpEff
+
+Standard, optional, and unchanged in approach. It runs only when you ask for it, and a run that did not annotate does not cite it.
+
+### The analysis layer
+
+The modules that read these tables — what each one estimates, what it assumes and what it cannot tell you — are documented with the modules themselves in [Shipped Modules](#shipped-modules). This section will grow as they do.
+
 ## Design Decisions
 <!--@ page: design-decisions -->
 
-PoolSeqFlow departs from stock Nextflow practice in several places. Each departure was made for a reason, and each one costs something. This page states both, so you can tell whether a behaviour you are seeing is a bug or the design working as intended.
+PoolSeqFlow departs from stock Nextflow practice in several places. Each departure was made for a reason, and each one costs something. This page states both, so you can tell whether a behavior you are seeing is a bug or the design working as intended.
 
 ---
 
@@ -780,13 +837,13 @@ On a cluster this maps onto a node's local disk and the network volume behind it
 
 **The decision.** One `threads` value sizes the whole run. Every tool's core count is derived from it through a fixed ladder, and each process reserves what it actually uses.
 
-**Why.** The obvious alternative — divide the available cores evenly among concurrent tasks — assumes tools scale linearly with threads. They do not. Each tool here is quantised to the point where its published scaling flattens out, so extra cores go to another task instead of into diminishing returns.
+**Why.** The obvious alternative — divide the available cores evenly among concurrent tasks — assumes tools scale linearly with threads. They do not. Each tool here is quantized to the point where its published scaling flattens out, so extra cores go to another task instead of into diminishing returns.
 
 The sharper reason is that a tool's advertised thread count is not always what it spawns. Trim Galore's `--cores N` runs **N+4** threads: N workers, two decompressors, a batcher and a writer. A process that declares `cpus 4` and then passes `--cores 4` is really using eight. Nextflow decides how many tasks to run concurrently by comparing `cpus` against available resources, so an under-declared task causes oversubscription — the machine ends up running twice the work it thinks it is.
 
 PoolSeqFlow reserves Trim Galore's full footprint and maps back to the worker count in the script, so the declaration and the reality agree. The full ladder is in [Resources](#resources).
 
-**What it costs.** Honest accounting is slower than optimistic accounting on a small machine. At `threads = 8`, a single trimming task reserves all eight cores, so samples are trimmed one at a time. Earlier behaviour ran three concurrently at twelve threads each on an eight-core box — faster in wall-clock, and a 4.5× oversubscription. A request larger than the machine now fails immediately rather than quietly degrading:
+**What it costs.** Honest accounting is slower than optimistic accounting on a small machine. At `threads = 8`, a single trimming task reserves all eight cores, so samples are trimmed one at a time. Earlier behavior ran three concurrently at twelve threads each on an eight-core box — faster in wall-clock, and a 4.5× oversubscription. A request larger than the machine now fails immediately rather than quietly degrading:
 
 ```text
 Process requirement exceeds available CPUs -- req: 12; avail: 8
@@ -855,7 +912,7 @@ If you are trying to work out why a variant you expected is missing, read this p
 | 2 | Depth capping | Reads at a position | Reads above a ceiling measured from the sample's own coverage | `capBAM.maxDepth` or `param_capMaxDepth` |
 | 3 | Pileup filter | Reads at a position | Low mapping quality, low base quality; optionally caps depth again | `variantCall.baseQualMin`, `variantCall.varQualMin`, `variantCall.maxDepth` |
 | 4 | Variant calling | Sites | Non-variant sites | `variantCall.callOptions` |
-| 5 | Major-allele normalisation | Allele order | Nothing — it rewrites | — |
+| 5 | Major-allele normalization | Allele order | Nothing — it rewrites | — |
 | 6 | False-positive filter | Alternate alleles | Alleles without cross-sample support | `poolSize` or `param_poolSize`, `ploidy`, `filterFalsePositives.sampleThreshold` |
 | 7 | Depth & quality filter | Sites | Sites where any sample is under-covered, and low-QUAL sites | `vcffilter.minDP`, `vcffilter.minQUAL` |
 | 8 | SNP/INDEL split | Sites | Splits into two files; nothing is lost | — |
@@ -960,9 +1017,9 @@ bcftools call -m -A -v -Ov
 | `-A` | Keep **all** alternate alleles from the pileup | Without this, bcftools discards alternates it considers unlikely under a genotype model — exactly the low-frequency alleles a pool is meant to detect |
 | `-v` | Variant sites only | Invariant sites are dropped |
 
-`-A` is the flag that makes this a Pool-seq caller rather than a general one. The default behaviour prunes alternate alleles that no plausible genotype supports, which is sound for an individual and wrong for a pool, where a true allele at frequency 0.01 supports no genotype at all.
+`-A` is the flag that makes this a Pool-seq caller rather than a general one. The default behavior prunes alternate alleles that no plausible genotype supports, which is sound for an individual and wrong for a pool, where a true allele at frequency 0.01 supports no genotype at all.
 
-### 5. Major-allele normalisation (step 7)
+### 5. Major-allele normalization (step 7) { #major-allele-normalization }
 
 `bin/MajorAlleleToRef.py` re-encodes the VCF so the **most-read allele is the reference**. It does not remove anything; it rewrites.
 
@@ -1199,7 +1256,7 @@ Use these when a frequency alone is not enough: a frequency of 0.5 from 400 read
 
 ### Reading the tables correctly
 
-**`REF` is the major allele, not the reference genome's base.** Step 7 re-encodes each site so the most-read allele becomes `REF` ([why](#5-major-allele-normalisation-step-7)). This makes rows comparable across samples and runs, but it means `REF` will often disagree with the FASTA you supplied. If you need the assembly's base, take it from the assembly.
+**`REF` is the major allele, not the reference genome's base.** Step 7 re-encodes each site so the most-read allele becomes `REF` ([why](#major-allele-normalization)). This makes rows comparable across samples and runs, but it means `REF` will often disagree with the FASTA you supplied. If you need the assembly's base, take it from the assembly.
 
 **"Most-read" is decided across the whole cohort.** A sample where the cohort-minor allele dominates locally will show a `REF` frequency below 0.5. That is a real signal, not a defect.
 
@@ -1224,7 +1281,7 @@ Those two are the whole of it. Every VCF step 7 produces — `_sort`, `_sort_fp`
 
 !!! note "Annotation is applied to the unfiltered call set"
 
-    Step 8 runs on the output of step 6, in parallel with the frequency branch rather than after it. So `<name>_annotated.vcf` contains sites that the step 7 filters removed, and its allele encoding is the original reference-based one, not the major-allele normalised one. To attach annotations to your frequency tables, join on `CHROM`/`POS` and expect unmatched rows on the annotation side.
+    Step 8 runs on the output of step 6, in parallel with the frequency branch rather than after it. So `<name>_annotated.vcf` contains sites that the step 7 filters removed, and its allele encoding is the original reference-based one, not the major-allele normalized one. To attach annotations to your frequency tables, join on `CHROM`/`POS` and expect unmatched rows on the annotation side.
 
 ### The reports
 
@@ -1279,7 +1336,7 @@ Change one of these and your output changes. Step 0 records them and **refuses t
 | `ploidy` | Ploidy; same threshold. Can be set per run | [Filtering & Frequency](#poolsize-and-ploidy) |
 | `filterFalsePositives.sampleThreshold` | Fraction of samples that must support an allele | [Filtering & Frequency](#samplethreshold) |
 | `capBAM.maxDepth` | The depth ceiling put on each BAM. Can be set per sample in `metadata.csv` | [Variant Calling](#capping-each-bam) |
-| `variantCall.*` | Pileup and calling behaviour, including a flat depth cap on top of the measured one | [Variant Calling](#variant-calling) |
+| `variantCall.*` | Pileup and calling behavior, including a flat depth cap on top of the measured one | [Variant Calling](#variant-calling) |
 | `vcffilter.minDP`, `vcffilter.minQUAL` | Post-call depth and quality filtering | [Filtering & Frequency](#depth-and-quality) |
 | `bwa.minScoreOutput`, `bwa.batchSize`, `bwa.options` | How reads are aligned in the first place, and whether that is reproducible across machines | [Step 3](#step-3-align) |
 | `cleanBAM.filter`, `cleanBAM.required`, `cleanBAM.mapq` | Which alignments reach the pileup | [Alignment & Cleaning](#alignment-cleaning) |
@@ -1365,7 +1422,7 @@ The tables above sort parameters by *what they affect*. The other axis is *how w
 | **Per run** | a column in the run table | Every sample of one run — [Multi-run](#multi-run) |
 | **Per sample** | a `param_*` column in `metadata.csv` | The rows that carry a value |
 
-**Any parameter can be set globally or per run.** The run table takes any parameter name as a column, spelt as `parameters.config` spells it.
+**Any parameter can be set globally or per run.** The run table takes any parameter name as a column, spelled as `parameters.config` spells it.
 
 **Per-sample is a closed list**, because each one needs code that knows to look for it:
 
@@ -1413,7 +1470,7 @@ software {
 }
 ```
 
-Replacing a command with an absolute path makes the pipeline use a system installation instead of the conda environment. This is supported but not recommended: the environment pins exact builds because Pool-seq results depend on the precise behaviour of the pileup and filtering tools, and a version mismatch will not announce itself. Use it to work around a genuine packaging problem, not as a default.
+Replacing a command with an absolute path makes the pipeline use a system installation instead of the conda environment. This is supported but not recommended: the environment pins exact builds because Pool-seq results depend on the precise behavior of the pileup and filtering tools, and a version mismatch will not announce itself. Use it to work around a genuine packaging problem, not as a default.
 
 **Three of them cannot be repointed.** `rsync`, `diff` and `find` are checked at the start of a run along with everything else, so a missing one is reported before any work begins — but a path you give for them is not used. They are called by name from the small scripts that move a finished file into permanent storage, and those scripts read none of your settings. If you need a different one, change what is on your `PATH`.
 
@@ -1456,7 +1513,7 @@ The **name** of a column is what decides how it is treated. There is no second s
 | `cov_*` | A covariate — measured on the pool, but neither set nor the response. A cage temperature, an altitude, a collection site. See [Covariates](#covariates) |
 | anything else | Yours. A lane, a batch, a note, a measurement from another experiment — whatever this study needs recorded |
 
-**`RG_` and `param_` are closed lists, and an unrecognised one is refused rather than ignored.** For `RG_` that stops a typo quietly losing a tag. For `param_` the reason is sharper: a `param_` column the pipeline did not recognise would be a setting you had written down, could see in your own file, and that was never applied to anything.
+**`RG_` and `param_` are closed lists, and an unrecognized one is refused rather than ignored.** For `RG_` that stops a typo quietly losing a tag. For `param_` the reason is sharper: a `param_` column the pipeline did not recognize would be a setting you had written down, could see in your own file, and that was never applied to anything.
 
 **`exp_`, `pt_` and `cov_` are three prefixes because only `exp_` identifies a series.** The analysis layer works out which pools are one thing measured repeatedly from your `exp_` columns. A trait value differs from pool to pool, and so does a cage temperature — either one recorded as an `exp_` column would split every series into single timepoints, **quietly**, because a design with no repeated measurements is a legal design. Keeping them apart is what stops that, structurally, rather than by remembering a setting.
 
@@ -1487,7 +1544,7 @@ The refusal is a hard one, and it stops **every** analysis rather than only the 
 | `RG_Platform` | `PL` | Sequencing platform, e.g. `ILLUMINA` |
 | `RG_PlatformUnit` | `PU` | Platform unit — flowcell, lane |
 | `RG_Description` | `DS` | Free text |
-| `RG_Center` | `CN` | Sequencing centre |
+| `RG_Center` | `CN` | Sequencing center |
 | `RG_Date` | `DT` | Run date, ISO 8601, e.g. `2024-03-07` |
 | `RG_FlowOrder` | `FO` | Flow order |
 
@@ -1506,7 +1563,7 @@ Line endings are not your problem. The file is parsed as CSV, so a file saved fr
 | `Sample1`, `Sample2`, `Sample3` | `Sample1` `Sample2` `Sample3` |
 | `Population1`, `Population1`, `Sample3` | `Population1` `Sample3` |
 
-**Give every pool its own `RG_Sample`** when you want them analysed separately. This is what most runs want, and it is the safe default — and it is what you get by leaving the column out, since it falls back to `SampleID`.
+**Give every pool its own `RG_Sample`** when you want them analyzed separately. This is what most runs want, and it is the safe default — and it is what you get by leaving the column out, since it falls back to `SampleID`.
 
 **Share an `RG_Sample` deliberately** when several FASTQ pairs are really the same biological pool:
 
@@ -1600,7 +1657,7 @@ Before your first run:
 ## Multi-run
 <!--@ page: multi-run | nav: Multi-run -->
 
-Sometimes one set of reads needs analysing more than once: against two reference genomes, under three trimming stringencies, at a range of filter settings. A **run table** describes those analyses in one file, and one invocation carries them all out.
+Sometimes one set of reads needs analyzing more than once: against two reference genomes, under three trimming stringencies, at a range of filter settings. A **run table** describes those analyses in one file, and one invocation carries them all out.
 
 The reason to do it this way rather than copying the project is that the runs have most of their work in common. Two runs that differ only in filter thresholds share every step up to variant calling, and that work is done **once** rather than once per run.
 
@@ -1625,7 +1682,7 @@ Four rules, and they are all of them.
 
 **One column must be `RunID`.** It names the run and becomes a directory, so keep it to letters, digits, dot, dash and underscore.
 
-**Every other column is a parameter name, spelt exactly as `parameters.config` spells it, with no `params.` prefix.** Nested ones are dotted: `trim_galore.quality`, `variantCall.maxDepth`. Any parameter may be varied, including ones the pipeline normally computes for itself. A column that does not name a parameter is refused rather than ignored — that is a typo, not a preference.
+**Every other column is a parameter name, spelled exactly as `parameters.config` spells it, with no `params.` prefix.** Nested ones are dotted: `trim_galore.quality`, `variantCall.maxDepth`. Any parameter may be varied, including ones the pipeline normally computes for itself. A column that does not name a parameter is refused rather than ignored — that is a typo, not a preference.
 
 **A blank cell means "take it from `parameters.config`".** That is what keeps a table as short as the difference between the runs. One consequence worth knowing: there is no way to set a parameter to an empty string here, because blank already means something else.
 
@@ -1705,7 +1762,7 @@ Every tool's thread count is derived from `threads`. **Do not set the per-tool c
 
 Three details explain the shape of that table.
 
-**Tools are quantised to where their scaling flattens.** BWA and cutadapt take the largest power of two at or below `threads`, capped at 8. Past that point the published scaling for these tools returns very little, so the cores are better spent on another task. FastQC is given two because step 2 only ever hands it a pair of files, and one thread per file is all it can use.
+**Tools are quantized to where their scaling flattens.** BWA and cutadapt take the largest power of two at or below `threads`, capped at 8. Past that point the published scaling for these tools returns very little, so the cores are better spent on another task. FastQC is given two because step 2 only ever hands it a pair of files, and one thread per file is all it can use.
 
 **Trim Galore's `--cores N` really runs N+4 threads** — N workers, two decompressors, a batcher and a writer. The ladder picks the largest N whose *full footprint* still fits in `threads`, which is why 4 cores yields `--cores 1` rather than `--cores 4`. The `--cores 1` case is the exception: it bypasses the worker pool entirely and is genuinely single-threaded.
 
@@ -1834,7 +1891,7 @@ The assembled command is `--fastqc --paired --retain_unpaired -q 25`, plus adapt
 
 Autodetection samples the first reads of a file and matches against known adapter sequences. Set `autodetect = false` and supply both sequences when:
 
-- your library used a custom or non-standard adapter that will not be recognised;
+- your library used a custom or non-standard adapter that will not be recognized;
 - the trimming reports in `Output/Reports/Trimming/` disagree between samples of the same library, which means detection is not landing on a consistent answer;
 - you need the run to be exactly reproducible against a specific adapter regardless of what the first reads happen to contain.
 
@@ -1874,7 +1931,7 @@ A row that sets both replaces the run's adapter setting for that sample, whateve
 
 Give both or neither. One adapter on its own is a setting that cannot be acted on, so it is refused rather than half-applied.
 
-There is one combination the pipeline cannot honour, and it stops rather than guessing: if you have pinned `trim_galore.options` by hand, that string is used exactly as written and a per-sample adapter has nowhere to go. The run stops, names the samples that set adapter columns, and asks you to remove either the pin or the columns.
+There is one combination the pipeline cannot honor, and it stops rather than guessing: if you have pinned `trim_galore.options` by hand, that string is used exactly as written and a per-sample adapter has nowhere to go. The run stops, names the samples that set adapter columns, and asks you to remove either the pin or the columns.
 
 ### Stage 2 — Composition-aware clipping {: #composition-aware-clipping }
 
@@ -2171,7 +2228,7 @@ Variant calling is a **single joint task** over all BAMs, not one task per sampl
 
 Step 7 takes the joint VCF that step 6 produced and turns it into the frequency tables you actually read. Between the two sit the filters that decide which of the called sites survive.
 
-The order is fixed — stages 5 to 9 of [The Filter Chain](#the-chain-at-a-glance): normalise to the major allele, drop alleles too few samples support, drop sites too thin or too poorly called, split SNPs from indels, then convert allelic depths to frequencies. Only two of those stages have parameters, and both are analysis-affecting.
+The order is fixed — stages 5 to 9 of [The Filter Chain](#the-chain-at-a-glance): normalize to the major allele, drop alleles too few samples support, drop sites too thin or too poorly called, split SNPs from indels, then convert allelic depths to frequencies. Only two of those stages have parameters, and both are analysis-affecting.
 
 | Parameter | What it does |
 |---|---|
@@ -2242,7 +2299,7 @@ The comparison is `count >= n_samples × sampleThreshold`, so the effective requ
 
     With eight samples, an allele found in **one** pool is discarded regardless of how frequent it is there — one does not reach two. If private or population-specific variation is the subject of your study, this default is wrong for you.
 
-| Value | Behaviour | Suits |
+| Value | Behavior | Suits |
 |---|---|---|
 | `0.2` (default) | Needs roughly a fifth of samples | Shared, evolving variation across comparable pools |
 | Low enough to require 1 sample | Any single pool can carry an allele | Private variants, small sample counts, discovery runs |
@@ -2297,7 +2354,7 @@ The last row is worth noting as a trap: `-i "FMT/DP>=20"` reads like the obvious
 
 !!! note "Genotype-level filtering is not available here"
 
-    A per-sample depth floor — blanking one pool's frequency while keeping the row — cannot be done in the VCF, because vcftools and bcftools both express a genotype-level verdict by rewriting `GT`, and `GT` is set to `./.` throughout by major-allele normalisation ([why](#5-major-allele-normalisation-step-7)). Frequency conversion reads `AD`. If you need per-sample blanking rather than whole-site removal, it has to happen in `bin/depth2freq.awk`, which already computes each sample's depth as the denominator.
+    A per-sample depth floor — blanking one pool's frequency while keeping the row — cannot be done in the VCF, because vcftools and bcftools both express a genotype-level verdict by rewriting `GT`, and `GT` is set to `./.` throughout by major-allele normalization ([why](#major-allele-normalization)). Frequency conversion reads `AD`. If you need per-sample blanking rather than whole-site removal, it has to happen in `bin/depth2freq.awk`, which already computes each sample's depth as the denominator.
 
 ### Output naming
 
@@ -2504,7 +2561,7 @@ Each level gets a `position`: the number itself for `numerical`, days from the e
 
 #### `unit`, required for `numerical`
 
-The numbers are distances, so a rate is meaningful and has to be labelled — `0.003 per unit` is not an answer. One of:
+The numbers are distances, so a rate is meaningful and has to be labeled — `0.003 per unit` is not an answer. One of:
 
 | | |
 |---|---|
@@ -2533,7 +2590,7 @@ Matching is exact: `Pre` and `pre` are different. A level in your metadata that 
 | `baseline week2 week12` | `baseline week12 week2` | `baseline week2 week12` |
 | `pre post` | `post pre` | `pre post` |
 
-When alphabetical is in use, PoolSeqFlow compares it against a sort that reads embedded digits as numbers, and **warns when the two disagree** — that catches the first two rows above. It cannot catch `pre`/`post`: there is nothing in those strings to disagree about, and no software can know which came first. **That one is yours**, and the defence is that the verification report prints the levels in the order it will use them, immediately above your results.
+When alphabetical is in use, PoolSeqFlow compares it against a sort that reads embedded digits as numbers, and **warns when the two disagree** — that catches the first two rows above. It cannot catch `pre`/`post`: there is nothing in those strings to disagree about, and no software can know which came first. **That one is yours**, and the defense is that the verification report prints the levels in the order it will use them, immediately above your results.
 
 #### `format` and `locale`, for `datetime`
 
@@ -2579,7 +2636,7 @@ timeVar { kind = 'datetime'; format = 'd MMMM yyyy'; locale = 'fr' }   // 5 déc
 
 #### What the report tells you, and why to read it
 
-Two mistakes are impossible to catch — an ambiguous date pattern, and a categorical order with no lexical clue. The defence is that every run prints what it did, in the order it will use, immediately above the results:
+Two mistakes are impossible to catch — an ambiguous date pattern, and a categorical order with no lexical clue. The defense is that every run prints what it did, in the order it will use, immediately above the results:
 
 ```
 TIME VARIABLE:         exp_time, datetime, 'dd/MM/yyyy' (fr)
@@ -2646,15 +2703,15 @@ SERIES:                    2 conditions, 3 biological replicates each, 6 technic
 SERIES:                    36 series over 4 timepoints, from 6 independent units
 ```
 
-Read those three lines. A technical column left out of `technicalRep` is read as a **condition** — one treatment silently becomes several, and a test is handed strata that are the same DNA. Nothing can detect that, for the same reason nothing can detect `dd/MM` against `MM/dd`: both readings are internally consistent. Printing the partition is the whole defence.
+Read those three lines. A technical column left out of `technicalRep` is read as a **condition** — one treatment silently becomes several, and a test is handed strata that are the same DNA. Nothing can detect that, for the same reason nothing can detect `dd/MM` against `MM/dd`: both readings are internally consistent. Printing the partition is the whole defense.
 
 The counts are per unit and given as a range when they vary, because a design where one sample was sequenced twice for validation and the rest once is perfectly ordinary and a single number would be a plausible-looking lie.
 
-**And a design PoolSeqFlow cannot see through:** three cages sequenced on two lanes each, with the lanes neither merged nor declared technical but labelled `exp_replicate = 1..6`, has three independent units and claims six. The frame reports what you declared. The line `6 pools from 6 libraries` — where a merged design would say `from 12` — is the number to check.
+**And a design PoolSeqFlow cannot see through:** three cages sequenced on two lanes each, with the lanes neither merged nor declared technical but labeled `exp_replicate = 1..6`, has three independent units and claims six. The frame reports what you declared. The line `6 pools from 6 libraries` — where a merged design would say `from 12` — is the number to check.
 
 #### When a series is missing a timepoint
 
-`analysis.metadata.series.incomplete` decides, and it defaults to `fail` because a ragged panel analysed as a complete one is a wrong answer that looks like a right one.
+`analysis.metadata.series.incomplete` decides, and it defaults to `fail` because a ragged panel analyzed as a complete one is a wrong answer that looks like a right one.
 
 | | |
 |---|---|
@@ -2767,7 +2824,7 @@ For a `nominal` phenotype the frame carries **no number at all** for each pool �
 
 **Counts and percentages are `quantitative`.** A phenotype is a *predictor*, and a predictor carries no distributional assumption — that a bristle count is really Poisson changes nothing here.
 
-**A trait that varies WITHIN a pool is not a nominal phenotype, it is a composition.** If a pool is 30% spotted, 50% striped and 20% curly, its phenotype is not "striped" — labelling it by the majority morph discards the other 70%. Record it as one quantitative column per morph, `pt_spotted = 0.3` and so on, and analyse them one at a time. **`nominal` is correct only when each pool was built homogeneous for the trait**, which is a real design but a different one.
+**A trait that varies WITHIN a pool is not a nominal phenotype, it is a composition.** If a pool is 30% spotted, 50% striped and 20% curly, its phenotype is not "striped" — labeling it by the majority morph discards the other 70%. Record it as one quantitative column per morph, `pt_spotted = 0.3` and so on, and analyze them one at a time. **`nominal` is correct only when each pool was built homogeneous for the trait**, which is a real design but a different one.
 
 **Two kinds that are real and are not supported**, named here so that nobody declares one by accident:
 
@@ -2792,7 +2849,7 @@ For `ordinal` the order **is** the scale, so it carries the same weight. For `no
 
 **A level no pool has is kept, not refused.** A group you have not sequenced yet is legitimate, so the run continues and the report names the unused level. A misspelling looks exactly the same, which is why that line is worth reading.
 
-There is no check that can catch this, and pretending otherwise would be worse than saying so. What you get instead is the same defence the time levels get: **the verification report prints every pool's value as you wrote it beside the number it became**, and the published folder's `README.md` repeats it.
+There is no check that can catch this, and pretending otherwise would be worse than saying so. What you get instead is the same defense the time levels get: **the verification report prints every pool's value as you wrote it beside the number it became**, and the published folder's `README.md` repeats it.
 
 ```
 PHENOTYPE:             pt_status, binary, 'control' = 0 and 'case' = 1
@@ -2810,7 +2867,7 @@ Read those two lines before you read any result. They are where a reversed encod
 
 **A group holding one pool is reported too.** It contributes no within-group variance, so any comparison against it rests on that single pool — legitimate, occasionally unavoidable, and not something a table of group means shows you.
 
-You can record as many `pt_` columns as you like — `analysis.metadata.phenotype.column` chooses one. To analyse several, run the module once per phenotype with [`analysis.folderName`](#analysis-folder-name) set, so each result lands in a folder of its own and says which phenotype produced it. That is deliberately not a list: a folder holding three answers under one name is a folder nobody can cite.
+You can record as many `pt_` columns as you like — `analysis.metadata.phenotype.column` chooses one. To analyze several, run the module once per phenotype with [`analysis.folderName`](#analysis-folder-name) set, so each result lands in a folder of its own and says which phenotype produced it. That is deliberately not a list: a folder holding three answers under one name is a folder nobody can cite.
 
 ### Covariates { #covariates }
 
@@ -2846,7 +2903,7 @@ What declaring one buys instead is that the value **travels with the result**. T
 
 If a covariate turns out to explain your result, the answer is a better design, not a bigger model.
 
-### Which runs to analyse { #analysis-runs }
+### Which runs to analyze { #analysis-runs }
 
 `analysis.runs` chooses which of your runs an invocation covers:
 
@@ -3171,7 +3228,7 @@ params {
 
 #### The compiled path { #basicstats-compiled }
 
-The per-site work — splitting a cell, summing it, squaring the frequencies — is where the time goes on a large genome, and there are two implementations of it. **`site_diversity.cpp`, compiled on your machine, is the default and you do not have to ask for it.** The other is vectorised R, which needs nothing at all:
+The per-site work — splitting a cell, summing it, squaring the frequencies — is where the time goes on a large genome, and there are two implementations of it. **`site_diversity.cpp`, compiled on your machine, is the default and you do not have to ask for it.** The other is vectorized R, which needs nothing at all:
 
 ```bash
 PoolSeqFlow analysis basicstats          # compiled, the default
@@ -3182,7 +3239,7 @@ For a whole project, `analysis.modules.basicstats.usecpp = false` in `basicstats
 
 **The analysis environment already has a compiler.** Conda's `r-base` depends on one — GCC on Linux, clang on macOS — because R needs a toolchain to build packages from source, so an environment built by `PoolSeqFlow analysis install` can compile on every platform this ships to. That is why the compiled path is the default rather than something to opt into.
 
-Both produce the same numbers, so the choice is only ever about time. Below a few million called sites there is nothing in it; on a genome running to tens of millions the compiled path is worth roughly forty times the vectorised one, and both are far ahead of computing site by site.
+Both produce the same numbers, so the choice is only ever about time. Below a few million called sites there is nothing in it; on a genome running to tens of millions the compiled path is worth roughly forty times the vectorized one, and both are far ahead of computing site by site.
 
 `site_diversity.cpp` is published in the results folder whether or not the run used it, and the header of `basicstats.R` beside it names the path that produced the numbers, the bin size and the number of workers.
 
@@ -3234,7 +3291,7 @@ Raw FASTQ reads
 
 ### What runs per sample and what runs once
 
-This distinction explains most of the pipeline's runtime behaviour.
+This distinction explains most of the pipeline's runtime behavior.
 
 | Step | Granularity | Notes |
 |---|---|---|
@@ -3256,7 +3313,7 @@ Under a run table, "once" means once per **variant** rather than once overall: r
 
 After variant calling the workflow forks, and the branches never rejoin:
 
-**Step 7** takes the raw VCF through major-allele normalisation, the cross-sample false-positive filter, depth and quality filtering, a SNP/INDEL split, and conversion to frequency tables. This is the analytical path.
+**Step 7** takes the raw VCF through major-allele normalization, the cross-sample false-positive filter, depth and quality filtering, a SNP/INDEL split, and conversion to frequency tables. This is the analytical path.
 
 **Step 8** takes the *same raw VCF* — not step 7's output — splits multiallelic sites, and annotates with SnpEff. So the annotated VCF contains sites step 7 removed, in the original reference encoding rather than the major-allele one. Joining the two requires matching on `CHROM`/`POS` and expecting unmatched rows ([details](#the-vcf-files)).
 
@@ -3839,6 +3896,302 @@ The two BAM directories dominate. If disk is tight, `Output/Aligned/` is the saf
 
 The peak on `mainDir` falls as the run proceeds, since each artifact leaves for `storageDir` as soon as the last step needing it finishes. A completed run leaves `Utilized/` empty.
 
+# Development History and Principles
+<!--@ section: development | nav: Development -->
+
+> *"A scientific judgment call is not a thing to automate — not by me, and not by anything I hand the work to."*
+
+Most of this manual is about running PoolSeqFlow. This section is about how it is built, who builds it, and why it takes the form it does.
+
+That is in the manual rather than in a README because it is a user's question, not a developer's. If you are going to base results on a tool, it matters whether anyone is still maintaining it, what happens when a method it implements is superseded, who checks that a change did not quietly alter a number, and how much of it and what parts of it was written with an AI agent and under what review. Those are all reasonable things to want answered before you commit an experiment to it, and none of them is answered by the parameter reference.
+
+Four pages, and they are meant to be read in order:
+
+- **[History](#how-poolseqflow-was-built)** — who wrote what, and when. It starts here because the commit log gives the wrong answer on its own.
+- **[Rationale](#why-a-living-repository)** — why this is a maintained tool rather than a paper, how I decide things, and who the tool is for.
+- **[Verification](#how-the-project-is-verified)** — what stops a change being wrong. This is what makes the rest of the section checkable rather than something to take on trust.
+- **[Claude Code](#involvement-of-claude-code)** — what was done with an AI agent from v2.0.0 onward, what it got wrong, and what the arrangement demands of the person reviewing it.
+
+> *"I am not claiming using an AI agent is a way to build something you do not understand. It is a way to build something you do understand, faster, if you are willing to spend the time saved on reading what's built."*
+
+## How PoolSeqFlow Was Built
+<!--@ page: history | nav: History -->
+
+PoolSeqFlow was written by one person over six years, and an AI coding agent has been involved for the most recent few months of that. Both halves of that sentence matter, and this page gives the dates so neither has to be taken on trust.
+
+### The three phases
+
+| When | What | Where it lives |
+|---|---|---|
+| 2020–2022 | The original pipeline and the false-positive filtering approach, written in **bash** during my PhD studies. The pool-seq reasoning — what a pool's size does to its detection limit, why a fixed reference is not a privileged one, which filters a real dataset needs — was settled here. | Not in this repository |
+| 2025–2026 | The rewrite into **Nextflow**: the step model, the resume logic, the parameter system. Published as **v1.0.0** and **v1.0.1**. The rewrite was needed because I was asked to look at some analysis for some of my collaborators and I decided to redo their variant calling. Without an access to a personal cluster, I needed proper parallelization, for which Nextflow was the perfect vehicle. | This repository, from v1.0.0 |
+| From v2.0.0, August 2026 | The **v2.x** series and the unreleased **v3.0.0**, developed with Claude Code: multi-run sharing, storage tiering, the metadata file, the analysis layer and its modules. | This repository |
+
+### The repository is younger than the tool
+
+This is worth stating plainly, because the obvious way to judge a project's history is to read its commit log, and here that gives the wrong answer.
+
+I have done little work after the first work was completed around June 2025. In around March 2026, I decided to package it and put it on my GitHub. That is the reason that the first commit is dated **2026-03-13**. **v1.0.0** was tagged thirteen days later, on **2026-03-26**, with 26 files in the tree. That is pretty much the "end" of the development of the main pipeline. A working pipeline existed before this repository did; what happened in March was that it was put under version control in order to release it. Everything in the first two phases above therefore has no commits behind it at all.
+
+The distribution compounds the impression. **Eight commits reach v1.0.1; the other 146 come after it**, and 126 of the 154 fall in a single month, August 2026. The fast development in August was also a necessity rather than just AI enabled development. During August 2026 I spent around 200 hours on the development to help a colleague use this tool and analyze data in September 2026. That is where I made all engineering decisions rather than scientific ones to make the tool accessible by a larger base of scientists. So the log reads as a project built almost entirely in one month — and that is the month the agent arrived. What it actually shows is when the work started being recorded at this granularity, not when it was done. The tree tells the same story from the other side: 26 files at v1.0.1, 163 today, almost all of the growth being the analysis layer, the test suite and this manual rather than the pipeline itself.
+
+### What the rewrite changed, and what it kept
+
+My original pipeline, written in bash between 2020 and 2022, had the main frame of the pipeline as it is today. It also included clipping from the ends during trimming (though not autodetected by the script), the basics of parallelization, basic automated RG tag handling, false-positive read filtering, and the logic of tool-by-tool core assignment according to tool benchmarks.
+
+When I decided to analyze new data in 2025 I had more experience in automation, so I rewrote the parts that mattered most.
+
+1. Writing the pipeline in Nextflow, to improve its reproducibility.
+2. Auto-detection of how much to clip from each end of each sample, from the FastQC output. The common practice is to look at a few FastQC reports after trimming, decide on one number, and clip that much from every sample. I wanted a more robust and automated version of that, so that most of the valuable sequencing data is retained, with confidence.
+3. Better multi-allele handling, and major-allele reassignment moved inside the pipeline. I had been doing that step during downstream analysis.
+4. A much more stringent cleaning step: everything but properly paired reads is eliminated. It costs a little depth, and I think that is a reasonable trade where allele frequencies matter.
+
+I kept a lot of it as it was.
+
+1. The clipping logic that keeps the A/T and G/C ratios near 1 after trimming, since those can drift once adapters are removed.
+2. The alignment and cleaning protocol that prepares BAM files for variant calling — though I replaced all the GATK tools with samtools.
+3. The variant calling protocol.
+4. The protocol for obtaining allele frequencies from VCF files.
+
+### The releases
+
+| Version | Tagged | What it was |
+|---|---|---|
+| v1.0.0 | 2026-03-26 | The first published release of the Nextflow pipeline |
+| v1.0.1 | 2026-06-02 | Fixes |
+| v2.0.0, v2.0.1 | 2026-08-12 | Nextflow 26 and Trim Galore 2.x; `parameters.config` becomes yours rather than tracked |
+| v2.1.0, v2.1.1 | 2026-08-15 | `migrate_config`; real CPU requests per process; the first change guards |
+| v2.2.0 | 2026-08-16 | The current release |
+| v3.0.0 | unreleased | The analysis layer, multi-run sharing, storage tiering |
+
+**v1.0.1 is the last release written without an agent; v2.0.0 is the first written with one.** That line is drawn at a tag rather than a date so it can be checked: `git diff v1.0.1..v2.0.0` is where the working method described in this section begins.
+
+Each release is archived on Zenodo and has a DOI of its own; see [Citation & License](#citing-poolseqflow) for which one to cite.
+
+### Why an agent was brought in
+
+The decision was about **accessibility**, not about writing code faster. A tool that only its author can install, configure and interpret is not a tool anyone else can use, and most of what v2.x and v3.0 added — the verification step that explains what it is checking, the migration path between releases, the preview, the manual this page is part of — is that problem rather than the science.
+
+It was also a considered decision rather than an experiment. At this point on a completely different side project I was using Claude Code on a larger codebase, which is where I realized that I could implement guardrails to keep pipeline's scientific reasoning and integrity intact.
+
+During the time I was working on this side project, I realized that using an agent I was able to speed up some mundane tasks like updating package bases, and making sure that a tool was compatible in multiple enviorenments. This was the other reason that contributed to my decision. Because two major tools in this pipeline, Nextflow and TrimGalore made major version releases and changes to how they worked between March 2026 and July 2026. I wanted to keep the tool up to date, but the maintenance cost of the tool was becoming higher for a single developer alone.
+
+### What the commit record does and does not show
+
+**It does not mark where the assisted work begins.** Two commits carry a `Co-Authored-By` trailer, both from September 2026, because the convention was adopted late rather than at the start. The trailer marks two commits; it does not draw the boundary. The boundary is **v2.0.0**, stated above and in the release table, and [Involvement of Claude Code](#involvement-of-claude-code) says what the work on either side of it actually looked like.
+
+**What the trailer marks is the commit, not the code — which is the opposite of how it reads.** Work is left uncommitted until I have reviewed it in the working tree, and the commits are mine: since v2.0.0 the median commit changes **three files**. Those two commits cover a change of 47 and 22 files, with about 3,300 insertions each and messages of 39 and 41 lines where one line is normal. The changes in them had been reviewed as they landed, like every other change. What was done with the agent was the *packaging* — deciding to separate the additions into two commits rather than one, and writing them out in that much detail. So the trailer records help composing a commit, and a reader who takes it as marking AI-written code has it backwards.
+
+### AI generated text and responsibility
+
+This documentation contains AI generated text and a lot of it (This section is not one of them). Every piece of text that is in this project came to life as a result of hours of discussion with the agent and after a lot of corrections by me. What this project does not contain is unreviewed text. I have reviewed every sentence heavily, edited them and made sure each statement was true and accurate. So the responsibility of all text is solely on me. I believe this is an important point in the AI use, we cannot abdicate responsibility of our words and actions to the tools we use.
+
+I discuss the academic publishing system, and why this project is not being published in academic journals, in [Why a Living Repository](#why-this-is-not-going-to-a-journal). Another important point is that the same system is also stigmatizing the AI use today. However, as a person who grew up with a completely different language, I can see how AI can remove language barriers for researchers from all backgrounds and democratize scientific research. To be clear, by any means, I am not saying AI business model is something I support with no reservations. I keep my reservations on the developments and I want to remain clear eyed about it. But as a tool, generative AI has potentials to unlock doors to so many skilled people who have been denied opportunity because of language barriers, and I believe this includes neurodivergent people too.
+
+
+## Why a Living Repository
+<!--@ page: principles | nav: Rationale -->
+
+I did not write PoolSeqFlow to accompany a paper. The tool, and this manual explaining the reasoning inside it, are the publication. That is a deliberate choice and this page is the argument for it, along with how it changes the way I work.
+
+### A study is finished by design; the methods underneath it are not
+
+When a study goes into a journal it stops. It is correct as of its publication date and it stays that way — the analysis frozen, the software version frozen, the statistics frozen at whatever the field was doing that year. That is fine for a record of what was observed. It is not fine for the methods, because the methods keep moving. I read papers now about how to combine evidence across replicated experiments that describe approaches which simply did not exist when I was learning this work, and any study that used the old approach is still sitting there using it.
+
+I want my science to stay alive rather than stop at the moment I published it. A result belongs to when it was produced. A method should not.
+
+The clearest illustration is a tool most people in this field have used. PoPoolation is among the most widely cited pool-seq toolkits there is, and it has been essentially untouched for over a decade. Every project still running it is running that decade's statistics, and there is nothing wrong with the software — it does what it always did. The problem is that it was finished, and the field was not.
+
+### So the tool is the thing I maintain, and the tool is the thing I publish
+
+A repository can do what a paper cannot: it can be corrected. If an estimator here turns out to be the wrong one, or a better one is published next year, the right response is to change it and say what changed — not to leave it in place because the paper describing it is already in print.
+
+That is not a slogan, it is a design constraint, and it is why the analysis layer is built the way it is. Each analysis is a **module** with its own version, its own citations and its own tests, and modules are published separately from the pipeline. A statistic can be replaced without rewriting anything around it. That seam is the mechanism that makes "maintained" a real claim rather than a promise about my future attention — and because a module is separately versioned and separately published, someone else can ship one without waiting for me.
+
+The obligation that comes with it is that an old result must still be explicable. Every run records the versions it ran under and every published analysis records the module and the settings that produced it, so using a current method and reproducing an old number are not in tension.
+
+### Why this is not going to a journal
+
+I have lost confidence in scientific publishing as a system. I do not think paying several thousand dollars in article-processing charges to be reviewed by only a few people is what makes work valuable. This model creates an unfair system where the research from countries with limited resources goes unnoticed just because publishing wall. The code is here, the reasoning is here, and the evidence is here. People can use it if they believe this is the right tool, or leave it behind if they believe the science is not convincing. Using this method is a decision on the merits, not by two reviewers and one editor, but by the community.
+
+I am aware that I am in a position to say all these and take a stance, and not everyone is. That is exactly why I am saying it. If someone with the freedom to take the risk does not demonstrate that the alternative exists and works, then nothing changes and we all keep paying for the privilege of being read.
+
+This is not a refusal to publish. I publish research through the ordinary channels when the work calls for it, and a preprint of this may follow once it is more complete rather than in heavy progress. What I am refusing is the idea that the being published in a "respected" journal is what makes it real.
+
+The same reasoning applies to working in the open. The reflex to keep a project hidden until it is finished, in case someone takes the idea, mostly just slows everything down. During my PhD I discussed my experiment freely while it was running — seventy populations, a thousand to two thousand flies in each, carried five generations — because the honest answer was that nobody else was going to run it. **Do something that is hard to do, rather than something you have to hide.** It is not 1920. Either we build a different way of doing this or we miss it entirely.
+
+### How I decide things
+
+**I do not settle design questions by argument when I can settle them with data.** The depth-cutoff detector in this pipeline had two candidate algorithms and a long discussion behind it, and the discussion was going nowhere. Building twenty synthetic depth distributions — a few clean, the rest deliberately pathological — and looking at what each design did to them ended it in minutes. Two designs died on contact with cases that no amount of reasoning had produced.
+
+I keep those distributions in the test suite rather than in a notebook, so the evidence stays executable. That is the general form of it: when I decide something on the basis of data, the data becomes part of the repository, and anyone who thinks the decision is wrong can re-run it, and propose a better alternative, if exists. This is a living project and it will only grow with feedback.
+
+The other half is that theory has to survive contact with a real dataset. Pool-seq has plenty of estimators that are correct on paper and weak on data — because coverage is not homogeneous, because pools are not the same size, because a "reference" allele is an accident of which genome got sequenced first. Where this pipeline departs from a published formula, it is usually because the published formula assumes something a real experiment does not provide, and the manual says so at the point where it matters.
+
+### Who this is for
+
+Pool sequencing is unfortunately underused outside a handful of model systems. The method itself does not care whether the organism has a reference-quality genome, a large research community or a commercial kit behind it — it works on populations, which covers a lot of biological studies. What stops people is almost never the biology. It is that the tooling makes assumptions on the data type because it was created to analyze a certain type of organism or expects a bioinformatician on the team. Creating a model-agnostic tool is a challenge and I accept the probability that I might have missed some use cases. If so bring it up, I like a good challenge to make the tool more accessible.
+
+So accessibility is not a nice-to-have here, it is the point. A tool only its author can install and interpret is not a tool. That is why the pipeline checks its environment and explains what it is checking, why a configuration can be carried forward across releases instead of rewritten, why there is a preview that shows what a run will produce before it produces it, and why this manual explains what a number means rather than only which flag produces it.
+
+### What I am not claiming
+
+- *That this is finished.* **It is not.** The point of the form is that it never quite will be.
+- *That maintenance is guaranteed.* **It is not.** I am developing this in my free time with my own resources as they allow me, which is why the module seam matters more than my intentions.
+- *That any of it is a substitute for understanding the analysis.* The pipeline can refuse a configuration that cannot be right, but it cannot tell you what your results mean in the biological context.
+
+## How the Project Is Verified
+<!--@ page: verification | nav: Verification -->
+
+Everything on the other pages of this section is a claim about how the project is built. This page is what makes those claims checkable rather than something you have to believe, and it is also the part of this section that has nothing to do with AI — it would be the same discipline, for the same reasons, if I had written every line by hand.
+
+### Scientific verification
+
+One thing I want to underline before any of the machinery: **scientific verification is always on the developer.** No test suite performs it, and none of what follows on this page should be read as though it does.
+
+A test can confirm that a formula was implemented as written, and that it behaves correctly on data built to a known answer. It cannot tell me the formula was the right one to choose, that its assumptions hold for pooled data, or that the paper it came from says what I think it says. Those are the questions that decide whether a number means anything, and they are answered by a person or not at all.
+
+In practice that is a specific and fairly slow kind of work, and it is worth saying what it looks like rather than leaving it as a principle:
+
+- **Deriving a quantity rather than porting it.** Where this pipeline computes something with a published name, the constant in front of it is worked out by hand and checked against a case computed by hand, because transcribing a formula from a paper is exactly how a factor of two travels silently from one codebase into the next.
+- **Reading the primary source, not the attribution.** Method citations here are checked against the paper before they ship. That is not ceremony: the effective-sample-size correction this pipeline uses was attributed to the wrong source twice before it was right, and the paper it is now cited for never writes the quantity down — it is cited for the result the quantity follows from, with a note saying so.
+- **Testing against data whose answer is known by construction**, rather than against what the code currently produces. If the expectation comes from the implementation, the test can only tell me the code has not changed.
+- **Asking what the estimator assumes, and whether a real experiment provides it.** Pooled data breaks assumptions that individual genotypes satisfy — unequal pool sizes, non-homogeneous coverage, no privileged reference allele. Where a standard quantity needs adjusting before it means anything here, the manual says so at the point where the number is produced.
+
+None of that is automatable, and it is the part of the work an AI agent is least able to help with — it will produce a correct implementation of the wrong statistic, and produce a simulation showing the implementation is correct. The implementation being correct is not the question.
+
+So: the suite below tells me I have not broken what I built. It does not tell me I built the right thing. That judgment is mine, and where I have made it the manual says what was chosen and what it assumes, so it is at least visible enough for someone to disagree with.
+
+### The shape of it
+
+There are **474 test cases in 17 suites**. Sixteen ship with the pipeline and cover the wrapper, configuration migration, parameter resolution, the change guards, the helper programs, the dry run, the analysis frame and the static checks; the seventeenth ships inside an analysis module, because a module's tests belong to the module and travel with it when it is published separately.
+
+Most of them are not testing what people usually mean by a test. The failures this pipeline can produce are rarely crashes — they are a run that completes, reports success, and gives a number that is quietly wrong, because a filter was applied with the wrong pool's threshold or a step reused an artifact that was produced under different settings. So a large share of the suite exists to catch a *plausible* result rather than a broken one.
+
+### A suite you will not run is not a suite
+
+The whole thing takes about three quarters of an hour, and that is the real problem to solve. A forty-minute gate between me and a one-line change does not make me careful, it makes me skip the check — so the suite is arranged so that the run I actually do is small.
+
+Every suite declares what it costs to run, in its own header:
+
+| Class | Suites | What it needs |
+|---|---|---|
+| `static` | 5 | Nothing installed. Reads files, runs the shell and Python helpers directly |
+| `jvm` | 11 | A JVM, to build and inspect a workflow without executing it |
+| `pipeline` | 1 | A real end-to-end run against the committed fixture data |
+
+The `static` set finishes in seconds on a machine with nothing set up at all, which makes it the loop I develop in. The full run belongs to a release, not to a change.
+
+There is a second axis alongside it. **`--changed` picks the suites for me**, from what each suite declares it covers, expanded through the include graph — so editing a helper program selects the suites that exercise it and nothing else. It deliberately errs wide: touching the test library or the selector itself selects everything. That way a narrow answer is trustworthy and a wide one is merely expensive.
+
+The rule I hold myself to is that **the cases for a step are written with the step and run on their own**, by name. The full suite is a release gate. Treating it as the per-change gate is how you end up not checking anything.
+
+### The checks that are not tests
+
+Some things cannot be asserted from inside the suite, so they are separate gates and all of them run before a release:
+
+- **`nextflow lint`** over every workflow file, at zero errors *and* zero warnings. The strict parser rejects a good deal of ordinary Groovy, and it reports a parse failure in one file as "not defined" at every call site in *other* files — so a clean lint is worth more than it sounds.
+- **The citation check.** Every reference is authored once in BibTeX and compiled to the JSON the pipeline reads; the gate regenerates it and fails if the two disagree, so the file a run cites from cannot drift from the file I edit.
+- **The manual check.** This manual is one file, and every page of the site is generated from it. The gate re-parses it, resolves every cross-reference, and fails on a link to a heading that no longer exists or two headings that would collide — which is what stops the documentation rotting quietly as things are renamed.
+- **The version check**, which fails when a shared library has changed without its version moving, and the **archive check**, which builds the release tarball and asserts that everything a user needs is in it and everything they do not need is out.
+
+### What this does not do
+
+It does not tell me the science is right — that is [Scientific verification](#scientific-verification) above, and it is the limit that matters most.
+
+It also does not cover everything. The cross-filesystem paths in the artifact-moving code cannot be reached from the suite, because the sandbox is a single filesystem — the evidence for those is measurement recorded in the development notes, and nothing in the automated run reproduces it. I would rather say that plainly than let a green run imply more than it covers.
+
+And a suite is only as good as the cases in it. When I fix something, I check that the new case actually fails against the unfixed code before I keep it. A test that passes both ways is worse than no test, because it reads as coverage.
+
+## Involvement of Claude Code
+<!--@ page: claude-code | nav: Claude Code -->
+
+From **v2.0.0** onward this pipeline has been developed with Claude Code, an AI coding agent, working against my review. Everything before v2.0.0 — the pool-seq reasoning, the filtering approach, the Nextflow pipeline itself — I wrote alone. This page says what the arrangement actually is, because "developed with AI" covers a range wide enough to be meaningless, and because I would rather describe it than have it guessed at.
+
+The short version: **the work got faster and the expertise it demands went up, not down.**
+
+### What the loop looks like
+
+I decide what to build and why. The agent proposes an implementation, usually with an argument for it. I read the code and the argument, and most of the time I send something back — this is wrong, this is slower than it needs to be, this contradicts a decision we already made, this assumption does not hold on real data. Then it changes, and I read it again. Work stays in the working tree until I have reviewed it; nothing is committed that I have not seen.
+
+That is the whole method. It is not novel and it is not automated. What is worth writing down is what it demands from the person doing the reviewing.
+
+### Why this needs more experience rather than less
+
+**The errors run in both directions, and the corrections do too.**
+
+The agent has also come back with the opposite of a plausible wrong answer: a confident alarm, graded FATAL, about a result being scientifically incorrect — and been wrong. One review concluded that the pipeline never removes PCR duplicates, which would make every allele frequency it produces suspect. It does: duplicates are marked and removed during cleaning, several steps before anything is called. Another claimed a distance measure "produces negative eigenvalues", stated flatly; measuring it across realistic population structures showed that it usually does not, and only one particular shape produced a single small one.
+
+Both were the same mistake in a different direction. Code written to answer a biological question carries context that is not local to the lines being read — the duplicate removal is real but it happens in a different file at a different stage, and whether an eigenvalue is negative depends on data the code does not contain. A model reading the code cannot see either. **On those occasions the scientist has to know, and hold the position** — a FATAL verdict about your own analysis is exactly the moment you are least inclined to argue, and sometimes arguing is correct.
+
+None of which means I am the one who is always right. It means the two of us are wrong about **different things**, and it is worth being precise about which.
+
+The science is the part I can stand on. Ten years of working on these questions and six (on and off) on this pipeline is what lets me say a proposal is wrong before I can say why, and that judgment has held up. **Where I have been wrong is the engineering** — repeatedly, and about shape rather than correctness:
+
+- I had a whole "per-window callable-sites" track built into the reporting step, and took it back out the same day. The pipeline was producing an artifact on my guess that somebody would eventually want it, and it was derivable from data already being kept. The measurements behind that are still in the development notes, because they turned out to size a different part of the system. And more importantly it was expensive on the storage.
+- I gave the analysis layer a wrapper of its own, so that the main command would not have to take an argument. Then I merged it back and amended the contract instead, because once the shared surface was visible the second executable was plainly the more expensive of the two.
+- I added flag-style subcommands for about an hour before reversing them to bare words, for consistency with the rest of the CLI.
+
+Those are architecture calls, and I make them with much less certainty than I make the scientific ones. Each cost time to build and throw away — and **this is one of the places the agent genuinely earns its keep**, because building the wrong shape fast enough to discover it is wrong is far better than reasoning about the right shape indefinitely. A feature built and reverted in a day is cheap (kind of). The same mistake argued about for a week and then built is not.
+
+So: neither my intuition nor the agent's is the authority. **What settles it is the data** — build the case that would distinguish the two claims, run it, and read what comes back. Nearly every argument in this project that took more than an hour ended that way rather than in agreement.
+
+**A wrong answer that looks wrong costs nothing.** You read it, you reject it, you move on. That is not the failure mode here.
+
+What actually arrives is a locally coherent proposal, often with evidence behind it, that violates something the project settled months earlier. The clearest example: for the phenotype-association module the agent proposed a correction for multiple testing across the alleles at a site, argued it carefully, and backed it with a simulation over two hundred thousand replicates showing the type-I error rate was controlled exactly as claimed. The simulation was correct. The proposal was still wrong, because it worked by discarding the reference allele — and the reference allele in a pool-seq cohort is not a privileged one, it is whichever allele happened to be most common when the call set was polarized. Dropping it privileges "not the most common allele" and throws away the row that carries the signal when two alternates rise together.
+
+Nothing in the code or the simulation showed that. It was only visible if you already held the principle. I caught it in three words — *this sounds wrong* — and it took another day's work to establish what the right answer was.
+
+That pattern repeated. A claim that a particular distance measure "produces negative eigenvalues" turned out to be too strong once measured: it usually does not, and only one realistic population structure produced one. A performance decision was sized against one to five million sites, when the honest planning figure for the genomes people actually use is a hundred million — the decision inverted once that was said out loud. A citation for an effective-sample-size correction was attributed to the wrong source twice before it was right. A statistic was implemented in a form that did not answer the question it was named for, and both versions were being carried at once.
+
+Every one of those is a **plausible** wrong answer. Someone without the experience to hold the principles firmly ships all of them, and the results look completely ordinary.
+
+That is the thesis, and it is the opposite of the usual claim made for these tools: generating candidate solutions got cheap, so the entire bottleneck moved onto evaluating them — and judgment does not compress. I spend more of my time thinking about this project than I did when I was writing every line myself.
+
+### A second, different failure mode
+
+The errors above are about analysis. There is another kind that has nothing to do with judgment and everything to do with reliability, and it needs a different defense.
+
+Over the course of this work the agent has: run the full test suite after I explicitly asked it not to, costing the better part of an hour; committed work I had not reviewed, against a standing instruction not to; and reported a test run as passing when twelve cases had failed, because it piped the output through `tail` and the tail of a failure summary is a list of case names that looks exactly like a list of passes.
+
+None of those is a wrong analysis. They are an unreliable process, and no amount of domain expertise on my side prevents them — I can only catch them afterwards. **Anything that has to hold has to be enforced by a check rather than by an instruction.** That is why the rules below are split the way they are: some are for judgment, and those live in prose because judgment cannot be automated; the rest are tests, because prose does not bind.
+
+### The rules this produced
+
+Every one of these would improve a project with no AI anywhere near it. What the agent did was make them load-bearing rather than advisable, by supplying a steady stream of the exact mistakes each one prevents.
+
+**A comment says what the code does; a decision goes somewhere else.** A design decision left in a comment reads to whoever comes next as a current constraint, and gets argued from long after it stopped being true — with an agent, that means yesterday's abandoned choice comes back as an objection to what I am asking for today. The opposite mistake is on record too: a file sat in the output directory of every run from 1.0 onward because the reason a deletion had been placed where it was never got written down, and the deletion later moved. So the test is not "why versus what", it is whether the code becomes inexplicable without the line.
+
+**Two things that must agree are checked, never kept in step by hand.** The wrapper's file list against what the release archive actually ships; the column definitions in the Python parser against the Groovy that renders them; paths computed in two places from the same values. Each pair has a test that re-derives both sides. A pair kept in step by care drifts silently and produces a wrong result rather than a failure — and where two lists are *supposed* to differ, the test says so and says why, so the difference is a decision rather than a discovery.
+
+**A test's expectations must not come from the code it tests.** The obvious way to write a corpus down is to run the thing and record what it said, which produces a test that cannot fail — a changelog with assertions, locking in whatever the code did that day. The depth-detector corpus derives every bound from how each case was constructed instead, and only the generator is committed, so there is no expectation file anyone can quietly edit to make a failing test pass.
+
+**Fail loudly, or document — never automate away the decision.** Where the right answer depends on something the pipeline cannot know, it reports and stops. Two depth profiles are deliberately left uncapped because they are indistinguishable from a library that simply ran deep; two runs that disagree about how to build a shared reference are refused by name rather than quietly split. And a computed default never removes the knob: everything derived can be set by hand, and a hand-set value still feeds what is computed from it.
+
+**Recompute rather than record.** Three times, in unrelated parts of the system, the question was whether to write something down for a later stage to read back. Three times the answer was to recompute it, because a record can be edited after the fact and a derivation keyed on the same identity cannot disagree with the run it describes.
+
+**Commit only what has been reviewed.** Work stays in the working tree until I have read it. The tree is the review surface — one diff, one view — and committing something I have not seen removes my chance to reject it before it becomes history.
+
+### What this does not transfer
+
+**The output is bounded by the reviewer.** Everything above works because I can tell when the answer is wrong, and I can tell because I built the thing it is wrong about. Hand the same tool to someone who could not have written this pipeline themselves and the plausible-but-wrong proposals go straight in, with a simulation attached and nothing to stop them.
+
+So I am not claiming this is a way to build something you do not understand. It is a way to build something you *do* understand, faster, if you are willing to spend the time saved on reading. If you are not going to read it, do not do this.
+
+I also cannot tell you how much of the code here the agent wrote, and I am suspicious of anyone who gives that number for a project like this. Almost nothing arrived and stayed unchanged. What is here is the result of a long argument, and attributing lines at the end of one is not a meaningful exercise.
+
+### The raw material, if you want it
+
+Both of these are in the repository rather than summarized here, because a description of a working method is worth much less than the thing itself.
+
+**`CLAUDE.md`**, at the repository root, is the file the agent reads at the start of every session. It is the rules on this page in the form they are actually given — 108 lines, written as instructions rather than as prose about instructions. It is worth reading against this page: the difference between how a rule is explained and how it has to be worded to hold is most of what I learned.
+
+**`.claude/development-notes/`** is the record of how the project got here: 21 notes, about 1,900 lines, covering design churn, alternatives tried and dropped, what things used to be, the measurements behind particular choices, and who decided what and when. A whole feature that was built and then reverted is kept there as a patch rather than deleted, because the sizing work behind the decision to revert it is what shaped the analysis layer.
+
+Each note carries the date it was written and the commit it was written against, and is **not** updated to follow the code. They are a record of how the project got here, not a second manual — where a note and this manual disagree, the manual is right and the note is history. The one exception says so at the top: the file of platform traps is appended to as they are found, because a trap does not expire.
+
+Both are development material and are kept out of release downloads, so they live in the repository and on the project's page rather than in a tarball.
+
 # Reference
 <!--@ section: reference -->
 
@@ -3926,7 +4279,7 @@ Column order follows `metadata.csv` **row order**. Where rows share an `RG_Sampl
 
 #### `REF` does not match my reference genome
 
-Correct. Step 7 re-encodes each site so the most-read allele across the whole cohort becomes `REF`, which is what makes frequencies comparable across samples and runs. If you need the assembly's base, take it from the assembly. [Why →](#5-major-allele-normalisation-step-7)
+Correct. Step 7 re-encodes each site so the most-read allele across the whole cohort becomes `REF`, which is what makes frequencies comparable across samples and runs. If you need the assembly's base, take it from the assembly. [Why →](#major-allele-normalization)
 
 #### A variant I know is real is missing
 
@@ -3961,9 +4314,9 @@ If the plateau is in **one sample** at an unround number, that is its measured c
 
 #### Annotated VCF contains sites missing from my frequency tables
 
-Step 8 runs on step **6**'s output, in parallel with the frequency branch, so it never sees the step 7 filters. Its allele encoding is also the original reference-based one, not the major-allele normalised one. Join on `CHROM`/`POS` and expect unmatched rows. [Details →](#the-vcf-files)
+Step 8 runs on step **6**'s output, in parallel with the frequency branch, so it never sees the step 7 filters. Its allele encoding is also the original reference-based one, not the major-allele normalized one. Join on `CHROM`/`POS` and expect unmatched rows. [Details →](#the-vcf-files)
 
-### Resume behaviour
+### Resume behavior
 
 #### A re-run skips too many steps
 
@@ -4160,7 +4513,7 @@ The tools a full run credits:
 | BWA | Alignment (`bwa mem`) |
 | SAMtools | BAM processing, duplicate removal, filtering |
 | BAMtools | Alignment statistics |
-| BCFtools | Variant calling, normalisation, filtering |
+| BCFtools | Variant calling, normalization, filtering |
 | VCFtools | Depth/quality filtering and SNP/INDEL splitting |
 | SnpEff | Variant annotation, if enabled |
 | Python | The pipeline's helper scripts |

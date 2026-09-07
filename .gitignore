@@ -70,9 +70,9 @@ dev/logs/
 test/**/__pycache__/
 test/**/*.pyc
 
-# Untracked until the public form of them is decided.
-.claude/
-CLAUDE.md
+# This machine's own permission grants for the coding agent. The rest of .claude/ is
+# tracked: the development notes are part of what the project publishes.
+.claude/settings.local.json
 
 # Build output from dev/scripts/verify-archive.sh.
 dist/

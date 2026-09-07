@@ -36,3 +36,9 @@ analysis/modules/*/test/    export-ignore
 # from this branch. A copy inside a tarball would be a second answer to what can be installed,
 # frozen on the day the release was built, and modules are published after it.
 analysis/modules-index.tsv  export-ignore
+
+# How the project is built rather than what it does: the agent's instruction file and the
+# development notes. Tracked, and linked from the manual's Development section, but a release
+# download carries the pipeline and the manual - the same rule dev/ follows.
+.claude/            export-ignore
+CLAUDE.md           export-ignore

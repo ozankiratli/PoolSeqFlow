@@ -138,6 +138,7 @@ nav:
       - Upgrading: getting-started/upgrading.md
   - Concepts:
       - concepts/index.md
+      - Scientific Rationale: concepts/scientific-rationale.md
       - Design Decisions: concepts/design-decisions.md
       - The Filter Chain: concepts/filter-chain.md
       - Interpreting Results: concepts/interpreting-results.md
@@ -162,6 +163,12 @@ nav:
       - Steps: pipeline/steps.md
       - Resume Logic: pipeline/resume.md
       - Directory Layout: pipeline/directories.md
+  - Development:
+      - development/index.md
+      - History: development/history.md
+      - Rationale: development/principles.md
+      - Verification: development/verification.md
+      - Claude Code: development/claude-code.md
   - Reference:
       - Troubleshooting: reference/troubleshooting.md
       - Bibliography: reference/bibliography.md
