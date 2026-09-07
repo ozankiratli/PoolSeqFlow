@@ -25,7 +25,7 @@ def timeVariable() {
 // The prefix that marks a phenotype measured on the pool. Mirrored by PHENOTYPE_PREFIX in
 // bin/parse_metadata.py.
 //
-// Separate from exp_ because only an experimental variable identifies a series: seriesKeyColumns()
+// Separate from exp_ because only an experimental variable identifies a series: designKeyColumns()
 // takes every exp_ column but time, and a trait value differs per pool, so admitting one there
 // would leave every series a single timepoint long.
 def phenotypePrefix() {
@@ -36,7 +36,7 @@ def phenotypePrefix() {
 // bin/parse_metadata.py.
 //
 // Neither set nor the response: a cage temperature, an altitude, a collection site. Its own prefix
-// for the same reason pt_ has one - seriesKeyColumns() takes every exp_ column but time, so a
+// for the same reason pt_ has one - designKeyColumns() takes every exp_ column but time, so a
 // temperature recorded at each timepoint would give every series length 1, which is the
 // dissolution the series settings can only be told to work around.
 //
@@ -538,10 +538,43 @@ def checkCovariateSettings(Map declared, List columns) {
     }
 }
 
-// Every declared covariate, resolved. An UNDECLARED cov_ column is not here and is not an error:
-// it is recorded, checked and reported like any pool-level column, and simply carries no typed
-// value for a module to compute with.
-def resolveCovariates(List pools, Map declared, List columns) {
+// Which of the recorded covariates are part of the design, and so are what a module adjusts for.
+// Empty means every one that has a declared scale - an undeclared cov_ column carries no typed
+// value, so there would be nothing of it to put in a model.
+def designCovariates(Map declared, List columns, List chosen) {
+    def declaredNames = declared.keySet().collect { name -> "${name}".toString() }
+    if (chosen.isEmpty()) return declaredNames
+
+    def named = chosen.collect { entry -> "${entry}".toString() }
+    def path = 'analysis.metadata.design.covariates'
+    named.each { column ->
+        if (!column.startsWith(covariatePrefix())) {
+            throw new IllegalArgumentException(
+                "${path} names '${column}', and a covariate has to be a " +
+                "${covariatePrefix()} column.\n" +
+                "What the experiment SET is named in analysis.metadata.design.by; a covariate is " +
+                "what was measured alongside and neither set nor tested against.")
+        }
+        if (!columns.contains(column)) {
+            throw new IllegalArgumentException(
+                "${path} names '${column}', and this project has no such column.\n" +
+                "The covariate columns it has are: " +
+                "${columns.isEmpty() ? '(none)' : columns.join(', ')}")
+        }
+        if (!declaredNames.contains(column)) {
+            throw new IllegalArgumentException(
+                "${path} names '${column}', which has no declared scale.\n" +
+                "A column with no scale has no value a model can take. Give it one:\n" +
+                "    analysis.metadata.covariates.${column} { kind = 'quantitative' }")
+        }
+    }
+    return named
+}
+
+// Every declared covariate, resolved, each saying whether it is part of the design. An UNDECLARED
+// cov_ column is not here and is not an error: it is recorded, checked and reported like any
+// pool-level column, and simply carries no typed value for a module to compute with.
+def resolveCovariates(List pools, Map declared, List columns, List inDesign) {
     def warnings = []
     def resolved = declared.collect { name, settings ->
         def column = "${name}".toString()
@@ -561,10 +594,20 @@ def resolveCovariates(List pools, Map declared, List columns) {
                           detail: "every pool has the same ${column} (${held[0].shown}), so it " +
                                   "separates nothing and can confound nothing." ]
         }
-        return [ column: column,
-                 kind  : kind,
-                 levels: kind == 'quantitative' ? null : levels,
-                 values: values ]
+        return [ column  : column,
+                 kind    : kind,
+                 levels  : kind == 'quantitative' ? null : levels,
+                 inDesign: inDesign.contains(column),
+                 values  : values ]
+    }
+    // A covariate declared and left out of the design. On the record, because leaving one out is
+    // as much a decision as putting one in and neither is visible from the values.
+    def excluded = resolved.findAll { entry -> !entry.inDesign }.collect { entry -> entry.column }
+    if (!excluded.isEmpty()) {
+        warnings << [ code  : 'covariate-not-in-design',
+                      detail: "analysis.metadata.design.covariates leaves ${excluded.join(', ')} " +
+                              "out, so ${excluded.size() == 1 ? 'it is' : 'they are'} reported " +
+                              "and no module adjusts for ${excluded.size() == 1 ? 'it' : 'them'}." ]
     }
     // A cov_ column nobody declared. Reported once, because the difference between "recorded for
     // the record" and "forgot to declare it" is not in the file.
@@ -582,24 +625,26 @@ def resolveCovariates(List pools, Map declared, List columns) {
     return [ covariates: resolved, warnings: warnings ]
 }
 
-// The columns that identify one thing measured repeatedly. Declared rather than inferred: a
+// The columns that identify one thing the experiment set up. Declared rather than inferred: a
 // variable recorded AT each timepoint - a temperature, a census - differs between the pools of one
 // series, so every series would have length 1 and the design would dissolve with no error.
-def seriesKeyColumns(List columns, String timeColumn, List by) {
-    if (by.isEmpty()) return columns.findAll { column -> column != timeColumn }
+//
+// timeColumn is null for a project with no time axis, and then nothing is held back.
+def designKeyColumns(List columns, String timeColumn, List by) {
+    if (by.isEmpty()) return columns.findAll { column -> timeColumn == null || column != timeColumn }
 
     def named = by.collect { entry -> "${entry}".toString() }
-    if (named.contains(timeColumn)) {
+    if (timeColumn != null && named.contains(timeColumn)) {
         throw new IllegalArgumentException(
-            "analysis.series.by names ${timeColumn}, which is the time column.\n" +
+            "analysis.metadata.design.by names ${timeColumn}, which is the time column.\n" +
             "A series is what stays the same WHILE time changes, so time cannot be part of what " +
             "identifies it.")
     }
     def unknown = named.findAll { column -> !columns.contains(column) }
     if (!unknown.isEmpty()) {
         throw new IllegalArgumentException(
-            "analysis.series.by names ${unknown.join(', ')}, which this project's metadata does " +
-            "not have.\n" +
+            "analysis.metadata.design.by names ${unknown.join(', ')}, which this project's " +
+            "metadata does not have.\n" +
             "The experimental variables it has are: ${columns.isEmpty() ? '(none)' : columns.join(', ')}")
     }
     return named
@@ -615,16 +660,18 @@ def replicateRoles(List keyColumns, String timeColumn, Map settings) {
     [['biologicalRep', biological], ['technicalRep', technical]].each { pair ->
         def name = pair[0]
         pair[1].each { column ->
-            if (column == timeColumn) {
+            if (timeColumn != null && column == timeColumn) {
                 throw new IllegalArgumentException(
-                    "analysis.series.${name} names ${timeColumn}, which is the time column. A " +
-                    "replicate is what a series has instead of a condition, and time is neither.")
+                    "analysis.metadata.design.${name} names ${timeColumn}, which is the time " +
+                    "column. A replicate is what a series has instead of a condition, and time " +
+                    "is neither.")
             }
             if (!keyColumns.contains(column)) {
                 throw new IllegalArgumentException(
-                    "analysis.series.${name} names '${column}', which does not identify a series.\n" +
+                    "analysis.metadata.design.${name} names '${column}', which is not one of the " +
+                    "columns that identify the design.\n" +
                     "The columns that do are: ${keyColumns.isEmpty() ? '(none)' : keyColumns.join(', ')}\n" +
-                    "Add it to analysis.series.by if it should, or correct the name.")
+                    "Add it to analysis.metadata.design.by if it should, or correct the name.")
             }
         }
     }
@@ -641,24 +688,88 @@ def replicateRoles(List keyColumns, String timeColumn, Map settings) {
              technical : technical ]
 }
 
-// Series rolled up by dropping columns: without the technical ones a series becomes the independent
-// biological unit, and without the biological ones too it becomes the condition. A module counting
-// degrees of freedom or choosing strata reads units, never series.
-def rollUp(List series, List keepColumns) {
-    def grouped = [:]
-    series.each { entry ->
-        def label = keepColumns.isEmpty() ? 'all pools' : keepColumns.collect { column -> entry.key[column] ?: '(blank)' }.join(' | ')
-        grouped.get(label, []) << entry
+// The finest thing the design tells apart: a series where there is a time axis, a pool where there
+// is not. Rolling up into units starts here.
+//
+// A pool is its own member: RG_Sample has already decided what was merged into one, so only a
+// technicalRep column can put two of them back together.
+def designMembers(List pools, List series, List keyColumns) {
+    if (series != null) {
+        return series.collect { entry -> [ label: entry.label, key: entry.key, pools: entry.pools ] }
     }
+    return pools.collect { pool ->
+        [ label: pool.pool,
+          key  : keyColumns.collectEntries { column -> [ column, pool.values[column] ] },
+          pools: [ pool.pool ] ] }
+}
+
+// Members rolled up into the independent biological units they came from. Two members are one unit
+// when they agree on every condition and biological column AND a technical column tells them apart.
+// Nothing else merges them, and a module counting degrees of freedom or choosing strata reads
+// units, never members.
+//
+// A group whose members all carry the same technical key is a group nothing tells apart, so each
+// member stands alone - which is every untimed project with no technicalRep declared. A group that
+// is partly one and partly the other cannot be partitioned either way, and refuses.
+def unitsOf(List members, List unitColumns, List technical) {
+    def grouped = [:]
+    members.each { entry -> grouped.get(keyLabel(entry.key, unitColumns), []) << entry }
+
+    def units = []
+    grouped.each { label, held ->
+        def apart = held.groupBy { entry -> keyLabel(entry.key, technical) }
+        if (apart.size() > 1 && apart.size() < held.size()) {
+            def sharing = apart.findAll { _key, entries -> entries.size() > 1 }
+            throw new IllegalArgumentException(
+                "'${label}' holds pools that ${technical.join(', ')} does not tell apart, beside " +
+                "pools it does:\n" +
+                sharing.collect { technicalKey, entries ->
+                    "    ${technicalKey}: ${entries.collectMany { entry -> entry.pools }.join(', ')}"
+                }.join('\n') + "\n" +
+                "A unit is what a technical replicate column tells apart, so this group is partly " +
+                "one unit and partly several and can be neither. Which these pools are decides " +
+                "what to do:\n" +
+                "  - separate biological material: give them an ${experimentalPrefix()} column that tells them\n" +
+                "    apart, and name it in analysis.metadata.design.biologicalRep.\n" +
+                "  - the same material sequenced separately: name the column that tells them apart\n" +
+                "    in analysis.metadata.design.technicalRep.\n" +
+                "  - one pool sequenced twice that you meant to merge: give the rows the same\n" +
+                "    RG_Sample. The pipeline pools their reads and adds their depths, and they\n" +
+                "    become one column of every published table.")
+        }
+        def key = unitColumns.collectEntries { column -> [ column, held[0].key[column] ] }
+        // Sorted, so a unit's pools are a sub-sequence of design.pools and a module can index the
+        // published columns with them. Only design.series orders pools by time.
+        if (apart.size() == held.size()) {
+            units << [ label  : label,
+                       key    : key,
+                       pools  : held.collectMany { entry -> entry.pools }.sort(),
+                       members: held.collect { entry -> entry.label } ]
+        }
+        else {
+            held.each { entry ->
+                units << [ label: entry.label, key: key, pools: entry.pools, members: [entry.label] ]
+            }
+        }
+    }
+    return units.sort { a, b -> a.label <=> b.label }
+}
+
+// Units rolled up into the conditions they are repeats of, by dropping the biological columns too.
+// Two units of one condition always merge: a condition is what they are repeats OF.
+def conditionsOf(List units, List conditionColumns) {
+    def grouped = [:]
+    units.each { unit -> grouped.get(keyLabel(unit.key, conditionColumns), []) << unit }
     return grouped.keySet().sort().collect { label ->
-        [ label : label,
-          key   : keepColumns.collectEntries { column -> [ column, grouped[label][0].key[column] ] },
-          series: grouped[label].collect { entry -> entry.label } ]
+        [ label: label,
+          key  : conditionColumns.collectEntries { column -> [ column, grouped[label][0].key[column] ] },
+          pools: grouped[label].collectMany { unit -> unit.pools }.sort(),
+          units: grouped[label].collect { unit -> unit.label } ]
     }
 }
 
 // A plain function, not a local closure: the strict parser rejects calling one by name.
-def seriesLabel(Map values, List keyColumns) {
+def keyLabel(Map values, List keyColumns) {
     if (keyColumns.isEmpty()) return 'all pools'
     return keyColumns.collect { column -> values[column] ?: '(blank)' }.join(' | ')
 }
@@ -668,7 +779,7 @@ def levelNames(Map time, List indices) {
     return indices.sort().collect { index -> time.levels[index].value }.join(', ')
 }
 
-// analysis.series.incomplete, applied. Returns the timeline that survives and the series dropped.
+// analysis.metadata.series.incomplete, applied. Returns the timeline that survives and the series dropped.
 //
 // keepLeft and keepRight truncate the TIMELINE and not each series, so every series that survives
 // covers the same points. None of the four fills a gap in: carrying a frequency forward invents a
@@ -688,7 +799,7 @@ def applyIncomplete(String mode, Map time, Map covered, List warnings) {
             "${named}${ragged.size() > 5 ? "\n    ... and ${ragged.size() - 5} more" : ''}\n" +
             "A ragged panel analysed as a complete one is a wrong answer that looks like a right " +
             "one, so this refuses by default. Choose what should happen with " +
-            "analysis.series.incomplete:\n" +
+            "analysis.metadata.series.incomplete:\n" +
             "    'drop'       leave the incomplete series out\n" +
             "    'keepLeft'   cut the timeline back to the points every series shares, from the start\n" +
             "    'keepRight'  the same, from the end")
@@ -696,7 +807,7 @@ def applyIncomplete(String mode, Map time, Map covered, List warnings) {
 
     if (mode == 'drop') {
         warnings << [ code  : 'series-dropped',
-                      detail: "analysis.series.incomplete is 'drop', so ${ragged.size()} " +
+                      detail: "analysis.metadata.series.incomplete is 'drop', so ${ragged.size()} " +
                               "incomplete series were left out:\n" +
                               ragged.collect { label, indices ->
                                   "    ${label} lacked ${levelNames(time, full.findAll { index -> !indices.contains(index) })}"
@@ -712,7 +823,7 @@ def applyIncomplete(String mode, Map time, Map covered, List warnings) {
         def edge = mode == 'keepLeft' ? full.first() : full.last()
         def without = covered.findAll { _label, indices -> !indices.contains(edge) }.keySet()
         throw new IllegalArgumentException(
-            "analysis.series.incomplete is '${mode}', and there is nothing left to keep: " +
+            "analysis.metadata.series.incomplete is '${mode}', and there is nothing left to keep: " +
             "${without.size() == 1 ? 'the series' : 'the series'} " +
             "${without.take(5).join(', ')} ${without.size() == 1 ? 'does' : 'do'} not cover " +
             "'${time.levels[edge].value}', which is the ${mode == 'keepLeft' ? 'first' : 'last'} " +
@@ -722,7 +833,7 @@ def applyIncomplete(String mode, Map time, Map covered, List warnings) {
     }
 
     warnings << [ code  : "series-${mode}",
-                  detail: "analysis.series.incomplete is '${mode}', so the timeline was cut from " +
+                  detail: "analysis.metadata.series.incomplete is '${mode}', so the timeline was cut from " +
                           "${full.size()} points to ${timeline.size()}: kept " +
                           "${levelNames(time, timeline)}; dropped " +
                           "${levelNames(time, full.findAll { index -> !timeline.contains(index) })}." ]
@@ -737,7 +848,7 @@ def applyIncomplete(String mode, Map time, Map covered, List warnings) {
     return [ timeline: timeline, dropped: [] ]
 }
 
-// Every series in this target, ordered by time, after analysis.series.incomplete has been applied.
+// Every series in this target, ordered by time, after analysis.metadata.series.incomplete has been applied.
 // The timeline is truncated rather than each series individually, so what comes out is rectangular
 // and every series is comparable with every other.
 def buildSeries(List pools, Map time, List keyColumns, String incomplete, List warnings) {
@@ -756,7 +867,7 @@ def buildSeries(List pools, Map time, List keyColumns, String incomplete, List w
 
     def grouped = [:]
     placed.each { pool ->
-        def label = seriesLabel(pool.values, keyColumns)
+        def label = keyLabel(pool.values, keyColumns)
         grouped.get(label, []) << pool
     }
 
@@ -771,7 +882,7 @@ def buildSeries(List pools, Map time, List keyColumns, String incomplete, List w
                     "these are decides what to do:\n" +
                     "  - separate biological material, or the same material sequenced separately:\n" +
                     "    give them an ${experimentalPrefix()} column that tells them apart, and name it in\n" +
-                    "    analysis.series.biologicalRep or technicalRep. They become separate series.\n" +
+                    "    analysis.metadata.design.biologicalRep or technicalRep. They become separate series.\n" +
                     "  - one pool sequenced twice that you meant to merge: give the rows the same\n" +
                     "    RG_Sample. The pipeline pools their reads and adds their depths, and they\n" +
                     "    become one column of every published table.")
@@ -804,7 +915,7 @@ def designSummary(List rows) {
     def columns = experimentalColumns(rows)
     // A pool's values carry both prefixes; `variables` and the series key take only exp_. A
     // phenotype describes the pool and so belongs on it, but it is not a variable the experiment
-    // set, and seriesKeyColumns() would make one that differs per pool split every series.
+    // set, and designKeyColumns() would make one that differs per pool split every series.
     def valueColumns = poolLevelColumns(rows)
     def byPool = rows.groupBy { row -> poolOf(row) }.sort { a, b -> a.key <=> b.key }
     def matchers = missingValueMatchers()
@@ -864,42 +975,39 @@ def designSummary(List rows) {
                               "that needs this covariate treats that pool as having no value and " +
                               "says so. Nothing is averaged and nothing is chosen for you." ]
     }
-    def time = null
-    def series = []
-    def keyColumns = []
-    def roles = [ condition: [], biological: [], technical: [] ]
-    def units = []
-    def conditions = []
+    // The key columns and their roles, resolved for every project. timeColumn is null where the
+    // project declared no time axis, and the time block below is then skipped.
+    def timeColumn = checkTimeSettings(settings, columns) ? "${settings.column}".trim() : null
+    def designSettings = metadataSetting('design')
+    def keyColumns = designKeyColumns(columns, timeColumn, designSettings.by ?: [])
+    if ((designSettings.by ?: []).isEmpty() && !keyColumns.isEmpty()) {
+        warnings << [ code  : 'design-key-computed',
+                      detail: "analysis.metadata.design.by is not set, so what identifies one " +
+                              "thing set up is every ${experimentalPrefix()} variable " +
+                              "${timeColumn == null ? 'there is' : 'but time'}: " +
+                              "${keyColumns.join(', ')}. Set it if a variable here is recorded ON " +
+                              "each pool rather than saying what the pool is." ]
+    }
+    def roles = replicateRoles(keyColumns, timeColumn, designSettings)
 
-    if (checkTimeSettings(settings, columns)) {
-        def column = "${settings.column}".trim()
-        def resolved = resolveTimeLevels(pools.collect { entry -> entry.values[column] }, settings)
+    def time = null
+    def series = null
+    if (timeColumn != null) {
+        def resolved = resolveTimeLevels(pools.collect { entry -> entry.values[timeColumn] }, settings)
         warnings.addAll(resolved.warnings)
         // format and locale travel with the levels: 'these dates were in this order' is not
         // reproducible from a published folder unless the folder says how they were read.
-        time = [ column: column,
+        time = [ column: timeColumn,
                  kind  : "${settings.kind}".trim(),
                  unit  : resolved.unit,
                  format: "${settings.format}".trim() ?: null,
                  locale: "${settings.kind}".trim() == 'datetime' ? "${settings.locale}".trim() : null,
                  levels: resolved.levels ]
 
-        def seriesSettings = metadataSetting('series')
-        keyColumns = seriesKeyColumns(columns, column, seriesSettings.by ?: [])
-        if ((seriesSettings.by ?: []).isEmpty()) {
-            warnings << [ code  : 'series-key-computed',
-                          detail: "analysis.series.by is not set, so a series is every pool sharing " +
-                                  "${keyColumns.isEmpty() ? 'nothing but the project' : keyColumns.join(' and ')}. " +
-                                  "Set it if a variable here is recorded AT each timepoint rather " +
-                                  "than identifying what is being followed." ]
-        }
-        roles = replicateRoles(keyColumns, column, seriesSettings)
         def built = buildSeries(pools, time, keyColumns,
-                                "${seriesSettings.incomplete}".trim(), warnings)
+                                "${metadataSetting('series').incomplete}".trim(), warnings)
         series = built.series
         time.timeline = built.timeline
-        units = rollUp(series, roles.condition + roles.biological)
-        conditions = rollUp(series, roles.condition)
 
         def singletons = series.findAll { entry -> entry.pools.size() == 1 }
         if (!singletons.isEmpty() && series.size() > singletons.size()) {
@@ -908,6 +1016,10 @@ def designSummary(List rows) {
                                   "trajectory: ${singletons.collect { entry -> entry.label }.join(', ')}" ]
         }
     }
+
+    def units = unitsOf(designMembers(pools, series, keyColumns),
+                        roles.condition + roles.biological, roles.technical)
+    def conditions = conditionsOf(units, roles.condition)
 
     def phenotypeSettings = metadataSetting('phenotype')
     def phenotype = null
@@ -919,9 +1031,10 @@ def designSummary(List rows) {
     def covariateNames = covariateColumns(rows)
     def declared = metadataSetting('covariates') ?: [:]
     checkCovariateSettings(declared, covariateNames)
+    def inDesign = designCovariates(declared, covariateNames, designSettings.covariates ?: [])
     def covariates = []
     if (!covariateNames.isEmpty()) {
-        def built = resolveCovariates(pools, declared, covariateNames)
+        def built = resolveCovariates(pools, declared, covariateNames, inDesign)
         covariates = built.covariates
         warnings.addAll(built.warnings)
     }
@@ -929,9 +1042,9 @@ def designSummary(List rows) {
     return [ variables : variables,
              pools     : pools,
              time      : time,
-             seriesBy  : keyColumns,
+             keyColumns: keyColumns,
              roles     : roles,
-             series    : series,
+             series    : series ?: [],
              units     : units,
              conditions: conditions,
              phenotype : phenotype,
@@ -1009,10 +1122,12 @@ def phenotypeReportLines(Map phenotype) {
 // spend on one - so the report IS the whole of what the frame does with them.
 def covariateReportLines(List covariates) {
     if (covariates.isEmpty()) return []
-    def lines = ["COVARIATES:            ${covariates.size()} declared".toString()]
+    def fitted = covariates.count { covariate -> covariate.inDesign }
+    def lines = ["COVARIATES:            ${covariates.size()} declared, ${fitted} in the design".toString()]
     covariates.each { covariate ->
         def head = "COVARIATES:                ${covariate.column}, ${covariate.kind}"
         if (covariate.kind != 'quantitative') head += ": ${covariate.levels.join(', ')}"
+        head += covariate.inDesign ? '  [in the design]' : '  [on the record only]'
         lines << head.toString()
         def held = covariate.values.findAll { entry -> entry.shown }
         if (covariate.kind == 'quantitative' && !held.isEmpty()) {
@@ -1038,34 +1153,48 @@ def spread(List counts) {
     return low == high ? "${low}".toString() : "${low}-${high}".toString()
 }
 
-// What a series is, and which of the columns identifying it name a condition rather than a repeat.
+// Which of the columns identifying the setup name a condition rather than a repeat, and what that
+// leaves as an independent unit. Printed whether or not the project has a time axis.
 //
 // EVERY key column is printed under exactly one role. A column left out of technicalRep is read as
 // a condition, which turns one treatment into three and hands a test strata that are the same DNA -
 // and no check can catch that, for the same reason none can catch dd/MM against MM/dd.
+def replicationReportLines(Map design) {
+    if (design.units.isEmpty()) return []
+    def lines = []
+
+    if (design.keyColumns.isEmpty()) {
+        lines << "REPLICATION:           no ${experimentalPrefix()} columns, so every pool stands alone".toString()
+    }
+    else {
+        lines << "REPLICATION:           conditions   ${design.roles.condition.isEmpty() ? '(none - one condition)' : design.roles.condition.join(', ')}".toString()
+        lines << "REPLICATION:           biological   ${design.roles.biological.isEmpty() ? '(none declared)' : design.roles.biological.join(', ')}".toString()
+        lines << "REPLICATION:           technical    ${design.roles.technical.isEmpty() ? '(none declared)' : design.roles.technical.join(', ')}".toString()
+    }
+
+    def perCondition = design.conditions.collect { entry -> entry.units.size() }
+    def perUnit = design.units.collect { unit -> unit.members.size() }
+    def poolCount = design.units.sum { unit -> unit.pools.size() }
+    lines << "REPLICATION:               ${design.conditions.size()} condition${design.conditions.size() == 1 ? '' : 's'}, " +
+             "${spread(perCondition)} biological replicate${perCondition.max() == 1 ? '' : 's'} each, " +
+             "${spread(perUnit)} technical".toString()
+    lines << "REPLICATION:               ${design.units.size()} independent unit${design.units.size() == 1 ? '' : 's'} " +
+             "from ${poolCount} pool${poolCount == 1 ? '' : 's'}".toString()
+
+    design.units.take(6).each { unit ->
+        lines << "REPLICATION:                   ${unit.label}  (${unit.pools.size()})".toString()
+    }
+    if (design.units.size() > 6) {
+        lines << "REPLICATION:                   ... and ${design.units.size() - 6} more".toString()
+    }
+    return lines
+}
+
+// The trajectories the time axis makes of those pools, and how much of the timeline each covers.
 def seriesReportLines(Map design) {
     if (design.time == null) return []
     def points = design.time.timeline == null ? 0 : design.time.timeline.size()
-    def lines = []
-
-    if (design.seriesBy.isEmpty()) {
-        lines << 'SERIES:                by nothing - every pool is one series'
-    }
-    else {
-        lines << "SERIES:                conditions   ${design.roles.condition.isEmpty() ? '(none - one condition)' : design.roles.condition.join(', ')}".toString()
-        lines << "SERIES:                biological   ${design.roles.biological.isEmpty() ? '(none declared)' : design.roles.biological.join(', ')}".toString()
-        lines << "SERIES:                technical    ${design.roles.technical.isEmpty() ? '(none declared)' : design.roles.technical.join(', ')}".toString()
-    }
-
-    def perCondition = design.conditions.collect { entry ->
-        design.units.count { unit -> entry.series.containsAll(unit.series) }
-    }
-    def perUnit = design.units.collect { unit -> unit.series.size() }
-    lines << "SERIES:                    ${design.conditions.size()} condition${design.conditions.size() == 1 ? '' : 's'}, " +
-             "${spread(perCondition)} biological replicate${perCondition.max() == 1 ? '' : 's'} each, " +
-             "${spread(perUnit)} technical".toString()
-    lines << "SERIES:                    ${design.series.size()} series over ${points} timepoint${points == 1 ? '' : 's'}, " +
-             "from ${design.units.size()} independent unit${design.units.size() == 1 ? '' : 's'}".toString()
+    def lines = ["SERIES:                    ${design.series.size()} series over ${points} timepoint${points == 1 ? '' : 's'}".toString()]
 
     design.series.take(6).each { entry ->
         lines << "SERIES:                        ${entry.label}  (${entry.pools.size()})".toString()
@@ -1115,6 +1244,7 @@ def designReportLines(List targets) {
             lines << "EXPERIMENTAL DESIGN:           ${stated}".toString()
         }
         lines.addAll(timeReportLines(design.time))
+        lines.addAll(replicationReportLines(design))
         lines.addAll(seriesReportLines(design))
         lines.addAll(phenotypeReportLines(design.phenotype))
         lines.addAll(covariateReportLines(design.covariates ?: []))

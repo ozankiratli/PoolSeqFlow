@@ -72,7 +72,7 @@ TestSample1,PoolA,Pop1,1
 TestSample2,PoolB,Pop1,10
 TestSample3,PoolC,Pop1,2'
     analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
-        series { by = ['exp_population'] }"
+        design { by = ['exp_population'] }"
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     local report; report=$(analysis_report "$ANALYSIS_SB")
     assert_contains "$report" "TIME VARIABLE:         exp_time, numerical, in generations" \
@@ -114,7 +114,7 @@ test_datetime_time_parses_and_positions_in_days() {
 TestSample1,PoolA,Pop1,07/03/2024
 TestSample2,PoolB,Pop1,11/04/2024'
     analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'datetime'; format = 'dd/MM/yyyy' }
-        series { by = ['exp_population'] }"
+        design { by = ['exp_population'] }"
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     local report; report=$(analysis_report "$ANALYSIS_SB")
     # Echoed as ISO, which is the only thing that catches a user who meant July 3rd. No check can.

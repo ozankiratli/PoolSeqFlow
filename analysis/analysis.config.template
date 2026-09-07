@@ -126,13 +126,21 @@ params {
             //     order = ['pre', 'post']
             // }
 
-            // TIME SERIES — which pools are one thing measured repeatedly.
+            // THE EXPERIMENTAL DESIGN — which pools are independent of each other.
             //
-            // series {
-            //     // The variables that identify a series. Left empty it is every exp_ variable
-            //     // except time. SET IT if one of your exp_ columns is recorded AT each
-            //     // timepoint — a temperature, a census — because that varies within a series
-            //     // and would split every one of them into singletons.
+            // This is where degrees of freedom come from, and NOTHING here is guessed. Two pools
+            // are two independent units unless you say a column tells them apart as repeats of
+            // one material: RG_Sample already decided what was merged into one pool, so what is
+            // left is separate until you declare otherwise.
+            //
+            // It applies with or without a time course. A one-off comparison of three treated
+            // pools against three controls has conditions and units exactly as a time series has.
+            //
+            // design {
+            //     // The variables that identify one thing you set up. Left empty it is every
+            //     // exp_ variable except time. SET IT if one of your exp_ columns is recorded ON
+            //     // each pool rather than saying what the pool is — a temperature, a census —
+            //     // because that differs pool to pool and would split every unit into singletons.
             //     by = ['exp_population', 'exp_replicate']
             //
             //     // Which of those index REPEATS rather than naming a condition. Both take any
@@ -144,12 +152,35 @@ params {
             //     // technical replicates are one biological unit measured more than once and
             //     // carry none. Calling the second the first is pseudo-replication.
             //     //
+            //     // technicalRep is the ONLY thing that makes two pools one unit. Leave your
+            //     // lane column out of it and each lane counts as an independent replicate,
+            //     // which roughly halves every standard error in the project.
+            //     //
             //     // A key column named in neither is a CONDITION — what is being compared.
-            //     // Nothing is guessed, and the verification report prints every key column
-            //     // under its role so a column in the wrong place is visible.
+            //     // The verification report prints every key column under its role, which is
+            //     // the only place a column in the wrong place can be seen.
             //     biologicalRep = ['exp_replicate']
             //     technicalRep  = ['exp_lane']
             //
+            //     // Which of your cov_ columns are PART OF THE DESIGN — the ones a module may
+            //     // adjust for, rather than only report. Left empty it is every cov_ column
+            //     // that has a declared scale below; naming any restricts it to those.
+            //     //
+            //     // Set it when you record covariates for the record that you do not want in
+            //     // any model. Each one that IS in the design costs a degree of freedom, and
+            //     // with six pools there are four to spend.
+            //     //
+            //     // A column named here must have a scale under analysis.metadata.covariates,
+            //     // because a column with no scale has no value a model could take.
+            //     covariates    = ['cov_temperature']
+            // }
+
+            // TIME SERIES — what to do with a trajectory that has a gap in it.
+            //
+            // Only a time axis can leave one ragged, so this is all the series scope holds. What
+            // a series IS comes from the design scope above.
+            //
+            // series {
             //     // What to do when a series does not cover every timepoint.
             //     //
             //     //   'fail'       refuse, naming what is missing            (the default)
@@ -214,16 +245,20 @@ params {
             // A cov_ column has its own prefix so that adding one CANNOT dissolve your time
             // series: exp_ columns identify a series, and a temperature recorded at each
             // timepoint would leave every series a single point long. cov_ columns are checked
-            // for agreeing across the rows of a pool and are never a series key.
+            // for agreeing across the rows of a pool and never identify a unit or a series.
             //
             // Declaring one is optional. Undeclared, it is recorded, checked and reported like
             // any other pool-level column. Declared, it also gets a scale, so a module can
             // compute with it — the kinds are the phenotype's and mean the same things.
             //
-            // NOTHING IS ADJUSTED FOR. With six or twenty pools there are no degrees of freedom
-            // to spend on a covariate, so what this buys is that the value is on the record and
-            // in the report: a reader can see that the high-phenotype pools were also the warm
-            // ones, which is the confounding nobody would otherwise suspect.
+            // WHAT IT HOLDS IS SET HERE; WHAT IT DOES IS SET IN design.covariates above. A
+            // covariate left out of the design is still resolved, still reported and still
+            // published — it is simply not a term in anybody's model.
+            //
+            // EVEN ON THE RECORD ONLY IT EARNS ITS PLACE. With six or twenty pools there are
+            // few degrees of freedom to spend, and a value in the report lets a reader see that
+            // the high-phenotype pools were also the warm ones — which is the confounding
+            // nobody would otherwise suspect.
             //
             // covariates {
             //     cov_temperature {

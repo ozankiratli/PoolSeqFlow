@@ -75,11 +75,123 @@ test_the_verification_report_states_the_design() {
         "and names each variable with how many levels it has"
     assert_contains "$report" "TIME VARIABLE:         exp_time, categorical" \
         "and says how the time axis was read"
-    assert_contains "$report" "SERIES:                conditions   exp_population" \
+    assert_contains "$report" "REPLICATION:           conditions   exp_population" \
         "and what a repeated measurement is"
-    assert_contains "$report" "SERIES:                biological   (none declared)" \
+    assert_contains "$report" "REPLICATION:           biological   (none declared)" \
         "with every key column placed under a role, declared or not"
     assert_contains "$report" "3 series over 2 timepoints" "and the shape it found"
+}
+
+# ---------------------------------------------------------------------------------------
+# Units without a time axis. THE BUG: units, conditions and roles were computed inside the time
+# branch, so a project with no time course reported zero independent units - and degrees of
+# freedom come from that number. A one-off comparison is the commonest design there is.
+
+# The pools ARE the units when nothing declares otherwise. RG_Sample already decided what was
+# merged into one pool, so two pools are two things until a technicalRep column says they are one
+# material measured twice.
+test_an_untimed_project_has_units_and_conditions() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_treatment
+TestSample1,PoolA,control
+TestSample2,PoolB,control
+TestSample3,PoolC,control
+TestSample4,PoolD,treated
+TestSample5,PoolE,treated
+TestSample6,PoolF,treated'
+    analysis_write_metadata_config "$ANALYSIS_SB" ""
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "a design with no time course is still a design"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "TIME VARIABLE:         none" "there is no time axis"
+    assert_contains "$report" "REPLICATION:               2 conditions, 3 biological replicates each, 1 technical" \
+        "and three pools a side are three replicates, not one"
+    assert_contains "$report" "REPLICATION:               6 independent units from 6 pools" \
+        "which is the number every standard error is computed from"
+    assert_not_contains "$report" "SERIES:" "and nothing claims a trajectory"
+}
+
+# The same six pools with the lane declared: three cages sequenced twice is THREE units, and
+# calling it six is pseudo-replication that roughly halves every standard error.
+test_a_technical_column_merges_untimed_pools_into_one_unit() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_cage,exp_lane
+TestSample1,PoolA,A,L1
+TestSample2,PoolB,A,L2
+TestSample3,PoolC,B,L1
+TestSample4,PoolD,B,L2
+TestSample5,PoolE,C,L1
+TestSample6,PoolF,C,L2'
+    analysis_write_metadata_config "$ANALYSIS_SB" "        design {
+            biologicalRep = ['exp_cage']
+            technicalRep  = ['exp_lane']
+        }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "a crossed untimed design should resolve"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "REPLICATION:               1 condition, 3 biological replicates each, 2 technical" \
+        "the cages are the replicates and the lanes are the repeats of each"
+    assert_contains "$report" "REPLICATION:               3 independent units from 6 pools" \
+        "so six pools carry three units"
+    assert_contains "$report" "REPLICATION:                   A  (2)" "and each unit names its pools"
+}
+
+# THE MISASSIGNMENT NOTHING CAN CATCH, without a time axis to make it visible. Leave the lane
+# out of technicalRep and it is read as a condition - the count doubles, silently. So every key
+# column is printed under a role here too.
+test_an_undeclared_technical_column_is_visible_as_a_condition() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_cage,exp_lane
+TestSample1,PoolA,A,L1
+TestSample2,PoolB,A,L2
+TestSample3,PoolC,B,L1
+TestSample4,PoolD,B,L2'
+    analysis_write_metadata_config "$ANALYSIS_SB" ""
+    run_analysis "$ANALYSIS_SB" verify > /dev/null
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "REPLICATION:           conditions   exp_cage, exp_lane" \
+        "the undeclared lane shows up as a condition, where it can be seen"
+    assert_contains "$report" "REPLICATION:           technical    (none declared)" \
+        "beside the empty list that should have held it"
+    assert_contains "$report" "4 independent units from 4 pools" \
+        "and the doubled count is printed rather than left to be inferred"
+}
+
+# A project with no exp_ columns at all still has units, because a module counting degrees of
+# freedom must not be handed a zero it cannot tell from an unanswered question.
+test_units_survive_a_project_with_no_experimental_columns() {
+    analysis_ready single || return
+    rm -f "$ANALYSIS_SB/main/analysis.config"
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample
+TestSample1,PoolA
+TestSample2,PoolB'
+    run_analysis "$ANALYSIS_SB" verify > /dev/null
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "REPLICATION:           no exp_ columns, so every pool stands alone" \
+        "the absence of a design is stated"
+    assert_contains "$report" "2 independent units from 2 pools" "and the pools are still units"
+}
+
+# Once technicalRep IS declared, it has to resolve the pools it applies to. A group that is
+# partly told apart and partly not is neither one unit nor several, and guessing either way
+# changes every degree of freedom in the project.
+test_pools_a_declared_technical_column_cannot_tell_apart_refuse() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_cage,exp_lane
+TestSample1,PoolA,A,L1
+TestSample2,PoolB,A,L1
+TestSample3,PoolC,A,L2'
+    analysis_write_metadata_config "$ANALYSIS_SB" "        design {
+            biologicalRep = ['exp_cage']
+            technicalRep  = ['exp_lane']
+        }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a group that cannot be partitioned must stop the run"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "L1: PoolA, PoolB" "naming the pools it cannot tell apart"
+    assert_contains "$out" "partly one unit and partly several" "and why that is not resolvable"
+    assert_contains "$out" "give the rows the same" \
+        "with merging them offered beside declaring a column, as the timed refusal does"
 }
 
 # A project with no exp_ columns and one whose metadata was never copied both have no design,
@@ -458,9 +570,9 @@ test_a_covariate_is_never_a_series_key() {
         "the series are what they were before the covariates existed"
 }
 
-# A DECLARED COVARIATE GETS A SCALE, on the phenotype's four kinds. What it buys is the report
-# line: nothing is adjusted for at six pools, so being able to see that the high-phenotype pools
-# were also the warm ones is the whole of what the frame does with one.
+# A DECLARED COVARIATE GETS A SCALE, on the phenotype's four kinds. The frame itself adjusts for
+# nothing; what a scale buys is a typed value a module can compute with, and a report line that
+# shows the high-phenotype pools were also the warm ones.
 test_a_declared_covariate_is_reported_with_its_scale() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_COVARIATE_METADATA"
@@ -520,6 +632,66 @@ test_a_covariate_declaration_outside_the_prefix_refuses() {
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "only a cov_ column may be declared a covariate"
     assert_contains "$(analysis_output)" "has to be a cov_ column" "and the refusal says so"
+}
+
+# WHAT A COLUMN HOLDS AND WHAT IT DOES ARE TWO SETTINGS. analysis.metadata.covariates gives it a
+# scale; analysis.metadata.design.covariates says whether a module may put it in a model. Left
+# unset every declared covariate is in the design, so declaring one is the whole of opting in.
+test_every_declared_covariate_is_in_the_design_by_default() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_COVARIATE_METADATA"
+    analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
+            covariates {
+                cov_temperature { kind = 'quantitative' }
+            }"
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "an unset design covariate list is the ordinary case: $(analysis_output)"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "1 declared, 1 in the design" "the two counts agree by default"
+    assert_contains "$report" "cov_temperature, quantitative  [in the design]" \
+        "and each covariate says which it is"
+}
+
+# Each covariate in the design costs a degree of freedom, and at six pools there are four. So a
+# covariate kept for provenance has to be excludable - and the exclusion goes on the record,
+# because leaving one out is as much a decision as putting one in.
+test_the_design_can_leave_a_declared_covariate_out() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_COVARIATE_METADATA"
+    analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
+            design { covariates = ['cov_temperature'] }
+            covariates {
+                cov_temperature { kind = 'quantitative' }
+                cov_site        { kind = 'nominal'; levels = ['coastal', 'inland', 'montane'] }
+            }"
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "naming one of two covariates is a sound design: $(analysis_output)"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "2 declared, 1 in the design" "the counts differ and both are printed"
+    assert_contains "$report" "cov_site, nominal: coastal, inland, montane  [on the record only]" \
+        "the excluded one is still resolved and still reported"
+    assert_contains "$report" "leaves cov_site out" "and the exclusion is in the design notes"
+}
+
+# A column with no scale has no value a model could take, so naming one in the design is a
+# request that cannot be met - and silently dropping it would spend a degree of freedom on
+# nothing, or none on something the user asked for.
+test_a_design_covariate_with_no_scale_refuses() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_COVARIATE_METADATA"
+    analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
+            design { covariates = ['cov_site'] }
+            covariates {
+                cov_temperature { kind = 'quantitative' }
+            }"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a covariate with no scale cannot be in a model"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "which has no declared scale" "the refusal says what is missing"
+    assert_contains "$out" "analysis.metadata.covariates.cov_site { kind =" \
+        "and shows the declaration that would fix it"
 }
 
 # A project with no phenotype is the ordinary case and must not look like a broken one.

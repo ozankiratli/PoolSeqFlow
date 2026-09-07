@@ -1515,7 +1515,7 @@ The **name** of a column is what decides how it is treated. There is no second s
 
 **`RG_` and `param_` are closed lists, and an unrecognized one is refused rather than ignored.** For `RG_` that stops a typo quietly losing a tag. For `param_` the reason is sharper: a `param_` column the pipeline did not recognize would be a setting you had written down, could see in your own file, and that was never applied to anything.
 
-**`exp_`, `pt_` and `cov_` are three prefixes because only `exp_` identifies a series.** The analysis layer works out which pools are one thing measured repeatedly from your `exp_` columns. A trait value differs from pool to pool, and so does a cage temperature — either one recorded as an `exp_` column would split every series into single timepoints, **quietly**, because a design with no repeated measurements is a legal design. Keeping them apart is what stops that, structurally, rather than by remembering a setting.
+**`exp_`, `pt_` and `cov_` are three prefixes because only `exp_` says what the experiment set up.** The analysis layer works out which pools are independent of each other — and, where there is a time course, which are one thing measured repeatedly — from your `exp_` columns. A trait value differs from pool to pool, and so does a cage temperature: either one recorded as an `exp_` column would make every pool its own unit and split every series into single timepoints, **quietly**, because a design with no repeated measurements is a legal design. Keeping them apart is what stops that, structurally, rather than by remembering a setting.
 
 **All three describe the POOL.** What differs between two rows of one pool — the lane, the run, the technician who handled one library — takes no prefix, and **not because it does not matter**. Once two libraries' reads are merged into one column, nothing downstream can attribute a read to the row it came from, so a row-level factor is not something the analysis layer has yet to support: it is unrecoverable. Record it unprefixed for the record. If every library of a pool *does* share one — one technician per pool — then it is pool-level after all, and it is a `cov_`.
 
@@ -2492,7 +2492,8 @@ Everything the analysis layer takes:
 | `analysis.folderName` | Which folder under `Analysis/Results` it writes to | [Output Layout](#analysis-folder-name) |
 | `analysis.metadata.missingValueEncoding` | What a cell means when it is not a value — `NA` and its spellings | [below](#missing-values) |
 | `analysis.metadata.timeVar.*` | How the time column is read and ordered | [below](#the-time-axis) |
-| `analysis.metadata.series.*` | Which pools are one thing measured repeatedly | [below](#time-series) |
+| `analysis.metadata.design.*` | Which pools are independent of each other, which repeats are which, and which covariates a module may fit | [below](#experimental-design) |
+| `analysis.metadata.series.incomplete` | What to do with a trajectory that skips a timepoint | [below](#time-series) |
 | `analysis.metadata.phenotype.*` | Which `pt_` column a module associates things with, and how to read it | [below](#the-phenotype) |
 | `analysis.metadata.covariates.*` | What each `cov_` column holds, so a module can compute with it | [below](#covariates) |
 | `analysis.modules.<module>.*` | One module's own settings | [below](#module-settings) |
@@ -2645,26 +2646,28 @@ TIME VARIABLE:             2024-03-07T00:00  2024-04-11T00:00   (2 levels)
 
 Someone who meant July 3rd sees `2024-03-07` and catches it in one glance. That line is doing more work than any check in this program.
 
-### Time series { #time-series }
+### The experimental design { #experimental-design }
 
-A trajectory needs more than an order: it needs to know which pools are **one thing measured repeatedly**. A series is the pools that share every identifying variable and differ only in time.
+**Which pools are independent of each other is where every degree of freedom in every module comes from, and nothing about it is guessed.**
 
 ```groovy
 params {
     analysis {
         metadata {
-            series {
+            design {
                 by            = ['exp_treatment', 'exp_replicate', 'exp_lane']
                 biologicalRep = ['exp_replicate']
                 technicalRep  = ['exp_lane']
-                incomplete    = 'fail'
+                covariates    = ['cov_temperature']
             }
         }
     }
 }
 ```
 
-**`by` defaults to every `exp_` variable except time**, and the report always prints the key it used. Set it explicitly when one of your `exp_` columns is recorded **at** each timepoint rather than identifying what is being followed — a cage temperature, a census count. Such a column differs *within* a series, so leaving it in the key splits every series into singletons and the design dissolves with no error at all.
+**This applies with or without a time course.** A one-off comparison of three treated pools against three controls has conditions and independent units exactly as a five-generation time series does, and reads them from the same three settings.
+
+**`by` defaults to every `exp_` variable except time**, and the report always prints the key it used. Set it explicitly when one of your `exp_` columns is recorded **on** each pool rather than saying what the pool is — a cage temperature, a census count. Such a column differs from pool to pool, so leaving it in the key makes every pool its own unit and, in a time series, splits every series into singletons with no error at all.
 
 #### Replicates: which repeats are independent { #replicates }
 
@@ -2683,24 +2686,50 @@ That gives three levels, each derived once and available to every module:
 
 | | what it is | formed by |
 |---|---|---|
-| series | one measurable trajectory | the full key |
+| series | one measurable trajectory, and only where there is a time axis | the full key |
 | **unit** | **the independent biological unit** | dropping the `technicalRep` columns |
 | condition | what is being compared | dropping the `biologicalRep` columns too |
 
 **A module that counts degrees of freedom or chooses strata reads units, never series.** A key column named in neither list is a condition, which is the default and the common case.
 
-Nothing is guessed. `biologicalRep` and `technicalRep` both default to empty, and a test that needs independent replicates refuses by name rather than inventing them.
+#### What makes two pools one unit, and it is only ever your declaration { #what-a-unit-is }
+
+**`RG_Sample` has already decided what was merged.** Rows sharing one are one pool; rows that do not are separate pools. So by the time the analysis layer sees your project, two pools are **two independent units**, and the only thing that can make them one material again is a column you named in `technicalRep`.
+
+That is the whole rule, and it cuts both ways:
+
+- **Three control pools with nothing but `exp_treatment` in the file are three units**, not one. They are three separate RG_Samples and you did not say otherwise.
+- **Three cages sequenced on two lanes each, with `technicalRep = ['exp_lane']`, are three units** from six pools. Leave the lane out of `technicalRep` and they are six, which roughly halves every standard error in the project.
+
+`biologicalRep` and `technicalRep` both default to empty, so a project that declares nothing gets one unit per pool. **That is not a claim that your pools are independent — it is the absence of a claim that they are not**, and a module whose test needs declared biological replication refuses by name rather than inventing it.
+
+Once `technicalRep` **is** declared it has to resolve the pools it applies to. A group where some pools are told apart by the technical column and others are not is neither one unit nor several, and that refuses, naming the pools and offering the same remedies as above.
+
+#### Which covariates are part of the design { #design-covariates }
+
+`covariates` names the `cov_` columns a module may **adjust for**, as opposed to only report. Left empty it is every `cov_` column that has a [declared scale](#covariates); naming any restricts it to those, and a column named here without a scale refuses, because a column with no scale has no value a model could take.
+
+**Set it when you record covariates you do not want in any model.** A collection site kept for provenance is not a term anybody wants fitted, and each covariate that *is* in the design costs a degree of freedom — with six pools there are four to spend.
+
+Every covariate is resolved, reported and published either way. The verification report marks each one, and a covariate you left out is named in the design notes, because leaving one out is as much a decision as putting one in and neither is visible from the values:
+
+```
+COVARIATES:            2 declared, 1 in the design
+COVARIATES:                cov_temperature, quantitative  [in the design]
+COVARIATES:                    4 pools, 18 to 23
+COVARIATES:                cov_site, nominal: north, south  [on the record only]
+```
 
 #### The mistake to watch for
 
 The report prints **every key column under exactly one role**:
 
 ```
-SERIES:                conditions   exp_treatment
-SERIES:                biological   exp_replicate
-SERIES:                technical    exp_lane, exp_seqrun
-SERIES:                    2 conditions, 3 biological replicates each, 6 technical
-SERIES:                    36 series over 4 timepoints, from 6 independent units
+REPLICATION:           conditions   exp_treatment
+REPLICATION:           biological   exp_replicate
+REPLICATION:           technical    exp_lane, exp_seqrun
+REPLICATION:               2 conditions, 3 biological replicates each, 6 technical
+REPLICATION:               6 independent units from 144 pools
 ```
 
 Read those three lines. A technical column left out of `technicalRep` is read as a **condition** — one treatment silently becomes several, and a test is handed strata that are the same DNA. Nothing can detect that, for the same reason nothing can detect `dd/MM` against `MM/dd`: both readings are internally consistent. Printing the partition is the whole defense.
@@ -2708,6 +2737,24 @@ Read those three lines. A technical column left out of `technicalRep` is read as
 The counts are per unit and given as a range when they vary, because a design where one sample was sequenced twice for validation and the rest once is perfectly ordinary and a single number would be a plausible-looking lie.
 
 **And a design PoolSeqFlow cannot see through:** three cages sequenced on two lanes each, with the lanes neither merged nor declared technical but labeled `exp_replicate = 1..6`, has three independent units and claims six. The frame reports what you declared. The line `6 pools from 6 libraries` — where a merged design would say `from 12` — is the number to check.
+
+### Time series { #time-series }
+
+A trajectory needs more than an order: it needs to know which pools are **one thing measured repeatedly**. A series is the pools that share every identifying variable and differ only in time — the same key the [experimental design](#experimental-design) is built from, followed through the [time axis](#the-time-axis).
+
+Where a project has no time axis there are no series, and the units and conditions above are unaffected. The only setting a series adds is what to do when one has a gap in it.
+
+```groovy
+params {
+    analysis {
+        metadata {
+            series {
+                incomplete = 'fail'
+            }
+        }
+    }
+}
+```
 
 #### When a series is missing a timepoint
 
@@ -2871,7 +2918,7 @@ You can record as many `pt_` columns as you like — `analysis.metadata.phenotyp
 
 ### Covariates { #covariates }
 
-A `cov_` column records something **measured on the pool that you neither set nor are testing against** — a cage temperature, an altitude, a collection site, a technician when every library of a pool shares one. It is the third pool-level prefix and it exists for one mechanical reason: an `exp_` column identifies a time series, so a temperature recorded at each timepoint would leave every series a single point long. A `cov_` column is never a series key, so adding one cannot do that.
+A `cov_` column records something **measured on the pool that you neither set nor are testing against** — a cage temperature, an altitude, a collection site, a technician when every library of a pool shares one. It is the third pool-level prefix and it exists for one mechanical reason: an `exp_` column says what the experiment set up, so a temperature recorded on each pool would make every pool its own unit and leave every series a single point long. A `cov_` column never identifies a unit or a series, so adding one cannot do that.
 
 **Declaring a covariate is optional.** Undeclared, it is recorded, checked for agreeing across the rows of its pool, and printed in the verification report like any other pool-level column. Declaring it gives it a **scale**, so a module can compute with it:
 
@@ -2895,13 +2942,15 @@ params {
 
 The kinds are the phenotype's — `quantitative`, `binary`, `ordinal`, `nominal` — and they mean [the same things](#phenotype-kind), including that a `nominal` covariate carries no number a module could fit a slope on. The report names any `cov_` column you recorded and did not declare, because "kept for the record" and "forgot to declare it" look identical in the file.
 
-#### Nothing is adjusted for, and that is the honest position { #covariates-not-adjusted }
+#### What adjusting for one costs, and why it is a decision { #covariates-not-adjusted }
 
-**PoolSeqFlow does not correct any result for a covariate, and will not in 3.0.0.** The reason is arithmetic rather than ambition: *n* is the number of **pools**, typically six to twenty, so a model that spends a degree of freedom on a covariate has almost none left for the effect you came for.
+**The frame never adjusts for anything.** It resolves each covariate, says which are [part of the design](#design-covariates), and publishes both. Whether a module puts a covariate in its model is that module's business, declared in its own section — and no module ships without saying.
 
-What declaring one buys instead is that the value **travels with the result**. The verification report and every published folder's `README.md` carry each pool's covariate value beside its phenotype, so a reader can see that the high-phenotype pools were also the warm ones. That is the confounding you would otherwise have no way to suspect — and seeing it is worth more than an adjustment you cannot afford to fit.
+**The arithmetic is why it has to be your decision.** *n* is the number of **pools**, typically six to twenty, so every covariate a model fits is a degree of freedom the effect you came for does not get. At six pools a comparison starts with four; a single covariate makes it three; a repeated-measures design of three units has one left before any covariate at all.
 
-If a covariate turns out to explain your result, the answer is a better design, not a bigger model.
+Whatever a module does with it, declaring a covariate buys one thing unconditionally: the value **travels with the result**. The verification report and every published folder's `README.md` carry each pool's covariate value beside its phenotype, so a reader can see that the high-phenotype pools were also the warm ones. That is the confounding you would otherwise have no way to suspect, and it needs no degrees of freedom at all.
+
+If a covariate turns out to explain your result, the answer is usually a better design rather than a bigger model.
 
 ### Which runs to analyze { #analysis-runs }
 

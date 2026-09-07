@@ -4,7 +4,7 @@
 #                  --cpp site_diversity.cpp --depths a.tsv,b.tsv --out published
 #
 # design.json, pools.json and options.json are written by the frame, from what analysisPlan()
-# resolved: the experimental design under the project's own timeVar and series settings, the
+# resolved: the experimental design under the project's own design, timeVar and series settings, the
 # pool sizes and ploidy the pipeline filtered with, and this module's settings. Nothing here
 # re-reads the metadata.
 

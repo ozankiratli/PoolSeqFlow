@@ -29,9 +29,14 @@ def metadataDefaults() {
              missingValueEncoding: [],
              // The time axis. Empty kind means the project has not declared one.
              timeVar   : [ column: 'exp_time', kind: '', unit: '', order: [], format: '', locale: 'en' ],
-             // What a repeated measurement is. Empty `by` means every exp_ variable but time; a
-             // key column in neither replicate list is a condition.
-             series    : [ by: [], biologicalRep: [], technicalRep: [], incomplete: 'fail' ],
+             // What the experiment was: which exp_ columns identify the setup, which of those
+             // index repeats, and which cov_ columns a module adjusts for. Empty `by` means
+             // every exp_ variable but time; a key column in neither replicate list is a
+             // condition; empty `covariates` means every cov_ column that has a declared scale.
+             design    : [ by: [], biologicalRep: [], technicalRep: [], covariates: [] ],
+             // What to do with a series that does not cover every timepoint. A time axis is the
+             // only thing that can leave one ragged, so this is all the series scope holds.
+             series    : [ incomplete: 'fail' ],
              // The phenotype to analyse against. Empty column means none is declared; a project
              // may record several pt_ columns and analyse one at a time under its own
              // folderName. `levels` names the groups of a categorical scale.

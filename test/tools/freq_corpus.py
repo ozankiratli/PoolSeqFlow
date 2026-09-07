@@ -598,24 +598,33 @@ def design(merged, members, kind="quantitative", timed=False):
     fixture carrying only the two keys basicstats happens to read would let a module pass
     against a shape the frame never emits.
 
-    Untimed, there is no series and no unit: six pools are six independent observations, which
-    is what an ordinary association study is. `timed` resolves exp_time as the time axis
-    instead, and then the six pools are three series of two - THREE units, not six - which is
-    the case rule 17c exists for and where degrees of freedom halve.
+    Untimed, there is no series and every pool is its own unit: six pools are six independent
+    observations, which is what an ordinary association study is. `timed` resolves exp_time as
+    the time axis instead, and then the six pools are three series of two - THREE units, not
+    six - which is the case rule 17c exists for and where degrees of freedom halve.
     """
     values = pool_values(merged)
     variables = [{"name": name, "levels": sorted({row[name] for row in values})}
                  for name in ("exp_population", "exp_time")]
+    # Untimed, exp_time is an ordinary experimental variable and joins the key: nothing here is
+    # declared a replicate, so no two pools are one material and each stands alone.
+    key_columns = ["exp_population", "exp_time"]
+    units = [{"label": " | ".join(row[column] for column in key_columns),
+              "key": {column: row[column] for column in key_columns},
+              "pools": [pool],
+              "members": [pool]}
+             for pool, row in zip(POOLS, values)]
     summary = {
         "variables": variables,
         "pools": [{"pool": pool, "libraries": members[pool], "values": row}
                   for pool, row in zip(POOLS, values)],
         "time": None,
-        "seriesBy": [],
-        "roles": {"condition": [], "biological": [], "technical": []},
+        "keyColumns": key_columns,
+        "roles": {"condition": key_columns, "biological": [], "technical": []},
         "series": [],
-        "units": [],
-        "conditions": [],
+        "units": units,
+        "conditions": [{"label": unit["label"], "key": unit["key"], "pools": unit["pools"],
+                        "units": [unit["label"]]} for unit in units],
         "phenotype": (phenotype_block(PHENOTYPE_COLUMN, "quantitative", None, PHENOTYPE)
                       if kind == "quantitative"
                       else phenotype_block(BINARY_COLUMN, "binary", BINARY_LEVELS, BINARY)),
@@ -630,7 +639,7 @@ def design(merged, members, kind="quantitative", timed=False):
     summary["time"] = {"column": "exp_time", "kind": "categorical", "unit": None,
                        "format": None, "locale": None, "levels": levels,
                        "timeline": [level["index"] for level in levels]}
-    summary["seriesBy"] = ["exp_population"]
+    summary["keyColumns"] = ["exp_population"]
     summary["roles"] = {"condition": ["exp_population"], "biological": [], "technical": []}
     summary["series"] = [
         {"label": population,
@@ -639,11 +648,13 @@ def design(merged, members, kind="quantitative", timed=False):
                    if row["exp_population"] == population],
          "timeline": [level["index"] for level in levels]}
         for population in variables[0]["levels"]]
-    # rollUp() over the condition columns, which with no replicate roles declared is every
-    # series key column - so a unit here is a population and there are three of them.
+    # With no technicalRep declared nothing merges two series, so a unit is a series - a
+    # population, and there are three of them where untimed there were six.
     summary["units"] = [{"label": entry["label"], "key": entry["key"],
-                         "series": [entry["label"]]} for entry in summary["series"]]
-    summary["conditions"] = summary["units"]
+                         "pools": entry["pools"], "members": [entry["label"]]}
+                        for entry in summary["series"]]
+    summary["conditions"] = [{"label": unit["label"], "key": unit["key"], "pools": unit["pools"],
+                              "units": [unit["label"]]} for unit in summary["units"]]
     return summary
 
 

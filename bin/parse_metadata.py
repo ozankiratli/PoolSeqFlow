@@ -24,9 +24,10 @@ SEVEN KINDS OF COLUMN, and the prefix is what separates them:
                     temperature, an altitude, a collection site. Open, and never read here.
     anything else   design metadata. Recorded, never read by steps 0-8.
 
-exp_, pt_ AND cov_ ARE THREE PREFIXES BECAUSE ONLY exp_ IDENTIFIES A SERIES. The analysis layer
-works out which pools are one thing measured repeatedly from the exp_ columns; a trait value or a
-temperature differs from pool to pool, so either one admitted there would leave every series a
+exp_, pt_ AND cov_ ARE THREE PREFIXES BECAUSE ONLY exp_ SAYS WHAT THE EXPERIMENT SET UP. The
+analysis layer works out which pools are independent of each other, and which are one thing
+measured repeatedly, from the exp_ columns; a trait value or a temperature differs from pool to
+pool, so either one admitted there would make every pool its own unit and leave every series a
 single timepoint long - quietly, because a design with no repeated measurement is a legal design.
 
 All three describe the POOL. What differs between two rows of one pool - the lane, the run, the

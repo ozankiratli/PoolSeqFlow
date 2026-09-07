@@ -35,11 +35,12 @@
 #                not look at them, so results already produced stay valid. The same is true
 #                of exp_, pt_ and cov_ columns.
 #
-# WHY exp_, pt_ AND cov_ ARE THREE PREFIXES AND NOT ONE: only exp_ identifies a time series.
-# The analysis layer works out which pools are one thing measured repeatedly from your exp_
-# columns, and a trait value or a cage temperature differs from pool to pool — so either one
-# written as exp_ would leave every series a single timepoint long, quietly, because a design
-# with no repeated measurement is a legal design.
+# WHY exp_, pt_ AND cov_ ARE THREE PREFIXES AND NOT ONE: only exp_ says what an experiment set
+# up. The analysis layer works out which pools are independent of each other — and, where there
+# is a time course, which are one thing measured repeatedly — from your exp_ columns, and a
+# trait value or a cage temperature differs from pool to pool. So either one written as exp_
+# would make every pool its own unit and leave every series a single timepoint long, quietly,
+# because a design with no repeated measurement is a legal design.
 #
 # ---------------------------------------------------------------------------------------
 # RG_Sample IS THE ONE THAT CHANGES THE RESULT. It is the pool a row belongs to, and becomes

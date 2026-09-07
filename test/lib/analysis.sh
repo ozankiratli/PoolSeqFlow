@@ -271,8 +271,9 @@ CFG
 # Biological and technical replicates. The two have OPPOSITE statistical standing - biological
 # ones are independent and carry degrees of freedom, technical ones are the same material
 # measured twice and carry none - so treating one as the other is pseudo-replication.
-# Two conditions, two biological replicates each, and two technical dimensions crossed over
-# them: 2 lanes x 2 sequencing runs = 4 series per unit, 16 series, 8 independent units.
+# One condition, two biological replicates, and two technical dimensions crossed over them:
+# 2 lanes x 2 sequencing runs = 4 series per unit, 8 series over 2 timepoints, 2 independent
+# units from 16 pools.
 ANALYSIS_REPLICATE_METADATA='SampleID,RG_Sample,exp_treatment,exp_rep,exp_lane,exp_seqrun,exp_time
 S1,P1,control,1,L1,R1,T1
 S2,P2,control,1,L1,R1,T2

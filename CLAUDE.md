@@ -59,6 +59,7 @@ In `test/`, a comment recording the bug a case guards *is* its function — it i
 
 ## Other standing rules
 
+- **Never `git push`.** Z publishes; nothing else does, for any reason.
 - **Never `git commit` unless asked**, and a commit instruction covers only the work that existed when it was given. Do the work, leave it uncommitted, say what changed in prose, stop. The uncommitted tree is the review surface — never build a diff artifact or a summary page as a substitute.
 - **Use the `Edit` tool for file changes, never a script that rewrites a file.** Z reviews side by side in the IDE diff view as it lands. Announced mechanical renames via `sed` are the one exception.
 - **No hard wrapping in markdown.** One paragraph is one line, in every `.md`.
