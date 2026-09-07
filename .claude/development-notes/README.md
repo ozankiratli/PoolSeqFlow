@@ -62,6 +62,7 @@ One file per subject, not per source file — the reasoning crosses file boundar
 | `bin-and-lib.md` | why the helpers are split into `bin/` (run) and `lib/` (sourced) |
 | `dry-run.md` | the preview: why it is its own entry point, and the traps in building it |
 | `concurrency.md` | two analysis modules deriving one intermediate: what was measured, and the one line that fixes it |
+| `analysis-versioning.md` | when `analysis/frame.version` moves, and the stricter rule that was measured against the history and dropped |
 | `shell-and-nextflow-gotchas.md` | the traps that produced a confidently wrong answer once: zsh vs bash, `set -e`, awk, the strict parser, channels, config |
 | `brainstorming.md` | ideas for later releases: what each would buy, what it would break, and where it sits |
 

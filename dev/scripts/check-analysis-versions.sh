@@ -42,10 +42,23 @@ frame_version_day() {
     grep -vE '^[[:space:]]*(#|$)' "$1" 2>/dev/null | head -1 | tr -d ' ' | cut -d. -f1
 }
 
-# The day the given paths last changed: today when anything is uncommitted, otherwise the day of
-# the last commit touching them. UTC, which is what bump-analysis-version.sh writes.
+# The day the given paths last changed: the newest mtime among them while they are uncommitted,
+# otherwise the day of the last commit touching them. UTC, which is what
+# bump-analysis-version.sh writes.
+#
+# THE MTIME AND NOT TODAY'S DATE: an uncommitted change keeps the day it was made, so the
+# comparison below moves when the frame moves and not when the calendar does.
 last_change_day() {
-    if dirty "$@"; then date -u +%Y%m%d; return; fi
+    if dirty "$@"; then
+        local newest
+        newest=$(git status --porcelain -- "$@" | awk '{print $NF}' \
+                 | while IFS= read -r path; do
+                       [ -e "$path" ] && date -u -r "$path" +%Y%m%d
+                   done | sort -n | tail -1)
+        # A change that only removed files leaves no mtime to read.
+        echo "${newest:-$(date -u +%Y%m%d)}"
+        return
+    fi
     TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d -- "$@" 2>/dev/null || true
 }
 
@@ -122,7 +135,11 @@ if [ -d analysis/modules ]; then
         # every new module reports as behind, because `git diff HEAD` says nothing at all about
         # an untracked file.
         git cat-file -e "HEAD:${dir}manifest.json" 2>/dev/null || continue
-        if dirty "$dir" && ! git diff HEAD -- "${dir}manifest.json" | grep -q '^+.*"version"'; then
+        # NOT THE MODULE'S OWN CASES. `analysis/modules/*/test/` carries export-ignore, so those
+        # files are in no published module and can change nothing a user installs - and the
+        # version is what an installation and every published result record the module BY.
+        if dirty "$dir" ":(exclude)${dir}test" \
+           && ! git diff HEAD -- "${dir}manifest.json" | grep -q '^+.*"version"'; then
             report "module '$name' changed and its manifest version did not" \
                 "bump it: dev/scripts/bump-analysis-version.sh module $name"
         fi

@@ -84,7 +84,8 @@ test_release_archive_excludes_development_material() {
     listing=$(working_tree_archive)
     [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
     local unwanted
-    for unwanted in "test/" "dev/" "docs/" ".github/" "mkdocs.yml" "__pycache__"; do
+    for unwanted in "test/" "dev/" "docs/" ".github/" "mkdocs.yml" "__pycache__" \
+                    ".claude/" "CLAUDE.md"; do
         assert_not_contains "$listing" "$unwanted" "release tarball should not carry $unwanted"
     done
 }
@@ -182,6 +183,65 @@ test_the_analysis_version_scripts_are_there_and_runnable() {
     assert_contains "$out" "frame" "usage should name the frame target"
     assert_contains "$out" "index" "and the index target"
     assert_contains "$out" "module" "and the module target"
+}
+
+# THE FRAME VERSION MOVES WITH A CHANGE AND NEVER WITH THE CALENDAR.
+#
+# check-analysis-versions.sh answered `date -u` for a dirty tree, so an uncommitted frame change
+# went BEHIND again at every midnight and asked for a fresh stamp from a frame nobody had
+# touched since. Work sits uncommitted in this project for as long as it is under review, which
+# is exactly how long that lasted.
+#
+# In a repository of its own, because the script takes its root from its own location and the
+# answer depends on whether the tree it reads is dirty - which this one's is not, most days.
+test_the_frame_version_moves_with_a_change_and_not_with_the_calendar() {
+    local sb; sb=$(guard_path "$TEST_TMPDIR/version-rule")
+    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/R" "$sb/analysis/modules/demo/test"
+    cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$sb/dev/scripts/"
+    printf 'frame {}\n' > "$sb/analysis/frame.config"
+    printf '20260101.001\n' > "$sb/analysis/frame.version"
+    printf 'f <- function() 1\n' > "$sb/analysis/lib/R/thing.R"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/analysis/modules-index.tsv"
+    printf '{"name": "demo", "version": "20260101.001"}\n' > "$sb/analysis/modules/demo/manifest.json"
+    printf 'workflow {}\n' > "$sb/analysis/modules/demo/main.nf"
+    printf 'echo case\n' > "$sb/analysis/modules/demo/test/demo.sh"
+    # Committed AS OF the day the version names, because a clean tree is compared against the
+    # commit date and this fixture would otherwise say the frame changed today.
+    (cd "$sb" && git init -q . && git add -A \
+        && GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
+           git -c user.email=t@t -c user.name=t commit -qm base \
+               --date='2026-01-01T00:00:00Z') > /dev/null 2>&1 \
+        || { skip_case "could not build a repository to check in"; return; }
+
+    local out
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1)
+    assert_contains "$out" "up to date" "an untouched frame needs no new version:"$'\n'"$out"
+
+    printf 'g <- function() 2\n' >> "$sb/analysis/lib/R/thing.R"
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
+    assert_contains "$out" "BEHIND" "a changed frame with a stale version:"$'\n'"$out"
+
+    # The version now names THE DAY THE CHANGE WAS MADE, which is January and not today. This
+    # is the assertion that fails if the dirty answer goes back to being today's date.
+    touch -d '2026-01-02T00:00:00Z' "$sb/analysis/lib/R/thing.R"
+    printf '20260102.001\n' > "$sb/analysis/frame.version"
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1)
+    assert_contains "$out" "up to date" \
+        "a bump dated to the change stays good however long it sits:"$'\n'"$out"
+
+    # A MODULE'S OWN CASES ARE NOT THE MODULE. analysis/modules/*/test/ carries export-ignore,
+    # so nothing there reaches a published module - and the manifest version is what an
+    # installation and every published result record the module by. Fixing a case must not move
+    # it; touching what the module computes must.
+    printf 'echo another case\n' >> "$sb/analysis/modules/demo/test/demo.sh"
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1)
+    assert_not_contains "$out" "module 'demo'" \
+        "a module's test changing is not the module changing:"$'\n'"$out"
+
+    printf 'process P {}\n' >> "$sb/analysis/modules/demo/main.nf"
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
+    assert_contains "$out" "module 'demo'" \
+        "but its main.nf changing is:"$'\n'"$out"
 }
 
 test_release_archive_carries_the_runtime() {

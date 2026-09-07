@@ -60,6 +60,20 @@ test_the_shared_r_library_vectorises_over_a_whole_column() {
     assert_status 0 "$status" "site_diversity: $R_LIB_OUTPUT"
 }
 
+# Depth per site and frequency per allele, in one pass over a pool's column. Two shapes come
+# back from one call and they are different lengths, so the site index that joins them is what
+# the cases are really about: a grouping that ran over sites instead of over a site's alleles
+# would make every site's frequencies sum to the number of sites.
+#
+# The ragged-row refusal is asserted on its MESSAGE. Without it R stops a few lines later of its
+# own accord, saying "incorrect length for 'group'", which passes any check that only asks
+# whether something stopped.
+test_the_shared_r_library_reads_a_frequency_per_allele() {
+    if ! have_r; then skip_case "no Rscript"; return; fi
+    local status; status=$(r_lib_section allele_frequencies)
+    assert_status 0 "$status" "allele_frequencies: $R_LIB_OUTPUT"
+}
+
 # What a parallel loop iterates over. A gap between two bins drops sites from a sum and an
 # overlap counts them twice, and both are silent.
 test_the_shared_r_library_splits_work_into_bins() {

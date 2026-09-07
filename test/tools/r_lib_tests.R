@@ -39,6 +39,22 @@ refuses <- function(label, expr) {
     invisible(NULL)
 }
 
+# For a refusal whose MESSAGE is the point. Bad input often stops R somewhere further down of
+# its own accord, and refuses() cannot tell that from a check that named the problem: deleting
+# the raggedness refusal in allele_frequencies() leaves R saying "incorrect length for 'group'",
+# which passes refuses() and tells a user nothing.
+refuses_with <- function(label, pattern, expr) {
+    RAN <<- RAN + 1
+    caught <- try(expr, silent = TRUE)
+    if (!inherits(caught, "try-error")) {
+        FAILED <<- c(FAILED, sprintf("%s: should have stopped and did not", label))
+    } else if (!grepl(pattern, as.character(caught), fixed = TRUE)) {
+        FAILED <<- c(FAILED, sprintf("%s: stopped without saying '%s': %s",
+                                     label, pattern, trimws(as.character(caught))))
+    }
+    invisible(NULL)
+}
+
 wanted <- function(name) section == "all" || section == name
 
 # ---------------------------------------------------------------------------------------
@@ -176,6 +192,115 @@ if (wanted("site_diversity")) {
     check("the site before it", missing$h[1], 0.375)
 
     check("no sites at all", length(site_diversity(character(0))$h), 0)
+}
+
+if (wanted("allele_frequencies")) {
+    # THE WORKED EXAMPLE THE FUNCTION'S OWN COMMENT PRINTS, checked value by value. Two pools
+    # over a biallelic site and a triallelic one, so the shapes differ between the two rows.
+    got <- allele_frequencies(list(A = c("50,50", "40,40,20"),
+                                   B = c("30,10", "10,10,10")))
+
+    # ONE ROW PER SITE IN `depth` AND ONE PER ALLELE IN `freq`, which is the whole reason the
+    # site index is returned: the two tables are different lengths and are read together.
+    check("two sites of depth", nrow(got$depth), 2)
+    check("five allele rows", nrow(got$freq), 5)
+    check("the site index is one per allele row", length(got$site), 5)
+    check("the first site is biallelic", got$alleles[1], 2)
+    check("the second is triallelic", got$alleles[2], 3)
+    check("allele row 2 belongs to site 1", got$site[2], 1)
+    check("allele row 3 belongs to site 2", got$site[3], 2)
+
+    check("A is 100 deep at site 1", got$depth[1, "A"], 100)
+    check("B is 40 deep at site 1", got$depth[1, "B"], 40)
+    check("B is 30 deep at site 2", got$depth[2, "B"], 30)
+    check("A's REF at site 1", got$freq[1, "A"], 0.5)
+    check("B's REF at site 1", got$freq[1, "B"], 0.75)
+    check("B's ALT at site 1", got$freq[2, "B"], 0.25)
+    check("A's second ALT at site 2", got$freq[5, "A"], 0.2)
+    check("B's third allele at site 2", got$freq[5, "B"], 1 / 3)
+
+    # THE PROPERTY EVERY CONSUMER LEANS ON. The k frequencies of a site sum to 1, which is what
+    # makes a site k - 1 free tests rather than k. Summed with the site index, so a grouping
+    # that ran over sites instead of over a site's alleles gives 2 here and not 1.
+    for (pool in c("A", "B")) {
+        sums <- as.vector(rowsum(got$freq[, pool], got$site, reorder = FALSE))
+        check(sprintf("%s's site 1 sums to one", pool), sums[1], 1)
+        check(sprintf("%s's site 2 sums to one", pool), sums[2], 1)
+    }
+
+    # The two library functions must not disagree about what a depth is: one is what a module
+    # weights by and the other is what it corrects diversity with.
+    one <- c("50,50", "40,40,20", "25,25,25,25", "0,0", "70,30")
+    check("depth agrees with site_diversity, site by site",
+          max(abs(allele_frequencies(list(one))$depth[, 1] - site_diversity(one)$depth)), 0)
+
+    # ONE ALT LIST SERVES EVERY POOL, so a site whose cells differ in length is not the table
+    # this reads. Refused rather than recycled: R would recycle the shorter one silently.
+    # ON THE MESSAGE, because R stops on a ragged row by itself a few lines later and says
+    # "incorrect length for 'group'". The site and the two pools are what makes the refusal
+    # worth writing, so that is what is asserted.
+    refuses_with("a site with three counts in one pool and two in another", "at site 2",
+                 allele_frequencies(list(A = c("50,50", "40,40,20"), B = c("30,10", "10,10"))))
+    refuses_with("columns of different lengths", "the same table read down the same rows",
+                 allele_frequencies(list(A = c("50,50", "40,60"), B = "30,10")))
+    refuses("no pools at all", allele_frequencies(list()))
+
+    # AN EMPTY CELL, WHICH IS THE ONE THAT DOES NOT ANNOUNCE ITSELF. It contributes no allele
+    # row, so rowsum() returns one total fewer than there are sites and every depth below moves
+    # up a row: with A = c("", "40,60") site 1 reported a depth of 100 that belonged to site 2.
+    # Nothing was NA and nothing was ragged - both rows were simply wrong.
+    refuses_with("an empty cell", "has no counts at site 1",
+                 allele_frequencies(list(A = c("", "40,60"))))
+    refuses_with("an empty cell further down", "has no counts at site 2",
+                 allele_frequencies(list(A = c("40,60", ""), B = c("10,10", "20,20"))))
+
+    # A pool with no reads at a site has a depth of zero and no frequency. 0/0 would be NaN and
+    # a floor at zero would read as "we observed p = 0", which is not what an empty cell says.
+    empty <- allele_frequencies(list(A = c("30,10", "0,0", "20,20")))
+    check("no reads is depth zero", empty$depth[2, 1], 0)
+    check("and no frequency", empty$freq[3, 1], NA_real_)
+    check("its neighbours are untouched", empty$freq[5, 1], 0.5)
+
+    # bcftools' missing value takes that pool's whole site with it, as it does in
+    # site_diversity(): a site is not partly observed for a pool.
+    missing <- allele_frequencies(list(A = c("30,10", "30,.")))
+    check("a missing count is a missing depth", missing$depth[2, 1], NA_real_)
+    check("and no frequency for either allele", missing$freq[3, 1], NA_real_)
+    check("nor for the allele beside it", missing$freq[4, 1], NA_real_)
+    check("the site before it stands", missing$freq[1, 1], 0.75)
+
+    # ONE POOL'S MISSING SITE IS ITS OWN. A module drops that pool from the fit at that row and
+    # reduces n; taking the site out for everybody would be a different filter entirely.
+    partial <- allele_frequencies(list(A = c("30,10", "30,."), B = c("50,50", "20,20")))
+    check("the other pool still has its depth", partial$depth[2, "B"], 40)
+    check("and its frequency", partial$freq[3, "B"], 0.5)
+
+    # RAGGED AND RANDOM, against one site at a time. A fixed list of cells is covered by the
+    # literals above; only arities in a shuffled order catch a grouping that happens to be
+    # right on the cases someone thought to write down. Seeded, so a failure reproduces.
+    per_site_freq <- function(cell) {
+        counts <- split_counts(cell)
+        total <- sum(counts)
+        if (!is.finite(total) || total <= 0) return(rep(NA_real_, length(counts)))
+        counts / total
+    }
+    set.seed(20260906)
+    arity <- sample(2:4, 500, replace = TRUE)
+    many <- lapply(1:2, function(pool) vapply(arity, function(k) {
+        paste(sample(0:400, k, replace = TRUE), collapse = ",")
+    }, ""))
+    wide <- allele_frequencies(many)
+    for (pool in 1:2) {
+        oracle <- unlist(lapply(many[[pool]], per_site_freq), use.names = FALSE)
+        check(sprintf("pool %d: 500 mixed-arity sites agree, one by one", pool),
+              max(abs(wide$freq[, pool] - oracle), na.rm = TRUE), 0)
+        check(sprintf("pool %d: and the same rows are missing", pool),
+              identical(is.na(wide$freq[, pool]), is.na(oracle)), TRUE)
+    }
+    check("the allele rows are the arities added up", nrow(wide$freq), sum(arity))
+    check("the site index runs to the last site", wide$site[nrow(wide$freq)], 500)
+
+    check("no sites at all", nrow(allele_frequencies(list(A = character(0)))$freq), 0)
 }
 
 if (wanted("chunk_ranges")) {

@@ -46,6 +46,7 @@ done
 # as well as out of the archive, and the check would pass. So an export-ignore fails here until
 # it is named in this list too.
 excluded='docs/ .github/ mkdocs.yml .gitignore .gitattributes dev/ Project/ test/
+          .claude/ CLAUDE.md
           analysis/modules/*/test/ analysis/modules-index.tsv'
 
 # Whether one tracked path is meant to reach the archive at all.
@@ -76,7 +77,7 @@ done <<< "$(git ls-tree -r --name-only "$REF")"
     || fail "only ${checked} file(s) enumerated at ${REF}; this check is not reading the release"
 
 # Repository furniture must NOT ship: the other half of .gitattributes' export-ignore.
-for f in docs .github mkdocs.yml .gitignore .gitattributes dev Project; do
+for f in docs .github mkdocs.yml .gitignore .gitattributes dev Project .claude CLAUDE.md; do
     [ ! -e "$root/$f" ] || fail "should have been export-ignored: $f"
 done
 

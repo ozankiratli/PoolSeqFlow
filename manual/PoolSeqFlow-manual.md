@@ -2438,7 +2438,7 @@ Modules in this release:
 | Module | What it does |
 |---|---|
 | `verify` | Reports what the analysis layer can see, and produces nothing |
-| `basicstats` | What is in your published tables, per pool — see [Shipped Modules](#shipped-modules) |
+| `basicstats` | What is in your published tables, per pool — [its own page](#basicstats) |
 
 Those are the ones a release ships. Every other module is installed separately from the pipeline and published on its own timetable, so what this layer can do grows without the pipeline changing version.
 
@@ -3065,9 +3065,50 @@ The cost of a working cycle is therefore one transfer, not two — which matters
 ## Shipped Modules
 <!--@ page: modules | nav: Modules -->
 
-Most modules are installed separately. These are the ones a release carries, so they are available the moment the analysis environment exists, and their versions move on the pipeline's timetable rather than a catalogue's.
+Most modules are installed separately. These are the ones a release carries, so they are available the moment the analysis environment exists, and their versions move on the pipeline's timetable rather than a catalogue's. Each has a page of its own:
 
-### `basicstats` { #basicstats }
+| Module | What it computes |
+|---|---|
+| [`basicstats`](#basicstats) | site counts, depth, effective pool size and gene diversity, per pool |
+
+What follows here is what they have in common.
+
+### How long the per-site work takes { #analysis-compiled }
+
+Every module here reads the same thing: one comma-separated list of read counts per pool per site, in the depth tables. On a genome running to tens of millions of called sites, splitting those strings is where the time goes — not the statistics computed from them. So each of the derivations that does it has two implementations, and **the compiled one is the default**. Both produce the same numbers; the choice is only ever about time.
+
+Measured on an Intel i7-7700HQ at 2.8 GHz with R 4.6.1 and GCC 16.2, over a corpus of 3.2 million sites — 92% biallelic, 7% triallelic, 1% tetrallelic, which is what a called cohort looks like. CPU time, scaled to what 100 million called sites would cost in one pass:
+
+| Derivation | Reads | Vectorized R | Compiled | Ratio |
+|---|---|---|---|---|
+| `site_diversity` | one pool | 131 s | 11 s | 12× |
+| `allele_frequencies` | one pool | 103 s | 16 s | 6× |
+| `allele_frequencies` | six pools | 715 s | 70 s | 10× |
+
+**Take the ratio as about ten, not as a precise figure.** It is not constant, and it is not constant in a direction worth knowing about: on a corpus small enough to sit in cache the compiled path looks two to three times better than this, and below about ten thousand sites the whole call is shorter than the clock can resolve, so a figure extrapolated from a small test corpus will flatter it by a wide margin. At three million sites one pool's cells are already 48 MB — past any current L3 — and both implementations spend their time waiting on memory rather than on arithmetic. That is the regime a genome is in. A machine with more memory bandwidth than a 2017 laptop does better than this table on both columns.
+
+What the table is really for is the decision it supports: **twelve minutes of a six-pool run spent splitting strings, against one.** That is why the compiled path is the default rather than something to ask for, and why a module offering it stops rather than quietly falling back when it cannot build one.
+
+`dev/scripts/bench-compiled-paths.R` is what produced the table, and re-running it on your own machine is how you find out what these numbers are where you work.
+
+**The analysis environment already has a compiler.** Conda's `r-base` depends on one — GCC on Linux, clang on macOS — because R needs a toolchain to build packages from source, so an environment built by `PoolSeqFlow analysis install` can compile on every platform this ships to.
+
+Each module publishes its compiled source into the results folder whether or not the run used it, and the header of the module's own script beside it names the path that produced the numbers.
+
+#### When the compiled path will not build { #analysis-compiled-fails }
+
+Having a compiler and being able to *use* it are two things. `Rcpp::sourceCpp` writes a source file, builds it, and then **executes** the result out of a temporary directory — so a machine that forbids executing from temporary storage fails here even with the toolchain installed. The usual causes:
+
+| What you see | Why |
+|---|---|
+| `The tools required to build C++ code for R were not found` | the environment is not activated, so its compiler is not on `PATH`. Run the module through `PoolSeqFlow analysis`, which activates it, rather than calling `Rscript` yourself |
+| `cannot open shared object file`, or a build that succeeds and then fails to load | `/tmp` mounted `noexec`, which is common on hardened clusters. Point `TMPDIR` at a filesystem you may execute from |
+| a permission error while compiling | a read-only home, or a read-only conda environment shared across users |
+
+**The run stops and says so; it never quietly drops to the other path.** A run that silently took a different implementation is a run whose timings mean nothing, and you would have no way to know which produced your numbers. Add `nocpp` after the module name and it will finish — slower, and with identical output.
+
+## `basicstats` { #basicstats }
+<!--@ page: basicstats | nav: basicstats -->
 
 What is in your published tables, per pool. It is the module to run first: everything it reports is a description of the data rather than a test of anything, and the numbers it prints are the ones every other module weights by.
 
@@ -3077,7 +3118,7 @@ PoolSeqFlow analysis basicstats
 
 It reads the frequency and depth tables, and it needs your `metadata.csv` — the pool sizes, the ploidy and the experimental design all come from the project as the pipeline recorded it. A project whose metadata file was never copied across is refused rather than described as having no design.
 
-#### `design.tsv` — one row per pool { #basicstats-design }
+### `design.tsv` — one row per pool { #basicstats-design }
 
 | Column | What |
 |---|---|
@@ -3094,7 +3135,7 @@ Nothing in this file is estimated. It is the design the results were produced un
 
 **A pool of one chromosome is refused**, and it is the only combination that is. A single haploid genome has no segregating sites, and the correction every diversity estimate here applies divides by `n_eff - 1`, which is zero there. Correct `ploidy`, or that pool's `param_poolSize`.
 
-#### `sites.tsv` — what the pipeline called { #basicstats-sites }
+### `sites.tsv` — what the pipeline called { #basicstats-sites }
 
 One row per sequence per kind of variant. It carries no pool, because it is a property of the tables rather than of any one column.
 
@@ -3107,7 +3148,7 @@ One row per sequence per kind of variant. It carries no pool, because it is a pr
 
 A sequence with no surviving variants has no row here at all, and is indistinguishable from one your reference does not have. That is a limit of reading the published tables: they hold what was called, and nothing records what was looked at and found invariant.
 
-#### `depth.tsv` — depth at the called sites { #basicstats-depth }
+### `depth.tsv` — depth at the called sites { #basicstats-depth }
 
 One row per pool per sequence, over the **SNP** table.
 
@@ -3120,7 +3161,7 @@ One row per pool per sequence, over the **SNP** table.
 
 **A pool's depth at a site is the sum of its cell in the depth table** — the reads supporting any allele there, after step 7's depth, quality and false-positive filters. It is not coverage, and it is not what `Output/Reports/Depth` measured: the sites here are the ones that survived calling, every one of them carries at least `vcffilter.minDP` reads in **every** sample by construction, and mapping and base quality minima applied to the pileup that they did not. The two numbers are not one quantity measured twice, and this one is always the larger.
 
-#### `diversity.tsv` — gene diversity and effective sample size { #basicstats-diversity }
+### `diversity.tsv` — gene diversity and effective sample size { #basicstats-diversity }
 
 One row per pool, over the called SNP sites of the whole project.
 
@@ -3147,7 +3188,7 @@ Not `2p(1-p)`: that form assumes two alleles and a privileged reference, so a tr
 
 **A site is segregating for a pool when an allele other than that pool's own major one reaches `max(detection_limit, minReads / depth)`.** Two limbs, because either alone is wrong: `detection_limit` is `1 / (2 × ploidy × pool_size)`, which at any ordinary depth is below one read and so admits every sequencing error; `minReads / depth` alone stops discriminating once the pool is large enough that one chromosome is rarer than a couple of reads. The crossover is at `depth = minReads / detection_limit`. The pool's **own** major allele and not the cohort's: a pool fixed for whatever the cohort calls alternate is not segregating, and reading the majority off the reference column would report that it is.
 
-#### `neff.tsv` — effective sample size, at two levels and from two sources { #basicstats-neff }
+### `neff.tsv` — effective sample size, at two levels and from two sources { #basicstats-neff }
 
 How many independent chromosomes a frequency read off this data is actually worth. Everything else the analysis layer will ever weight by is this number, so it is reported at every level the data supports rather than collapsed to one.
 
@@ -3166,7 +3207,7 @@ How many independent chromosomes a frequency read off this data is actually wort
 
 **There is no `library` row from the `called` source, and there cannot be.** The published tables carry one column per `RG_Sample`, so a merged pool's libraries are already summed inside them and nothing can separate them again. Per-library figures come from the histograms or from nowhere.
 
-##### A merged pool's genome-wide figure is a lower bound { #basicstats-neff-bound }
+#### A merged pool's genome-wide figure is a lower bound { #basicstats-neff-bound }
 
 When two libraries were merged into one pool, its depth at a position is their depths **added** — and the harmonic mean of that sum cannot be recovered from the two histograms. Adding the histograms would assume the libraries are independent across positions, which is false and errs *optimistic*. So the module adds the parts' harmonic means instead, and marks the row `lower_bound`.
 
@@ -3184,7 +3225,7 @@ A pool of one library is marked `exact`: there is nothing to add.
 
 **A pool with no histogram gets no row from that source, and none is guessed.** `DepthProfile` skips a sample whose ceiling is already decided, so a sound project can lack them; the run names those pools rather than averaging over the libraries that did have one.
 
-#### `depth_<sequence>.png` — depth along a sequence { #basicstats-depth-plots }
+### `depth_<sequence>.png` — depth along a sequence { #basicstats-depth-plots }
 
 One file per sequence you name, one panel per pool, a point per called site.
 
@@ -3206,7 +3247,7 @@ params {
 
 **It is depth, not coverage, and the axis says so.** Every point is a site that was *called*; the gaps between them are sites the pipeline did not call, which is not the same as sites with no reads. A run of thin points is a stretch where calling was sparse — read it against `depth.tsv` for that sequence rather than as a coverage trace.
 
-#### What it can be set to { #basicstats-settings }
+### What it can be set to { #basicstats-settings }
 
 ```groovy
 params {
@@ -3226,34 +3267,18 @@ params {
 
 `minReads` is the only one that changes a number, and `chromosomes` is the only one that decides whether a file appears. `binSize`, `workers` and `usecpp` decide how the work is divided and which implementation does it: every combination of them produces the same output, which is what the test suite asserts by running the corpus through all of them and comparing the published tables byte for byte.
 
-#### The compiled path { #basicstats-compiled }
+### The compiled path { #basicstats-compiled }
 
-The per-site work — splitting a cell, summing it, squaring the frequencies — is where the time goes on a large genome, and there are two implementations of it. **`site_diversity.cpp`, compiled on your machine, is the default and you do not have to ask for it.** The other is vectorized R, which needs nothing at all:
+`basicstats` computes depth and gene diversity through **`site_diversity.cpp`, compiled on your machine, and that is the default**. The other implementation is vectorized R, which needs nothing at all:
 
 ```bash
 PoolSeqFlow analysis basicstats          # compiled, the default
 PoolSeqFlow analysis basicstats nocpp    # plain R, for one run
 ```
 
-For a whole project, `analysis.modules.basicstats.usecpp = false` in `basicstats.config` does the same thing permanently.
-
-**The analysis environment already has a compiler.** Conda's `r-base` depends on one — GCC on Linux, clang on macOS — because R needs a toolchain to build packages from source, so an environment built by `PoolSeqFlow analysis install` can compile on every platform this ships to. That is why the compiled path is the default rather than something to opt into.
-
-Both produce the same numbers, so the choice is only ever about time. Below a few million called sites there is nothing in it; on a genome running to tens of millions the compiled path is worth roughly forty times the vectorized one, and both are far ahead of computing site by site.
+For a whole project, `analysis.modules.basicstats.usecpp = false` in `basicstats.config` does the same thing permanently. Both produce the same numbers; what the choice costs is in [How long the per-site work takes](#analysis-compiled), along with what to do when the compiled path will not build.
 
 `site_diversity.cpp` is published in the results folder whether or not the run used it, and the header of `basicstats.R` beside it names the path that produced the numbers, the bin size and the number of workers.
-
-##### When the compiled path will not build { #basicstats-compiled-fails }
-
-Having a compiler and being able to *use* it are two things. `Rcpp::sourceCpp` writes a source file, builds it, and then **executes** the result out of a temporary directory — so a machine that forbids executing from temporary storage fails here even with the toolchain installed. The usual causes:
-
-| What you see | Why |
-|---|---|
-| `The tools required to build C++ code for R were not found` | the environment is not activated, so its compiler is not on `PATH`. Run the module through `PoolSeqFlow analysis`, which activates it, rather than calling `Rscript` yourself |
-| `cannot open shared object file`, or a build that succeeds and then fails to load | `/tmp` mounted `noexec`, which is common on hardened clusters. Point `TMPDIR` at a filesystem you may execute from |
-| a permission error while compiling | a read-only home, or a read-only conda environment shared across users |
-
-**The run stops and says so; it never quietly drops to the other path.** A run that silently took a different implementation is a run whose timings mean nothing, and you would have no way to know which produced your numbers. Add `nocpp` and it will finish — slower, and with identical output.
 
 # Pipeline Overview
 <!--@ section: pipeline | nav: Pipeline -->
@@ -4338,7 +4363,7 @@ If the interruption hit a cross-filesystem move, the partial copy was left under
 
 #### A module stops on a C++ compile
 
-`basicstats` computes its per-site work through a compiled function by default, and stops rather than falling back if it cannot build one. The commonest cause is calling `Rscript` yourself instead of going through `PoolSeqFlow analysis`, which activates the environment the compiler lives in; the next commonest is `/tmp` mounted `noexec`. Add `nocpp` to finish now — the numbers are identical — and see [When the compiled path will not build](#basicstats-compiled-fails) for the full list.
+`basicstats` computes its per-site work through a compiled function by default, and stops rather than falling back if it cannot build one. The commonest cause is calling `Rscript` yourself instead of going through `PoolSeqFlow analysis`, which activates the environment the compiler lives in; the next commonest is `/tmp` mounted `noexec`. Add `nocpp` to finish now — the numbers are identical — and see [When the compiled path will not build](#analysis-compiled-fails) for the full list.
 
 ```bash
 PoolSeqFlow analysis basicstats nocpp

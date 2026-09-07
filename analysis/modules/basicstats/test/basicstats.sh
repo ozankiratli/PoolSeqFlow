@@ -242,7 +242,7 @@ test_the_effective_size_is_reported_at_both_levels() {
         # construction, so their harmonic depth cannot be below the genome-wide one.
         called=$(awk -F'\t' -v p="$pool" '$1=="pool" && $2==p && $4=="called" {print $6}' "$sb/run/neff.tsv")
         awk -v a="$called" -v b="$hist" 'BEGIN { exit !(a > b) }' \
-            || fail_case "$pool: the called depth ($called) must exceed the genome-wide one ($b)"
+            || fail_case "$pool: the called depth ($called) must exceed the genome-wide one ($hist)"
     done
 
     assert_eq "" \
@@ -299,8 +299,8 @@ test_a_depth_plot_is_drawn_only_for_named_sequences() {
     assert_eq "0" "$(find "$sb/none" -name 'depth_*.png' | wc -l)" \
         "nothing is drawn until a sequence is named"
     local said; said=$(cat "$sb/none/out.txt" 2>/dev/null)
-    assert_contains "$said" "chr1 (3 called SNP sites)" "and the candidates are listed to copy from"
-    assert_contains "$said" "chr10 (2 called SNP sites)" "every one of them, chr10 included"
+    assert_contains "$said" "chr1 (4 called SNP sites)" "and the candidates are listed to copy from"
+    assert_contains "$said" "chr10 (6 called SNP sites)" "every one of them, chr10 included"
 
     basicstats_direct "$sb/two" \
         '{"minReads":2,"binSize":100000,"workers":1,"usecpp":false,"chromosomes":["chr1","chr10"]}' "$sb"

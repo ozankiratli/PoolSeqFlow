@@ -158,6 +158,7 @@ nav:
       - Verification: analysis/verification.md
       - Output: analysis/output.md
       - Modules: analysis/modules.md
+      - basicstats: analysis/basicstats.md
   - Pipeline:
       - pipeline/index.md
       - Steps: pipeline/steps.md
