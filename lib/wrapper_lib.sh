@@ -175,3 +175,107 @@ EOF
 analysis_r_packages() {
     sed -n 's/^ *- *r-\([^=]*\).*$/\1/p' "$ENV_FILE" | grep -vx base
 }
+
+# The shape a module's `packages` entry must have: a name, one `=`, an exact version. No build
+# string, no range, no channel prefix. The analysis frame applies the same rule when a module
+# runs; this is what refuses one before it is installed.
+MODULE_SPEC_RE='^[a-z0-9][a-z0-9._-]*=[A-Za-z0-9][A-Za-z0-9._+]*$'
+
+# The conda specs one module declares, one per line, read out of its manifest. `packages` is a
+# flat array of quoted strings and the wrapper has no JSON parser, so it is read with sed; a
+# manifest without the field yields nothing.
+module_packages() {
+    local manifest="$1"
+    [ -f "$manifest" ] || return 0
+    tr '\n' ' ' < "$manifest" \
+        | sed -n 's/.*"packages"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' \
+        | tr ',' '\n' \
+        | sed -n 's/^[^"]*"\([^"]*\)".*/\1/p'
+}
+
+# Every spec the modules in a store declare, sorted and deduplicated, optionally skipping one
+# module by name. Two modules may pin the same package, and the same spec is one entry.
+store_packages() {
+    local store="$1" skip="${2:-}" dir name
+    [ -d "$store" ] || return 0
+    for dir in "$store"/*/; do
+        [ -d "$dir" ] || continue
+        name=$(basename "$dir")
+        if [ -n "$skip" ] && [ "$name" = "$skip" ]; then continue; fi
+        module_packages "$dir/manifest.json"
+    done | sort -u
+}
+
+# The package names an environment holds, one per line.
+conda_installed_packages() {
+    conda list -n "$1" --export 2>/dev/null | sed -n 's/^\([^#=][^=]*\)=.*/\1/p'
+}
+
+# The specs an environment cannot take without moving a version it already holds, one line each
+# as `<spec> (installed <version>)`. `--freeze-installed` covers what the solve reaches on its
+# own and NOT what the command line names: conda installs a named pin at the version asked for,
+# downgrading what is there. So a disagreement is caught here, before conda is asked.
+conda_conflicting_packages() {
+    local env="$1"; shift
+    local held spec name want have
+    held=$(conda list -n "$env" --export 2>/dev/null | grep -v '^#' || true)
+    for spec in "$@"; do
+        name="${spec%%=*}"
+        want="${spec#*=}"
+        have=$(printf '%s\n' "$held" \
+               | sed -n "s/^$(printf '%s' "$name" | sed 's/[.]/\\./g')=\([^=]*\).*/\1/p" | head -1)
+        [ -n "$have" ] || continue
+        [ "$have" = "$want" ] && continue
+        printf '%s (installed %s)\n' "$spec" "$have"
+    done
+}
+
+# Installs the named specs into an environment, or fails having installed none of them.
+# `--freeze-installed` lets the solver add these and whatever they need while refusing to change
+# anything else that is already there.
+conda_install_packages() {
+    local env="$1"; shift
+    [ "$#" -gt 0 ] || return 0
+    local clash
+    clash=$(conda_conflicting_packages "$env" "$@")
+    if [ -n "$clash" ]; then
+        echo "ERROR: these pins disagree with what '$env' already holds:" >&2
+        printf '%s\n' "$clash" | sed 's/^/    /' >&2
+        echo "" >&2
+        echo "  One environment is shared by every module installed here. Installing a pin over" >&2
+        echo "  a different version would change what the release itself, and every other module" >&2
+        echo "  in it, computes. Nothing was installed." >&2
+        return 1
+    fi
+    conda install -n "$env" --freeze-installed -y "$@"
+}
+
+# What removing the named packages would take out of an environment, one name per line.
+# `conda remove` takes everything that depends on what it is given, so the plan is read first.
+conda_removal_plan() {
+    local env="$1"; shift
+    conda remove -n "$env" --dry-run --json "$@" 2>/dev/null \
+        | sed -n 's/^ *"name": *"\([^"]*\)".*/\1/p' | sort -u
+}
+
+# Removes the named packages and nothing else. A name the plan adds beyond them depends on one
+# of them, so it belongs to something still installed and the removal stops instead. An empty
+# plan means none of them is there, which is not an error.
+conda_remove_packages() {
+    local env="$1"; shift
+    [ "$#" -gt 0 ] || return 0
+    local wanted plan extra
+    wanted=$(printf '%s\n' "$@" | sort -u)
+    plan=$(conda_removal_plan "$env" "$@")
+    [ -n "$plan" ] || return 0
+    extra=$(printf '%s\n' "$plan" | grep -vxF "$wanted" || true)
+    if [ -n "$extra" ]; then
+        echo "ERROR: removing those packages would take others with them:" >&2
+        printf '%s\n' "$extra" | sed 's/^/    /' >&2
+        echo "" >&2
+        echo "  Each of those depends on one being removed and belongs to something still" >&2
+        echo "  installed. Nothing was removed. Remove that first, or leave these in place." >&2
+        return 1
+    fi
+    conda remove -n "$env" -y "$@"
+}

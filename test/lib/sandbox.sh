@@ -557,7 +557,37 @@ make_stub_conda() {
         echo '        exit 0 ;;'
         echo '    "env create") exit 0 ;;'
         echo '    "env remove") exit 0 ;;'
+        # What the environment already holds, in `conda list --export` form. Empty unless a
+        # case sets it, so nothing an install asks for collides by default.
+        echo '    "list -n")'
+        echo '        printf "%s" "${STUB_CONDA_INSTALLED:-}"'
+        echo '        exit 0 ;;'
         echo 'esac'
+        # A removal plan naming exactly what was asked for, which is what conda answers when
+        # nothing else depends on it. STUB_CONDA_COLLATERAL adds one more name to the plan,
+        # which is the cascade the wrapper has to read and refuse.
+        cat <<'STUB'
+if [ "$1" = "remove" ] && printf '%s\n' "$@" | grep -qx -- --dry-run; then
+    echo '{ "actions": { "UNLINK": ['
+    skip=0
+    for a in "$@"; do
+        if [ "$skip" = 1 ]; then skip=0; continue; fi
+        case $a in
+            remove)    continue ;;
+            -n|--name) skip=1; continue ;;
+            -*)        continue ;;
+        esac
+        printf '      {\n        "dist_name": "%s-0",\n        "name": "%s"\n      },\n' \
+            "${a%%=*}" "${a%%=*}"
+    done
+    if [ -n "${STUB_CONDA_COLLATERAL:-}" ]; then
+        printf '      {\n        "dist_name": "%s-0",\n        "name": "%s"\n      }\n' \
+            "$STUB_CONDA_COLLATERAL" "$STUB_CONDA_COLLATERAL"
+    fi
+    echo '  ] } }'
+    exit 0
+fi
+STUB
         echo 'exit 0'
     } > "$dir/bin/conda"
     chmod +x "$dir/bin/conda"
@@ -568,10 +598,14 @@ make_stub_conda() {
 # with its header on the first call. Everything is local: nothing here reaches the network.
 # Echoes the index path, which a case passes as LAUNCHER_MODULE_INDEX.
 make_module_release() {
-    local dir="$1" name="$2" version="$3" contract="${4:-freq-1}" tarball sha
+    local dir="$1" name="$2" version="$3" contract="${4:-freq-1}" specs="${5:-}" tarball sha
+    local packages="" spec
+    for spec in $specs; do
+        packages="${packages:+$packages,}\"$spec\""
+    done
     mkdir -p "$dir/src/$name"
-    printf '{"name":"%s","version":"%s","contract":"%s","summary":"planted"}\n' \
-        "$name" "$version" "$contract" > "$dir/src/$name/manifest.json"
+    printf '{"name":"%s","version":"%s","contract":"%s","packages":[%s],"summary":"planted"}\n' \
+        "$name" "$version" "$contract" "$packages" > "$dir/src/$name/manifest.json"
     printf 'nextflow.enable.dsl=2\nworkflow { println "%s ran" }\n' "$name" > "$dir/src/$name/main.nf"
     # Required of every module, and `install` refuses an archive without one.
     printf '{}\n' > "$dir/src/$name/citations.json"
@@ -759,6 +793,14 @@ run_launcher_on_a_tty() {
 #     LAUNCHER_STORE_MODULE             plant this module in the sandbox's own store, and
 #                                       write the <module>.config layer beside the project's
 #     LAUNCHER_STORE_MODULE_INCOMPLETE  plant it without a main.nf
+#     LAUNCHER_STORE_MODULE_PACKAGES    what its manifest declares, as the JSON array's own
+#                                       body: '"r-foo=1.0","r-bar=2.0"'
+#     LAUNCHER_STORE_EXTRA_MODULE       a second module beside it, and
+#     LAUNCHER_STORE_EXTRA_PACKAGES     what that one declares, written the same way
+#     STUB_CONDA_COLLATERAL             a package the stub conda adds to every removal plan,
+#                                       which is the cascade a removal has to refuse
+#     STUB_CONDA_INSTALLED              what the stub conda says the environment already holds,
+#                                       in `conda list --export` form: 'r-foo=1.0=0'
 #     LAUNCHER_MODULE_INDEX             a catalogue for `modules available|install` to read,
 #                                       as POOLSEQFLOW_MODULE_INDEX. Build one with
 #                                       make_module_release
@@ -791,10 +833,19 @@ run_analysis_launcher_with_envs() {
         # Never read here - the wrapper looks for the directory and main.nf, and the manifest is
         # the analysis layer's to parse - but an installed module has one, and `modules list`
         # tells a directory holding one from a directory that is merely there.
-        printf '{"name":"%s","version":"0.0.1","contract":"freq-1","summary":"stub"}\n' \
-            "$LAUNCHER_STORE_MODULE" > "$store/manifest.json"
+        printf '{"name":"%s","version":"0.0.1","contract":"freq-1","packages":[%s],"summary":"stub"}\n' \
+            "$LAUNCHER_STORE_MODULE" "${LAUNCHER_STORE_MODULE_PACKAGES:-}" > "$store/manifest.json"
         [ -n "${LAUNCHER_STORE_MODULE_INCOMPLETE:-}" ] || : > "$store/main.nf"
         printf '// stub module config\n' > "$sb/${LAUNCHER_STORE_MODULE}.config"
+    fi
+
+    # A second module, for the cases about what two of them share in one environment.
+    if [ -n "${LAUNCHER_STORE_EXTRA_MODULE:-}" ]; then
+        local extra="$sb/analysis/modules/$LAUNCHER_STORE_EXTRA_MODULE"
+        mkdir -p "$extra"
+        printf '{"name":"%s","version":"0.0.1","contract":"freq-1","packages":[%s],"summary":"stub"}\n' \
+            "$LAUNCHER_STORE_EXTRA_MODULE" "${LAUNCHER_STORE_EXTRA_PACKAGES:-}" > "$extra/manifest.json"
+        : > "$extra/main.nf"
     fi
 
     # shellcheck disable=SC2086
@@ -807,6 +858,8 @@ run_analysis_launcher_with_envs() {
     LAUNCHER_OUTPUT=$(cd "$sb" && PATH="$sb/stub/bin:$PATH" \
                       POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" \
                       POOLSEQFLOW_MODULE_INDEX="${LAUNCHER_MODULE_INDEX:-}" \
+                      STUB_CONDA_COLLATERAL="${STUB_CONDA_COLLATERAL:-}" \
+                      STUB_CONDA_INSTALLED="${STUB_CONDA_INSTALLED:-}" \
                       ./PoolSeqFlow analysis "$@" 2>&1)
     LAUNCHER_STATUS=$?
 }

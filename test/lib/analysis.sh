@@ -320,7 +320,12 @@ workflow {
     }
 }'
 
+# The compatibility floors are the lowest either field can express, so no fixture has to move
+# when the frame or the release does.
+ANALYSIS_MANIFEST_FLOORS='"license": "Apache-2.0", "frame": "20260101.001", "environment": "0.0.0"'
+
 ANALYSIS_PROBE_MANIFEST='{ "name": "probe", "version": "0.1.0", "contract": "freq-1",
+  '"$ANALYSIS_MANIFEST_FLOORS"',
   "summary": "print what the library says this project holds", "needs": ["frequencies"] }'
 
 # The histograms class is the only one that does not sit at a top-level dir.output key: it is
@@ -398,6 +403,7 @@ MODULE
 )
 
 ANALYSIS_WRITER_MANIFEST='{ "name": "writer", "version": "0.1.0", "contract": "freq-1",
+  '"$ANALYSIS_MANIFEST_FLOORS"',
   "summary": "derive one intermediate and publish one analysis", "needs": ["frequencies"] }'
 
 # The same, minus everything shared: it produces its results and then fails, which is the state
@@ -431,6 +437,7 @@ MODULE
 )
 
 ANALYSIS_BREAKER_MANIFEST='{ "name": "breaker", "version": "0.1.0", "contract": "freq-1",
+  '"$ANALYSIS_MANIFEST_FLOORS"',
   "summary": "fail after producing results", "needs": ["frequencies"] }'
 
 # Produces a result and no script - the thing README rule 15 forbids and nothing used to catch.
@@ -461,6 +468,7 @@ MODULE
 )
 
 ANALYSIS_MUTE_MANIFEST='{ "name": "mute", "version": "20260901.001", "contract": "freq-1",
+  '"$ANALYSIS_MANIFEST_FLOORS"',
   "summary": "produce a result and no script", "needs": ["frequencies"] }'
 
 # Set up a single-run project with results planted and one module installed.
@@ -495,6 +503,7 @@ analysis_run_module() {
 # ---------------------------------------------------------------------------------------
 # What a published folder says about how to read itself.
 ANALYSIS_LINKED_MANIFEST='{ "name": "writer", "version": "0.1.0", "contract": "freq-1",
+  '"$ANALYSIS_MANIFEST_FLOORS"',
   "summary": "publish one analysis and say where it is explained", "needs": ["frequencies"],
   "outputs": [ { "file": "result.tsv", "summary": "the analysis",
                  "anchor": "output-layout" } ] }'

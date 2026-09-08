@@ -3086,13 +3086,38 @@ PoolSeqFlow analysis modules list              # what is installed for this rele
 PoolSeqFlow analysis modules uninstall mds     # remove one, after confirming
 ```
 
-All of them read the installation rather than your project, so they work from anywhere and need neither the analysis environment nor a `parameters.config`.
+All of them read the installation rather than your project, so they work from anywhere and none needs a `parameters.config`. `list` and `available` need nothing else either. **`install` needs the analysis environment**, because installing a module also installs what it runs on; `uninstall` uses it when it is there and says so when it is not.
 
 **`install` pins by name.** Without a version it takes the newest one this release can read; with one it takes exactly that. **Name the version in your methods section**, and install that version to reproduce the analysis — a module carries its own version precisely so it can move without the pipeline moving, which means two runs of "the same module" are not necessarily the same code. Every analysis prints the module version it ran in its header, and installing writes a `.source` file beside the module recording where it came from and the checksum it matched.
 
 **`available` reads a catalogue over the network** and a release carries no copy of it, so a module published long after a release is still installable into it. What it lists is filtered to the table contract this release speaks; a module written against a later contract is shown and marked rather than hidden, so being told to install something that cannot work here gives you a reason instead of a blank. If your machine has no route to the internet, or your institution keeps a mirror, `POOLSEQFLOW_MODULE_INDEX` points at a URL or a file instead.
 
 **A download is verified before it is unpacked.** A module is code that runs on your machine, so the checksum in the catalogue is checked first, and a mismatch stops the install having written nothing.
+
+**Every module declares its own license, and the report prints it.** PoolSeqFlow is Apache-2.0 and imposes nothing on a module, so a module that builds on a GPL package is GPL itself and the results it produces are produced under those terms. The verification report at the top of every analysis carries the line — `published under GPL-3.0-or-later` — before anything runs, which is where to look if you are about to redistribute what comes out.
+
+**`basicstats`, `association` and `mds` are GPL-3.0-or-later**, and the pipeline they run beside is not. Each compiles its hot path with `Rcpp`, which is GPL, and does so by default — `nocpp` turns it off for one run but the module ships expecting it. `verify` is the exception: it belongs to the frame, runs no R at all, and is Apache-2.0 with the rest of the pipeline.
+
+**A module also declares the frame and the release it needs**, and a module that needs a newer one is refused by name rather than run. The frame is the library a module imports — `analysis/frame.version` in the installation, versioned separately from the pipeline because a module runs against it and not against the pipeline's own steps. The release is named because the analysis environment belongs to it: there is one R environment per release, shared by every module installed into it.
+
+#### What installing a module does to your environment { #module-packages }
+
+**There is one analysis environment per release and every module shares it.** A module that needs an R package the release does not ship names it in its manifest, pinned to an exact version, and `modules install` puts it in that shared environment. The three modules shipped with this release name nothing: they run on base R plus what the environment already carries.
+
+```
+Installing what fst runs on, into 'PoolSeqFlow-3.0.0-analysis':
+    r-poolfstat=3.0.0
+```
+
+**Nothing already in the environment is allowed to move.** A pin that names a package the environment already holds at a different version is refused outright, before conda is asked, so a module can never quietly downgrade something another module — or the release itself — is running on. Beyond that the install is made with conda's `--freeze-installed`, which lets the solver add whatever the new package needs while refusing to change anything else. The worst a module can do is fail to install, and it fails having changed nothing:
+
+> ERROR: fst v1.0.0 needs packages this release's analysis environment cannot take without moving something already in it. The module was not installed and the environment was not changed.
+
+That is a compatibility question between a release and a module, settled when each is published rather than on your machine. The answer is a build of that module published for the release you have.
+
+**Uninstalling takes back only what nothing else asks for.** If two modules both name `r-poolfstat=3.0.0`, removing one leaves it installed for the other. And because `conda remove` takes everything that depends on what it is given, the removal is planned before it is run: if taking a package out would take something else with it, nothing is removed and the module stays installed.
+
+**Two things follow from the store living inside the installation.** Reinstalling the pipeline over itself wipes the store, so the packages its modules added are taken out of the environment first, while the manifests declaring them still exist — afterwards both are back to what the release ships. And `analysis uninstall` removes the environment while leaving the store, so `analysis install` puts back what the modules still there need. Neither is something to manage by hand.
 
 `list` is worth knowing about before you need it. Modules live inside the release's own installation, so each release has its own set and a module installed for one is never picked up by another — reinstalling the same version wipes them, and one command puts each back. More usefully: **a module directory that has lost its pipeline stops every analysis run, not only its own**, and `list` is what names the one at fault. It also tells you where the store is, which is the directory a module is installed into.
 
@@ -4942,6 +4967,8 @@ Exact versions are pinned in `install/environment.yml`, and the versions for the
 PoolSeqFlow is licensed under the [Apache License 2.0](https://github.com/ozankiratli/PoolSeqFlow/blob/main/LICENSE).
 
 The tools it invokes carry their own licenses, which are not affected by this one.
+
+**Analysis modules carry their own license, and it is not always this one.** A module is a separate work that is versioned and installed separately, and the terms it is published under are in its `manifest.json` and printed in the report of every analysis it produces. The three that ship with this release — `basicstats`, `association` and `mds` — are GPL-3.0-or-later, because each compiles its hot path with `Rcpp` and does so by default. `verify` belongs to the frame and is Apache-2.0 with the rest of the pipeline. If you redistribute what a module produced, read the line the report gives you.
 
 ### Contact
 

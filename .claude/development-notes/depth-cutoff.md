@@ -1,6 +1,6 @@
 # The per-sample depth cutoff
 
-**Written 2026-08-31, against the tree at `7d65893`.** The detector shipped in `c3a3191` before this was written and has not moved since: all five constants, the twenty corpus cases and the self-explaining `max()` are exactly as described. One open defect in the process that publishes its output is noted below.
+**Written 2026-08-31, against the tree at `7d65893`.** The detector shipped in `c3a3191` before this was written and has not moved since: all five constants, the twenty corpus cases and the self-explaining `max()` are exactly as described. One defect in the process that publishes its output was open when this was written and is fixed; both the observation and the fix are below.
 
 How `bin/depth_cutoff.py` came to be shaped the way it is, and the three designs that were tried and measured before it. E2, 2026-08-30.
 
@@ -57,6 +57,10 @@ Truncating a 30000x organelle to 15849 does nothing. The cap belongs where cover
 The corresponding trap is that "uncapped" must be *visible*. A sample the detector declines to cut is the one case where the pipeline decided to do nothing, and the user cannot tell that from the output — which is why the sentence explaining the decision is published for every sample whether it was capped or not.
 
 **The process publishing that sentence declares only one of the three files it writes.** `DepthProfile` produces `<sample>_depth_histogram.tsv`, `<sample>_depth_cap.txt` and `<sample>_depth_report.txt`, and its `output:` block names the decision file alone — so the report carrying the sentence above is outside Nextflow's tracking and outside the skip test, which asks about the decision file. A pipeline run cannot reach the bad state: the `atomic_mv` calls put the decision file last, so an interruption leaves the decision missing, the skip does not fire, and all three are rebuilt. Only deleting the histogram by hand gets there. Open as E6h and triaged low. Observed 2026-09-05.
+
+**Fixed 2026-09-08 (E6h).** The histogram and the report are a second emit, `report`, keyed on run and sample the way `AlignmentReport`'s and `CoverageReport`'s are — separate from `profile` because step 6 reads that tuple by position, so widening it would have broken the consumer. The skip now tests all three files and both branches symlink all three back into the work directory; without that second half, declaring the outputs would have made every resume against an existing profile fail on a missing declared output. `optional: true` would have been the wrong escape, since it hides a genuine miss.
+
+**The ordering of the three `atomic_mv` calls stops being load-bearing with that change**, which is worth knowing before anyone tidies it: whichever of the three is missing, the skip no longer fires. Before, only the decision file going last kept the partial state unreachable.
 
 ## Everything is oriented towards not capping
 

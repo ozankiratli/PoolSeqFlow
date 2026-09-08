@@ -145,6 +145,8 @@ Your installed copy prints its own citation, with the version filled in:
 
 Apache 2.0 — see [LICENSE](LICENSE). The tools PoolSeqFlow invokes carry their own licenses.
 
+**Analysis modules under `analysis/modules/` carry their own**, declared in each `manifest.json` and printed in the report of every analysis. `basicstats`, `association` and `mds` are GPL-3.0-or-later; `verify` belongs to the frame and is Apache 2.0.
+
 ## Contact
 
 **Ozan L. Z. Kiratli** · [@ozankiratli](https://github.com/ozankiratli) · [Issues](https://github.com/ozankiratli/PoolSeqFlow/issues)

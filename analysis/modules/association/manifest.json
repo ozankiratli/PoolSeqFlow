@@ -1,8 +1,10 @@
 {
   "name": "association",
-  "version": "20260908.002",
+  "version": "20260908.003",
   "contract": "freq-1",
-  "license": "Apache-2.0",
+  "license": "GPL-3.0-or-later",
+  "frame": "20260908.003",
+  "environment": "2.2.0",
   "summary": "each allele's frequency regressed on a phenotype measured per pool, with a permutation p",
   "needs": [
     "depths"

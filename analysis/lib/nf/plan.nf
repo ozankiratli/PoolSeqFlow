@@ -9,7 +9,7 @@ nextflow.enable.dsl=2
 include { runDefinitions; resolveParameters } from '../../../scripts/resolve_parameters.nf'
 include { variantPlan; runToken; dig } from '../../../scripts/variants.nf'
 include { analysisSetting; checkAnalysisScope; renderSetting; targetResultsDir; installDir } from './paths.nf'
-include { moduleNeeds } from './modules.nf'
+include { checkModuleCompatible; moduleNeeds } from './modules.nf'
 include { checkTargetDesign; designSummary } from './design.nf'
 include { poolFigures } from './pools.nf'
 include { checkModuleOutputs; moduleOutputs } from './outputs.nf'
@@ -152,6 +152,7 @@ def analysisPlan(String module) {
     params.dir.bin = "${installDir()}/bin".toString()
     def runDefs = runDefinitions()
     resolveParameters()
+    checkModuleCompatible(module)
     def needs = moduleNeeds(module)
     checkModuleNeeds(module, needs)
     checkModuleOutputs(module, moduleOutputs(module))

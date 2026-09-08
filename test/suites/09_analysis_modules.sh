@@ -32,7 +32,8 @@ test_an_unknown_module_refuses_before_any_task() {
 test_a_module_installed_into_the_store_joins_the_roster() {
     analysis_ready single || return
     analysis_install_module demo \
-        '{"name":"demo","version":"1.4.2","contract":"freq-1","summary":"scaling over frequencies"}'
+        '{"name":"demo","version":"1.4.2","contract":"freq-1",'"$ANALYSIS_MANIFEST_FLOORS"',
+          "summary":"scaling over frequencies"}'
     local status; status=$(run_analysis "$ANALYSIS_SB" demo)
     assert_status 0 "$status" "an installed module should be found"
     local report; report=$(analysis_report "$ANALYSIS_SB")
@@ -46,7 +47,8 @@ test_a_module_installed_into_the_store_joins_the_roster() {
 test_a_module_version_is_not_the_release_version() {
     analysis_ready single || return
     analysis_install_module demo \
-        '{"name":"demo","version":"9.9.9","contract":"freq-1","summary":"scaling over frequencies"}'
+        '{"name":"demo","version":"9.9.9","contract":"freq-1",'"$ANALYSIS_MANIFEST_FLOORS"',
+          "summary":"scaling over frequencies"}'
     run_analysis "$ANALYSIS_SB" demo > /dev/null
     local report; report=$(analysis_report "$ANALYSIS_SB")
     assert_contains "$report" "demo v9.9.9" "the module reports its own version"
@@ -74,7 +76,8 @@ workflow {
     }
 }'
     analysis_install_module probe \
-        '{"name":"probe","version":"0.1.0","contract":"freq-1","summary":"reads depths","needs":["depths"]}' \
+        '{"name":"probe","version":"0.1.0","contract":"freq-1",'"$ANALYSIS_MANIFEST_FLOORS"',
+          "summary":"reads depths","needs":["depths"]}' \
         "$main"
     local status; status=$(run_module "$ANALYSIS_SB" probe)
     assert_status 0 "$status" "a module naming only itself should run"
@@ -89,7 +92,8 @@ test_a_module_needing_an_unknown_artifact_class_refuses() {
     analysis_ready single || return
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     analysis_install_module probe \
-        '{"name":"probe","version":"0.1.0","contract":"freq-1","summary":"reads nothing that exists","needs":["frequencies","pileups"]}'
+        '{"name":"probe","version":"0.1.0","contract":"freq-1",'"$ANALYSIS_MANIFEST_FLOORS"',
+          "summary":"reads nothing that exists","needs":["frequencies","pileups"]}'
     local status; status=$(run_analysis "$ANALYSIS_SB" probe)
     assert_status 1 "$status" "a manifest naming a class the frame has no answer for must stop the run"
     local out; out=$(analysis_output)
@@ -106,12 +110,108 @@ test_a_manifest_missing_a_field_refuses() {
     assert_contains "$(analysis_output)" "has no 'contract'" "naming the field that is missing"
 }
 
+# A result produced by a module is produced under that module's terms, and the store is open to
+# modules the pipeline's own license says nothing about.
+test_a_manifest_without_a_license_refuses() {
+    analysis_ready single || return
+    analysis_install_module demo \
+        '{"name":"demo","version":"1.4.2","contract":"freq-1","frame":"20260101.001",
+          "environment":"0.0.0","summary":"scaling over frequencies"}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" demo)
+    assert_status 1 "$status" "a module that says nothing about its terms must stop the run"
+    assert_contains "$(analysis_output)" "has no 'license'" "naming the field that is missing"
+}
+
+# The license reaches the verification report, so what an analysis was produced under is readable
+# beside what produced it rather than only in the store.
+test_the_report_says_what_the_module_is_published_under() {
+    analysis_ready single || return
+    analysis_install_module demo \
+        '{"name":"demo","version":"1.4.2","contract":"freq-1","license":"GPL-3.0-or-later",
+          "frame":"20260101.001","environment":"0.0.0","packages":["r-poolfstat=3.0.0"],
+          "summary":"scaling over frequencies"}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" demo)
+    assert_status 0 "$status" "a module declaring a package should still run"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "published under GPL-3.0-or-later" "the report carries the terms"
+    assert_contains "$report" "installed r-poolfstat=3.0.0" "and what it put in the environment"
+}
+
+# The axis `contract` does not cover: a module imports analysisPlan, designJson and
+# PublishResults by name, and a frame that does not have one of them is not a table problem.
+test_a_module_needing_a_newer_frame_refuses() {
+    analysis_ready single || return
+    analysis_install_module demo \
+        '{"name":"demo","version":"1.4.2","contract":"freq-1","license":"Apache-2.0",
+          "frame":"20990101.001","environment":"0.0.0","summary":"scaling over frequencies"}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" demo)
+    assert_status 1 "$status" "a module the frame cannot satisfy must stop before any compute"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "needs analysis frame 20990101.001 or newer" "the refusal names what it wants"
+    assert_contains "$out" "this installation is" "and what this installation is"
+}
+
+# The packages are installed once, for the release, so a module built against a later release's
+# environment cannot be made to work by installing it here.
+test_a_module_needing_a_newer_environment_refuses() {
+    analysis_ready single || return
+    analysis_install_module demo \
+        '{"name":"demo","version":"1.4.2","contract":"freq-1","license":"Apache-2.0",
+          "frame":"20260101.001","environment":"99.0.0","summary":"scaling over frequencies"}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" demo)
+    assert_status 1 "$status" "a module built for a later environment must stop before any compute"
+    assert_contains "$(analysis_output)" "PoolSeqFlow 99.0.0 or newer" \
+        "the refusal names the release whose environment it wants"
+}
+
+# Set together to work together: a range or a floating spec makes what an analysis ran on a
+# property of the day it was installed.
+test_an_unpinned_package_refuses() {
+    analysis_ready single || return
+    analysis_install_module demo \
+        '{"name":"demo","version":"1.4.2","contract":"freq-1","license":"Apache-2.0",
+          "frame":"20260101.001","environment":"0.0.0","packages":["r-poolfstat"],
+          "summary":"scaling over frequencies"}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" demo)
+    assert_status 1 "$status" "an unpinned package must stop the run"
+    assert_contains "$(analysis_output)" "is not a pinned conda spec" "naming what is wrong with it"
+}
+
+# A build string names one platform's build of a version, so a manifest carrying one cannot be
+# installed anywhere else - and a channel prefix is the release's decision, not the module's.
+test_a_build_string_or_a_channel_in_a_package_refuses() {
+    analysis_ready single || return
+    analysis_install_module demo \
+        '{"name":"demo","version":"1.4.2","contract":"freq-1","license":"Apache-2.0",
+          "frame":"20260101.001","environment":"0.0.0",
+          "packages":["r-poolfstat=3.0.0=r44hb79369c_0"],"summary":"scaling over frequencies"}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" demo)
+    assert_status 1 "$status" "a build string must stop the run"
+    local out; out=$(analysis_output)
+    assert_contains "$out" "r-poolfstat=3.0.0=r44hb79369c_0" "quoting the entry that is wrong"
+    assert_contains "$out" "no build string" "and saying what a spec may not carry"
+
+    # The store is one namespace and readManifest() runs over all of it, so the second half needs
+    # the first module gone or it refuses on that one again.
+    rm -rf "$ANALYSIS_SB/install/analysis/modules/demo"
+    analysis_install_module demo \
+        '{"name":"demo","version":"1.4.2","contract":"freq-1","license":"Apache-2.0",
+          "frame":"20260101.001","environment":"0.0.0",
+          "packages":["conda-forge::r-poolfstat=3.0.0"],"summary":"scaling over frequencies"}'
+    status=$(run_analysis "$ANALYSIS_SB" demo)
+    assert_status 1 "$status" "a channel prefix must stop the run"
+    out=$(analysis_output)
+    assert_contains "$out" "conda-forge::r-poolfstat=3.0.0" "quoting the entry that is wrong"
+    assert_contains "$out" "no channel prefix" "and saying who decides the channel"
+}
+
 # The directory is how a module is found and the name is how it is asked for, so the two
 # disagreeing means one of them would never be reachable.
 test_a_manifest_that_disagrees_with_its_directory_refuses() {
     analysis_ready single || return
     analysis_install_module demo \
-        '{"name":"pca","version":"1.0.0","contract":"freq-1","summary":"wrong name"}'
+        '{"name":"pca","version":"1.0.0","contract":"freq-1",'"$ANALYSIS_MANIFEST_FLOORS"',
+          "summary":"wrong name"}'
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a mismatched manifest must stop even an unrelated module"
     assert_contains "$(analysis_output)" "installed in a directory named 'demo'" \
@@ -124,7 +224,8 @@ test_a_manifest_that_disagrees_with_its_directory_refuses() {
 test_a_module_with_a_manifest_but_no_pipeline_refuses() {
     analysis_ready single || return
     analysis_install_module demo \
-        '{"name":"demo","version":"1.4.2","contract":"freq-1","summary":"scaling over frequencies"}'
+        '{"name":"demo","version":"1.4.2","contract":"freq-1",'"$ANALYSIS_MANIFEST_FLOORS"',
+          "summary":"scaling over frequencies"}'
     rm "$ANALYSIS_SB/install/analysis/modules/demo/main.nf"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a module with no main.nf must stop even an unrelated module"
@@ -140,7 +241,8 @@ test_a_module_with_a_manifest_but_no_pipeline_refuses() {
 test_a_module_without_citations_refuses() {
     analysis_ready single || return
     analysis_install_module demo \
-        '{"name":"demo","version":"1.4.2","contract":"freq-1","summary":"scaling over frequencies"}'
+        '{"name":"demo","version":"1.4.2","contract":"freq-1",'"$ANALYSIS_MANIFEST_FLOORS"',
+          "summary":"scaling over frequencies"}'
     rm "$ANALYSIS_SB/install/analysis/modules/demo/citations.json"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a module with no citations.json must stop even an unrelated module"

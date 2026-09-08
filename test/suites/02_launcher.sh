@@ -651,7 +651,7 @@ test_modules_available_refuses_a_catalogue_layout_it_cannot_read() {
 test_modules_install_refuses_a_catalogue_layout_it_cannot_read() {
     LAUNCHER_MODULE_INDEX=$(modules_catalogue_stamped "$(modules_catalogue)" 99 20991231.001)
     LAUNCHER_STORE_MODULE=""
-    run_analysis_launcher_with_envs "base" modules install probe
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
     unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE
     assert_status 1 "$LAUNCHER_STATUS" "an unreadable layout must stop the install"
     assert_no_file "$LAUNCHER_STORE/probe" "and nothing may be installed from it"
@@ -665,7 +665,7 @@ test_the_catalogue_version_is_reported_and_recorded() {
     assert_contains "$LAUNCHER_OUTPUT" "20260901.007" "available should name the catalogue it read"
 
     LAUNCHER_STORE_MODULE=""
-    run_analysis_launcher_with_envs "base" modules install probe
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
     unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE
     assert_status 0 "$LAUNCHER_STATUS" "and installing from it should work"
     assert_contains "$(cat "$LAUNCHER_STORE/probe/.source" 2>/dev/null)" "20260901.007" \
@@ -675,7 +675,7 @@ test_the_catalogue_version_is_reported_and_recorded() {
 test_modules_install_takes_the_newest_version_it_can_read() {
     LAUNCHER_MODULE_INDEX=$(modules_catalogue)
     LAUNCHER_STORE_MODULE=""
-    run_analysis_launcher_with_envs "base" modules install probe
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
     unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE
     assert_status 0 "$LAUNCHER_STATUS" "installing a published module should work"
     assert_contains "$LAUNCHER_OUTPUT" "probe v0.2.0" "the newest version, not the first row"
@@ -687,7 +687,7 @@ test_modules_install_takes_the_newest_version_it_can_read() {
 
 test_modules_install_pins_a_named_version() {
     LAUNCHER_MODULE_INDEX=$(modules_catalogue)
-    run_analysis_launcher_with_envs "base" modules install probe 0.1.0
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe 0.1.0
     unset LAUNCHER_MODULE_INDEX
     assert_status 0 "$LAUNCHER_STATUS" "naming a version should install that one"
     assert_contains "$LAUNCHER_OUTPUT" "probe v0.1.0" "the version asked for, not the newest"
@@ -700,7 +700,7 @@ test_modules_install_refuses_a_tampered_download() {
         $1 == "probe" && $2 == "0.2.0" { $5 = "0000000000000000000000000000000000000000000000000000000000000000" }
         { print }' "$index" > "$index.tampered"
     LAUNCHER_MODULE_INDEX="$index.tampered"
-    run_analysis_launcher_with_envs "base" modules install probe
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
     unset LAUNCHER_MODULE_INDEX
     assert_status 1 "$LAUNCHER_STATUS" "a checksum mismatch must stop the install"
     assert_contains "$LAUNCHER_OUTPUT" "does not match the checksum" "saying what failed"
@@ -709,7 +709,7 @@ test_modules_install_refuses_a_tampered_download() {
 
 test_modules_install_refuses_a_module_for_another_contract() {
     LAUNCHER_MODULE_INDEX=$(modules_catalogue)
-    run_analysis_launcher_with_envs "base" modules install future
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install future
     unset LAUNCHER_MODULE_INDEX
     assert_status 1 "$LAUNCHER_STATUS" "a module for another contract should be refused"
     assert_no_file "$LAUNCHER_STORE/future" "and not installed"
@@ -719,11 +719,212 @@ test_modules_install_refuses_a_module_for_another_contract() {
 test_modules_install_will_not_replace_an_installed_module() {
     LAUNCHER_MODULE_INDEX=$(modules_catalogue)
     LAUNCHER_STORE_MODULE=probe
-    run_analysis_launcher_with_envs "base" modules install probe
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
     unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE
     assert_status 0 "$LAUNCHER_STATUS" "it is not an error, only a no-op"
     assert_contains "$LAUNCHER_OUTPUT" "already installed" "saying so"
     assert_contains "$LAUNCHER_OUTPUT" "modules uninstall probe" "and how to replace it"
+}
+
+# ---------------------------------------------------------------------------------------
+# One analysis environment, shared by every module in it. What these prove is which conda
+# command lines are issued and in what order; whether a solve succeeds is not a question a
+# stub can answer, and dev/scripts/check-module-packages.sh is where that is asked.
+
+# Installing a module now installs what it runs on, so an environment to install it into is
+# no longer optional.
+test_modules_install_needs_the_analysis_environment() {
+    LAUNCHER_MODULE_INDEX=$(modules_catalogue)
+    LAUNCHER_STORE_MODULE=""
+    run_analysis_launcher_with_envs "base" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE
+    assert_status 1 "$LAUNCHER_STATUS" "installing without the analysis environment should fail"
+    assert_contains "$LAUNCHER_OUTPUT" "${VERSIONED_ENV}-analysis" "naming the environment it wanted"
+    assert_no_file "$LAUNCHER_STORE/probe/main.nf" "and nothing should reach the store"
+}
+
+# --freeze-installed is the whole guarantee: the solver may add these and what they need, and
+# may not move anything another module is already running on.
+test_modules_install_puts_a_modules_packages_in_the_environment() {
+    local dir; dir=$(guard_path "$TEST_TMPDIR/module-catalogue-pkgs")
+    rm -rf "$dir"; mkdir -p "$dir"
+    LAUNCHER_MODULE_INDEX=$(make_module_release "$dir" probe 0.1.0 freq-1 "r-poolfstat=3.0.0")
+    LAUNCHER_STORE_MODULE=""
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE
+    assert_status 0 "$LAUNCHER_STATUS" "installing a module with a dependency should work: $LAUNCHER_OUTPUT"
+    assert_contains "$(cat "$LAUNCHER_CONDA_LOG")" \
+        "install -n ${VERSIONED_ENV}-analysis --freeze-installed -y r-poolfstat=3.0.0" \
+        "the pin should be installed into the analysis environment, frozen"
+    assert_contains "$LAUNCHER_OUTPUT" "r-poolfstat=3.0.0" "and the user should be told what was added"
+}
+
+# Every module shipped in this release declares nothing, so the common case must issue no
+# conda command at all rather than an empty install.
+test_modules_install_asks_conda_for_nothing_when_a_module_declares_none() {
+    LAUNCHER_MODULE_INDEX=$(modules_catalogue)
+    LAUNCHER_STORE_MODULE=""
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE
+    assert_status 0 "$LAUNCHER_STATUS" "installing a module with no packages should work"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "--freeze-installed" \
+        "a module declaring nothing should reach conda with nothing"
+}
+
+# Refused from the manifest, before the archive is moved and before conda is asked: a spec
+# conda would reject anyway is refused here so the message names the module, not the solver.
+test_modules_install_refuses_a_spec_that_is_not_pinned() {
+    local dir; dir=$(guard_path "$TEST_TMPDIR/module-catalogue-loose")
+    rm -rf "$dir"; mkdir -p "$dir"
+    LAUNCHER_MODULE_INDEX=$(make_module_release "$dir" probe 0.1.0 freq-1 "r-poolfstat")
+    LAUNCHER_STORE_MODULE=""
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
+    assert_status 1 "$LAUNCHER_STATUS" "an unpinned package should stop the install"
+    assert_contains "$LAUNCHER_OUTPUT" "'r-poolfstat'" "quoting the spec that is wrong"
+    assert_contains "$LAUNCHER_OUTPUT" "no build string" "and saying what a spec may not carry"
+    assert_no_file "$LAUNCHER_STORE/probe/main.nf" "with nothing left in the store"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "--freeze-installed" \
+        "and conda never asked"
+
+    rm -rf "$dir"; mkdir -p "$dir"
+    LAUNCHER_MODULE_INDEX=$(make_module_release "$dir" probe 0.1.0 freq-1 "r-poolfstat=3.0.0=r44h1")
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE
+    assert_status 1 "$LAUNCHER_STATUS" "a build string should stop the install"
+    assert_contains "$LAUNCHER_OUTPUT" "r44h1" "quoting the spec that is wrong"
+}
+
+# --freeze-installed covers what the SOLVE reaches on its own and not what the command line
+# names: conda installs a named pin at the version asked for, downgrading what is there. Found
+# by dev/scripts/check-module-packages.sh against real conda, which watched a fixture take the
+# baseline's r-glue from 1.8.1 to 1.8.0 and call the solve a success.
+test_modules_install_refuses_a_pin_over_a_version_already_installed() {
+    local dir; dir=$(guard_path "$TEST_TMPDIR/module-catalogue-clash")
+    rm -rf "$dir"; mkdir -p "$dir"
+    LAUNCHER_MODULE_INDEX=$(make_module_release "$dir" probe 0.1.0 freq-1 "r-poolfstat=3.0.0")
+    LAUNCHER_STORE_MODULE=""
+    STUB_CONDA_INSTALLED='r-poolfstat=2.0.0=r44h1'
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE STUB_CONDA_INSTALLED
+    assert_status 1 "$LAUNCHER_STATUS" "a pin over a different installed version should fail"
+    assert_contains "$LAUNCHER_OUTPUT" "already holds" "saying the environment disagrees"
+    assert_contains "$LAUNCHER_OUTPUT" "installed 2.0.0" "and naming the version that is there"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "--freeze-installed" \
+        "with conda never asked to install it"
+    assert_no_file "$LAUNCHER_STORE/probe/main.nf" "and the module rolled back out of the store"
+}
+
+# The same pin twice is not a disagreement: two modules may need one package at one version,
+# which is the whole reason the environment is shared.
+test_modules_install_accepts_a_pin_the_environment_already_matches() {
+    local dir; dir=$(guard_path "$TEST_TMPDIR/module-catalogue-match")
+    rm -rf "$dir"; mkdir -p "$dir"
+    LAUNCHER_MODULE_INDEX=$(make_module_release "$dir" probe 0.1.0 freq-1 "r-poolfstat=3.0.0")
+    LAUNCHER_STORE_MODULE=""
+    STUB_CONDA_INSTALLED='r-poolfstat=3.0.0=r44h1'
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE STUB_CONDA_INSTALLED
+    assert_status 0 "$LAUNCHER_STATUS" "the same version already there should install: $LAUNCHER_OUTPUT"
+    assert_file "$LAUNCHER_STORE/probe/main.nf" "and the module should be in the store"
+}
+
+# The environment is shared, so what leaves with a module is its own list minus whatever the
+# modules left behind still declare.
+test_modules_uninstall_takes_only_what_nothing_else_declares() {
+    local store="$TEST_TMPDIR/analysis-launcher/analysis/modules"
+    LAUNCHER_STORE_MODULE=probe
+    LAUNCHER_STORE_MODULE_PACKAGES='"r-shared=1.0","r-mine=2.0"'
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" \
+        modules uninstall probe <<< y
+    unset LAUNCHER_STORE_MODULE LAUNCHER_STORE_MODULE_PACKAGES
+    assert_status 0 "$LAUNCHER_STATUS" "the removal should succeed: $LAUNCHER_OUTPUT"
+    assert_no_file "$store/probe" "and the module should be gone"
+    assert_contains "$(cat "$LAUNCHER_CONDA_LOG")" \
+        "remove -n ${VERSIONED_ENV}-analysis -y r-mine r-shared" \
+        "both of its packages go when it is the only module"
+}
+
+test_modules_uninstall_leaves_a_package_another_module_declares() {
+    local store="$TEST_TMPDIR/analysis-launcher/analysis/modules"
+    LAUNCHER_STORE_MODULE=probe
+    LAUNCHER_STORE_MODULE_PACKAGES='"r-shared=1.0","r-mine=2.0"'
+    LAUNCHER_STORE_EXTRA_MODULE=keeper
+    LAUNCHER_STORE_EXTRA_PACKAGES='"r-shared=1.0"'
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" \
+        modules uninstall probe <<< y
+    unset LAUNCHER_STORE_MODULE LAUNCHER_STORE_MODULE_PACKAGES
+    unset LAUNCHER_STORE_EXTRA_MODULE LAUNCHER_STORE_EXTRA_PACKAGES
+    assert_status 0 "$LAUNCHER_STATUS" "the removal should succeed: $LAUNCHER_OUTPUT"
+    assert_no_file "$store/probe" "and the module should be gone"
+    assert_dir "$store/keeper" "while the other module stays"
+    local log; log=$(cat "$LAUNCHER_CONDA_LOG")
+    assert_contains "$log" "remove -n ${VERSIONED_ENV}-analysis -y r-mine" "only its own package goes"
+    assert_not_contains "$log" "-y r-shared" "the one the other module declares stays"
+}
+
+# `conda remove` takes everything depending on what it is given, so the plan is read before
+# it runs and a name beyond the ones asked for stops the removal.
+test_modules_uninstall_stops_when_the_removal_would_cascade() {
+    local store="$TEST_TMPDIR/analysis-launcher/analysis/modules"
+    LAUNCHER_STORE_MODULE=probe
+    LAUNCHER_STORE_MODULE_PACKAGES='"r-mine=2.0"'
+    STUB_CONDA_COLLATERAL=r-bystander
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" \
+        modules uninstall probe <<< y
+    unset LAUNCHER_STORE_MODULE LAUNCHER_STORE_MODULE_PACKAGES STUB_CONDA_COLLATERAL
+    assert_status 1 "$LAUNCHER_STATUS" "a cascade should stop the removal"
+    assert_contains "$LAUNCHER_OUTPUT" "r-bystander" "naming what would have gone with it"
+    assert_contains "$LAUNCHER_OUTPUT" "still installed" "and saying the module stayed"
+    assert_dir "$store/probe" "which it did"
+}
+
+# The store lives inside the payload and dies with it, so its packages come out while the
+# manifests declaring them still exist. After this both are back to what the release ships.
+test_installing_over_a_store_takes_its_packages_out_first() {
+    run_launcher_with_envs "base $VERSIONED_ENV ${VERSIONED_ENV}-analysis" install
+    assert_status 0 "$LAUNCHER_STATUS" "the first install should succeed"
+    local dest="$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION"
+    mkdir -p "$dest/analysis/modules/planted"
+    printf '{"name":"planted","version":"1.0","contract":"freq-1","packages":["r-planted=1.0"]}\n' \
+        > "$dest/analysis/modules/planted/manifest.json"
+    # The second install runs against the sandbox as it stands: run_launcher_with_envs rebuilds
+    # it from scratch, which would take the planted module with it.
+    local sb out status=0
+    sb=$(dirname "$LAUNCHER_PREFIX")
+    out=$(cd "$sb" && PATH="$sb/stub/bin:$PATH" POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" \
+          ./PoolSeqFlow install 2>&1) || status=$?
+    assert_status 0 "$status" "installing over it should succeed: $out"
+    assert_contains "$(cat "$LAUNCHER_CONDA_LOG")" \
+        "remove -n ${VERSIONED_ENV}-analysis -y r-planted" \
+        "the wiped store's packages should be removed before the wipe"
+    assert_contains "$out" "r-planted" "and the user should be told what came out"
+    assert_no_file "$dest/analysis/modules/planted" "with the store back to what the release ships"
+}
+
+# The store outlives the environment - `analysis uninstall` takes one and leaves the other -
+# so creating the environment has to give the modules already there what they run on, or the
+# pair leaves every one of them installed and unable to start.
+test_analysis_install_gives_the_store_its_packages_back() {
+    LAUNCHER_STORE_MODULE=probe
+    LAUNCHER_STORE_MODULE_PACKAGES='"r-poolfstat=3.0.0"'
+    run_analysis_launcher_with_envs "base" install
+    unset LAUNCHER_STORE_MODULE LAUNCHER_STORE_MODULE_PACKAGES
+    assert_status 0 "$LAUNCHER_STATUS" "creating the analysis environment should work: $LAUNCHER_OUTPUT"
+    local log; log=$(cat "$LAUNCHER_CONDA_LOG")
+    assert_contains "$log" "env create -n ${VERSIONED_ENV}-analysis" "the environment is created"
+    assert_contains "$log" \
+        "install -n ${VERSIONED_ENV}-analysis --freeze-installed -y r-poolfstat=3.0.0" \
+        "and the installed modules' packages go back into it"
+    assert_contains "$LAUNCHER_OUTPUT" "r-poolfstat=3.0.0" "with the user told what was added"
+}
+
+test_analysis_install_asks_conda_for_nothing_when_the_store_declares_none() {
+    LAUNCHER_STORE_MODULE=probe
+    run_analysis_launcher_with_envs "base" install
+    unset LAUNCHER_STORE_MODULE
+    assert_status 0 "$LAUNCHER_STATUS" "creating the analysis environment should work"
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "--freeze-installed" \
+        "a store whose modules declare nothing reaches conda with nothing"
 }
 
 test_modules_explains_an_unreachable_catalogue() {

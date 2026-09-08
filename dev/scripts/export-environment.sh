@@ -49,6 +49,41 @@ if ! conda env list | awk '{print $1}' | grep -qxF "$ENV_NAME"; then
     exit 1
 fi
 
+# An installed module puts its own packages into the shared analysis environment. Exporting one
+# in that state folds them into the baseline every project installs, permanently and invisibly -
+# the module would then be un-uninstallable and the release would ship a dependency nothing
+# declares. The export is refused instead, and the fix is to remove the modules and re-export.
+#
+# Only the module's OWN specs are looked for. What conda pulled in beneath them is not
+# distinguishable here from what the baseline needed anyway, which is exactly why the answer is
+# to rebuild the environment rather than to subtract from it.
+INSTALL="$REPO_ROOT"
+POOLSEQFLOW_INSTALLED_HOME="${POOLSEQFLOW_INSTALLED_HOME:-}"
+# shellcheck source=../../lib/wrapper_lib.sh
+. "$REPO_ROOT/lib/wrapper_lib.sh"
+
+INSTALLED_STORE="$(install_prefix)/opt/PoolSeqFlow-$VERSION/analysis/modules"
+DECLARED=$( { store_packages "$REPO_ROOT/analysis/modules"
+              store_packages "$INSTALLED_STORE"; } | sort -u )
+HELD=$(conda_installed_packages "$ENV_NAME")
+CARRIED=""
+while IFS= read -r SPEC; do
+    [ -n "$SPEC" ] || continue
+    if printf '%s\n' "$HELD" | grep -qxF "${SPEC%%=*}"; then
+        CARRIED="$CARRIED    $SPEC"$'\n'
+    fi
+done <<< "$DECLARED"
+if [ -n "$CARRIED" ]; then
+    echo "export-environment: '$ENV_NAME' carries packages an analysis module declares:" >&2
+    printf '%s' "$CARRIED" >&2
+    echo "Exporting now would write them into the file every release installs from, where" >&2
+    echo "nothing declares them and nothing can remove them. Take the modules out first:" >&2
+    echo "    ./PoolSeqFlow analysis modules list" >&2
+    echo "    ./PoolSeqFlow analysis modules uninstall <module>" >&2
+    echo "or rebuild the environment from the shipped file and export that." >&2
+    exit 1
+fi
+
 # Through a temporary file: a failed export must not leave a truncated file behind.
 TMP=$(mktemp "$OUTPUT.XXXXXX")
 trap 'rm -f "$TMP"' EXIT

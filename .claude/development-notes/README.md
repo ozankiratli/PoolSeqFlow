@@ -63,6 +63,7 @@ One file per subject, not per source file — the reasoning crosses file boundar
 | `dry-run.md` | the preview: why it is its own entry point, and the traps in building it |
 | `concurrency.md` | two analysis modules deriving one intermediate: what was measured, and the one line that fixes it |
 | `analysis-versioning.md` | when `analysis/frame.version` moves, and the stricter rule that was measured against the history and dropped |
+| `module-dependencies.md` | the four compatibility fields a manifest declares, why shape and compatibility are checked in different places, and what a package spec may not carry |
 | `experimental-design.md` | what makes two pools one independent unit, why it was gated on the time axis, and the two formulations that are not partitions |
 | `association-math.md` | F2 before it was written: the permutation scheme measured at twice its nominal rate, weighted FWL, and what a case may not assert |
 | `calibration.md` | what `dev/validation/` measured against a known truth: `n_eff` exact, the closed form calibrated, unit means required rather than a df adjustment, and the depth-phenotype correlation that breaks permuting |

@@ -182,8 +182,8 @@ test_a_module_naming_an_anchor_the_manual_lacks_refuses() {
     analysis_ready single || return
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     analysis_install_module writer \
-        '{"name":"writer","version":"0.1.0","contract":"freq-1","summary":"points nowhere",
-          "needs":["frequencies"],
+        '{"name":"writer","version":"0.1.0","contract":"freq-1",'"$ANALYSIS_MANIFEST_FLOORS"',
+          "summary":"points nowhere", "needs":["frequencies"],
           "outputs":[{"file":"result.tsv","anchor":"how-to-read-a-thing-that-is-not-written"}]}' \
         "$ANALYSIS_WRITER_MAIN"
     local status; status=$(run_analysis "$ANALYSIS_SB" writer)
@@ -199,8 +199,8 @@ test_a_module_may_link_out_of_the_manual_entirely() {
     analysis_ready single || return
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     analysis_install_module writer \
-        '{"name":"writer","version":"0.1.0","contract":"freq-1","summary":"published elsewhere",
-          "needs":["frequencies"],
+        '{"name":"writer","version":"0.1.0","contract":"freq-1",'"$ANALYSIS_MANIFEST_FLOORS"',
+          "summary":"published elsewhere", "needs":["frequencies"],
           "outputs":[{"file":"result.tsv","summary":"the analysis",
                       "url":"https://example.org/writer/#results"}]}' \
         "$ANALYSIS_WRITER_MAIN"
@@ -216,8 +216,8 @@ test_a_module_that_does_not_publish_what_it_declared_publishes_nothing() {
     analysis_ready single || return
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     analysis_install_module writer \
-        '{"name":"writer","version":"0.1.0","contract":"freq-1","summary":"promises a table",
-          "needs":["frequencies"],
+        '{"name":"writer","version":"0.1.0","contract":"freq-1",'"$ANALYSIS_MANIFEST_FLOORS"',
+          "summary":"promises a table", "needs":["frequencies"],
           "outputs":[{"file":"frequencies.tsv","summary":"never produced","anchor":"output-layout"}]}' \
         "$ANALYSIS_WRITER_MAIN"
     local status; status=$(analysis_run_module writer)

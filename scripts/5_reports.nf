@@ -111,10 +111,14 @@ process DepthProfile {
     input:
     tuple val(run), val(pair_id), path(ready_bam), path(ready_bai)
 
-    // The BAM and its index pass straight through; step 6 reads them.
+    // The BAM and its index pass straight through; step 6 reads them. The histogram and the
+    // report are a completion signal like the other two processes', and are separate from
+    // `profile` because step 6 reads that tuple by position.
     output:
     tuple val(run), val(pair_id), path(ready_bam), path(ready_bai),
           path("${pair_id}_depth_cap.txt"), emit: profile
+    tuple val(run), val(pair_id), path("${pair_id}_depth_histogram.tsv"),
+          path("${pair_id}_depth_report.txt"), emit: report
 
     script:
     setting = sampleCapMaxDepth(run, pair_id)
@@ -128,11 +132,15 @@ process DepthProfile {
 
     """
     set -eo pipefail
-    if [ -f ${target_folder}/${decision_file} ]; then
+    if [ -f ${target_folder}/${decision_file} ] &&
+       [ -f ${target_folder}/${histogram_file} ] &&
+       [ -f ${target_folder}/${report_file} ]; then
         echo "DEPTH PROFILE ${ready_bam}: Found existing depth profile"
         echo "DEPTH PROFILE ${ready_bam}: Found: ${target_folder}/${decision_file}"
         echo "DEPTH PROFILE ${ready_bam}: Creating symbolic links..."
         ln -s ${target_folder}/${decision_file} .
+        ln -s ${target_folder}/${histogram_file} .
+        ln -s ${target_folder}/${report_file} .
         echo "DEPTH PROFILE ${ready_bam}: COMPLETED"
     else
         echo "DEPTH PROFILE ${ready_bam}: Measuring the depth histogram..."
@@ -186,6 +194,8 @@ process DepthProfile {
         atomic_mv.sh ${decision_file} ${target_folder}/${decision_file}
         echo "DEPTH PROFILE ${ready_bam}: Creating symbolic links..."
         ln -s ${target_folder}/${decision_file} .
+        ln -s ${target_folder}/${histogram_file} .
+        ln -s ${target_folder}/${report_file} .
         echo "DEPTH PROFILE ${ready_bam}: COMPLETED"
     fi
 

@@ -272,7 +272,7 @@ remove_payload() {
 # Copies the runtime to $PREFIX/opt/PoolSeqFlow-<version> and puts two symlinks in
 # $PREFIX/bin: one carrying the version, plus a plain one pointing at the newest installed.
 deploy_payload() {
-    local prefix dest bindir here item newest
+    local prefix dest bindir here item newest gone
     prefix=$(install_prefix)
     dest="$prefix/opt/PoolSeqFlow-${VERSION}"
     bindir="$prefix/bin"
@@ -289,6 +289,20 @@ deploy_payload() {
             }
         done
         echo "Installing the pipeline into $dest..."
+        # The store lives inside what is about to be wiped, so whatever its modules put in the
+        # analysis environment comes out first, while the manifests declaring it still exist.
+        # After this the store and the environment are both back to what the release ships.
+        gone=$(store_packages "$dest/analysis/modules" | cut -d= -f1 | sort -u)
+        if [ -n "$gone" ] && env_exists "$ANALYSIS_ENV"; then
+            echo "Removing what the installed modules added to '$ANALYSIS_ENV':"
+            printf '    %s\n' $gone
+            # shellcheck disable=SC2086
+            conda_remove_packages "$ANALYSIS_ENV" $gone || {
+                echo "ERROR: those packages could not be removed, so the pipeline was not" >&2
+                echo "  installed over the copy that declares them. Nothing was changed." >&2
+                exit 1
+            }
+        fi
         rm -rf "$dest"
         mkdir -p "$dest"
         for item in $PAYLOAD_ITEMS; do
@@ -545,7 +559,7 @@ available_modules() {
 # version; without one, the newest the catalogue offers for this release's contract.
 install_module() {
     local name="$1" want="${2:-}" index contract line version row_contract url sha summary
-    local tmp tarball unpacked dest
+    local tmp tarball unpacked dest specs spec
     case $name in
         ''|*[!A-Za-z0-9_-]*)
             echo "ERROR: '$name' is not a module name." >&2
@@ -636,6 +650,19 @@ EOF
         fi
     done
 
+    # Read before the module is moved into the store, so an unusable spec stops the install
+    # with the store untouched.
+    specs=$(module_packages "$unpacked/$name/manifest.json")
+    for spec in $specs; do
+        if ! printf '%s' "$spec" | grep -qE "$MODULE_SPEC_RE"; then
+            echo "ERROR: $name v$version asks for the package '$spec'." >&2
+            echo "  A module pins what it needs as <name>=<version> and nothing else: one '='," >&2
+            echo "  an exact version, no build string, no range, no channel prefix." >&2
+            echo "  Nothing was installed." >&2
+            exit 1
+        fi
+    done
+
     mkdir -p "$MODULE_STORE"
     dest="$MODULE_STORE/$name"
     mv "$unpacked/$name" "$dest"
@@ -644,6 +671,30 @@ EOF
     printf 'name\t%s\nversion\t%s\ncontract\t%s\nurl\t%s\nsha256\t%s\ncatalogue\t%s\n' \
         "$name" "$version" "$row_contract" "$url" "$sha" \
         "$(module_index_header "$index" index-version)" > "$dest/.source"
+
+    # The store and the environment are installed together. conda's own transaction is atomic,
+    # so a failed solve leaves the environment as it was and the rollback is this directory.
+    if [ -n "$specs" ]; then
+        echo ""
+        echo "Installing what $name runs on, into '$ANALYSIS_ENV':"
+        printf '    %s\n' $specs
+        echo ""
+        # shellcheck disable=SC2086
+        if ! conda_install_packages "$ANALYSIS_ENV" $specs; then
+            rm -rf "$dest"
+            echo "" >&2
+            echo "ERROR: $name v$version needs packages this release's analysis environment" >&2
+            echo "  cannot take without moving something already in it. The module was not" >&2
+            echo "  installed and the environment was not changed." >&2
+            echo "" >&2
+            echo "  That is a compatibility question between this release and this module," >&2
+            echo "  not something to solve here: install a build of $name published for" >&2
+            echo "  PoolSeqFlow $VERSION." >&2
+            exit 1
+        fi
+        echo ""
+    fi
+
     echo "Installed $name v$version into"
     echo "    $dest"
     echo ""
@@ -653,7 +704,7 @@ EOF
 
 # Removes one module's directory from this installation's store, after confirming.
 uninstall_module() {
-    local name="$1" dir
+    local name="$1" dir mine others going
     case $name in
         ''|*[!A-Za-z0-9_-]*)
             echo "ERROR: '$name' is not a module name." >&2
@@ -667,9 +718,26 @@ uninstall_module() {
         list_modules
         exit 0
     fi
+    # A package another installed module also declares stays: the environment is shared, and
+    # what leaves with this module is what nothing left behind asks for. With no analysis
+    # environment there is nothing to take them out of, and the store is still the user's to
+    # tidy - `analysis install` puts back whatever the modules left in it need.
+    mine=$(module_packages "$dir/manifest.json" | cut -d= -f1 | sort -u)
+    others=$(store_packages "$MODULE_STORE" "$name" | cut -d= -f1 | sort -u)
+    going=$(printf '%s\n' "$mine" | grep -vxF "$others" || true)
+    if ! env_exists "$ANALYSIS_ENV"; then going=""; fi
     echo ""
     echo "This removes:"
     echo "    $dir"
+    if [ -n "$going" ]; then
+        echo ""
+        echo "and these packages from '$ANALYSIS_ENV', which nothing else installed here asks for:"
+        printf '    %s\n' $going
+    elif [ -n "$mine" ] && ! env_exists "$ANALYSIS_ENV"; then
+        echo ""
+        echo "The packages it declares stay where they are: '$ANALYSIS_ENV' is not installed,"
+        echo "so there is nothing to take them out of."
+    fi
     echo ""
     echo "Only the module goes. The pipeline, both environments and everything under Analysis/"
     echo "stay where they are, including results this module has already produced."
@@ -684,6 +752,16 @@ uninstall_module() {
         y|Y|yes|YES|Yes) ;;
         *) echo "Aborted - nothing was removed."; exit 1 ;;
     esac
+    # Before the directory: a removal the environment refuses has to leave the module installed
+    # and able to run.
+    if [ -n "$going" ]; then
+        # shellcheck disable=SC2086
+        if ! conda_remove_packages "$ANALYSIS_ENV" $going; then
+            echo "" >&2
+            echo "  '$name' is still installed." >&2
+            exit 1
+        fi
+    fi
     rm -rf "$dir"
     echo "Removed '$name'. Install it again with the same command that installed it."
 }
@@ -1228,6 +1306,24 @@ EOF
                     # -n overrides the `name:` key inside environment-analysis.yml.
                     conda env create -n "$ANALYSIS_ENV" -f "$ANALYSIS_ENV_FILE"
                 fi
+                # The store outlives the environment: `analysis uninstall` takes the environment
+                # and leaves the modules, so this is where they get what they run on back.
+                STORE_SPECS=$(store_packages "$MODULE_STORE")
+                if [ -n "$STORE_SPECS" ]; then
+                    echo ""
+                    echo "Installing what the modules in this installation run on:"
+                    printf '    %s\n' $STORE_SPECS
+                    echo ""
+                    # shellcheck disable=SC2086
+                    conda_install_packages "$ANALYSIS_ENV" $STORE_SPECS || {
+                        echo "" >&2
+                        echo "ERROR: the environment was created, but the packages the installed" >&2
+                        echo "  modules declare could not be added to it. Those modules will not" >&2
+                        echo "  run. Remove the one at fault and install this environment again:" >&2
+                        echo "    $(basename "$0") analysis modules list" >&2
+                        exit 1
+                    }
+                fi
                 echo ""
                 echo "The analysis layer is installed. Run a module from your project directory:"
                 echo "    $(basename "$0") analysis <module>"
@@ -1289,8 +1385,9 @@ EOF
                 ;;
 
             modules)
-                # The store, not the environment: these read and remove directories inside the
-                # installation and need neither conda nor a project.
+                # The store, inside the installation, and never a project. `list` and `available`
+                # read directories and a catalogue; `install` and `uninstall` also move packages
+                # in and out of the analysis environment, so those two need it to exist.
                 require_analysis_install
                 case "${ANALYSIS_ARGS[0]:-}" in
                     list)
@@ -1307,7 +1404,9 @@ EOF
                             2|3) ;;
                             *) usage_modules ;;
                         esac
+                        require_analysis_env
                         install_module "${ANALYSIS_ARGS[1]}" "${ANALYSIS_ARGS[2]:-}"
+                        conda deactivate
                         ;;
                     uninstall)
                         [ "${#ANALYSIS_ARGS[@]}" -eq 2 ] || usage_modules

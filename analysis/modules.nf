@@ -45,6 +45,11 @@ def moduleReportLines(String module) {
     if (!entry.builtin) {
         lines << "MODULE:                speaks table contract ${entry.contract}".toString()
     }
+    lines << "MODULE:                published under ${entry.license}".toString()
+    if (entry.packages) {
+        lines << "MODULE:                installed ${entry.packages.join(', ')} into the analysis".toString()
+        lines << 'MODULE:                environment, which every other module here also runs in'
+    }
     return lines
 }
 

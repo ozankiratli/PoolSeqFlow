@@ -956,6 +956,82 @@ PY
     assert_eq "" "$out" "every helper a suite calls must be defined:"$'\n'"$out"
 }
 
+# The rule for a package spec is written twice - the wrapper refuses one before it installs a
+# module, the analysis frame refuses one before it runs it - and neither can call the other:
+# one is shell reached without a JVM, the other is Groovy reached without a shell. So the two
+# are checked against the same table of specs instead.
+test_both_sides_agree_on_what_a_package_spec_may_be() {
+    local shell_re groovy_re spec want got
+    shell_re=$(sed -n "s/^MODULE_SPEC_RE='\^\(.*\)\\$'$/\1/p" "$REPO_ROOT/lib/wrapper_lib.sh")
+    groovy_re=$(sed -n '/^def checkPackageSpec/,/^}/ s/.*==~ \/\(.*\)\/)).*/\1/p' \
+        "$REPO_ROOT/analysis/lib/nf/modules.nf")
+    # Named rather than compared to the empty string: a pattern neither side carries would
+    # otherwise make the two agree by both being nothing.
+    assert_eq "yes" "$([ -n "$shell_re" ] && echo yes)" "the wrapper should carry a spec pattern"
+    assert_eq "yes" "$([ -n "$groovy_re" ] && echo yes)" "and so should readManifest"
+    assert_eq "$groovy_re" "$shell_re" "and the two should be the same pattern"
+
+    # Each entry is the spec and whether it is acceptable. The refusals are the point: the
+    # first is unpinned, the second carries a build string, the third a range, the fourth a
+    # channel the release rather than the module decides.
+    while read -r spec want; do
+        got=no
+        printf '%s' "$spec" | grep -qE "^$shell_re\$" && got=yes
+        assert_eq "$want" "$got" "the spec '$spec'"
+    done <<'SPECS'
+r-poolfstat=3.0.0 yes
+r-base=4.4.1 yes
+bwa=0.7.19 yes
+r-poolfstat no
+r-poolfstat=3.0.0=r44hb79369c_0 no
+r-poolfstat>=3.0 no
+conda-forge::r-poolfstat=3.0.0 no
+SPECS
+}
+
+# The compatibility fields every module declares, checked for the modules that ship inside a
+# release. `frame` and `environment` are minima and a third-party module sets its own; a shipped
+# one is installed with the frame and the environment it names, so its `environment` is this
+# release exactly and its `frame` is no newer than this frame.
+test_every_shipped_manifest_declares_its_compatibility() {
+    local out
+    out=$(cd "$REPO_ROOT" && python3 - <<'PY'
+import json, pathlib, re
+
+release = re.search(r"version\s*=\s*'([^']+)'",
+                    pathlib.Path("nextflow.config").read_text(encoding="utf-8")).group(1)
+frame = [line.strip() for line in
+         pathlib.Path("analysis/frame.version").read_text(encoding="utf-8").splitlines()
+         if line.strip() and not line.startswith("#")][0]
+
+def parts(version):
+    return [int(n) for n in version.split(".")]
+
+paths = sorted(pathlib.Path("analysis/modules").glob("*/manifest.json"))
+if not paths:
+    print("no module ships in this checkout, so this case checked nothing")
+for path in paths:
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    for field in ("license", "frame", "environment"):
+        if not str(manifest.get(field, "")).strip():
+            print("%s: no '%s'" % (path, field))
+    if re.fullmatch(r"\d{8}\.\d{3}", str(manifest.get("frame", ""))):
+        if parts(str(manifest["frame"])) > parts(frame):
+            print("%s: needs frame %s, and this release's is %s"
+                  % (path, manifest["frame"], frame))
+    elif "frame" in manifest:
+        print("%s: gives frame as '%s', which is not YYYYMMDD.NNN" % (path, manifest["frame"]))
+    if "environment" in manifest and str(manifest["environment"]) != release:
+        print("%s: names environment %s, and this release is %s"
+              % (path, manifest["environment"], release))
+    for spec in manifest.get("packages", []):
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*=[A-Za-z0-9][A-Za-z0-9._+]*", str(spec)):
+            print("%s: '%s' is not a pinned conda spec" % (path, spec))
+PY
+)
+    assert_eq "" "$out" "every shipped manifest declares what it runs on:"$'\n'"$out"
+}
+
 test_every_declared_manual_anchor_exists() {
     local out
     out=$(cd "$REPO_ROOT" && python3 - <<'PY'

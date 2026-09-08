@@ -1187,6 +1187,48 @@ test_every_sample_gets_a_depth_report() {
     done
 }
 
+# ALL THREE FILES ARE THE STEP'S OUTPUT, AND THE SKIP IS ON ALL THREE. DepthProfile used to
+# declare only the decision file and skip on it alone, so a project missing a histogram found
+# the decision, skipped, and stayed missing it - with the step reporting success and the only
+# record of which reads reached bcftools gone for good.
+#
+# It could not happen on its own: the three moves put the decision LAST, so an interrupted run
+# leaves the decision absent and the skip does not fire. Deleting a published file by hand is
+# the one route in, and it is the route this takes.
+test_a_deleted_depth_histogram_is_rebuilt_rather_than_skipped() {
+    needs_run || return
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb depth before status
+    sb=$(guard_path "$TEST_TMPDIR/depth-rebuild")
+    rm -rf "$sb"; cp -r "$PIPELINE_SB" "$sb"; rm -f "$sb/run.out"
+    sed -i "s|$PIPELINE_SB|$sb|g" "$sb/main/parameters.config"
+    depth="$sb/store/Output/Reports/Depth"
+
+    before=$(cat "$depth/TestSample1_depth_cap.txt")
+    rm -f "$depth/TestSample1_depth_histogram.tsv"
+
+    status=$(run_pipeline "$sb")
+    assert_status 0 "$status" "the run should succeed; see $sb/run.out"
+    assert_file "$depth/TestSample1_depth_histogram.tsv" "the histogram should be measured again"
+    assert_file "$depth/TestSample1_depth_report.txt"    "and the report rewritten with it"
+    assert_eq "$before" "$(cat "$depth/TestSample1_depth_cap.txt")" \
+        "and the ceiling should come out the same, since the BAM did not change"
+
+    # The other samples were complete, so they take the skip and are not measured again. Counted
+    # in the per-sample log, which is appended to once per run: a task_count would say 6 either
+    # way, because every sample is still DISPATCHED and it is the skip inside the script that
+    # decides whether the histogram is measured.
+    local log="$sb/store/Logs/5_reports/5_GenerateReports_s3_DepthProfile"
+    assert_count 2 "$(grep -c 'Measuring the depth histogram' \
+        "${log}_TestSample1_nextflow.log" 2>/dev/null)" \
+        "the sample missing a file should have measured twice, once per run"
+    assert_count 1 "$(grep -c 'Measuring the depth histogram' \
+        "${log}_TestSample2_nextflow.log" 2>/dev/null)" \
+        "while a complete sample measures only on the first run"
+    assert_contains "$(cat "${log}_TestSample2_nextflow.log" 2>/dev/null)" \
+        "Found existing depth profile" "and takes the skip on the second"
+}
+
 # A SAMPLE THE DETECTOR DECLINES TO CAP MUST SAY SO. It is the one outcome where the pipeline
 # decided to do nothing, and nothing else in the output distinguishes it from a sample that was
 # capped. The fixture is a single clean coverage lobe, so every sample lands here.
@@ -1238,8 +1280,8 @@ test_a_fixed_ceiling_caps_every_sample() {
 # raise it there - in an installation that is replaced wholesale on the next upgrade, so the
 # edit is lost silently and the run that worked stops working.
 #
-# A fresh sandbox and not a copy of the finished project: DepthProfile skips on its own decision
-# file, so a project that already has one never measures a histogram at all.
+# A fresh sandbox and not a copy of the finished project: DepthProfile skips when its three
+# published files are all there, so a project that has them never measures a histogram at all.
 test_a_truncated_depth_histogram_names_the_parameter() {
     if ! have_tools; then skip_case "no conda environment"; return; fi
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi

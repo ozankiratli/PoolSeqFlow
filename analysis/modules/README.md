@@ -4,7 +4,7 @@ One directory per module, named exactly as the module is named. Each holds at le
 
 | File | What |
 |---|---|
-| `manifest.json` | `name`, `version`, `contract`, `summary`, and optionally `needs`, `gates` and `outputs` |
+| `manifest.json` | `name`, `version`, `contract`, `summary`, `license`, `frame`, `environment`, and optionally `needs`, `gates`, `outputs` and `packages` |
 | `main.nf` | the module's own Nextflow pipeline |
 | `citations.json` | the methods and packages your module should be cited with |
 
@@ -71,6 +71,20 @@ The classes `needs` may name:
 A name no class answers to is refused while the DAG is built. Without that it would simply never be checked: a class is marked required by asking whether `needs` contains its name, which cannot notice a name that belongs to nothing.
 
 **`histograms` may legitimately be absent from a sound project**, so weigh whether yours truly cannot run without it. A module that needs them should degrade per library and name the ones it had none for, rather than averaging over the survivors.
+
+### Declaring what you run on
+
+6b. **`license` is an SPDX identifier and it is required.** A result your module produces is produced under your terms, not the pipeline's — PoolSeqFlow is Apache-2.0 and imposes nothing on you, but a module that loads a GPL package into its R session is GPL itself. The frame prints it in the verification report so a user can see what an analysis was produced under before it runs, which is the whole reason it is not optional.
+
+All three modules shipped here are **GPL-3.0-or-later**, and the check that decides it is worth copying: each offers a compiled hot path through `Rcpp`, which is GPL, and each has it on **by default** — `nocpp` turns it off for one run, but the module ships expecting it and stops rather than falling back when `Rcpp` is absent. A dependency that only the default configuration reaches is still a dependency. Run the same test over what you load: `packageDescription("<pkg>")$License` for each one, and take the strictest.
+
+6c. **`frame` is the oldest `analysis/frame.version` your module runs on**, written the same way — `YYYYMMDD.NNN`. It is the axis `contract` does not cover: `contract` is about the shape of the published tables, while `frame` is about the library you import. You call `analysisPlan`, `designJson`, `moduleSettings` and `PublishResults` by name, and a frame that predates one of them is not a table problem. Set it to the frame you developed against and move it when you start calling something newer.
+
+6d. **`environment` is the oldest PoolSeqFlow release whose analysis environment holds what you need**, written as a release is — `3.0.0`. There is one analysis environment per release and every module shares it, so its package set is a property of the release rather than something negotiated at install time. A module built against a later release's environment is refused here rather than installed and left to fail in R.
+
+6e. **`packages` names what has to be added to that environment, pinned.** Each entry is `<name>=<version>` and nothing else: one `=`, an exact version, no build string, no range, no channel prefix. A build string names one platform's build, so a manifest carrying one cannot install anywhere else; the channel is the release's decision and not yours. Leave the field out when the release's own environment suffices — which is true of every module shipped here.
+
+**You cannot pin a package the environment already holds at another version.** Installing your module refuses outright in that case, naming both versions, and installs nothing. That covers the release's own packages and every other module's alike: one version of one package serves everyone in the shared environment, so a disagreement is a release-time incompatibility rather than something to resolve on a user's machine. The same pin at the same version is fine and is the ordinary case for two modules built on one library.
 
 ### Reading a published result
 
