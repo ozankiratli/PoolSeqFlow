@@ -27,8 +27,9 @@ TestSample2,PoolB,Pop1,T1'
 
 test_a_series_key_naming_the_time_column_refuses() {
     analysis_ready single || return
-    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }
-        design { by = ['exp_time'] }"
+    analysis_write_analysis_config "$ANALYSIS_SB" \
+        "        timeVar { kind = 'categorical' }" \
+        "        by = ['exp_time']"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "time cannot identify what is being followed through time"
     assert_contains "$(analysis_output)" "which is the time column" "and the refusal says so"
@@ -46,7 +47,7 @@ TestSample3,PoolC,Pop2,T1'
     assert_status 1 "$status" "fail is the default and this panel is ragged"
     local out; out=$(analysis_output)
     assert_contains "$out" "Pop2 lacks T2" "naming the series and what it lacks"
-    assert_contains "$out" "analysis.metadata.series.incomplete" "and the setting that decides what to do"
+    assert_contains "$out" "analysis.design.series.incomplete" "and the setting that decides what to do"
 }
 
 test_drop_leaves_the_incomplete_series_out() {
@@ -55,8 +56,9 @@ test_drop_leaves_the_incomplete_series_out() {
 TestSample1,PoolA,Pop1,T1
 TestSample2,PoolB,Pop1,T2
 TestSample3,PoolC,Pop2,T1'
-    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }
-        series { incomplete = 'drop' }"
+    analysis_write_analysis_config "$ANALYSIS_SB" \
+        "        timeVar { kind = 'categorical' }" \
+        "            series { incomplete = 'drop' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 0 "$status" "drop should proceed on what is complete"
     local report; report=$(analysis_report "$ANALYSIS_SB")
@@ -77,8 +79,9 @@ TestSample5,PoolE,Pop2,2'
 
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$metadata"
-    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
-        series { incomplete = 'keepLeft' }"
+    analysis_write_analysis_config "$ANALYSIS_SB" \
+        "        timeVar { kind = 'numerical'; unit = 'generation' }" \
+        "            series { incomplete = 'keepLeft' }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 0 "$status" "keepLeft should keep the shared start"
     local report; report=$(analysis_report "$ANALYSIS_SB")
@@ -88,8 +91,9 @@ TestSample5,PoolE,Pop2,2'
     # The same panel from the other end: Pop2 has no third point, so there is no shared suffix.
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$metadata"
-    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
-        series { incomplete = 'keepRight' }"
+    analysis_write_analysis_config "$ANALYSIS_SB" \
+        "        timeVar { kind = 'numerical'; unit = 'generation' }" \
+        "            series { incomplete = 'keepRight' }"
     status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "keepRight has nothing to keep here"
     assert_contains "$(analysis_output)" "Try 'keepLeft'" "and the refusal points at the one that would work"
@@ -103,8 +107,9 @@ TestSample1,PoolA,Pop1,1
 TestSample2,PoolB,Pop1,2
 TestSample3,PoolC,Pop1,3
 TestSample4,PoolD,Pop2,1'
-    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical'; unit = 'generation' }
-        series { incomplete = 'keepLeft' }"
+    analysis_write_analysis_config "$ANALYSIS_SB" \
+        "        timeVar { kind = 'numerical'; unit = 'generation' }" \
+        "            series { incomplete = 'keepLeft' }"
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     assert_contains "$(analysis_report "$ANALYSIS_SB")" "SINGLE point" \
         "a one-point timeline has to be stated, not left to look like an analysis"
@@ -152,11 +157,10 @@ test_an_unknown_key_in_a_nested_scope_refuses() {
 test_technical_replicates_roll_up_into_independent_units() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_REPLICATE_METADATA"
-    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
-        design {
-            biologicalRep = ['exp_rep']
-            technicalRep  = ['exp_lane', 'exp_seqrun']
-        }"
+    analysis_write_analysis_config "$ANALYSIS_SB" \
+        "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }" \
+        "            biologicalRep = ['exp_rep']
+            technicalRep  = ['exp_lane', 'exp_seqrun']"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 0 "$status" "a crossed technical design should resolve"
     local report; report=$(analysis_report "$ANALYSIS_SB")
@@ -175,11 +179,10 @@ test_technical_replicates_roll_up_into_independent_units() {
 test_every_key_column_is_printed_under_a_role() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_REPLICATE_METADATA"
-    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
-        design {
-            biologicalRep = ['exp_rep']
-            technicalRep  = ['exp_lane']
-        }"
+    analysis_write_analysis_config "$ANALYSIS_SB" \
+        "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }" \
+        "            biologicalRep = ['exp_rep']
+            technicalRep  = ['exp_lane']"
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     local report; report=$(analysis_report "$ANALYSIS_SB")
     assert_contains "$report" "REPLICATION:           conditions   exp_treatment, exp_seqrun" \
@@ -189,8 +192,9 @@ test_every_key_column_is_printed_under_a_role() {
 
 test_a_replicate_column_outside_the_design_key_refuses() {
     analysis_ready single || return
-    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
-        design { biologicalRep = ['exp_cage'] }"
+    analysis_write_analysis_config "$ANALYSIS_SB" \
+        "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }" \
+        "            biologicalRep = ['exp_cage']"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "naming a column that identifies nothing must stop the run"
     assert_contains "$(analysis_output)" "not one of the columns that identify the design" \
@@ -202,11 +206,10 @@ test_a_replicate_column_outside_the_design_key_refuses() {
 test_a_column_named_as_both_kinds_of_replicate_refuses() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_REPLICATE_METADATA"
-    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
-        design {
-            biologicalRep = ['exp_rep', 'exp_lane']
-            technicalRep  = ['exp_lane']
-        }"
+    analysis_write_analysis_config "$ANALYSIS_SB" \
+        "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }" \
+        "            biologicalRep = ['exp_rep', 'exp_lane']
+            technicalRep  = ['exp_lane']"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "one column cannot be both kinds of replicate"
     assert_contains "$(analysis_output)" "carry degrees of freedom; technical replicates" \
@@ -224,11 +227,10 @@ S3,P3,control,1,L2,T1
 S4,P4,control,1,L2,T2
 S5,P5,control,2,L1,T1
 S6,P6,control,2,L1,T2'
-    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }
-        design {
-            biologicalRep = ['exp_rep']
-            technicalRep  = ['exp_lane']
-        }"
+    analysis_write_analysis_config "$ANALYSIS_SB" \
+        "        timeVar { kind = 'categorical'; order = ['T1', 'T2'] }" \
+        "            biologicalRep = ['exp_rep']
+            technicalRep  = ['exp_lane']"
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     assert_contains "$(analysis_report "$ANALYSIS_SB")" "1-2 technical" \
         "one unit was sequenced twice and the other once"
@@ -246,7 +248,7 @@ TestSample2,PoolB,Pop1,T1'
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "two pools at one point is still a refusal"
     local out; out=$(analysis_output)
-    assert_contains "$out" "analysis.metadata.design.biologicalRep or technicalRep" \
+    assert_contains "$out" "analysis.design.biologicalRep or technicalRep" \
         "one remedy is to tell them apart and declare what they are"
     assert_contains "$out" "give the rows the same" \
         "and the other is to merge them, which is the pipeline's job and not a series"

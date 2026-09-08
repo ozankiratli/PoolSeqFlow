@@ -14,9 +14,9 @@ and under the sidecar directory, which defaults to the same place, what only the
     expected.tsv                        key<TAB>value, what a module must compute from them
     pools.json                          the pool sizes and ploidy the pipeline filtered with
     design.json                         the design as the frame resolves it, for calling a
-                                        module directly. design_binary.json is the same pools
-                                        under a binary phenotype and design_timed.json the same
-                                        again with exp_time as a time axis, where the six pools
+                                        module directly. It carries both phenotypes, quantitative
+                                        and binary, as the frame does; design_timed.json is the
+                                        same pools with exp_time as a time axis, where the six
                                         become three units
 
 The frequency tables are NOT written here. `bin/depth2freq.awk` derives them from the depth
@@ -72,6 +72,10 @@ import json
 import math
 import os
 import sys
+
+# How near zero a residual sum has to be before it is no residual at all. Relative to the site's
+# own scatter, never absolute: see wls().
+EPSILON = sys.float_info.epsilon
 
 # The six pools of test/data/base/metadata.csv, in the order the table's columns take.
 POOLS = ["TestSample%d" % n for n in range(1, 7)]
@@ -346,6 +350,12 @@ def wls(y, f, w):
     b1 = sxy / sxx
     b0 = fbar - b1 * ybar
     rss = sum(wi * (fi - b0 - b1 * yi) ** 2 for wi, yi, fi in zip(w, y, f))
+    # The weighted scatter about the mean, which `rss` is judged against rather than against
+    # zero. A perfectly separated site has no residual left, but whether the sum lands on
+    # exactly 0.0 or on 1e-32 is which order the terms cancelled in - and that differs between
+    # Python BUILDS, not only between Python and R. Testing for zero makes the flag guarding
+    # the unreproducible numbers as unreproducible as they are.
+    tss = sum(wi * (fi - fbar) ** 2 for wi, fi in zip(w, f))
     df = n - 2
     sigma2 = rss / df
     se = math.sqrt(sigma2 / sxx)
@@ -355,7 +365,8 @@ def wls(y, f, w):
         t = math.nan if b1 == 0.0 else math.inf
     p = math.nan if math.isnan(t) else t_two_sided(t, df)
     return {"b1": b1, "b0": b0, "se": se, "t": t, "df": df, "sxx": sxx,
-            "sigma2": sigma2, "p": p}
+            "sigma2": sigma2, "rss": rss, "tss": tss, "exhausted": rss <= 64 * EPSILON * tss,
+            "p": p}
 
 
 def site_fit(counts, y):
@@ -380,33 +391,63 @@ def site_fit(counts, y):
     return {"alleles": alleles, "S": max(tested) if tested else math.nan, "weights": w}
 
 
-def permutations_of(values):
-    """Every distinct ordering of the phenotype, as the exhaustive permutation set.
+def rearrangements_of(n):
+    """Every rearrangement of the pools, as index tuples. 720 at six pools.
 
-    Distinct orderings and not all n!, so a phenotype with repeated values - every binary one -
-    gives choose(n, n1) relabellings rather than n! copies of each. THE FLOOR IS THIS COUNT: the
-    observed labelling is one of them, so no permutation p can be smaller than 1 / len(this),
-    and at three pools against three that is 1/20.
+    INDICES, NOT DISTINCT ORDERINGS OF THE PHENOTYPE. The residuals move and the labels stay, so
+    two rearrangements putting the same phenotype value in the same place are still different
+    rearrangements of the residuals. THE FLOOR IS THIS COUNT, 1/720, and not the 2/20 a binary
+    phenotype gives when the labels are what move - though at equal weights the two coincide,
+    because rearranging residuals inside one phenotype group then changes no group mean and the
+    720 collapse onto the same 20 distinct statistics, ties and all.
     """
-    return sorted(set(itertools.permutations(values)))
+    return list(itertools.permutations(range(n)))
 
 
-def permutation_p(counts, y, orderings):
-    """The site's permutation p: the share of relabellings whose site statistic reaches the
-    observed one.
+def residual_p(counts, y, moves):
+    """The site's permutation p, from moving the standardised residuals rather than the labels.
 
-    THE PHENOTYPE MOVES AND THE WEIGHT DOES NOT. A weight says how precisely that pool's
-    frequency was measured, so it belongs to the frequency and stays with it; carrying it along
-    with the phenotype would weight one pool's frequency by another pool's depth.
+    THE LABELS DO NOT MOVE. Pools read at different depths carry different precision; weighting
+    them correctly is what the fit needs and is not what a permutation test needs, which is for
+    the observations to be interchangeable. Under the null the residuals about the weighted mean
+    have variance proportional to 1/w and z = e * sqrt(w) does not, so the z are what may be moved:
 
-    The observed labelling is included in the count, which is what stops a p of zero.
+        z_i  = (f_i - fbar_w) * sqrt(w_i)
+        f*_i = fbar_w + z_sigma(i) / sqrt(w_i)     put back at THIS pool's precision
+
+    WHOLE POOL COLUMNS MOVE TOGETHER, so a site's frequencies still sum to one: a pool's residuals
+    sum to zero across its alleles, so a rebuilt pool does too. Moving alleles independently would
+    not, and would be a different null.
+
+    The identity rearrangement is one of the 720 counted, which is what stops a p of zero.
     """
     observed = site_fit(counts, y)["S"]
     if math.isnan(observed):
         return float("nan")
-    reached = sum(1 for order in orderings
-                  if site_fit(counts, list(order))["S"] >= observed - 1e-12)
-    return float(reached) / len(orderings)
+
+    depths = [float(sum(cell)) for cell in counts]
+    w = [n_eff(N_CHROM, d) for d in depths]
+    root = [math.sqrt(wi) for wi in w]
+    total = sum(w)
+
+    centres, standardised = [], []
+    for j in range(len(counts[0])):
+        f = [cell[j] / depth for cell, depth in zip(counts, depths)]
+        centre = sum(wi * fi for wi, fi in zip(w, f)) / total
+        centres.append(centre)
+        standardised.append([(fi - centre) * ri for fi, ri in zip(f, root)])
+
+    reached = 0
+    for move in moves:
+        best = float("nan")
+        for j in range(len(centres)):
+            rebuilt = [centres[j] + standardised[j][move[i]] / root[i] for i in range(len(w))]
+            t = wls(y, rebuilt, w)["t"]
+            if not math.isnan(t) and (math.isnan(best) or abs(t) > best):
+                best = abs(t)
+        if not math.isnan(best) and best >= observed - 1e-12:
+            reached += 1
+    return float(reached) / len(moves)
 
 
 def segregating(counts):
@@ -506,24 +547,25 @@ def association_expectations():
     # BINARY_LEVELS, so `present` is 1 and the sign of b1 is readable from the declaration.
     binary = [float(BINARY_LEVELS.index(level)) for level in BINARY]
 
+    moves = rearrangements_of(len(POOLS))
     for prefix, y in (("assoc", quantitative), ("assocb", binary)):
-        orderings = permutations_of(y)
-        # THE FLOOR, AND IT IS THE POINT OF PUBLISHING A PERMUTATION P. The observed labelling
-        # is one of the orderings, so nothing can come back below 1 / this however large t is.
+        # THE FLOOR, AND IT IS THE POINT OF PUBLISHING A PERMUTATION P. The identity is one of
+        # the rearrangements, so nothing can come back below 1 / this however large t is.
         #
-        # `smallest_p` is what the corpus ACTUALLY REACHED, which for a binary phenotype is
-        # twice the arithmetic floor and not equal to it: swapping every label negates t and
-        # leaves |t| alone, so the complementary labelling always ties with the observed one and
-        # no site can score better than 2/20. That is the number a 3-against-3 design lives
-        # with, and it is 0.1.
-        put("%s.permutations" % prefix, len(orderings))
-        put("%s.floor" % prefix, 1.0 / len(orderings))
+        # `smallest_p` is what the corpus ACTUALLY REACHED, and it is not the arithmetic floor.
+        # Where every pool is read at the same depth the weights are equal, moving residuals
+        # inside one phenotype group changes no group mean, and the 720 rearrangements collapse
+        # onto far fewer distinct statistics - for a binary phenotype onto the same 20 the label
+        # scheme gives, complementary tie included. Where the depths differ they do not collapse,
+        # and the design reaches further down. Both are in this corpus.
+        put("%s.permutations" % prefix, len(moves))
+        put("%s.floor" % prefix, 1.0 / len(moves))
         smallest = math.inf
 
         for chrom, pos, _ref, alts, cells in SNP_SITES:
             site = "%s.%s.%d" % (prefix, chrom, pos)
             fit = site_fit(cells, y)
-            perm = permutation_p(cells, y, orderings)
+            perm = residual_p(cells, y, moves)
             if not math.isnan(perm):
                 smallest = min(smallest, perm)
             # WHERE THE RESIDUAL VARIANCE REACHES ZERO, t AND p ARE NOT COMPARABLE BETWEEN
@@ -538,7 +580,7 @@ def association_expectations():
             # has a slope and no residual, so its t runs off to infinity. The `t` beside this
             # tells them apart.
             put("%s.zero_variance" % site,
-                1 if any(a["sigma2"] <= 0.0 or not math.isfinite(a["t"])
+                1 if any(a["exhausted"] or not math.isfinite(a["t"])
                          for a in fit["alleles"]) else 0)
             put("%s.k" % site, len(alts) + 1)
             put("%s.S" % site, fit["S"])
@@ -587,16 +629,16 @@ def phenotype_block(column, kind, levels, raw):
                            "value": float(group)})
     return {"column": column, "kind": kind,
             "levels": None if kind == "quantitative" else levels,
-            "values": values, "warnings": []}
+            "values": values}
 
 
-def design(merged, members, kind="quantitative", timed=False):
+def design(merged, members, timed=False):
     """The design as the frame resolves it and hands it to a module.
 
     EVERY KEY designSummary() RETURNS IS HERE, including the ones this corpus has nothing to put
-    in. A module reads `units` for its degrees of freedom and `phenotype` for its fit, and a
-    fixture carrying only the two keys basicstats happens to read would let a module pass
-    against a shape the frame never emits.
+    in. A module reads `units` for its degrees of freedom and picks one of `phenotypes` for its
+    fit, and a fixture carrying only the two keys basicstats happens to read would let a module
+    pass against a shape the frame never emits.
 
     Untimed, there is no series and every pool is its own unit: six pools are six independent
     observations, which is what an ordinary association study is. `timed` resolves exp_time as
@@ -625,9 +667,11 @@ def design(merged, members, kind="quantitative", timed=False):
         "units": units,
         "conditions": [{"label": unit["label"], "key": unit["key"], "pools": unit["pools"],
                         "units": [unit["label"]]} for unit in units],
-        "phenotype": (phenotype_block(PHENOTYPE_COLUMN, "quantitative", None, PHENOTYPE)
-                      if kind == "quantitative"
-                      else phenotype_block(BINARY_COLUMN, "binary", BINARY_LEVELS, BINARY)),
+        # Both phenotypes, always: the frame resolves every declared pt_ column and a module
+        # names the one it tests against. `kind` decides which one this file is ABOUT, which is
+        # what the expectations were computed under.
+        "phenotypes": [phenotype_block(PHENOTYPE_COLUMN, "quantitative", None, PHENOTYPE),
+                       phenotype_block(BINARY_COLUMN, "binary", BINARY_LEVELS, BINARY)],
         "covariates": [],
         "warnings": [],
     }
@@ -741,11 +785,10 @@ def main():
     with open(os.path.join(side, "pools.json"), "w") as handle:
         json.dump([{"pool": pool, "size": POOL_SIZE, "ploidy": PLOIDY,
                     "nChrom": N_CHROM, "sensitivity": SENSITIVITY} for pool in POOLS], handle)
-    # Three designs over one set of pools: the ordinary one, the same under a binary phenotype,
-    # and the one where exp_time is a time axis so the six pools are three units. A module names
-    # the one its case needs; nothing has to re-run this to get another.
+    # Two designs over one set of pools: the ordinary one, and the one where exp_time is a time
+    # axis so the six pools are three units. Both carry BOTH phenotypes, because the frame
+    # resolves every declared pt_ column and the module names the one it tests against.
     for name, block in (("design.json", design(merged, members)),
-                        ("design_binary.json", design(merged, members, kind="binary")),
                         ("design_timed.json", design(merged, members, timed=True))):
         with open(os.path.join(side, name), "w") as handle:
             json.dump(block, handle)

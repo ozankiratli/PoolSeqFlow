@@ -256,15 +256,24 @@ analysis_write_metadata() {
 # slope has a sign, and nothing says the order was wrong.
 # Replaces the baseline's analysis.config with an `analysis` scope of the case's own.
 analysis_write_metadata_config() {
-    cat > "$1/main/analysis.config" <<CFG
-params {
-    analysis {
-        metadata {
-$2
-        }
-    }
+    analysis_write_analysis_config "$1" "$2" ""
 }
-CFG
+
+# The two frame scopes a case may need, as siblings: how the file is READ, and what the
+# experiment WAS. Either body may be empty, and an empty one writes no block at all - which is
+# how a case exercises the defaults rather than an empty scope.
+analysis_write_analysis_config() {
+    # ${3:-} and not $3: the harness runs under set -u, so a two-argument call - metadata and no
+    # design - would end the case rather than write the block it asked for.
+    local sandbox="$1" metadata="$2" design="${3:-}"
+    {
+        printf 'params {\n    analysis {\n'
+        # if, not `[ -n ] &&`: a failing test is the last command of an AND-list, so under set -e
+        # an empty body would end the case rather than skip the block.
+        if [ -n "$metadata" ]; then printf '        metadata {\n%s\n        }\n' "$metadata"; fi
+        if [ -n "$design" ]; then printf '        design {\n%s\n        }\n' "$design"; fi
+        printf '    }\n}\n'
+    } > "$sandbox/main/analysis.config"
 }
 
 # ---------------------------------------------------------------------------------------

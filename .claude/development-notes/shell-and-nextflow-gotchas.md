@@ -34,6 +34,8 @@ The companion notes are `dag-wiring.md` for channel shape and `parameter-resolut
 
 **`grep -c` exits 1 when it counts none**, and a Nextflow process script runs under `bash -ue`, so `N=$(grep -c PATTERN file)` kills the task when the answer is zero. Use `|| true`. The older code sidesteps this with `grep … | wc -l`, whose status is `wc`'s.
 
+**An optional positional parameter needs `${3:-}`, not `$3`.** Widening a test helper from two arguments to three, 2026-09-07: every existing two-argument call died on `analysis.sh: line 266: $3: unbound variable`, and the suite stopped mid-file rather than failing a case — so the log showed a suite that simply ended. `local design="${3:-}"` is the whole fix. The same shape bit an argument that was *always* passed but sometimes empty, which `set -u` does not mind and `[ -n "$x" ] && printf …` does: a failing test is the last command of an AND-list, so under `set -e` an empty body ends the case. Write it as `if …; then …; fi`.
+
 ---
 
 ## awk and sed
@@ -83,6 +85,10 @@ The companion notes are `dag-wiring.md` for channel shape and `parameter-resolut
 **`workflow.onComplete` in `nextflow.config` is deprecated.** The working form is a top-level `def` plus one registration line *inside* the entry workflow — which is why `assembleCombinedLog()` in `poolseqflow.nf` looks the way it does.
 
 **`.execute()` and `groovy.json.JsonSlurper` DO work**, at DAG-build time. That is what lets `runDefinitions()` shell out to a tested Python parser instead of reimplementing CSV quoting in Groovy.
+
+---
+
+**An EMPTY config block reaches `params` as nothing at all.** Measured 2026-09-07: `phenotypes { pt_wingspan { }; pt_other { levels = ['a','b'] } }` arrives as `[pt_other:[levels:[a, b]]]` — `pt_wingspan` is *absent*, not present and empty. So a checker that iterates a declaration scope cannot refuse an empty declaration: it never sees one, and it cannot tell that block from a column nobody wrote about. This bites any open scope declared per column — `analysis.metadata.phenotypes` and `analysis.metadata.covariates` both. **The defence is to report what is UNdeclared**, which covers the empty block for free; a test case asserting that an empty block refuses will fail, and correctly.
 
 ---
 

@@ -122,10 +122,9 @@ TestSample3,PoolC,B,L1
 TestSample4,PoolD,B,L2
 TestSample5,PoolE,C,L1
 TestSample6,PoolF,C,L2'
-    analysis_write_metadata_config "$ANALYSIS_SB" "        design {
-            biologicalRep = ['exp_cage']
-            technicalRep  = ['exp_lane']
-        }"
+    analysis_write_analysis_config "$ANALYSIS_SB" "" \
+        "            biologicalRep = ['exp_cage']
+            technicalRep  = ['exp_lane']"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 0 "$status" "a crossed untimed design should resolve"
     local report; report=$(analysis_report "$ANALYSIS_SB")
@@ -181,10 +180,9 @@ test_pools_a_declared_technical_column_cannot_tell_apart_refuse() {
 TestSample1,PoolA,A,L1
 TestSample2,PoolB,A,L1
 TestSample3,PoolC,A,L2'
-    analysis_write_metadata_config "$ANALYSIS_SB" "        design {
-            biologicalRep = ['exp_cage']
-            technicalRep  = ['exp_lane']
-        }"
+    analysis_write_analysis_config "$ANALYSIS_SB" "" \
+        "            biologicalRep = ['exp_cage']
+            technicalRep  = ['exp_lane']"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a group that cannot be partitioned must stop the run"
     local out; out=$(analysis_output)
@@ -336,18 +334,43 @@ TestSample2,PoolA,18.9'
 }
 
 # The kind is never inferred: 0 and 1 read as numbers as readily as they encode two groups, so
-# a project that names a column and no kind stops rather than guessing one.
+# a project that declares a column and no kind stops rather than guessing one.
 test_a_phenotype_with_no_kind_refuses() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_PHENOTYPE_METADATA"
     analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
-        phenotype {
-            column = 'pt_wingspan'
+        phenotypes {
+            pt_wingspan {
+                levels = ['small', 'large']
+            }
         }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a phenotype with no kind must not be guessed at"
-    assert_contains "$(analysis_output)" "analysis.metadata.phenotype.kind is not set" \
+    assert_contains "$(analysis_output)" "analysis.metadata.phenotypes.pt_wingspan.kind is not set" \
         "and the refusal says which setting is missing, by its full path"
+}
+
+# NEXTFLOW DROPS AN EMPTY CONFIG BLOCK. `pt_wingspan { }` reaches params as nothing at all - the
+# key is absent, not present and empty - so the frame cannot tell it from a column nobody wrote
+# about and CANNOT refuse it. Measured 2026-09-07; the same is true of an empty covariate block.
+# What saves it is the undeclared warning, which names any pt_ column with no scale.
+test_an_empty_declaration_block_reaches_the_frame_as_nothing() {
+    analysis_ready single || return
+    analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_PHENOTYPE_METADATA"
+    analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
+        phenotypes {
+            pt_wingspan {
+            }
+        }"
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 0 "$status" "an empty block is invisible, so there is nothing to refuse"
+    local report; report=$(analysis_report "$ANALYSIS_SB")
+    assert_contains "$report" "PHENOTYPE:             none - analysis.metadata.phenotypes declares no column" \
+        "the block declared nothing the frame could see"
+    assert_contains "$report" \
+        "pt_status, pt_wingspan, pt_wing, pt_resistance are phenotype columns this project records and does not declare" \
+        "and every one is named as undeclared, which is the only defence there is"
 }
 
 # Outside the prefix a column escapes the pool-agreement refusal above, so the two rules are
@@ -355,9 +378,10 @@ test_a_phenotype_with_no_kind_refuses() {
 test_a_phenotype_outside_the_prefix_refuses() {
     analysis_ready single || return
     analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
-        phenotype {
-            column = 'exp_population'
-            kind   = 'quantitative'
+        phenotypes {
+            exp_population {
+                kind   = 'quantitative'
+            }
         }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "only a pt_ column may be the phenotype"
@@ -372,9 +396,10 @@ test_a_binary_phenotype_without_levels_refuses() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_PHENOTYPE_METADATA"
     analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
-        phenotype {
-            column = 'pt_status'
-            kind   = 'binary'
+        phenotypes {
+            pt_status {
+                kind   = 'binary'
+            }
         }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a binary phenotype must declare which level is 1"
@@ -389,9 +414,10 @@ test_a_quantitative_phenotype_refuses_a_value_that_is_not_a_number() {
     analysis_write_metadata "$ANALYSIS_SB" \
         "${ANALYSIS_PHENOTYPE_METADATA/,affected,13.8,/,affected,large,}"
     analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
-        phenotype {
-            column = 'pt_wingspan'
-            kind   = 'quantitative'
+        phenotypes {
+            pt_wingspan {
+                kind   = 'quantitative'
+            }
         }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "'large' is not a quantitative phenotype"
@@ -408,16 +434,17 @@ test_the_report_states_the_phenotype_as_it_resolved() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_PHENOTYPE_METADATA"
     analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
-        phenotype {
-            column = 'pt_status'
-            kind   = 'binary'
-            levels = ['unaffected', 'affected']
+        phenotypes {
+            pt_status {
+                kind   = 'binary'
+                levels = ['unaffected', 'affected']
+            }
         }"
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 0 "$status" "a declared binary phenotype is a sound design"
     local report; report=$(analysis_report "$ANALYSIS_SB")
-    assert_contains "$report" "PHENOTYPE:             pt_status, binary, 'unaffected' absent and 'affected' present" \
+    assert_contains "$report" "PHENOTYPE:                 pt_status, binary, 'unaffected' absent and 'affected' present" \
         "the report states the encoding rather than leaving it to be inferred"
     assert_contains "$report" "TestSample1  affected -> 1.0" \
         "and every pool's written value beside the number it became"
@@ -433,10 +460,11 @@ test_a_nominal_phenotype_gets_a_group_and_no_value() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_PHENOTYPE_METADATA"
     analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
-        phenotype {
-            column = 'pt_wing'
-            kind   = 'nominal'
-            levels = ['spotted', 'striped', 'curly']
+        phenotypes {
+            pt_wing {
+                kind   = 'nominal'
+                levels = ['spotted', 'striped', 'curly']
+            }
         }"
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
@@ -457,10 +485,11 @@ test_an_ordinal_phenotype_keeps_its_order() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_PHENOTYPE_METADATA"
     analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
-        phenotype {
-            column = 'pt_resistance'
-            kind   = 'ordinal'
-            levels = ['low', 'medium', 'high']
+        phenotypes {
+            pt_resistance {
+                kind   = 'ordinal'
+                levels = ['low', 'medium', 'high']
+            }
         }"
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
@@ -479,10 +508,11 @@ test_a_binary_phenotype_takes_exactly_two_levels() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_PHENOTYPE_METADATA"
     analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
-        phenotype {
-            column = 'pt_wing'
-            kind   = 'binary'
-            levels = ['spotted', 'striped', 'curly']
+        phenotypes {
+            pt_wing {
+                kind   = 'binary'
+                levels = ['spotted', 'striped', 'curly']
+            }
         }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "three levels are not a presence and an absence"
@@ -497,10 +527,11 @@ test_a_phenotype_level_no_pool_has_is_reported() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_PHENOTYPE_METADATA"
     analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
-        phenotype {
-            column = 'pt_wing'
-            kind   = 'nominal'
-            levels = ['spotted', 'striped', 'curly', 'plain']
+        phenotypes {
+            pt_wing {
+                kind   = 'nominal'
+                levels = ['spotted', 'striped', 'curly', 'plain']
+            }
         }"
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
@@ -582,8 +613,8 @@ test_a_declared_covariate_is_reported_with_its_scale() {
                     kind = 'quantitative'
                 }
                 cov_site {
-                    kind   = 'nominal'
-                    levels = ['coastal', 'inland', 'montane']
+                kind   = 'nominal'
+                levels = ['coastal', 'inland', 'montane']
                 }
             }"
     analysis_plant_results "$ANALYSIS_SB/store/Output"
@@ -626,7 +657,7 @@ test_a_covariate_declaration_outside_the_prefix_refuses() {
             covariates {
                 exp_population {
                     kind = 'nominal'
-                    levels = ['Pop1', 'Pop2', 'Pop3']
+                levels = ['Pop1', 'Pop2', 'Pop3']
                 }
             }"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
@@ -635,7 +666,7 @@ test_a_covariate_declaration_outside_the_prefix_refuses() {
 }
 
 # WHAT A COLUMN HOLDS AND WHAT IT DOES ARE TWO SETTINGS. analysis.metadata.covariates gives it a
-# scale; analysis.metadata.design.covariates says whether a module may put it in a model. Left
+# scale; analysis.design.covariates says whether a module may put it in a model. Left
 # unset every declared covariate is in the design, so declaring one is the whole of opting in.
 test_every_declared_covariate_is_in_the_design_by_default() {
     analysis_ready single || return
@@ -659,12 +690,13 @@ test_every_declared_covariate_is_in_the_design_by_default() {
 test_the_design_can_leave_a_declared_covariate_out() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_COVARIATE_METADATA"
-    analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
-            design { covariates = ['cov_temperature'] }
+    analysis_write_analysis_config "$ANALYSIS_SB" \
+        "$ANALYSIS_TIME_BLOCK
             covariates {
                 cov_temperature { kind = 'quantitative' }
                 cov_site        { kind = 'nominal'; levels = ['coastal', 'inland', 'montane'] }
-            }"
+            }" \
+        "            covariates = ['cov_temperature']"
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 0 "$status" "naming one of two covariates is a sound design: $(analysis_output)"
@@ -681,11 +713,12 @@ test_the_design_can_leave_a_declared_covariate_out() {
 test_a_design_covariate_with_no_scale_refuses() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_COVARIATE_METADATA"
-    analysis_write_metadata_config "$ANALYSIS_SB" "$ANALYSIS_TIME_BLOCK
-            design { covariates = ['cov_site'] }
+    analysis_write_analysis_config "$ANALYSIS_SB" \
+        "$ANALYSIS_TIME_BLOCK
             covariates {
                 cov_temperature { kind = 'quantitative' }
-            }"
+            }" \
+        "            covariates = ['cov_site']"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a covariate with no scale cannot be in a model"
     local out; out=$(analysis_output)
@@ -700,7 +733,7 @@ test_the_report_says_when_there_is_no_phenotype() {
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     assert_contains "$(analysis_report "$ANALYSIS_SB")" \
-        "PHENOTYPE:             none - analysis.phenotype names no column" \
+        "PHENOTYPE:             none - analysis.metadata.phenotypes declares no column" \
         "and says so plainly"
 }
 

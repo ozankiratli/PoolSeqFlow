@@ -44,20 +44,9 @@
   note    = {Why a pooled estimate needs correcting at all: individuals are sampled into the pool and reads are sampled from the pool, so an allele frequency carries both, and the estimator has to account for the smaller of the two.},
 }
 
-@article{hivert2018poolseq,
-  group   = {The statistics PoolSeqFlow computes},
-  id      = {hivert2018},
-  name    = {Effective sample size for Pool-seq},
-  authors = {Hivert, Valentin and Leblois, Rapha{\"e}l and Petit, Eric J. and Gautier, Mathieu and Vitalis, Renaud},
-  title   = {Measuring Genetic Differentiation from Pool-seq Data},
-  journal = {Genetics},
-  volume  = {210},
-  number  = {1},
-  pages   = {315--330},
-  year    = {2018},
-  doi     = {10.1534/genetics.118.300900},
-  note    = {The effective sample size this module weights by, n_eff = n*d / (n + d - 1) for a pool of n chromosomes read to depth d. The paper does not write it in that form - it defines D2 as the sum of (d + n - 1)/n, which is the sum of d / n_eff under this form and under no other. Its pools are parameterised by HAPLOID size, which is what leaves n_eff, and everything weighted by it, general over ploidy.},
-}
+% The effective sample size this module weights by is credited in analysis/references.bib, not
+% here. n_eff is library code that every module calls, so its citation belongs to the layer
+% rather than to one module - and a BibTeX key may be defined once across the whole manual.
 
 @misc{rdatatable,
   id        = {datatable},
@@ -69,26 +58,6 @@
   note      = {Reads the published frequency and depth tables, which run to millions of rows.},
 }
 
-@misc{wickham2016ggplot2,
-  id        = {ggplot2},
-  name      = {ggplot2},
-  r_package = {ggplot2},
-  authors   = {Wickham, Hadley},
-  title     = {ggplot2: Elegant Graphics for Data Analysis},
-  publisher = {Springer-Verlag New York},
-  year      = {2016},
-  url       = {https://ggplot2.tidyverse.org},
-  note      = {Every figure this module draws.},
-}
-
-@article{ooms2014jsonlite,
-  id        = {jsonlite},
-  name      = {jsonlite},
-  r_package = {jsonlite},
-  authors   = {Ooms, Jeroen},
-  title     = {The jsonlite Package: A Practical and Consistent Mapping Between JSON Data and R Objects},
-  journal   = {arXiv:1403.2805 [stat.CO]},
-  year      = {2014},
-  url       = {https://arxiv.org/abs/1403.2805},
-  note      = {Reads the experimental design the frame resolved, which reaches this module as JSON.},
-}
+% ggplot2 and jsonlite are credited in analysis/references.bib. Every module reads the design as
+% JSON and most of them draw something, so both belong to the layer rather than to one module -
+% and a BibTeX key may be defined once across the whole manual.

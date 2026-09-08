@@ -54,6 +54,20 @@ The second case is what `technicalRep = []` degenerates to, and it is why an und
 
 Z had picked `analysis.design` when asked; it became `analysis.metadata.design` because every sibling setting lives under `analysis.metadata`, and a top-level scope would collide with a module named `design` — the collision `paths.nf` keeps the nesting for.
 
+**Corrected the same day, by Z, and my reason was wrong.** A module's settings live at `analysis.modules.<name>`, one level below the frame's own scopes, which is exactly what stops a module named `design` reading a frame setting — so there was never a collision to avoid. It moved to a top-level **`analysis.design`**, with `series` nested inside it, on Z's call: *"I think design should move out of metadata (after metadata) but inherit series inside it."*
+
+That gives three scopes with a real distinction, and it is worth stating because it decides where a future setting goes:
+
+| scope | question it answers |
+|---|---|
+| `analysis.metadata` | how the file is **read** — what a blank means, how a date parses, what scale a column carries |
+| `analysis.design` | what the file **describes** — which pools are independent, which repeats are which |
+| `analysis.modules.<name>` | what **this analysis** does with either |
+
+`series` sits inside `design` rather than beside it because a series is what a time axis makes of the design, not a thing of its own. `timeVar` stays in `metadata`: it says how the time column is *parsed and ordered*, which is reading.
+
+`metadataSetting()` and the new `designSetting()` are now one `frameSetting(scope, defaults, key)`, so the partial-write merge and the unknown-key refusal cannot drift between the two scopes.
+
 **No migration.** `analysis.metadata.series` was added in F0d and is in no release tag, so nothing on disk anywhere carries the old spelling. A 2.x config has no `analysis` scope at all. A `dev` user who wrote one gets the existing unknown-key refusal, which names the keys the scope does have.
 
 ## What a module now reads
@@ -73,6 +87,18 @@ Same split as the `exp_` columns: `analysis.metadata.covariates.<column>` says *
 **An exclusion is a warning, not silence.** Leaving a covariate out is as much a decision as putting one in, and neither is visible from the values.
 
 This makes the manual's `#covariates-not-adjusted` section wrong in its old form — *"PoolSeqFlow does not correct any result for a covariate, and will not in 3.0.0"* — because F0f settled that F2 fits them as extra predictors. Rewritten to say what is true at both times: the frame adjusts for nothing, a module says what it fits, and the arithmetic of `n_units - 2` is why the choice is the user's.
+
+## Phenotypes became plural, on the covariate shape
+
+Z, the same day, proposing the shape themselves: `metadata.phenotypes { pt_wingspan { kind = … } pt_wingpattern { kind = …; levels = … } }`.
+
+`analysis.metadata.phenotype` was one scope with a `column` key, which asserted that a project has one phenotype. It is now `analysis.metadata.phenotypes`, an open scope with one block per column — the shape `covariates` already had — so the block name *is* the column and the `column` key is gone. `checkScaleDeclaration()` was already shared between the two, so the four kinds and their level rules needed no new code; `checkPhenotypeSettings`/`resolvePhenotype` became the plural forms of the covariate pair, and gained the same undeclared-column warning.
+
+**Which phenotype an analysis tests against is a module setting**, `analysis.modules.<name>.phenotypes`, and it lands with F2 rather than now: `moduleSettings()` checks a scope against *that module's* declared list, so there is nowhere to put it until the module exists. What the frame does today is resolve every declared phenotype and report all of them.
+
+That retires the rule that a project analyses one phenotype at a time under its own `folderName`. `folderName` goes back to being only about where output lands.
+
+**One thing measured rather than assumed:** an empty config block reaches `params` as *nothing*, so `pt_wingspan { }` cannot be refused — the frame never sees the key. Recorded in `shell-and-nextflow-gotchas.md`, with a case that asserts the behaviour rather than a case that asserts a refusal which cannot happen. The undeclared-column warning is what covers it.
 
 ## The report
 

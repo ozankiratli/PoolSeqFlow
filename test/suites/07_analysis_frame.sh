@@ -53,7 +53,10 @@ test_the_analysis_layer_ships_with_the_release() {
              analysis/lib/nf/pools.nf \
              analysis/modules/basicstats/manifest.json analysis/modules/basicstats/main.nf \
              analysis/modules/basicstats/basicstats.R \
-             analysis/modules/basicstats/citations.json; do
+             analysis/modules/basicstats/citations.json \
+             analysis/modules/association/manifest.json analysis/modules/association/main.nf \
+             analysis/modules/association/association.R \
+             analysis/modules/association/citations.json; do
         assert_file "$REPO_ROOT/$f" "$f must ship"
     done
 

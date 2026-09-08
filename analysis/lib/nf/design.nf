@@ -9,7 +9,7 @@
 
 nextflow.enable.dsl=2
 
-include { analysisSetting; metadataSetting } from './paths.nf'
+include { analysisSetting; metadataSetting; designSetting } from './paths.nf'
 include { timeKinds; timeUnits; resolveTimeLevels } from './time.nf'
 
 // The prefix that marks an experimental variable, and the name time is written under.
@@ -313,37 +313,45 @@ def measurementLevelRule() {
              nominal: [ least: 2, most: 0 ] ]
 }
 
-// The phenotype settings, checked against each other and against the columns this target has.
-// Returns true when there is a phenotype to resolve.
-def checkPhenotypeSettings(Map settings, List columns) {
-    def column = "${settings.column}".trim()
-    def kind = "${settings.kind}".trim()
-    def levels = settings.levels ?: []
-    def available = columns.isEmpty() ? '(none)' : columns.join(', ')
-
-    if (column.isEmpty()) {
-        if (kind.isEmpty() && levels.isEmpty()) return false
-        throw new IllegalArgumentException(
-            "analysis.metadata.phenotype is set and names no column.\n" +
-            "The phenotype columns this project has are: ${available}\n" +
-            "Set analysis.metadata.phenotype.column to one of them, or remove the settings.")
+// The phenotype declarations, checked against each other and against the columns this target has.
+//
+// A scope per column rather than a list, the shape analysis.metadata.covariates already has: a
+// declaration reads the way every other scope in this file does, a repeated column is impossible
+// by construction, and a project may declare every pt_ column it records. WHICH of them a module
+// tests against is that module's own setting, not the frame's.
+def checkPhenotypeSettings(Map declared, List columns) {
+    declared.each { name, settings ->
+        def column = "${name}".toString()
+        def path = "analysis.metadata.phenotypes.${column}"
+        // Anything outside the prefix escapes the pool-agreement refusal, and one pool could then
+        // carry two phenotype values with nothing to stop it.
+        if (!column.startsWith(phenotypePrefix())) {
+            throw new IllegalArgumentException(
+                "${path} declares '${column}', and a phenotype has to be a " +
+                "${phenotypePrefix()} column.\n" +
+                "Only those are checked for agreeing across the rows of one pool, which is what " +
+                "stops a pool carrying two values at once.")
+        }
+        if (!columns.contains(column)) {
+            throw new IllegalArgumentException(
+                "${path} is declared, and this project has no such column.\n" +
+                "The phenotype columns it has are: " +
+                "${columns.isEmpty() ? '(none)' : columns.join(', ')}")
+        }
+        if (!(settings instanceof Map)) {
+            throw new IllegalArgumentException(
+                "${path} is set to a single value, and a phenotype is declared as a scope:\n" +
+                "    ${column} {\n        kind = 'quantitative'\n    }")
+        }
+        def unknown = settings.keySet().collect { key -> "${key}".toString() }
+                              .findAll { key -> !['kind', 'levels'].contains(key) }
+        if (!unknown.isEmpty()) {
+            throw new IllegalArgumentException(
+                "${path} is given ${unknown.size() == 1 ? 'a setting' : 'settings'} it does not " +
+                "have: ${unknown.join(', ')}\nIt has: kind, levels.")
+        }
+        checkScaleDeclaration(path, "${settings.kind ?: ''}".trim(), settings.levels ?: [])
     }
-    // Anything outside the prefix escapes the pool-agreement refusal, and one pool could then
-    // carry two phenotype values with nothing to stop it.
-    if (!column.startsWith(phenotypePrefix())) {
-        throw new IllegalArgumentException(
-            "analysis.metadata.phenotype.column is '${column}', and a phenotype has to be a " +
-            "${phenotypePrefix()} column.\n" +
-            "Only those are checked for agreeing across the rows of one pool, which is what " +
-            "stops a pool carrying two values at once.")
-    }
-    if (!columns.contains(column)) {
-        throw new IllegalArgumentException(
-            "analysis.metadata.phenotype.column is '${column}', and this project has no such " +
-            "column.\nThe phenotype columns it has are: ${available}")
-    }
-    checkScaleDeclaration('analysis.metadata.phenotype', kind, levels)
-    return true
 }
 
 // One declared scale, checked. Shared by the phenotype and by every covariate, so the four kinds
@@ -445,59 +453,79 @@ def resolveScale(List pools, String setting, String column, String kind, List le
     }
 }
 
-def resolvePhenotype(List pools, Map settings) {
-    def column = "${settings.column}".trim()
-    def kind = "${settings.kind}".trim()
-    def levels = (settings.levels ?: []).collect { level -> "${level}".toString() }
+// Every declared phenotype, resolved. An UNDECLARED pt_ column is not here and is not an error:
+// it is recorded, checked and reported like any pool-level column, and simply carries no typed
+// value for a module to test against.
+def resolvePhenotypes(List pools, Map declared, List columns) {
     def warnings = []
+    def resolved = declared.collect { name, settings ->
+        def column = "${name}".toString()
+        def path = "analysis.metadata.phenotypes.${column}"
+        def kind = "${settings.kind}".trim()
+        def levels = (settings.levels ?: []).collect { level -> "${level}".toString() }
 
-    def values = resolveScale(pools, 'analysis.metadata.phenotype', column, kind, levels)
+        def values = resolveScale(pools, path, column, kind, levels)
 
-    // Missingness is the blank cell, not the null `value` - a nominal phenotype has a group for
-    // every pool and no value for any of them.
-    def missing = values.findAll { entry -> !entry.shown }
-    if (!missing.isEmpty()) {
-        warnings << [ code  : 'phenotype-missing',
-                      detail: "${missing.size()} of ${values.size()} pools have no ${column} and " +
-                              "cannot be fitted: " +
-                              "${missing.collect { entry -> entry.pool }.join(', ')}" ]
-    }
-
-    if (kind != 'quantitative') {
-        def unseen = levels.findAll { level -> !values.any { entry -> entry.shown == level } }
-        if (!unseen.isEmpty()) {
-            warnings << [ code  : 'phenotype-level-unused',
-                          detail: "analysis.phenotype.levels names ${unseen.join(', ')}, which no " +
-                                  "pool of this results directory has. Declared levels are kept " +
-                                  "either way, so a group you have not sequenced yet is not an " +
-                                  "error - but a misspelling looks exactly like one." ]
+        // Missingness is the blank cell, not the null `value` - a nominal phenotype has a group
+        // for every pool and no value for any of them.
+        def missing = values.findAll { entry -> !entry.shown }
+        if (!missing.isEmpty()) {
+            warnings << [ code  : 'phenotype-missing',
+                          detail: "${missing.size()} of ${values.size()} pools have no ${column} " +
+                                  "and cannot be fitted against it: " +
+                                  "${missing.collect { entry -> entry.pool }.join(', ')}" ]
         }
-        def counts = values.findAll { entry -> entry.shown }.groupBy { entry -> entry.shown }
-        def alone = counts.findAll { _level, members -> members.size() == 1 }.keySet()
-        if (!alone.isEmpty() && counts.size() > 1) {
-            warnings << [ code  : 'phenotype-singleton-group',
-                          detail: "${alone.join(', ')} ${alone.size() == 1 ? 'holds' : 'hold'} one " +
-                                  "pool each, so ${alone.size() == 1 ? 'it contributes' : 'they contribute'} " +
-                                  "no within-group variance. A comparison against a group of one " +
-                                  "rests on that pool alone." ]
+
+        if (kind != 'quantitative') {
+            def unseen = levels.findAll { level -> !values.any { entry -> entry.shown == level } }
+            if (!unseen.isEmpty()) {
+                warnings << [ code  : 'phenotype-level-unused',
+                              detail: "${path}.levels names ${unseen.join(', ')}, which no " +
+                                      "pool of this results directory has. Declared levels are " +
+                                      "kept either way, so a group you have not sequenced yet is " +
+                                      "not an error - but a misspelling looks exactly like one." ]
+            }
+            def counts = values.findAll { entry -> entry.shown }.groupBy { entry -> entry.shown }
+            def alone = counts.findAll { _level, members -> members.size() == 1 }.keySet()
+            if (!alone.isEmpty() && counts.size() > 1) {
+                warnings << [ code  : 'phenotype-singleton-group',
+                              detail: "${column}: ${alone.join(', ')} " +
+                                      "${alone.size() == 1 ? 'holds' : 'hold'} one pool each, so " +
+                                      "${alone.size() == 1 ? 'it contributes' : 'they contribute'} " +
+                                      "no within-group variance. A comparison against a group of " +
+                                      "one rests on that pool alone." ]
+            }
         }
-    }
 
-    // On `shown` and not on `value`: a nominal phenotype has a null value for every pool, so
-    // comparing values would call every one of them constant.
-    def held = values.findAll { entry -> entry.shown }
-    if (held.size() > 1 && held.collect { entry -> entry.shown }.unique().size() == 1) {
-        warnings << [ code  : 'phenotype-constant',
-                      detail: "every pool has the same ${column} (${held[0].shown}), so there is " +
-                              "no variation to associate anything with. A module that fits " +
-                              "against it will refuse." ]
-    }
+        // On `shown` and not on `value`: a nominal phenotype has a null value for every pool, so
+        // comparing values would call every one of them constant.
+        def held = values.findAll { entry -> entry.shown }
+        if (held.size() > 1 && held.collect { entry -> entry.shown }.unique().size() == 1) {
+            warnings << [ code  : 'phenotype-constant',
+                          detail: "every pool has the same ${column} (${held[0].shown}), so there " +
+                                  "is no variation to associate anything with. A module that fits " +
+                                  "against it will refuse." ]
+        }
 
-    return [ column : column,
-             kind   : kind,
-             levels : kind == 'quantitative' ? null : levels,
-             values : values,
-             warnings: warnings ]
+        return [ column: column,
+                 kind  : kind,
+                 levels: kind == 'quantitative' ? null : levels,
+                 values: values ]
+    }
+    // A pt_ column nobody declared. Reported once, on the covariate's rule: the difference
+    // between "recorded for the record" and "forgot to declare it" is not in the file.
+    def undeclared = columns.findAll { column -> !declared.containsKey(column) }
+    if (!undeclared.isEmpty()) {
+        warnings << [ code  : 'phenotype-undeclared',
+                      detail: "${undeclared.join(', ')} " +
+                              "${undeclared.size() == 1 ? 'is a phenotype column' : 'are phenotype columns'} " +
+                              "this project records and does not declare, so no module can test " +
+                              "against ${undeclared.size() == 1 ? 'it' : 'them'}. Declare " +
+                              "${undeclared.size() == 1 ? 'it' : 'them'} under " +
+                              "analysis.metadata.phenotypes to give a scale, or leave as is to " +
+                              "keep on the record only." ]
+    }
+    return [ phenotypes: resolved, warnings: warnings ]
 }
 
 // The covariate declarations, checked against each other and against the columns this target has.
@@ -546,13 +574,13 @@ def designCovariates(Map declared, List columns, List chosen) {
     if (chosen.isEmpty()) return declaredNames
 
     def named = chosen.collect { entry -> "${entry}".toString() }
-    def path = 'analysis.metadata.design.covariates'
+    def path = 'analysis.design.covariates'
     named.each { column ->
         if (!column.startsWith(covariatePrefix())) {
             throw new IllegalArgumentException(
                 "${path} names '${column}', and a covariate has to be a " +
                 "${covariatePrefix()} column.\n" +
-                "What the experiment SET is named in analysis.metadata.design.by; a covariate is " +
+                "What the experiment SET is named in analysis.design.by; a covariate is " +
                 "what was measured alongside and neither set nor tested against.")
         }
         if (!columns.contains(column)) {
@@ -605,7 +633,7 @@ def resolveCovariates(List pools, Map declared, List columns, List inDesign) {
     def excluded = resolved.findAll { entry -> !entry.inDesign }.collect { entry -> entry.column }
     if (!excluded.isEmpty()) {
         warnings << [ code  : 'covariate-not-in-design',
-                      detail: "analysis.metadata.design.covariates leaves ${excluded.join(', ')} " +
+                      detail: "analysis.design.covariates leaves ${excluded.join(', ')} " +
                               "out, so ${excluded.size() == 1 ? 'it is' : 'they are'} reported " +
                               "and no module adjusts for ${excluded.size() == 1 ? 'it' : 'them'}." ]
     }
@@ -636,14 +664,14 @@ def designKeyColumns(List columns, String timeColumn, List by) {
     def named = by.collect { entry -> "${entry}".toString() }
     if (timeColumn != null && named.contains(timeColumn)) {
         throw new IllegalArgumentException(
-            "analysis.metadata.design.by names ${timeColumn}, which is the time column.\n" +
+            "analysis.design.by names ${timeColumn}, which is the time column.\n" +
             "A series is what stays the same WHILE time changes, so time cannot be part of what " +
             "identifies it.")
     }
     def unknown = named.findAll { column -> !columns.contains(column) }
     if (!unknown.isEmpty()) {
         throw new IllegalArgumentException(
-            "analysis.metadata.design.by names ${unknown.join(', ')}, which this project's " +
+            "analysis.design.by names ${unknown.join(', ')}, which this project's " +
             "metadata does not have.\n" +
             "The experimental variables it has are: ${columns.isEmpty() ? '(none)' : columns.join(', ')}")
     }
@@ -653,25 +681,25 @@ def designKeyColumns(List columns, String timeColumn, List by) {
 // Which of the key columns index repeats rather than naming a condition, checked. Two lists and
 // not one: biological replicates are independent and are what degrees of freedom are counted from,
 // technical ones are the same material measured twice and carry none.
-def replicateRoles(List keyColumns, String timeColumn, Map settings) {
-    def biological = (settings.biologicalRep ?: []).collect { entry -> "${entry}".toString() }
-    def technical = (settings.technicalRep ?: []).collect { entry -> "${entry}".toString() }
+def replicateRoles(List keyColumns, String timeColumn, List biologicalRep, List technicalRep) {
+    def biological = biologicalRep.collect { entry -> "${entry}".toString() }
+    def technical = technicalRep.collect { entry -> "${entry}".toString() }
 
     [['biologicalRep', biological], ['technicalRep', technical]].each { pair ->
         def name = pair[0]
         pair[1].each { column ->
             if (timeColumn != null && column == timeColumn) {
                 throw new IllegalArgumentException(
-                    "analysis.metadata.design.${name} names ${timeColumn}, which is the time " +
+                    "analysis.design.${name} names ${timeColumn}, which is the time " +
                     "column. A replicate is what a series has instead of a condition, and time " +
                     "is neither.")
             }
             if (!keyColumns.contains(column)) {
                 throw new IllegalArgumentException(
-                    "analysis.metadata.design.${name} names '${column}', which is not one of the " +
+                    "analysis.design.${name} names '${column}', which is not one of the " +
                     "columns that identify the design.\n" +
                     "The columns that do are: ${keyColumns.isEmpty() ? '(none)' : keyColumns.join(', ')}\n" +
-                    "Add it to analysis.metadata.design.by if it should, or correct the name.")
+                    "Add it to analysis.design.by if it should, or correct the name.")
             }
         }
     }
@@ -730,9 +758,9 @@ def unitsOf(List members, List unitColumns, List technical) {
                 "one unit and partly several and can be neither. Which these pools are decides " +
                 "what to do:\n" +
                 "  - separate biological material: give them an ${experimentalPrefix()} column that tells them\n" +
-                "    apart, and name it in analysis.metadata.design.biologicalRep.\n" +
+                "    apart, and name it in analysis.design.biologicalRep.\n" +
                 "  - the same material sequenced separately: name the column that tells them apart\n" +
-                "    in analysis.metadata.design.technicalRep.\n" +
+                "    in analysis.design.technicalRep.\n" +
                 "  - one pool sequenced twice that you meant to merge: give the rows the same\n" +
                 "    RG_Sample. The pipeline pools their reads and adds their depths, and they\n" +
                 "    become one column of every published table.")
@@ -779,7 +807,7 @@ def levelNames(Map time, List indices) {
     return indices.sort().collect { index -> time.levels[index].value }.join(', ')
 }
 
-// analysis.metadata.series.incomplete, applied. Returns the timeline that survives and the series dropped.
+// analysis.design.series.incomplete, applied. Returns the timeline that survives and the series dropped.
 //
 // keepLeft and keepRight truncate the TIMELINE and not each series, so every series that survives
 // covers the same points. None of the four fills a gap in: carrying a frequency forward invents a
@@ -799,7 +827,7 @@ def applyIncomplete(String mode, Map time, Map covered, List warnings) {
             "${named}${ragged.size() > 5 ? "\n    ... and ${ragged.size() - 5} more" : ''}\n" +
             "A ragged panel analysed as a complete one is a wrong answer that looks like a right " +
             "one, so this refuses by default. Choose what should happen with " +
-            "analysis.metadata.series.incomplete:\n" +
+            "analysis.design.series.incomplete:\n" +
             "    'drop'       leave the incomplete series out\n" +
             "    'keepLeft'   cut the timeline back to the points every series shares, from the start\n" +
             "    'keepRight'  the same, from the end")
@@ -807,7 +835,7 @@ def applyIncomplete(String mode, Map time, Map covered, List warnings) {
 
     if (mode == 'drop') {
         warnings << [ code  : 'series-dropped',
-                      detail: "analysis.metadata.series.incomplete is 'drop', so ${ragged.size()} " +
+                      detail: "analysis.design.series.incomplete is 'drop', so ${ragged.size()} " +
                               "incomplete series were left out:\n" +
                               ragged.collect { label, indices ->
                                   "    ${label} lacked ${levelNames(time, full.findAll { index -> !indices.contains(index) })}"
@@ -823,7 +851,7 @@ def applyIncomplete(String mode, Map time, Map covered, List warnings) {
         def edge = mode == 'keepLeft' ? full.first() : full.last()
         def without = covered.findAll { _label, indices -> !indices.contains(edge) }.keySet()
         throw new IllegalArgumentException(
-            "analysis.metadata.series.incomplete is '${mode}', and there is nothing left to keep: " +
+            "analysis.design.series.incomplete is '${mode}', and there is nothing left to keep: " +
             "${without.size() == 1 ? 'the series' : 'the series'} " +
             "${without.take(5).join(', ')} ${without.size() == 1 ? 'does' : 'do'} not cover " +
             "'${time.levels[edge].value}', which is the ${mode == 'keepLeft' ? 'first' : 'last'} " +
@@ -833,7 +861,7 @@ def applyIncomplete(String mode, Map time, Map covered, List warnings) {
     }
 
     warnings << [ code  : "series-${mode}",
-                  detail: "analysis.metadata.series.incomplete is '${mode}', so the timeline was cut from " +
+                  detail: "analysis.design.series.incomplete is '${mode}', so the timeline was cut from " +
                           "${full.size()} points to ${timeline.size()}: kept " +
                           "${levelNames(time, timeline)}; dropped " +
                           "${levelNames(time, full.findAll { index -> !timeline.contains(index) })}." ]
@@ -848,7 +876,7 @@ def applyIncomplete(String mode, Map time, Map covered, List warnings) {
     return [ timeline: timeline, dropped: [] ]
 }
 
-// Every series in this target, ordered by time, after analysis.metadata.series.incomplete has been applied.
+// Every series in this target, ordered by time, after analysis.design.series.incomplete has been applied.
 // The timeline is truncated rather than each series individually, so what comes out is rectangular
 // and every series is comparable with every other.
 def buildSeries(List pools, Map time, List keyColumns, String incomplete, List warnings) {
@@ -882,7 +910,7 @@ def buildSeries(List pools, Map time, List keyColumns, String incomplete, List w
                     "these are decides what to do:\n" +
                     "  - separate biological material, or the same material sequenced separately:\n" +
                     "    give them an ${experimentalPrefix()} column that tells them apart, and name it in\n" +
-                    "    analysis.metadata.design.biologicalRep or technicalRep. They become separate series.\n" +
+                    "    analysis.design.biologicalRep or technicalRep. They become separate series.\n" +
                     "  - one pool sequenced twice that you meant to merge: give the rows the same\n" +
                     "    RG_Sample. The pipeline pools their reads and adds their depths, and they\n" +
                     "    become one column of every published table.")
@@ -978,17 +1006,18 @@ def designSummary(List rows) {
     // The key columns and their roles, resolved for every project. timeColumn is null where the
     // project declared no time axis, and the time block below is then skipped.
     def timeColumn = checkTimeSettings(settings, columns) ? "${settings.column}".trim() : null
-    def designSettings = metadataSetting('design')
-    def keyColumns = designKeyColumns(columns, timeColumn, designSettings.by ?: [])
-    if ((designSettings.by ?: []).isEmpty() && !keyColumns.isEmpty()) {
+    def by = designSetting('by') ?: []
+    def keyColumns = designKeyColumns(columns, timeColumn, by)
+    if (by.isEmpty() && !keyColumns.isEmpty()) {
         warnings << [ code  : 'design-key-computed',
-                      detail: "analysis.metadata.design.by is not set, so what identifies one " +
+                      detail: "analysis.design.by is not set, so what identifies one " +
                               "thing set up is every ${experimentalPrefix()} variable " +
                               "${timeColumn == null ? 'there is' : 'but time'}: " +
                               "${keyColumns.join(', ')}. Set it if a variable here is recorded ON " +
                               "each pool rather than saying what the pool is." ]
     }
-    def roles = replicateRoles(keyColumns, timeColumn, designSettings)
+    def roles = replicateRoles(keyColumns, timeColumn,
+                               designSetting('biologicalRep') ?: [], designSetting('technicalRep') ?: [])
 
     def time = null
     def series = null
@@ -1005,7 +1034,7 @@ def designSummary(List rows) {
                  levels: resolved.levels ]
 
         def built = buildSeries(pools, time, keyColumns,
-                                "${metadataSetting('series').incomplete}".trim(), warnings)
+                                "${designSetting('series').incomplete}".trim(), warnings)
         series = built.series
         time.timeline = built.timeline
 
@@ -1021,17 +1050,20 @@ def designSummary(List rows) {
                         roles.condition + roles.biological, roles.technical)
     def conditions = conditionsOf(units, roles.condition)
 
-    def phenotypeSettings = metadataSetting('phenotype')
-    def phenotype = null
-    if (checkPhenotypeSettings(phenotypeSettings, phenotypeColumns(rows))) {
-        phenotype = resolvePhenotype(pools, phenotypeSettings)
-        warnings.addAll(phenotype.warnings)
+    def phenotypeNames = phenotypeColumns(rows)
+    def declaredPhenotypes = metadataSetting('phenotypes') ?: [:]
+    checkPhenotypeSettings(declaredPhenotypes, phenotypeNames)
+    def phenotypes = []
+    if (!phenotypeNames.isEmpty()) {
+        def built = resolvePhenotypes(pools, declaredPhenotypes, phenotypeNames)
+        phenotypes = built.phenotypes
+        warnings.addAll(built.warnings)
     }
 
     def covariateNames = covariateColumns(rows)
     def declared = metadataSetting('covariates') ?: [:]
     checkCovariateSettings(declared, covariateNames)
-    def inDesign = designCovariates(declared, covariateNames, designSettings.covariates ?: [])
+    def inDesign = designCovariates(declared, covariateNames, designSetting('covariates') ?: [])
     def covariates = []
     if (!covariateNames.isEmpty()) {
         def built = resolveCovariates(pools, declared, covariateNames, inDesign)
@@ -1047,7 +1079,7 @@ def designSummary(List rows) {
              series    : series ?: [],
              units     : units,
              conditions: conditions,
-             phenotype : phenotype,
+             phenotypes: phenotypes,
              covariates: covariates,
              warnings  : warnings ]
 }
@@ -1073,43 +1105,47 @@ def timeReportLines(Map time) {
     return lines
 }
 
-// The phenotype, and every pool's value as it resolved.
+// Every declared phenotype, and every pool's value as it resolved.
 //
 // The values are printed as WRITTEN beside what they became, which is the only thing that catches a
 // reversed binary encoding: [control, case] and [case, control] are both legal, both silent, and
 // give every slope the opposite sign. No check can tell which was meant.
-def phenotypeReportLines(Map phenotype) {
-    if (phenotype == null) return ['PHENOTYPE:             none - analysis.phenotype names no column']
+def phenotypeReportLines(List phenotypes) {
+    if (phenotypes.isEmpty()) {
+        return ['PHENOTYPE:             none - analysis.metadata.phenotypes declares no column']
+    }
+    def lines = ["PHENOTYPE:             ${phenotypes.size()} declared".toString()]
+    phenotypes.each { phenotype ->
+        def head = "PHENOTYPE:                 ${phenotype.column}, ${phenotype.kind}"
+        if (phenotype.kind == 'binary') {
+            head += ", '${phenotype.levels[0]}' absent and '${phenotype.levels[1]}' present"
+        }
+        else if (phenotype.kind == 'ordinal') {
+            head += ", in this order: ${phenotype.levels.join(' < ')}"
+        }
+        else if (phenotype.kind == 'nominal') {
+            head += ", unordered: ${phenotype.levels.join(', ')}"
+        }
+        lines << head.toString()
 
-    def head = "PHENOTYPE:             ${phenotype.column}, ${phenotype.kind}"
-    if (phenotype.kind == 'binary') {
-        head += ", '${phenotype.levels[0]}' absent and '${phenotype.levels[1]}' present"
-    }
-    else if (phenotype.kind == 'ordinal') {
-        head += ", in this order: ${phenotype.levels.join(' < ')}"
-    }
-    else if (phenotype.kind == 'nominal') {
-        head += ", unordered: ${phenotype.levels.join(', ')}"
-    }
-    def lines = [head.toString()]
-
-    def held = phenotype.values.findAll { entry -> entry.shown }
-    if (phenotype.kind == 'quantitative' && !held.isEmpty()) {
-        def numbers = held.collect { entry -> entry.value }
-        lines << ("PHENOTYPE:                 ${held.size()} pools, " +
-                  "${numbers.min()} to ${numbers.max()}").toString()
-    }
-    // No slope may be fitted on an unordered scale, so the report says so rather than leaving a
-    // column of nulls to be read as a failure.
-    if (phenotype.kind == 'nominal') {
-        lines << ("PHENOTYPE:                 ${held.size()} pools over " +
-                  "${held.collect { entry -> entry.shown }.unique().size()} groups; " +
-                  "unordered, so a module compares groups and fits no trend").toString()
-    }
-    phenotype.values.each { entry ->
-        def became = !entry.shown ? '(no value)'
-            : (entry.value == null ? "group ${entry.group}" : "${entry.value}")
-        lines << "PHENOTYPE:                 ${entry.pool}  ${entry.shown ?: '(blank)'} -> ${became}".toString()
+        def held = phenotype.values.findAll { entry -> entry.shown }
+        if (phenotype.kind == 'quantitative' && !held.isEmpty()) {
+            def numbers = held.collect { entry -> entry.value }
+            lines << ("PHENOTYPE:                     ${held.size()} pools, " +
+                      "${numbers.min()} to ${numbers.max()}").toString()
+        }
+        // No slope may be fitted on an unordered scale, so the report says so rather than leaving
+        // a column of nulls to be read as a failure.
+        if (phenotype.kind == 'nominal') {
+            lines << ("PHENOTYPE:                     ${held.size()} pools over " +
+                      "${held.collect { entry -> entry.shown }.unique().size()} groups; " +
+                      "unordered, so a module compares groups and fits no trend").toString()
+        }
+        phenotype.values.each { entry ->
+            def became = !entry.shown ? '(no value)'
+                : (entry.value == null ? "group ${entry.group}" : "${entry.value}")
+            lines << "PHENOTYPE:                     ${entry.pool}  ${entry.shown ?: '(blank)'} -> ${became}".toString()
+        }
     }
     return lines
 }
@@ -1246,7 +1282,7 @@ def designReportLines(List targets) {
         lines.addAll(timeReportLines(design.time))
         lines.addAll(replicationReportLines(design))
         lines.addAll(seriesReportLines(design))
-        lines.addAll(phenotypeReportLines(design.phenotype))
+        lines.addAll(phenotypeReportLines(design.phenotypes ?: []))
         lines.addAll(covariateReportLines(design.covariates ?: []))
         lines.addAll(designNoteLines(design))
     }

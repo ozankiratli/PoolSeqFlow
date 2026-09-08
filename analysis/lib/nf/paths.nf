@@ -11,9 +11,12 @@ nextflow.enable.dsl=2
 def analysisDefaults() {
     return [ runs      : 'all',   // 'all' is a keyword; a list is always run names.
              folderName: '',      // Empty means the module's own name.
-             // How to read the metadata file. Everything here describes the project's own
+             // How to READ the metadata file. Everything here describes the project's own
              // records rather than this invocation.
              metadata  : metadataDefaults(),
+             // What the experiment WAS: which pools are independent of each other, and what a
+             // time axis makes of them.
+             design    : designDefaults(),
              // One scope per installed module, named after it. Open, so it has no defaults of
              // its own - moduleSettings() checks a module's scope against that module's list.
              modules   : [:] ]
@@ -29,22 +32,31 @@ def metadataDefaults() {
              missingValueEncoding: [],
              // The time axis. Empty kind means the project has not declared one.
              timeVar   : [ column: 'exp_time', kind: '', unit: '', order: [], format: '', locale: 'en' ],
-             // What the experiment was: which exp_ columns identify the setup, which of those
-             // index repeats, and which cov_ columns a module adjusts for. Empty `by` means
-             // every exp_ variable but time; a key column in neither replicate list is a
-             // condition; empty `covariates` means every cov_ column that has a declared scale.
-             design    : [ by: [], biologicalRep: [], technicalRep: [], covariates: [] ],
-             // What to do with a series that does not cover every timepoint. A time axis is the
-             // only thing that can leave one ragged, so this is all the series scope holds.
-             series    : [ incomplete: 'fail' ],
-             // The phenotype to analyse against. Empty column means none is declared; a project
-             // may record several pt_ columns and analyse one at a time under its own
-             // folderName. `levels` names the groups of a categorical scale.
-             phenotype : [ column: '', kind: '', levels: [] ],
-             // What a cov_ column holds, one scope per column: `kind` and, for a categorical
-             // scale, `levels`. Open, because the columns are the project's own. A cov_ column
-             // left out is recorded and reported; declaring one gives it a typed value.
+             // What a pt_ column holds, one scope per column: `kind` and, for a categorical
+             // scale, `levels`. Open, because the columns are the project's own. A project may
+             // declare as many as it records; which one a module tests against is that module's
+             // own setting.
+             phenotypes: [:],
+             // What a cov_ column holds, on the same shape and the same four kinds. A cov_
+             // column left out is recorded and reported; declaring one gives it a typed value.
              covariates: [:] ]
+}
+
+// The settings that say what the experiment was. A scope of its own beside metadata, so a module
+// name cannot collide with one of these and a misspelling here is refused rather than ignored.
+def designDefaults() {
+    return [ // Which exp_ columns identify one thing the experiment set up, and which of those
+             // index repeats. Empty `by` means every exp_ variable but time; a key column in
+             // neither replicate list is a condition.
+             by           : [],
+             biologicalRep: [],
+             technicalRep : [],
+             // Which cov_ columns are part of the design, and so may enter a module's model.
+             // Empty means every cov_ column that has a declared scale.
+             covariates   : [],
+             // What a time axis makes of the design. Only it can leave a trajectory ragged, so
+             // this is all the series scope holds.
+             series       : [ incomplete: 'fail' ] ]
 }
 
 // The `analysis` scope as the project wrote it. It may not exist at all: analysis.config carries
@@ -94,11 +106,14 @@ def checkAnalysisScope() {
             "the analysis scope is given ${unknown.size() == 1 ? 'a setting' : 'settings'} the " +
             "analysis layer does not have: ${unknown.join(', ')}\n" +
             "It has: ${defaults.keySet().sort().join(', ')}.\n" +
-            "A module's settings go in analysis.modules.<name>, and how the metadata file is read " +
-            "goes in analysis.metadata.")
+            "A module's settings go in analysis.modules.<name>, how the metadata file is read " +
+            "goes in analysis.metadata, and what the experiment was goes in analysis.design.")
     }
     if (scope.containsKey('metadata')) {
         mergeScope('analysis.metadata', metadataDefaults(), scope.metadata)
+    }
+    if (scope.containsKey('design')) {
+        mergeScope('analysis.design', designDefaults(), scope.design)
     }
 }
 
@@ -118,17 +133,19 @@ def analysisSetting(String key) {
     return mergeScope("analysis.${key}", defaults[key], scope[key])
 }
 
-// One of the settings that say how the metadata file is read.
-def metadataSetting(String key) {
-    def defaults = metadataDefaults()
+// One setting from a scope the frame owns, as the project set it or as it defaults.
+//
+// The whole scope is merged before one key is read, so a project that wrote a single sub-key
+// keeps every other default in that scope and a key it does not have is refused.
+def frameSetting(String scope, Map defaults, String key) {
     if (!defaults.containsKey(key)) {
         throw new IllegalStateException(
-            "analysis.metadata.${key} is not a setting the analysis layer has. It has: " +
+            "analysis.${scope}.${key} is not a setting the analysis layer has. It has: " +
             "${defaults.keySet().sort().join(', ')}.")
     }
-    def scope = analysisScope()
-    def written = scope.containsKey('metadata')
-        ? mergeScope('analysis.metadata', defaults, scope.metadata) : defaults
+    def outer = analysisScope()
+    def written = outer.containsKey(scope)
+        ? mergeScope("analysis.${scope}", defaults, outer[scope]) : defaults
     if (!(defaults[key] instanceof Map)) return written[key]
     // An empty default map is an OPEN namespace - covariates are named after the project's own
     // columns, so there is no list to check them against here. Whatever reads it does its own
@@ -136,11 +153,21 @@ def metadataSetting(String key) {
     if (defaults[key].isEmpty()) {
         if (written[key] instanceof Map) return written[key]
         throw new IllegalArgumentException(
-            "analysis.metadata.${key} is set to a single value, and it is a scope holding one " +
+            "analysis.${scope}.${key} is set to a single value, and it is a scope holding one " +
             "block per column.")
     }
     if (written[key].is(defaults[key])) return defaults[key]
-    return mergeScope("analysis.metadata.${key}", defaults[key], written[key])
+    return mergeScope("analysis.${scope}.${key}", defaults[key], written[key])
+}
+
+// One of the settings that say how the metadata file is read.
+def metadataSetting(String key) {
+    return frameSetting('metadata', metadataDefaults(), key)
+}
+
+// One of the settings that say what the experiment was.
+def designSetting(String key) {
+    return frameSetting('design', designDefaults(), key)
 }
 
 // Every setting one module has, as the project set them over the module's own defaults.

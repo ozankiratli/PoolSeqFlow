@@ -142,6 +142,11 @@ nav:
       - Design Decisions: concepts/design-decisions.md
       - The Filter Chain: concepts/filter-chain.md
       - Interpreting Results: concepts/interpreting-results.md
+  - Pipeline:
+      - pipeline/index.md
+      - Steps: pipeline/steps.md
+      - Resume Logic: pipeline/resume.md
+      - Directory Layout: pipeline/directories.md
   - Configuration:
       - configuration/index.md
       - Metadata: configuration/metadata.md
@@ -157,13 +162,11 @@ nav:
       - Configuration: analysis/configuration.md
       - Verification: analysis/verification.md
       - Output: analysis/output.md
-      - Modules: analysis/modules.md
-      - basicstats: analysis/basicstats.md
-  - Pipeline:
-      - pipeline/index.md
-      - Steps: pipeline/steps.md
-      - Resume Logic: pipeline/resume.md
-      - Directory Layout: pipeline/directories.md
+  - Modules:
+      - modules/index.md
+      - In common: modules/common.md
+      - basicstats: modules/basicstats.md
+      - association: modules/association.md
   - Development:
       - development/index.md
       - History: development/history.md

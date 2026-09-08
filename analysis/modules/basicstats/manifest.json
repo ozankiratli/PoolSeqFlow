@@ -1,6 +1,6 @@
 {
   "name": "basicstats",
-  "version": "20260907.001",
+  "version": "20260908.001",
   "contract": "freq-1",
   "summary": "site counts, depth, effective pool size and gene diversity, per pool",
   "needs": [

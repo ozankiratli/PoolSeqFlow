@@ -126,116 +126,58 @@ params {
             //     order = ['pre', 'post']
             // }
 
-            // THE EXPERIMENTAL DESIGN — which pools are independent of each other.
+            // PHENOTYPES — what was MEASURED on each pool, for a module to test against.
             //
-            // This is where degrees of freedom come from, and NOTHING here is guessed. Two pools
-            // are two independent units unless you say a column tells them apart as repeats of
-            // one material: RG_Sample already decided what was merged into one pool, so what is
-            // left is separate until you declare otherwise.
+            // One block per pt_ column, and declare as many as you record. Those are the columns
+            // checked for agreeing across the rows of one pool, which is what stops a pool
+            // carrying two values at once. An exp_ column is what you SET; a pt_ column is what
+            // came out.
             //
-            // It applies with or without a time course. A one-off comparison of three treated
-            // pools against three controls has conditions and units exactly as a time series has.
+            // DECLARING ONE DOES NOT CHOOSE IT. Which phenotype an analysis tests against is the
+            // module's own setting, so a project with three of them runs three analyses from one
+            // declaration block — set folderName so each lands somewhere of its own.
             //
-            // design {
-            //     // The variables that identify one thing you set up. Left empty it is every
-            //     // exp_ variable except time. SET IT if one of your exp_ columns is recorded ON
-            //     // each pool rather than saying what the pool is — a temperature, a census —
-            //     // because that differs pool to pool and would split every unit into singletons.
-            //     by = ['exp_population', 'exp_replicate']
+            // A pt_ column you do not declare is still recorded, checked and reported; it simply
+            // carries no scale, so no module can test against it. The verification report names
+            // the ones in that state, because "kept for the record" and "forgot to declare it"
+            // look identical in the file.
             //
-            //     // Which of those index REPEATS rather than naming a condition. Both take any
-            //     // number of columns — two lanes crossed with three sequencing runs is
-            //     // technicalRep = ['exp_lane', 'exp_seqrun'], six technical replicates each.
-            //     //
-            //     // The two are not interchangeable. Biological replicates are independent
-            //     // repeats of one condition and are where degrees of freedom come from;
-            //     // technical replicates are one biological unit measured more than once and
-            //     // carry none. Calling the second the first is pseudo-replication.
-            //     //
-            //     // technicalRep is the ONLY thing that makes two pools one unit. Leave your
-            //     // lane column out of it and each lane counts as an independent replicate,
-            //     // which roughly halves every standard error in the project.
-            //     //
-            //     // A key column named in neither is a CONDITION — what is being compared.
-            //     // The verification report prints every key column under its role, which is
-            //     // the only place a column in the wrong place can be seen.
-            //     biologicalRep = ['exp_replicate']
-            //     technicalRep  = ['exp_lane']
+            // phenotypes {
+            //     pt_wingspan {
+            //         // WHAT KIND OF SCALE IT IS. Never guessed — 0 and 1 read as numbers as
+            //         // readily as they encode two groups, and no file says which of 'case'
+            //         // and 'control' is the affected one.
+            //         //
+            //         //   'quantitative'  a measurement. Every value must parse as a number.
+            //         //                   Counts and percentages are this too.
+            //         //   'binary'        PRESENCE and ABSENCE — affected or not, resistant or
+            //         //                   not. Exactly two levels, as [absent, present].
+            //         //   'ordinal'       groups whose ORDER means something and whose spacing
+            //         //                   does not: low, medium, high.
+            //         //   'nominal'       groups with no order: spotted, striped, curly.
+            //         //
+            //         // Two groups that are not an absence and a presence — coastal and inland,
+            //         // two host plants — are 'nominal', not 'binary'.
+            //         kind = 'quantitative'
+            //     }
             //
-            //     // Which of your cov_ columns are PART OF THE DESIGN — the ones a module may
-            //     // adjust for, rather than only report. Left empty it is every cov_ column
-            //     // that has a declared scale below; naming any restricts it to those.
-            //     //
-            //     // Set it when you record covariates for the record that you do not want in
-            //     // any model. Each one that IS in the design costs a degree of freedom, and
-            //     // with six pools there are four to spend.
-            //     //
-            //     // A column named here must have a scale under analysis.metadata.covariates,
-            //     // because a column with no scale has no value a model could take.
-            //     covariates    = ['cov_temperature']
-            // }
-
-            // TIME SERIES — what to do with a trajectory that has a gap in it.
+            //     pt_resistance {
+            //         kind = 'binary'
             //
-            // Only a time axis can leave one ragged, so this is all the series scope holds. What
-            // a series IS comes from the design scope above.
-            //
-            // series {
-            //     // What to do when a series does not cover every timepoint.
-            //     //
-            //     //   'fail'       refuse, naming what is missing            (the default)
-            //     //   'drop'       leave the incomplete series out
-            //     //   'keepLeft'   cut the timeline back to the points every series shares,
-            //     //                from the START
-            //     //   'keepRight'  the same, from the END
-            //     //
-            //     // keepLeft and keepRight shorten the TIMELINE, not each series, so what comes
-            //     // out is comparable across series. Neither fills a gap in: no value is ever
-            //     // carried forward or invented.
-            //     incomplete = 'fail'
-            // }
-
-            // THE PHENOTYPE — what was MEASURED on each pool, for a module that associates
-            // something with it.
-            //
-            // It has to be a pt_ column. Those are the ones checked for agreeing across the rows
-            // of one pool, which is what stops a pool carrying two values at once. An exp_ column
-            // is what you SET; a pt_ column is what came out.
-            //
-            // Record as many pt_ columns as you like and analyse one at a time — set folderName
-            // so each analysis lands somewhere of its own.
-            //
-            // phenotype {
-            //     column = 'pt_wingspan'
-            //
-            //     // WHAT KIND OF SCALE IT IS. Never guessed — 0 and 1 read as numbers as readily
-            //     // as they encode two groups, and no file says which of 'case' and 'control' is
-            //     // the affected one.
-            //     //
-            //     //   'quantitative'  a measurement. Every value must parse as a number. Counts
-            //     //                   and percentages are this too.
-            //     //   'binary'        PRESENCE and ABSENCE — affected or not, resistant or not.
-            //     //                   Exactly two levels, as [absent, present].
-            //     //   'ordinal'       groups whose ORDER means something and whose spacing does
-            //     //                   not: low, medium, high.
-            //     //   'nominal'       groups with no order: spotted, striped, curly.
-            //     //
-            //     // Two groups that are not an absence and a presence — coastal and inland, two
-            //     // host plants — are 'nominal', not 'binary'.
-            //     kind = 'quantitative'
-            //
-            //     // REQUIRED for binary, ordinal and nominal; refused for quantitative.
-            //     //
-            //     // For 'binary' the order is [absent, present] and it decides the SIGN of every
-            //     // effect reported against it — write it the wrong way round and every result
-            //     // reverses, with nothing in the data to tell you.
-            //     // For 'ordinal' the order IS the scale.
-            //     // For 'nominal' the order only sets which group others are reported against.
-            //     //
-            //     // A level no pool has is kept and reported, not an error: a group you have not
-            //     // sequenced yet is legitimate. A misspelling looks exactly the same, so read
-            //     // that line of the verification report.
-            //     levels = ['unaffected', 'affected']
+            //         // REQUIRED for binary, ordinal and nominal; refused for quantitative.
+            //         //
+            //         // For 'binary' the order is [absent, present] and it decides the SIGN of
+            //         // every effect reported against it — write it the wrong way round and
+            //         // every result reverses, with nothing in the data to tell you.
+            //         // For 'ordinal' the order IS the scale.
+            //         // For 'nominal' the order only sets which group others are reported
+            //         // against.
+            //         //
+            //         // A level no pool has is kept and reported, not an error: a group you
+            //         // have not sequenced yet is legitimate. A misspelling looks exactly the
+            //         // same, so read that line of the verification report.
+            //         levels = ['unaffected', 'affected']
+            //     }
             // }
 
             // COVARIATES — what was MEASURED alongside, and is neither set nor the response.
@@ -276,6 +218,74 @@ params {
             // unprefixed column; it is kept and never interpreted.
 
         }
+
+        // WHAT YOUR EXPERIMENT WAS — which pools are independent of each other.
+        //
+        // Its own scope beside `metadata`, not inside it: that one says how the file is READ,
+        // this one says what the file DESCRIBES. This is where degrees of freedom come from,
+        // and NOTHING here is guessed. Two pools are two independent units unless you say a
+        // column tells them apart as repeats of one material: RG_Sample already decided what
+        // was merged into one pool, so what is left is separate until you declare otherwise.
+        //
+        // It applies with or without a time course. A one-off comparison of three treated pools
+        // against three controls has conditions and units exactly as a time series has.
+        //
+        // design {
+        //     // The variables that identify one thing you set up. Left empty it is every exp_
+        //     // variable except time. SET IT if one of your exp_ columns is recorded ON each
+        //     // pool rather than saying what the pool is — a temperature, a census — because
+        //     // that differs pool to pool and would split every unit into singletons.
+        //     by = ['exp_population', 'exp_replicate']
+        //
+        //     // Which of those index REPEATS rather than naming a condition. Both take any
+        //     // number of columns — two lanes crossed with three sequencing runs is
+        //     // technicalRep = ['exp_lane', 'exp_seqrun'], six technical replicates each.
+        //     //
+        //     // The two are not interchangeable. Biological replicates are independent repeats
+        //     // of one condition and are where degrees of freedom come from; technical
+        //     // replicates are one biological unit measured more than once and carry none.
+        //     // Calling the second the first is pseudo-replication.
+        //     //
+        //     // technicalRep is the ONLY thing that makes two pools one unit. Leave your lane
+        //     // column out of it and each lane counts as an independent replicate, which
+        //     // roughly halves every standard error in the project.
+        //     //
+        //     // A key column named in neither is a CONDITION — what is being compared. The
+        //     // verification report prints every key column under its role, which is the only
+        //     // place a column in the wrong place can be seen.
+        //     biologicalRep = ['exp_replicate']
+        //     technicalRep  = ['exp_lane']
+        //
+        //     // Which of your cov_ columns are PART OF THE DESIGN — the ones a module may
+        //     // adjust for, rather than only report. Left empty it is every cov_ column that
+        //     // has a declared scale under metadata.covariates; naming any restricts it.
+        //     //
+        //     // Set it when you record covariates for the record that you do not want in any
+        //     // model. Each one that IS in the design costs a degree of freedom, and with six
+        //     // pools there are four to spend.
+        //     //
+        //     // A column named here must have a scale, because a column with no scale has no
+        //     // value a model could take.
+        //     covariates    = ['cov_temperature']
+        //
+        //     // WHAT A TIME AXIS MAKES OF ALL THAT. Only a time course can leave a trajectory
+        //     // with a gap in it, so this is the one thing the series scope holds — what a
+        //     // series IS comes from the keys above.
+        //     series {
+        //         // What to do when a series does not cover every timepoint.
+        //         //
+        //         //   'fail'       refuse, naming what is missing            (the default)
+        //         //   'drop'       leave the incomplete series out
+        //         //   'keepLeft'   cut the timeline back to the points every series shares,
+        //         //                from the START
+        //         //   'keepRight'  the same, from the END
+        //         //
+        //         // keepLeft and keepRight shorten the TIMELINE, not each series, so what
+        //         // comes out is comparable across series. Neither fills a gap in: no value
+        //         // is ever carried forward or invented.
+        //         incomplete = 'fail'
+        //     }
+        // }
 
         // A MODULE'S OWN SETTINGS go in a scope named after the module, inside `modules`. What
         // each module has is listed in its section of the manual, and a key it does not have is

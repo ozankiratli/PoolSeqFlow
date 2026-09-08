@@ -1,0 +1,82 @@
+% What an association analysis should be cited with: the statistics it computes and the R
+% packages it computes them in. Merged with PoolSeqFlow, Nextflow and R by the frame, and
+% written into every published folder as CITATIONS.md and references.bib.
+%
+% This file is the one to edit; it compiles to citations.json beside it with
+% dev/scripts/bib2citations.py, and 00_static fails when the two disagree.
+%
+% A 'note' says what the entry is cited FOR. A method is not a tool, so an entry for one
+% names no r_package and no version is asked of anything: what is credited is the estimator.
+%
+% NOTHING IS CITED THAT THIS MODULE DOES NOT USE. A genome-wide maximum threshold and an
+% independent filter both belong to this statistic's family and neither is computed here, so
+% neither is credited: an entry a reader follows and finds nothing of in the output is worse
+% than no entry.
+
+% The effective sample size each unit is weighted by is credited in analysis/references.bib, not
+% here. n_eff is library code that every module calls, so its citation belongs to the layer
+% rather than to one module - and a BibTeX key may be defined once across the whole manual.
+
+@article{phipson2010permutation,
+  group   = {The statistics PoolSeqFlow computes},
+  id      = {phipson2010},
+  name    = {Exact p-values from sampled permutations},
+  authors = {Phipson, Belinda and Smyth, Gordon K.},
+  title   = {Permutation P-values Should Never Be Zero: Calculating Exact P-values When Permutations Are Randomly Drawn},
+  journal = {Statistical Applications in Genetics and Molecular Biology},
+  volume  = {9},
+  number  = {1},
+  pages   = {Article 39},
+  year    = {2010},
+  doi     = {10.2202/1544-6115.1585},
+  note    = {Why a sampled permutation p is (1 + reached) / (1 + draws) rather than the raw share. The raw form can return zero, which no permutation p can be, and understates by about one over the number of draws. Only used where the set of rearrangements is too large to enumerate; an enumerated null already counts the identity and needs no correction.},
+}
+
+@article{benjamini1995fdr,
+  group   = {The statistics PoolSeqFlow computes},
+  id      = {benjamini1995},
+  name    = {Controlling the false discovery rate},
+  authors = {Benjamini, Yoav and Hochberg, Yosef},
+  title   = {Controlling the False Discovery Rate: A Practical and Powerful Approach to Multiple Testing},
+  journal = {Journal of the Royal Statistical Society: Series B},
+  volume  = {57},
+  number  = {1},
+  pages   = {289--300},
+  year    = {1995},
+  doi     = {10.1111/j.2517-6161.1995.tb02031.x},
+  note    = {The default correction across sites, applied to the permutation p and never to the per-allele one. The number of tests passed to it is the count of sites that produced a statistic, so a site whose alleles were all invariant is excluded rather than counted as a test that failed to reject.},
+}
+
+@article{long2026polygenicity,
+  group   = {Estimating from pooled reads},
+  id      = {long2026},
+  name    = {The illusion of polygenicity in pool-seq mapping},
+  authors = {Long, Anthony D. and Hanson, Kenneth M. and Macdonald, Stuart J.},
+  title   = {The illusion of polygenicity in pool-seq genetic mapping studies: insufficient power can mask simple genetic architectures},
+  journal = {Genetics},
+  volume  = {233},
+  number  = {1},
+  pages   = {iyag068},
+  year    = {2026},
+  doi     = {10.1093/genetics/iyag068},
+  note    = {What a modestly powered pool-seq association study produces when it is read as though it were well powered: scattered genome-wide significance from a single causal variant, which looks like a polygenic architecture and is noise. It is cited here because this module's permutation floor is a structural answer to it - a design of few units cannot reach a small p however large the statistic - and because the limit it describes is the reason that floor is printed rather than assumed.},
+}
+
+% jsonlite and ggplot2 are credited in analysis/references.bib. Every module reads the design as
+% JSON and most of them draw something, so both belong to the layer; a BibTeX key is defined once
+% across the whole manual and the frame merges the layer's set into every published folder.
+
+@misc{eddelbuettel2011rcpp,
+  id        = {Rcpp},
+  name      = {Rcpp},
+  r_package = {Rcpp},
+  authors   = {Eddelbuettel, Dirk and Fran{\c{c}}ois, Romain},
+  title     = {Rcpp: Seamless R and C++ Integration},
+  journal   = {Journal of Statistical Software},
+  volume    = {40},
+  number    = {8},
+  pages     = {1--18},
+  year      = {2011},
+  url       = {https://www.jstatsoft.org/v40/i08/},
+  note      = {Compiles the per-site parse at run time. The R form is the reference and the compiled one is judged against it, so a run that used the compiled path says so in the published script's header. Cited by URL and not by DOI, as every other r_package entry is: a DOI a module cites has to appear in the manual's Bibliography, and that is divided into method groups where a language binding has no place.},
+}

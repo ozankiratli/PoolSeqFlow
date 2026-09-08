@@ -121,3 +121,29 @@ rsync verifies *what it wrote against what it read*. The current digest compares
 ### Where it sits
 
 **Not now.** Adding a dependency mid-release touches step 0's software check, `install/check_install.sh` and the pinned export, and the environment is re-exported at E7a anyway. Revisit there: the question is small, the answer is a line of YAML, and the test that settles it is whether local `--whole-file` transfers really do verify.
+
+---
+
+## Covariate adjustment as a layer-wide question — Z, 2026-09-07
+
+Deferred out of F2 deliberately, and not because the arithmetic is hard. The arithmetic is settled: weighted Frisch–Waugh–Lovell reproduces `lm(f ~ y + z, weights = w)` to twelve significant figures provided the degrees of freedom come from the full model, and the permutation scheme that works with covariates was measured — permute the RAW phenotype and re-residualise at each site, where permuting the already-residualised one runs at twice its nominal rate. `association-math.md` holds both.
+
+### Why it is not an F2 setting
+
+Z, 2026-09-07: *"this requires a constant discussion where we would need covariate analysis in the whole analysis layer and then design tools to address it after we have a much more complete set."*
+
+A covariate is not a property of one test. If `association` adjusts for a covariate and `mds` does not, two published folders from one project disagree about what the data was, and a reader has no way to see it. The same question reaches diversity, FST, every trajectory statistic — each needs its own answer to *what does adjusting mean here*, and several of those answers are not "put it in the model" at all.
+
+So the decision is that the layer gets one answer, not that F2 gets one first. The frame already declares covariates and their scales and prints them; what it does not do is fit them, and nothing should until there are enough modules to see the shape of the problem.
+
+### What already exists to build on
+
+`analysis.metadata.covariates.<column>` gives a scale; `analysis.design.covariates` says which may enter a model, each entry carrying `inDesign`; module rule 17e says to fit only those. The declaration side is done and shipping. Only the use side is deferred.
+
+### What it would break
+
+Every degree of freedom counted so far. `df = n_observed − 2 − q` over units means a timed design of three units cannot fit a single covariate — that refusal has to be loud rather than a column of NA, and it is a design being honest rather than a defect. And a covariate correlated with the phenotype changes what a published effect size means, which is a manual problem before it is a code problem.
+
+### Where it sits
+
+After the roster is fuller — F4 onwards, once there are enough modules that "what does this layer do about covariates" has a real answer instead of one module's opinion. Z, 2026-09-07, on the interim: *"since the results and metadata will be aligned, the user might be able to handle it themselves."*

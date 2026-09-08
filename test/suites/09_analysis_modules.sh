@@ -20,7 +20,7 @@ test_an_unknown_module_refuses_before_any_task() {
         "should name what was asked for"
     # Both kinds of module, sorted: one the release ships into the store, and the frame's own
     # built-in, which is in no directory at all.
-    assert_contains "$(analysis_output)" "Available here: basicstats, verify" \
+    assert_contains "$(analysis_output)" "Available here: association, basicstats, verify" \
         "and list what there is"
     assert_no_file "$ANALYSIS_SB/main/Analysis/Results/mds/0_verify_analysis.txt" \
         "nothing should have run"

@@ -1317,6 +1317,647 @@ After a run finishes, four checks catch most problems:
 3. **Row counts.** Compare the site count in `<name>.vcf` with the distinct positions that reached the tables — `tail -n +2 <name>_snp_freq.tsv | cut -f1,2 | sort -u | wc -l`, and the same for the indel table. A very large drop points at the cross-sample filter; check `sampleThreshold` against your sample count in [the table above](#where-m-comes-from).
 4. **Column sums.** Frequencies within a site should sum to 1 in every column.
 
+# Pipeline Overview
+<!--@ section: pipeline | nav: Pipeline -->
+
+PoolSeqFlow is a set of Nextflow DSL2 modules, each an independent file under `scripts/` and each responsible for its own resume logic. Steps 0 to 8 are the analysis; a tenth module handles promotion, moving each finished artifact to permanent storage once nothing needs it any more. This page is the map; the detail is in [Steps](#pipeline-steps).
+
+```text
+Raw FASTQ reads
+      │
+      ▼
+[Step 0] Verify environment, parameters and folder structure
+      │
+      ▼
+[Step 1] Build reference dictionaries (BWA, SAMtools, SnpEff)
+      │
+      ▼
+[Step 2] QC & trimming (FastQC → Trim Galore → composition-aware clipping)
+      │
+      ▼
+[Step 3] Alignment (BWA-MEM)
+      │
+      ▼
+[Step 4] BAM cleanup (name-sort → fixmate → coord-sort → markdup → addRG → filter → index)
+      │
+      ▼
+[Step 5] Reports, and the depth ceiling for each sample
+      │
+      ▼
+[Step 6] Cap each BAM, then variant calling (BCFtools mpileup + call)
+      │
+      ├────────────────────────────────┐
+      ▼                                ▼
+[Step 7] VCF → frequency tables   [Step 8] Annotation (optional)
+```
+
+### What runs per sample and what runs once
+
+This distinction explains most of the pipeline's runtime behavior.
+
+| Step | Granularity | Notes |
+|---|---|---|
+| 0 Verify | Once | Gate for everything else |
+| 1 Dictionaries | Once | Three parallel index builds |
+| 2 Trim & clip | Per sample | Two sub-steps, the second depends on the first's FastQC output |
+| 3 Align | Per sample | |
+| 4 Cleanup | Per sample | |
+| 5 Reports | Per sample | Three sub-steps, independent; one of them sets that sample's depth ceiling |
+| 6 Variant call | Capping per sample, then **once, jointly** | Capping runs only for samples that have a ceiling; then one `bcftools mpileup` over every BAM |
+| 7 Frequencies | Once, five sub-steps | Serial chain; the last runs twice, on SNPs and on INDELs |
+| 8 Annotation | Once | Optional; runs on step 6's output, not step 7's |
+
+Step 6 is the pipeline's barrier: it needs every BAM before it can start, so a single slow sample delays the whole run from that point. It is also why samples must share a reference, and why the sample column order needs deciding ([in `metadata.csv`](#row-order-decides-column-order)).
+
+Under a run table, "once" means once per **variant** rather than once overall: runs that agree on everything a step reads share that step's single task, and only diverging work is repeated. See [Multi-run](#multi-run).
+
+### The two output branches
+
+After variant calling the workflow forks, and the branches never rejoin:
+
+**Step 7** takes the raw VCF through major-allele normalization, the cross-sample false-positive filter, depth and quality filtering, a SNP/INDEL split, and conversion to frequency tables. This is the analytical path.
+
+**Step 8** takes the *same raw VCF* — not step 7's output — splits multiallelic sites, and annotates with SnpEff. So the annotated VCF contains sites step 7 removed, in the original reference encoding rather than the major-allele one. Joining the two requires matching on `CHROM`/`POS` and expecting unmatched rows ([details](#the-vcf-files)).
+
+### Where the work happens
+
+Every step follows the same pattern:
+
+1. Check whether its output already exists — in `storageDir`, or on the working volume waiting to be promoted. If so, symlink it and exit.
+2. Otherwise do the work in `mainDir/work/`.
+3. Move the result out atomically: to `mainDir/Utilized/` if a later step will read it, or straight to `storageDir` if nothing will.
+4. Symlink it back into the task's working directory.
+5. Copy `.command.log` and `.command.err` into `Logs/`.
+
+Then, separately: when the last step that needed an artifact has succeeded, it is moved from `Utilized/` to `storageDir`. Each byte crosses between the two volumes exactly once, and something enters `Utilized/` precisely when it will be read again — the unpaired reads, the trimming reports and the FastQC output have no consumer at all, so they go straight to permanent storage and never appear there.
+
+That pattern is what makes the pipeline resumable without Nextflow's cache, keeps files from being duplicated, and survives an interrupted move. The reasoning is in [Design Decisions](#design-decisions); the mechanics are in [Resume Logic](#resume-logic).
+
+### Error handling
+
+`nextflow.config` sets `errorStrategy = 'finish'`: on a failure, running tasks are allowed to complete and no new ones start. Nothing is left half-written, and a re-run picks up from whatever genuinely finished.
+
+`ClipReads` is the exception, with `errorStrategy 'retry'` and `maxRetries 3` — it is the one step whose failures are commonly transient.
+
+`cleanup = true` removes task working directories after a successful run, leaving only empty hash-prefix folders under `work/`. `./PoolSeqFlow clean` clears those.
+
+**These five are yours to change, from `parameters.config`** — `errorStrategy`, `maxRetries`, `maxErrors`, `cleanup` and `conda.enabled`. They are defaults the installation sets *before* it reads your config, so anything you write wins. Nextflow scopes go outside the `params { }` block:
+
+```groovy
+params {
+    // ... your settings ...
+}
+
+cleanup = false          // keep work/ for debugging
+process {
+    errorStrategy = 'retry'
+    maxRetries = 5
+}
+```
+
+Two settings in `nextflow.config` are **not** yours to change, and a value you write for either is ignored. `workDir` is `mainDir/work`, which is where `clean` and `reset` look for it — move `mainDir` if you need the work directory elsewhere. `env.PATH` is what puts `dir.bin` in front of every task, and it is how the process scripts find the helpers they call by bare name; both of those follow the installation, and a run that lost them would fail at its first `atomic_mv.sh`.
+
+## Pipeline Steps
+<!--@ page: steps | nav: Steps -->
+
+Each step is an independent module under `scripts/`. This page covers what each one does, what it writes, and what makes it skip itself.
+
+---
+
+### Step 0: Verify Environment {: #step-0-verify-environment }
+
+`scripts/0_verify_environment.nf`
+
+The gate for everything else. Nine stages run in parallel, each writing its own section, and the results are assembled into `Output/Reports/0_verify_environment.txt`. Nothing downstream starts until every one of them has passed.
+
+#### The nine stages
+
+| Stage | Reports as | Fails when |
+|---|---|---|
+| `CheckReference` | `REFERENCE FILE CHECK` | The reference is missing. Gzipped or plain are both accepted |
+| `CheckGFF` | `GFF FILE CHECK` | The annotation is missing while `annotate = true` |
+| `CheckData` | `DATA SOURCE CHECK`, `DATA FOLDER CHECK`, `DATA FILES CHECK` | `dataSource` does not resolve, the directory is absent, or nothing matches `readPattern` |
+| `CheckMetadataFile` | `METADATA FILE CHECK`, `METADATA CHECK`, `METADATA SAMPLE MATCH`, `METADATA CHANGE CHECK` | `metadata.csv` is missing or malformed, a FASTQ sample has no row, or the analysis-affecting columns differ from what produced your results |
+| `CheckInstalledSoftware` | `SOFTWARE CHECK` | A tool named in `params.software` is not on `PATH` |
+| `CheckTrimParameters` | `TRIM PARAMETER CHECK` | `autodetect = false` with `adapter1` or `adapter2` unset |
+| `CheckRunParameters` | `PIPELINE VERSION`, `RUN PARAMETER CHECK` | The release differs from the one that produced your results, or an analysis-affecting parameter has changed |
+| `CheckDirectories` | `DIRECTORY CHECK` | `mainDir` and `storageDir` are the same path, or either is the installation itself |
+| `CheckMultiRun` | `MULTI-RUN CHECK` | The run table is missing, unparseable, or names a column that is not a parameter |
+
+`CheckMetadataFile` reports more than it refuses. It prints the pooling it worked out — which rows merged into which VCF column — and the pool sizes it will apply, before any compute is spent. A mistake there is visible in seconds rather than in a result months later.
+
+#### The consistency guards
+
+Three of those stages are not validating your input; they are checking that what you are about to run matches what produced the results already on disk. They exist because of how resume works: completed steps are skipped by looking for output files, not by checking what produced them, so a changed `poolSize` would leave one `Frequencies/` folder holding tables computed under two different thresholds, invisibly.
+
+| Record | Contents |
+|---|---|
+| `.poolseqflow_version` | The release that produced these results. A mismatch is a **hard stop** — nothing else is compared, because the parameter set itself moves between releases |
+| `.poolseqflow_params` | The analysis-affecting parameters, mirrored to a readable `run_parameters.txt` |
+| `.parameters.config` | Your configuration file, copied verbatim |
+| `.multirun.csv` | Your run table, copied verbatim, if you used one |
+| `.poolseqflow_metadata` | The `RG_*` and `param_*` columns and the row order, kept beside the results they describe |
+
+Path and resource parameters are excluded, along with the `software` entries — they change where and how fast work happens rather than what the answer is.
+
+When a guard trips, the run stops **before any work happens** and the report names what to delete. Deleting it is what clears the check. How much has to go depends on what changed: a reordered `metadata.csv` invalidates less than an edited tag value, and a changed pool size less again ([table](#editing-metadatacsv-after-a-run)).
+
+---
+
+### Step 1: Build Reference Dictionaries
+
+`scripts/1_build_dictionaries.nf`
+
+Puts an uncompressed reference into `Reference/Dictionaries/` — decompressing it if it was gzipped, copying it if it was not — and builds three index sets there, in parallel:
+
+| Sub-step | Produces |
+|---|---|
+| `CreateBwaIndex` | `Ref.fasta.{amb,ann,bwt,pac,sa}` |
+| `CreateSamtoolsFaiIndex` | `Ref.fasta.fai` |
+| `BuildSnpEffDb` | `Reference/Dictionaries/snpEff/` and `snpEff.config` (only if `annotate = true`) |
+
+All of it lives under `mainDir`, beside the reference it was built from, and none of it is copied to `storageDir`. Dictionaries are working material: they are derived from your reference and can be rebuilt from it, so they are not a result to keep. Under a run table, runs sharing a reference build them **once**.
+
+The SnpEff database name is derived from the GFF filename — `reference.gff.gz` becomes database `reference.gff`. The build copies the reference and GFF into a SnpEff `data/` layout, generates a minimal config, and verifies that `.bin` files were produced before declaring success. Completion is marked by `.build_complete`, which is what the resume check looks for.
+
+Build options are `-gff3 -noCheckCds -noCheckProtein -v`. The two `-noCheck` flags suppress SnpEff's protein and CDS consistency checks, which fail on many non-model GFFs for reasons that do not affect variant annotation.
+
+---
+
+### Step 2: Trim & QC
+
+`scripts/2_trim_reads.nf`
+
+Two sub-steps.
+
+**`TrimReads`** runs Trim Galore with `--fastqc --paired --retain_unpaired -q 25`, which removes adapters and low-quality 3′ ends and produces a FastQC report on the result.
+
+**`ClipReads`** parses that FastQC report and derives per-sample clip points from the per-base composition table, then applies them with cutadapt and re-runs FastQC on the output.
+
+The clipping algorithm, its failure modes and the one parameter worth tuning are covered in [Trimming & Clipping](#composition-aware-clipping).
+
+Trimmed reads are deleted once clipping has consumed them. `ClipReads` is the only step configured to retry on failure.
+
+---
+
+### Step 3: Align {: #step-3-align }
+
+`scripts/3_align.nf`
+
+```bash
+bwa mem -K 10000000 -T 30 -t <threads> reference R1_clipped R2_clipped \
+  | samtools view -b -o <sample>.bam
+```
+
+| Option | Parameter | Effect |
+|---|---|---|
+| `-T 30` | `bwa.minScoreOutput` | Minimum alignment score to report |
+| `-K 10000000` | `bwa.batchSize` | Fixed bases per batch — makes output **deterministic** regardless of thread count |
+
+`-K` is worth knowing about. Without it, BWA processes a batch sized by thread count, so the same input aligned with different `threads` can produce slightly different output. Fixing the batch size makes a run reproducible across machines.
+
+`bwa.options` is the whole flag string, and it ships commented out **because the pipeline builds it for you** from the two values above. There is nothing to set: change `minScoreOutput` or `batchSize` and the string follows.
+
+```groovy
+// options      = "-K ${params.bwa.batchSize} -T ${params.bwa.minScoreOutput}"
+```
+
+Uncomment it only when you want flags those two cannot express — a different `-A`/`-B` scoring, say. From then on the string is used exactly as you write it and the two values above stop being read, so **`-K` is gone unless you put it back yourself**, and the run quietly loses the determinism the section above is about. `-t` is the exception: it is not in the string at either end, so the thread count still comes from the [`cores` ladder](#resources) whatever you pin here.
+
+Like the values it replaces, it is analysis-affecting — step 0 refuses a run whose string differs from the one recorded beside your existing alignments.
+
+Output goes to `Output/Aligned/` as unsorted BAM.
+
+---
+
+### Step 4: Clean BAM Files
+
+`scripts/4_clean.nf`
+
+A single streamed pipeline of seven operations: name-sort, fixmate, coordinate-sort, mark and remove duplicates, add read groups, filter, index. The `@RG` string is assembled per sample from that sample's row in `metadata.csv`, skipping empty fields.
+
+Full detail, including why duplicates are removed rather than marked and what the MAPQ floor costs you: [Alignment & Cleaning](#alignment-cleaning).
+
+Output: `Output/Ready/<sample>_ready.bam` and `.bai`.
+
+---
+
+### Step 5: Generate Reports
+
+`scripts/5_reports.nf`
+
+Three independent sub-steps per sample:
+
+| Sub-step | Command | Output |
+|---|---|---|
+| `AlignmentReport` | `bamtools stats` | `Output/Reports/Alignment/<sample>_alignment_report.txt` |
+| `CoverageReport` | `samtools coverage` | `Output/Reports/Coverage/<sample>_coverage_report.txt` |
+| `DepthProfile` | `samtools stats` | `Output/Reports/Depth/<sample>_depth_histogram.tsv` and `_depth_report.txt` |
+
+`DepthProfile` also decides the depth ceiling step 6 applies to that sample, which is why this step is no longer a leaf: it passes the BAM, its index and the chosen ceiling on to variant calling. It runs whatever `capBAM.maxDepth` is set to — the histogram is worth having even when nothing is capped, and the reports are what [step 6](#depth-capping) is judged by.
+
+Reading the depth report on every run is the habit worth forming. The capped BAM step 6 builds is transient, so this file is the only record of which reads were actually called for that sample.
+
+---
+
+### Step 6: Variant Calling
+
+`scripts/6_variant_call.nf`
+
+```bash
+bcftools mpileup -B -C 50 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou -f reference <all BAMs> \
+  | bcftools call -m -A -v -Ov -o <name>.vcf
+```
+
+Before that, `CapBAM` truncates each BAM to the ceiling step 5 chose for it. It runs **only for samples that have one**: a sample the detector left alone, or a run with `capBAM.maxDepth = 0`, goes to bcftools with its ready BAM unchanged, and no `CapBAM` task appears in the trace. The capped BAM never reaches either storage root — it is built here, read by the pileup, and discarded, which is why step 5's reports are the durable record.
+
+One joint task over every BAM, producing a multi-sample VCF with `AD` and `DP` FORMAT fields. Every flag and its consequence: [Variant Calling](#variant-calling).
+
+**The BAMs are sorted before being handed to bcftools**, in `metadata.csv` row order. bcftools orders VCF columns by command-line order, so without this the column order would follow task-completion order — three consecutive runs on identical input gave three different orders.
+
+A header fix is applied afterwards: `INFO/MQ` is declared `Integer` by bcftools but can carry a float, so the declaration is rewritten to `Float`. Without it, strict VCF parsers reject the file.
+
+---
+
+### Step 7: VCF → Allele Frequency Tables
+
+`scripts/7_vcf2freq.nf`
+
+Five sub-steps in a serial chain, each deleting its input once its output is safe:
+
+| # | Sub-step | Does |
+|---|---|---|
+| 1 | `SortRefAltByFrequency` | Re-encodes so the most-read allele is `REF`; recomputes `DP` from `AD`; sets `GT` to `./.` |
+| 2 | `FilterPotentialFalsePositives` | Splits multiallelics, applies the cross-sample support test, rejoins, re-normalises |
+| 3 | `DepthAndQualityFilter` | `bcftools view -e "FMT/DP<20"` then `vcftools --minQ 30` |
+| 4 | `SplitSNPsAndINDELs` | Two vcftools passes into a SNP VCF and an INDEL VCF |
+| 5 | `CalculateFrequencies` | Extracts `AD`, publishes it as the depth table, then divides to frequencies; runs once per split file |
+
+Sub-step 2 is the pool-aware core of the pipeline and is documented in full in [The Filter Chain](#6-false-positive-filter-step-7). The minimum credible frequency it enforces is
+
+$$f_{\min} = \frac{1}{2 \times \text{ploidy} \times \text{poolSize}}$$
+
+but the test is not a plain cutoff in either direction. An allele must reach that frequency in a *fraction of samples*, which is what lets the threshold sit so low — and each sample is judged against **its own** pool's threshold, taken from `param_poolSize`, rather than against one number for the whole run.
+
+Output: `Output/Frequencies/<name>_snp_freq.tsv` and `<name>_indel_freq.tsv`, each beside a `_depth.tsv` holding the read counts it was computed from. Formats: [Interpreting Results](#the-frequency-tables) and [The depth tables](#depth-tables).
+
+---
+
+### Step 8: Annotate Variants {: #step-8-annotate-variants }
+
+`scripts/8_annotate_variants.nf` — optional, controlled by `annotate`.
+
+```bash
+bcftools norm -m - <name>.vcf | snpEff -v -stats snpeff_summary.html <db>
+```
+
+Splits multiallelic sites onto separate lines — SnpEff annotates one alternate allele per record — and annotates against the database built in step 1.
+
+!!! warning "This runs on the raw call set"
+
+    Step 8 takes step **6**'s output, not step 7's. It runs in parallel with the frequency branch, so `<name>_annotated.vcf` contains sites the step 7 filters removed, encoded against the original reference rather than the major allele. To attach annotations to your frequency tables, join on `CHROM`/`POS` and expect unmatched rows on the annotation side.
+
+Output: `Output/VCF/<name>_annotated.vcf`, `Output/Reports/snpeff_summary.html` and `Output/Reports/snpeff_summary.genes.txt`. SnpEff names the gene table after the summary and writes the two together, so they arrive and are replaced as a pair.
+
+Setting `annotate = false` skips this step and makes `gffFile` unnecessary — step 1 also stops building the SnpEff database.
+
+The parameters that control it — `annotate`, `gffFile` and the `snpEff` block — are in [Annotations](#annotations).
+
+---
+
+### Promotion
+
+`scripts/9_completion.nf`
+
+Not an analysis step, and it produces nothing of its own. It moves each finished artifact from the working volume to permanent storage once nothing needs it any more, so every byte crosses between the two exactly once.
+
+An artifact enters `mainDir/Utilized/` precisely when a later step will read it again. Things with no consumer at all — the unpaired reads, the trimming reports, the FastQC output, both step 5 reports — go straight to `storageDir` and never appear there.
+
+What moves it is a **completion signal from the last step that reads it**, not the artifact itself. Which step that is can depend on your configuration: `<name>.vcf` is read by step 7 always and by step 8 only when `annotate = true`, with no ordering between them, so the gate has to wait for whichever set applies to this run.
+
+If a run is interrupted, artifacts stay in `Utilized/` and the skip checks find them there — a resumed run counts them as done and picks up where it stopped, rather than repeating the work because the file is not in its final place yet.
+
+## Resume Logic
+<!--@ page: resume -->
+
+PoolSeqFlow implements its own resume strategy rather than using Nextflow's. This page covers how it behaves; the reasoning behind replacing `-resume` is in [Design Decisions](#resume-is-filesystem-based).
+
+### Two directories
+
+| | |
+|---|---|
+| **`mainDir`** | Where the pipeline runs and where everything it works on lives — your reads, your reference, the dictionaries built from it, `work/`, and outputs still being read. Not scratch: it holds your inputs, so it has to survive between runs |
+| **`storageDir`** | Where finished results are kept. Network storage, a group volume, a different mount |
+
+**They cannot be the same path**, and the run stops if they are. The two are storage tiers with different jobs, and an output moving from one to the other is the event that marks it finished — which cannot mean anything if they are one place.
+
+Each output is **moved** out of `work/` and a symlink left behind. Consequences:
+
+- **No duplication.** Nothing the pipeline produces exists twice on disk.
+- **One crossing.** An artifact moves between the two volumes exactly once, when the last step that needed it has finished.
+- **Automatic step-skipping.** Every step looks for its own outputs — in `storageDir` first, then on the working volume — and skips itself if they are there, regardless of the state of `work/`.
+- **Resilience.** The check depends on nothing but the storage the results are already in, so it survives cluster timeouts, reboots and `work/` cleanups.
+
+The order of that search matters. Permanent storage is consulted first so that a stray copy left on the working volume can never outrank a promoted one.
+
+### There is no `-resume`
+
+This strategy **replaces** Nextflow's `-resume`, and the wrapper never passes that flag. Two reasons it could not work here even if it were passed:
+
+- `cleanup = true` deletes task working directories once a run completes. `-resume` replays task outputs *from* those directories; after a successful run there is nothing to replay.
+- Several steps delete their own inputs once consumed. That leaves the upstream task's recorded outputs dangling, which invalidates the cache entry regardless.
+
+So `PoolSeqFlow run` is both "start" and "resume". `PoolSeqFlow resume` survives as a deprecated alias and prints a notice.
+
+To start genuinely from scratch:
+
+```bash
+PoolSeqFlow reset
+```
+
+It lists exactly what it is about to remove, across both directories, and requires typing `DELETE_MY_ANALYSIS` to confirm. That covers `Output/` and `Logs/` in `storageDir`; on `mainDir`, the dictionaries built from your reference, anything not yet promoted, and `work/`; Nextflow's own history; and the `.parameters.config`, `.multirun.csv` and `.poolseqflow_*` records describing all of it. Those records go too, because leaving them would have the next run comparing your configuration against outputs that no longer exist.
+
+Your reads, your reference and your two configuration files are not touched.
+
+### What a resumed run looks like
+
+Every process is still submitted. Step-skipping happens *inside* each task, not before it, so a fully resumed run submits roughly one job per process per sample. Those jobs test for a file, create a symlink, copy two log files and exit — but on a scheduler they are real submissions with real queue time.
+
+The log lines to look for are the `COMPLETED` messages that follow a "Found existing" line:
+
+```text
+ALIGNING Sample1: Found existing BAM file
+ALIGNING Sample1: Found: /storage/project/Output/Aligned/Sample1.bam
+ALIGNING Sample1: Creating symbolic link...
+ALIGNING Sample1: COMPLETED
+```
+
+### Partial-stage resume
+
+Step 7 is a chain of five sub-steps, and each checks for the outputs of every *later* stage as well as its own. If the frequency tables already exist, the earlier sub-steps create an empty placeholder and exit rather than redoing work whose result was superseded. This is why a partially completed step 7 resumes correctly even though its intermediates have been deleted.
+
+### Interrupted moves
+
+A plain `mv` across a filesystem boundary is a copy followed by an unlink. A job killed mid-move would leave a **truncated file under its final name**, which existence-based resume would then accept as a completed step.
+
+All cross-filesystem moves go through `bin/atomic_mv.sh`, which stages inside a temporary directory of its own and renames into place. An interrupted move leaves nothing any check looks for, and the step simply runs again.
+
+### What resume does not protect you from
+
+"The output exists" is not "the output is correct for your current settings". A file produced under `poolSize = 50` is indistinguishable from one produced under `poolSize = 100`.
+
+That gap is closed by the consistency guards at the start of a run, which record the release, the analysis parameters, the run table and the analysis-affecting parts of `metadata.csv` behind a set of outputs, and stop the run when any of them has changed. See [Step 0](#step-0-verify-environment).
+
+### Cleaning up
+
+| Command | Removes |
+|---|---|
+| `PoolSeqFlow clean` | Nextflow work directories — the empty hash-prefix folders `cleanup = true` leaves behind — and any staging directory left by a killed transfer |
+| `PoolSeqFlow dryclean` | The empty directory tree `dryrun` created as a preview |
+| `PoolSeqFlow reset` | All progress, across both directories, after listing it and asking you to type a confirmation |
+
+`clean` is safe at any time and does not affect resume — nothing in `work/` is consulted by the skip logic. `reset` deletes results.
+
+Every file the pipeline and the analysis layer publish is written into a staging directory beside its destination, verified there, and only then renamed into place, so that a partly-written file is never visible under a final name. That staging directory is removed on every path the transfer can reach, including failure — but a process that is *killed* reaches none of them, and leaves one behind. `clean` collects them from both `mainDir` and `storageDir`, naming each one before it goes. They are named `.atomic_mv.*`, `.restore.*` and `.analysis_results.*`, and finding one is a sign a run was killed rather than allowed to stop.
+
+The preview itself is built in `dryRunDir`, which is `dryrun/` in the directory you launch from, beside `parameters.config`, unless you point it somewhere else. It is outside the `Output/` tree on both roots, so a preview is never mixed in among results. `dryclean` asks the same parameter where to look, and both commands check what they are about to delete first: a directory holding anything other than empty folders, a `README.txt` and a `members.txt` is not a preview, so they list what is in it and remove nothing. `dryrun` replaces a preview that passes that check without asking, because there is nothing in one to lose.
+
+`dryRun` is the other half, and it is the pipeline's own flag rather than a setting for you to make: the `dryrun` command sets it, and it is what stops step 0 writing. Every check still runs and every comparison is still made — the report says *would record* where a real run says *recording*. That is what keeps a preview from leaving a baseline behind for results that are never produced, and it is why `dryRun` and `dryRunDir` are among the handful of parameters kept out of the recorded manifest: a preview must not be able to look like a run.
+
+!!! danger "Do not delete either directory's contents while a run is in flight"
+
+    Task working directories contain symlinks into the volume the output was moved to. Removing the target breaks links that are actively in use, and the failure will not be obvious. That applies to the working volume as well as to permanent storage — an artifact waiting to be promoted is being read from where it is.
+
+## Directory Layout
+<!--@ page: directories -->
+
+There are three directories, and keeping them apart is most of understanding the layout: **the installation**, which is a tool; **`mainDir`**, which is your project and where the work happens; and **`storageDir`**, which holds finished results.
+
+### The installation
+
+```text
+~/.local/opt/PoolSeqFlow-<version>/
+├── bin/                          # Run by the pipeline; all executable, all on PATH
+│   ├── atomic_mv.sh              # Cross-filesystem moves, staged and renamed
+│   ├── cap_depth.awk             # Truncate a BAM to a depth ceiling
+│   ├── classify_manifest.sh      # Sorts a parameter change into added/changed/removed
+│   ├── config_migrate.sh         # Backs migrate_config
+│   ├── createDepthFile.sh        # Extract AD/DP columns from a VCF
+│   ├── depth2freq.awk            # Convert allelic depths to frequencies
+│   ├── depth_cutoff.py           # Choose a sample's depth ceiling from its histogram
+│   ├── filterFalsePositives.sh   # Cross-sample support filter
+│   ├── find_artifact.sh          # Locate an output across the storage tiers
+│   ├── MajorAlleleToRef.py       # Re-encode VCF with the major allele as REF
+│   ├── parse_metadata.py         # Read and validate metadata.csv
+│   ├── parse_multirun.py         # Read and validate the run table
+│   └── write_citations.py        # Writes CITATIONS.md and references.bib per run
+├── lib/                          # Sourced by another script, never run; not on PATH
+│   ├── tool_version.sh           # Asks each tool its version, one way per tool
+│   └── wrapper_lib.sh            # Machinery shared by the wrapper and the install checks
+├── install/
+│   ├── environment.yml           # Pinned conda environment
+│   ├── environment-analysis.yml  # Pinned conda environment for the analysis layer
+│   ├── check_install.sh          # Verifies an installation (PoolSeqFlow check)
+│   └── check_analysis_install.sh # The same for the analysis layer, R packages included
+├── scripts/
+│   ├── 0_verify_environment.nf   # The nine checks that gate everything else
+│   ├── 1_build_dictionaries.nf   # BWA, SAMtools and SnpEff indices from your reference
+│   ├── 2_trim_reads.nf           # Trim Galore, then composition-aware clipping
+│   ├── 3_align.nf                # BWA-MEM
+│   ├── 4_clean.nf                # Name-sort → fixmate → markdup → addRG → filter → index
+│   ├── 5_reports.nf              # Alignment and coverage reports
+│   ├── 6_variant_call.nf         # One joint bcftools mpileup and call
+│   ├── 7_vcf2freq.nf             # Normalise, filter, split, convert to frequencies
+│   ├── 8_annotate_variants.nf    # SnpEff, optional
+│   ├── 9_completion.nf           # Promotion: moving finished artifacts to storageDir
+│   ├── citations.nf              # Writes CITATIONS.md and references.bib for the run
+│   ├── metadata.nf               # Reading metadata.csv, and the projections from it
+│   ├── resolve_parameters.nf     # Computed parameters, and one parameter set per run
+│   └── variants.nf               # Which runs share which work, and where it goes
+├── manual/                       # This manual
+├── nextflow.config
+├── parameters.config.template
+├── metadata.csv.template
+├── multi-run.csv.example
+├── poolseqflow.nf                # Workflow entry point
+├── dryrun.nf                     # Entry point for the layout preview
+└── PoolSeqFlow                   # CLI wrapper, pipeline and analysis layer alike
+```
+
+One copy serves any number of projects, and it is replaced wholesale when you upgrade — which is why nothing of yours belongs in it. `bin/` is prepended to `PATH` by `nextflow.config`, which is how the helper scripts are callable by bare name inside process scripts.
+
+### What you provide, on `mainDir`
+
+```text
+/path/to/working/directory/  ← mainDir, and where you run from
+├── parameters.config
+├── metadata.csv
+├── metadata.csv.example     ← left by init; reference, nothing reads it
+├── Data/                    ← dataSource names this folder
+│   ├── Sample1_R1.fq.gz
+│   ├── Sample1_R2.fq.gz
+│   └── …
+└── Reference/
+    ├── reference.fasta.gz
+    └── reference.gff.gz     ← only if annotate = true
+```
+
+Either reference file may be gzipped or plain.
+
+### What appears on `mainDir` as the run proceeds
+
+```text
+/path/to/working/directory/
+├── Reference/Dictionaries/       # Built from your reference in step 1
+│   ├── reference.fasta
+│   ├── reference.fasta.{amb,ann,bwt,fai,pac,sa}
+│   └── snpEff/
+├── Utilized/                     # Outputs still to be read; mirrors Output/'s tree
+└── work/                         # Nextflow's task directories
+```
+
+`Utilized/` empties itself as the run proceeds — each artifact moves to `storageDir` once the last step that needed it has finished, so a completed run leaves it empty. Under a run table each run gets its own, `Utilized_<RunID>`, because the runs share `mainDir` and would otherwise write to one path.
+
+`work/` is emptied by `cleanup = true` after a successful run, and `PoolSeqFlow clean` removes what is left. The dictionaries stay: they are derived from your reference and rebuilding them costs time for no gain.
+
+### What the pipeline produces, on `storageDir`
+
+```text
+/path/to/permanent/storage/
+├── Logs/                         # Per-step .log and .err, mirrored from every task
+└── Output/
+    ├── .poolseqflow_version      # The release that produced these results
+    ├── .poolseqflow_params       # The analysis parameters behind them
+    ├── .parameters.config        # Your configuration, copied verbatim
+    ├── .multirun.csv             # Your run table, copied verbatim, if you used one
+    ├── .poolseqflow_metadata     # The analysis-affecting columns of metadata.csv
+    ├── run_parameters.txt        # Readable mirror of .poolseqflow_params
+    ├── Trimmed/<sample>/         # Clipped FASTQs
+    ├── Unpaired/<sample>/        # Reads whose mate was discarded
+    ├── Aligned/                  # Raw BWA output
+    ├── Ready/                    # Cleaned, filtered, indexed BAMs
+    ├── VCF/                      # Call sets
+    ├── Frequencies/              # The result
+    └── Reports/
+        ├── Alignment/
+        ├── Coverage/
+        ├── Depth/                # Depth histogram and chosen ceiling, per sample
+        ├── Fastqc/<sample>/
+        ├── Trimming/<sample>/
+        ├── 0_verify_environment.txt
+        ├── snpeff_summary.{html,genes.txt}
+        └── PoolSeqFlow_pipeline_{report,timeline,trace,dag}.*
+```
+
+That is the shape for a single run.
+
+### Under a run table
+
+`Output/` and `Logs/` gain one level, and **only divergence is named**. Work every run shared goes under `All_Runs/`, work some of them shared under `Shared_<N>/`, and whatever a run did alone under its own `RunID`. Below each of those, the subtree is exactly the one above.
+
+Take three runs against two references, one of them filtered harder:
+
+```csv
+RunID,referenceFile,gffFile,vcffilter.minDP
+run_a1,ref_a.fasta.gz,ref_a.gff.gz,20
+run_a2,ref_a.fasta.gz,ref_a.gff.gz,40
+run_b,ref_b.fasta.gz,ref_b.gff.gz,20
+```
+
+```text
+/path/to/permanent/storage/Output/
+├── .poolseqflow_version          # The invocation's records stay at the root,
+├── .poolseqflow_params           #   describing the whole set of runs
+├── .parameters.config
+├── .multirun.csv
+├── run_parameters.txt
+│
+├── All_Runs/                     # every run agreed on the reads and the trimming
+│   ├── Trimmed/<sample>/
+│   ├── Unpaired/<sample>/
+│   └── Reports/
+│       ├── Fastqc/<sample>/
+│       ├── Trimming/<sample>/
+│       └── PoolSeqFlow_pipeline_{report,timeline,trace,dag}.*
+│
+├── Shared_1/                     # run_a1 and run_a2 share reference A
+│   ├── members.txt               #   -> "run_a1", "run_a2"
+│   ├── Aligned/
+│   ├── Ready/
+│   ├── VCF/
+│   └── Reports/{Alignment,Coverage}/
+│
+├── run_a1/                       # same reference, different minDP: only step 7 differs
+│   └── Frequencies/
+├── run_a2/
+│   └── Frequencies/
+│
+└── run_b/                        # a reference of its own, so it shares nothing past trimming
+    ├── Aligned/
+    ├── Ready/
+    ├── VCF/
+    ├── Reports/{Alignment,Coverage}/
+    └── Frequencies/
+```
+
+`Logs/` mirrors that shape exactly, so a step's log sits beside the output it produced.
+
+Three things are worth reading off it:
+
+- **The trimming is done once, not three times.** Every run reads the same FASTQ files with the same settings, so there is one set of trimmed reads under `All_Runs/`.
+- **`Shared_1` needs `members.txt`**, because a group number says nothing about which runs are in it. Numbers are assigned in order of appearance in the table, so reordering rows can move them.
+- **`run_a1` and `run_a2` hold only `Frequencies/`.** Everything earlier was identical between them and lives in `Shared_1`; the filtered VCFs that differ are intermediates and do not survive.
+
+`.poolseqflow_metadata` is the one record that does not sit at the root with the others. It describes the column order of a particular VCF, so it is kept beside that VCF — here, one in `Shared_1/` and one in `run_b/`.
+
+The Nextflow reports describe the whole invocation rather than any one run, so there is a single set under `All_Runs/Reports/`.
+
+A run that sets its own `storageDir` gets none of this. It has a results tree to itself, shares nothing, and repeats every step alone.
+
+### What survives a completed run {: #what-survives-a-completed-run }
+
+Several steps delete their inputs once the next stage has consumed them, and the deletion follows the symlink — the permanent copy goes too ([why](#steps-delete-their-own-inputs)). So the contents of `Output/VCF/` mid-run and after a completed run are not the same.
+
+With `vcf.fileName = 'Test'`:
+
+| File | Survives | Notes |
+|---|---|---|
+| `Test.vcf` | **Yes** | Raw call set from step 6 |
+| `Test_sort.vcf` | No | Deleted by the false-positive filter |
+| `Test_sort_fp.vcf` | No | Deleted by the depth/quality filter |
+| `Test_sort_fp_dq.vcf` | No | Deleted by the SNP/INDEL split |
+| `Test_sort_fp_dq_snp.vcf` | No | Deleted by frequency conversion |
+| `Test_sort_fp_dq_indel.vcf` | No | Deleted by frequency conversion |
+| `Test_annotated.vcf` | **Yes** | If `annotate = true`; annotates the *raw* call set |
+| `Test_snp_freq.tsv` | **Yes** | In `Frequencies/` |
+| `Test_indel_freq.tsv` | **Yes** | In `Frequencies/` |
+
+So `Output/VCF/` holds exactly two files after a completed run: the raw call set, and the annotated one if you enabled annotation. **Every VCF step 7 produces is an intermediate**, including the fully filtered one — what that becomes is the frequency tables.
+
+Likewise, `Output/Trimmed/<sample>/` keeps only the `_clipped.fq.gz` files after a completed run — the intermediate `_val_1`/`_val_2` files are removed once clipping has used them.
+
+`Output/Aligned/` and `Output/Ready/` are both kept. Nothing deletes a BAM.
+
+### Sizing storage
+
+Rough guidance for planning, per sample:
+
+| Directory | Relative size | Kept? |
+|---|---|---|
+| `Data/` | Your input | Yours |
+| `Trimmed/` | Slightly under input, after clipping | Yes |
+| `Unpaired/` | Small | Yes |
+| `Aligned/` | Comparable to trimmed input | Yes |
+| `Ready/` | Smaller — duplicates and filtered reads removed | Yes |
+| `VCF/` | Depends on variant density, not read count | Partly |
+| `Frequencies/` | Larger than the VCF it came from — one row per allele, not per site | Yes |
+
+The two BAM directories dominate. If disk is tight, `Output/Aligned/` is the safe thing to remove after a completed run: step 4 has consumed it, and only a re-run from alignment would need it back.
+
+**`mainDir` needs room for more than scratch.** It holds your reads and reference permanently, the dictionaries built from them, and — while the run is going — every output that a later step still has to read. At peak that is most of a run's intermediates at once. `work/` itself stays small, because it holds symlinks rather than copies.
+
+The peak on `mainDir` falls as the run proceeds, since each artifact leaves for `storageDir` as soon as the last step needing it finishes. A completed run leaves `Utilized/` empty.
+
 # Configuration
 <!--@ section: configuration -->
 
@@ -2433,14 +3074,7 @@ cd /path/to/project
 PoolSeqFlow analysis verify
 ```
 
-Modules in this release:
-
-| Module | What it does |
-|---|---|
-| `verify` | Reports what the analysis layer can see, and produces nothing |
-| `basicstats` | What is in your published tables, per pool — [its own page](#basicstats) |
-
-Those are the ones a release ships. Every other module is installed separately from the pipeline and published on its own timetable, so what this layer can do grows without the pipeline changing version.
+Three ship with the release — `verify`, `basicstats` and `association` — and each has a page of its own under [Shipped Modules](#shipped-modules), which is where what they compute and what they assume is written down. Every other module is installed separately and published on its own timetable.
 
 ### The modules installed here { #analysis-modules }
 
@@ -2492,13 +3126,13 @@ Everything the analysis layer takes:
 | `analysis.folderName` | Which folder under `Analysis/Results` it writes to | [Output Layout](#analysis-folder-name) |
 | `analysis.metadata.missingValueEncoding` | What a cell means when it is not a value — `NA` and its spellings | [below](#missing-values) |
 | `analysis.metadata.timeVar.*` | How the time column is read and ordered | [below](#the-time-axis) |
-| `analysis.metadata.design.*` | Which pools are independent of each other, which repeats are which, and which covariates a module may fit | [below](#experimental-design) |
-| `analysis.metadata.series.incomplete` | What to do with a trajectory that skips a timepoint | [below](#time-series) |
-| `analysis.metadata.phenotype.*` | Which `pt_` column a module associates things with, and how to read it | [below](#the-phenotype) |
+| `analysis.design.*` | What the experiment was: which pools are independent of each other, which repeats are which, and which covariates a module may fit | [below](#experimental-design) |
+| `analysis.design.series.incomplete` | What a time axis makes of that, and what to do with a trajectory that skips a timepoint | [below](#time-series) |
+| `analysis.metadata.phenotypes.*` | What each `pt_` column holds, so a module can test against it | [below](#the-phenotype) |
 | `analysis.metadata.covariates.*` | What each `cov_` column holds, so a module can compute with it | [below](#covariates) |
 | `analysis.modules.<module>.*` | One module's own settings | [below](#module-settings) |
 
-**The two extra levels are namespaces, and they earn their place.** `analysis.metadata` holds everything that says how `metadata.csv` is read; `analysis.modules` holds one scope per installed module. Keeping them apart means a module called `series` cannot read the frame's series settings, and it lets each level **refuse a key it does not have** — without which `analysis { timevar { … } }`, with a small `v`, would sit in your file unread while the project ran on defaults you never chose.
+**The three inner scopes are namespaces, and the split between them is a real one.** `analysis.metadata` says how `metadata.csv` is **read** — what a blank means, how a date parses, what scale a column carries. `analysis.design` says what the file **describes** — which pools are independent, which repeats are which. `analysis.modules` holds one scope per installed module. Keeping them apart means a module called `design` cannot read the frame's design settings, and it lets each level **refuse a key it does not have** — without which `analysis { timevar { … } }`, with a small `v`, would sit in your file unread while the project ran on defaults you never chose.
 
 A scope you write only part of keeps the rest of its defaults — `timeVar { kind = 'numerical' }` still takes `column` from `exp_time`. A key a scope does not have is refused, naming the ones it does.
 
@@ -2653,17 +3287,17 @@ Someone who meant July 3rd sees `2024-03-07` and catches it in one glance. That 
 ```groovy
 params {
     analysis {
-        metadata {
-            design {
-                by            = ['exp_treatment', 'exp_replicate', 'exp_lane']
-                biologicalRep = ['exp_replicate']
-                technicalRep  = ['exp_lane']
-                covariates    = ['cov_temperature']
-            }
+        design {
+            by            = ['exp_treatment', 'exp_replicate', 'exp_lane']
+            biologicalRep = ['exp_replicate']
+            technicalRep  = ['exp_lane']
+            covariates    = ['cov_temperature']
         }
     }
 }
 ```
+
+**Its own scope beside `analysis.metadata`, not inside it.** That one says how the file is read; this one says what the file describes. The two answer different questions and a project can get one right and the other wrong.
 
 **This applies with or without a time course.** A one-off comparison of three treated pools against three controls has conditions and independent units exactly as a five-generation time series does, and reads them from the same three settings.
 
@@ -2742,12 +3376,12 @@ The counts are per unit and given as a range when they vary, because a design wh
 
 A trajectory needs more than an order: it needs to know which pools are **one thing measured repeatedly**. A series is the pools that share every identifying variable and differ only in time — the same key the [experimental design](#experimental-design) is built from, followed through the [time axis](#the-time-axis).
 
-Where a project has no time axis there are no series, and the units and conditions above are unaffected. The only setting a series adds is what to do when one has a gap in it.
+Where a project has no time axis there are no series, and the units and conditions above are unaffected. The only setting a series adds is what to do when one has a gap in it, and it lives **inside** the design scope, because a series is what a time axis makes of the design rather than a thing of its own.
 
 ```groovy
 params {
     analysis {
-        metadata {
+        design {
             series {
                 incomplete = 'fail'
             }
@@ -2758,7 +3392,7 @@ params {
 
 #### When a series is missing a timepoint
 
-`analysis.metadata.series.incomplete` decides, and it defaults to `fail` because a ragged panel analyzed as a complete one is a wrong answer that looks like a right one.
+`analysis.design.series.incomplete` decides, and it defaults to `fail` because a ragged panel analyzed as a complete one is a wrong answer that looks like a right one.
 
 | | |
 |---|---|
@@ -2831,24 +3465,28 @@ What a module has is listed in its own section of this manual, and the defaults 
 
 Inside `analysis`, always. A scope written at the top level of a configuration file becomes part of the record this project is checked against, and every analysis would then refuse with a message about a changed project rather than about the file you just wrote — so that mistake is caught and named where it happens.
 
-### The phenotype { #the-phenotype }
+### Phenotypes { #the-phenotype }
 
-A `pt_` column records something **measured on the pool** — a trait value, a resistance score, a case/control status. No pipeline step reads one. A module that associates allele frequencies with a phenotype reads exactly one of them, and which one is yours to name.
+A `pt_` column records something **measured on the pool** — a trait value, a resistance score, a case/control status. No pipeline step reads one. Declare a scale for as many as you record, one block per column:
 
 ```groovy
 params {
     analysis {
         metadata {
-            phenotype {
-                column = 'pt_wingspan'
-                kind   = 'quantitative'
+            phenotypes {
+                pt_wingspan   { kind = 'quantitative' }
+                pt_resistance { kind = 'binary'; levels = ['unaffected', 'affected'] }
             }
         }
     }
 }
 ```
 
-**It has to be a `pt_` column, and that is a rule rather than a convention.** `pt_` columns are checked for agreeing across the rows of one pool, exactly as `exp_` ones are — so naming any other column would let one pool carry two phenotype values with nothing to stop it. Anything outside the prefix is refused by name.
+**Declaring a phenotype does not choose it.** This block says what each column *holds*; which one an analysis tests against is the module's own setting, listed in that module's section. So a project with three phenotypes writes one declaration block and runs three analyses from it — set [`folderName`](#analysis-folder-name) so each lands somewhere of its own. It is the same split [covariates](#covariates) use, and the same one that separates [`analysis.metadata`](#analysis-configuration) from `analysis.design`: what a column holds is one question, what it is *for* is another.
+
+**A `pt_` column you do not declare is not an error.** It is recorded, checked and reported like any pool-level column; it simply carries no scale, so no module can test against it. The report names the columns in that state, because "kept for the record" and "forgot to declare it" look identical in the file.
+
+**It has to be a `pt_` column, and that is a rule rather than a convention.** `pt_` columns are checked for agreeing across the rows of one pool, exactly as `exp_` ones are — so declaring any other column would let one pool carry two phenotype values with nothing to stop it. Anything outside the prefix is refused by name.
 
 #### `kind` is a measurement scale, declared and never detected { #phenotype-kind }
 
@@ -2914,7 +3552,7 @@ Read those two lines before you read any result. They are where a reversed encod
 
 **A group holding one pool is reported too.** It contributes no within-group variance, so any comparison against it rests on that single pool — legitimate, occasionally unavoidable, and not something a table of group means shows you.
 
-You can record as many `pt_` columns as you like — `analysis.metadata.phenotype.column` chooses one. To analyze several, run the module once per phenotype with [`analysis.folderName`](#analysis-folder-name) set, so each result lands in a folder of its own and says which phenotype produced it. That is deliberately not a list: a folder holding three answers under one name is a folder nobody can cite.
+Record and declare as many `pt_` columns as you like. **What a module does with them is its own setting**, and a module that fits one phenotype at a time is run once per phenotype with [`analysis.folderName`](#analysis-folder-name) set, so each result lands in a folder of its own and says which phenotype produced it. A folder holding three answers under one name is a folder nobody can cite.
 
 ### Covariates { #covariates }
 
@@ -3111,16 +3749,28 @@ The cost of a working cycle is therefore one transfer, not two — which matters
 
 **Do not run it while a module is running.** The two would be moving the same folders in opposite directions, and neither checks for the other.
 
-## Shipped Modules
-<!--@ page: modules | nav: Modules -->
+# Shipped Modules
+<!--@ section: modules | nav: Modules -->
 
-Most modules are installed separately. These are the ones a release carries, so they are available the moment the analysis environment exists, and their versions move on the pipeline's timetable rather than a catalogue's. Each has a page of its own:
+Most modules are installed separately. These are the ones a release carries, so they are available the moment the analysis environment exists, and their versions move on the pipeline's timetable rather than a catalogue's.
 
-| Module | What it computes |
-|---|---|
-| [`basicstats`](#basicstats) | site counts, depth, effective pool size and gene diversity, per pool |
+| Module | What it computes | Needs |
+|---|---|---|
+| `verify` | Reports what the analysis layer can see of your project, and produces nothing. Run it first when something is not being found | nothing |
+| [`basicstats`](#basicstats) | Site counts, depth, effective pool size and gene diversity, per pool | the frequency and depth tables |
+| [`association`](#association) | Each allele's frequency against a phenotype you measured per pool, with a permutation p | the depth tables, and a `pt_` column |
 
-What follows here is what they have in common.
+Run one at a time, from your project directory:
+
+```bash
+cd /path/to/project
+PoolSeqFlow analysis basicstats
+```
+
+Each has a page of its own here. What comes first is what they have in common.
+
+## What every module shares
+<!--@ page: common | nav: In common -->
 
 ### How long the per-site work takes { #analysis-compiled }
 
@@ -3329,646 +3979,166 @@ For a whole project, `analysis.modules.basicstats.usecpp = false` in `basicstats
 
 `site_diversity.cpp` is published in the results folder whether or not the run used it, and the header of `basicstats.R` beside it names the path that produced the numbers, the bin size and the number of workers.
 
-# Pipeline Overview
-<!--@ section: pipeline | nav: Pipeline -->
+### What to cite { #basicstats-citations }
 
-PoolSeqFlow is a set of Nextflow DSL2 modules, each an independent file under `scripts/` and each responsible for its own resume logic. Steps 0 to 8 are the analysis; a tenth module handles promotion, moving each finished artifact to permanent storage once nothing needs it any more. This page is the map; the detail is in [Steps](#pipeline-steps).
-
-```text
-Raw FASTQ reads
-      │
-      ▼
-[Step 0] Verify environment, parameters and folder structure
-      │
-      ▼
-[Step 1] Build reference dictionaries (BWA, SAMtools, SnpEff)
-      │
-      ▼
-[Step 2] QC & trimming (FastQC → Trim Galore → composition-aware clipping)
-      │
-      ▼
-[Step 3] Alignment (BWA-MEM)
-      │
-      ▼
-[Step 4] BAM cleanup (name-sort → fixmate → coord-sort → markdup → addRG → filter → index)
-      │
-      ▼
-[Step 5] Reports, and the depth ceiling for each sample
-      │
-      ▼
-[Step 6] Cap each BAM, then variant calling (BCFtools mpileup + call)
-      │
-      ├────────────────────────────────┐
-      ▼                                ▼
-[Step 7] VCF → frequency tables   [Step 8] Annotation (optional)
-```
-
-### What runs per sample and what runs once
-
-This distinction explains most of the pipeline's runtime behavior.
-
-| Step | Granularity | Notes |
-|---|---|---|
-| 0 Verify | Once | Gate for everything else |
-| 1 Dictionaries | Once | Three parallel index builds |
-| 2 Trim & clip | Per sample | Two sub-steps, the second depends on the first's FastQC output |
-| 3 Align | Per sample | |
-| 4 Cleanup | Per sample | |
-| 5 Reports | Per sample | Three sub-steps, independent; one of them sets that sample's depth ceiling |
-| 6 Variant call | Capping per sample, then **once, jointly** | Capping runs only for samples that have a ceiling; then one `bcftools mpileup` over every BAM |
-| 7 Frequencies | Once, five sub-steps | Serial chain; the last runs twice, on SNPs and on INDELs |
-| 8 Annotation | Once | Optional; runs on step 6's output, not step 7's |
-
-Step 6 is the pipeline's barrier: it needs every BAM before it can start, so a single slow sample delays the whole run from that point. It is also why samples must share a reference, and why the sample column order needs deciding ([in `metadata.csv`](#row-order-decides-column-order)).
-
-Under a run table, "once" means once per **variant** rather than once overall: runs that agree on everything a step reads share that step's single task, and only diverging work is repeated. See [Multi-run](#multi-run).
-
-### The two output branches
-
-After variant calling the workflow forks, and the branches never rejoin:
-
-**Step 7** takes the raw VCF through major-allele normalization, the cross-sample false-positive filter, depth and quality filtering, a SNP/INDEL split, and conversion to frequency tables. This is the analytical path.
-
-**Step 8** takes the *same raw VCF* — not step 7's output — splits multiallelic sites, and annotates with SnpEff. So the annotated VCF contains sites step 7 removed, in the original reference encoding rather than the major-allele one. Joining the two requires matching on `CHROM`/`POS` and expecting unmatched rows ([details](#the-vcf-files)).
-
-### Where the work happens
-
-Every step follows the same pattern:
-
-1. Check whether its output already exists — in `storageDir`, or on the working volume waiting to be promoted. If so, symlink it and exit.
-2. Otherwise do the work in `mainDir/work/`.
-3. Move the result out atomically: to `mainDir/Utilized/` if a later step will read it, or straight to `storageDir` if nothing will.
-4. Symlink it back into the task's working directory.
-5. Copy `.command.log` and `.command.err` into `Logs/`.
-
-Then, separately: when the last step that needed an artifact has succeeded, it is moved from `Utilized/` to `storageDir`. Each byte crosses between the two volumes exactly once, and something enters `Utilized/` precisely when it will be read again — the unpaired reads, the trimming reports and the FastQC output have no consumer at all, so they go straight to permanent storage and never appear there.
-
-That pattern is what makes the pipeline resumable without Nextflow's cache, keeps files from being duplicated, and survives an interrupted move. The reasoning is in [Design Decisions](#design-decisions); the mechanics are in [Resume Logic](#resume-logic).
-
-### Error handling
-
-`nextflow.config` sets `errorStrategy = 'finish'`: on a failure, running tasks are allowed to complete and no new ones start. Nothing is left half-written, and a re-run picks up from whatever genuinely finished.
-
-`ClipReads` is the exception, with `errorStrategy 'retry'` and `maxRetries 3` — it is the one step whose failures are commonly transient.
-
-`cleanup = true` removes task working directories after a successful run, leaving only empty hash-prefix folders under `work/`. `./PoolSeqFlow clean` clears those.
-
-**These five are yours to change, from `parameters.config`** — `errorStrategy`, `maxRetries`, `maxErrors`, `cleanup` and `conda.enabled`. They are defaults the installation sets *before* it reads your config, so anything you write wins. Nextflow scopes go outside the `params { }` block:
-
-```groovy
-params {
-    // ... your settings ...
-}
-
-cleanup = false          // keep work/ for debugging
-process {
-    errorStrategy = 'retry'
-    maxRetries = 5
-}
-```
-
-Two settings in `nextflow.config` are **not** yours to change, and a value you write for either is ignored. `workDir` is `mainDir/work`, which is where `clean` and `reset` look for it — move `mainDir` if you need the work directory elsewhere. `env.PATH` is what puts `dir.bin` in front of every task, and it is how the process scripts find the helpers they call by bare name; both of those follow the installation, and a run that lost them would fail at its first `atomic_mv.sh`.
-
-## Pipeline Steps
-<!--@ page: steps | nav: Steps -->
-
-Each step is an independent module under `scripts/`. This page covers what each one does, what it writes, and what makes it skip itself.
-
----
-
-### Step 0: Verify Environment {: #step-0-verify-environment }
-
-`scripts/0_verify_environment.nf`
-
-The gate for everything else. Nine stages run in parallel, each writing its own section, and the results are assembled into `Output/Reports/0_verify_environment.txt`. Nothing downstream starts until every one of them has passed.
-
-#### The nine stages
-
-| Stage | Reports as | Fails when |
-|---|---|---|
-| `CheckReference` | `REFERENCE FILE CHECK` | The reference is missing. Gzipped or plain are both accepted |
-| `CheckGFF` | `GFF FILE CHECK` | The annotation is missing while `annotate = true` |
-| `CheckData` | `DATA SOURCE CHECK`, `DATA FOLDER CHECK`, `DATA FILES CHECK` | `dataSource` does not resolve, the directory is absent, or nothing matches `readPattern` |
-| `CheckMetadataFile` | `METADATA FILE CHECK`, `METADATA CHECK`, `METADATA SAMPLE MATCH`, `METADATA CHANGE CHECK` | `metadata.csv` is missing or malformed, a FASTQ sample has no row, or the analysis-affecting columns differ from what produced your results |
-| `CheckInstalledSoftware` | `SOFTWARE CHECK` | A tool named in `params.software` is not on `PATH` |
-| `CheckTrimParameters` | `TRIM PARAMETER CHECK` | `autodetect = false` with `adapter1` or `adapter2` unset |
-| `CheckRunParameters` | `PIPELINE VERSION`, `RUN PARAMETER CHECK` | The release differs from the one that produced your results, or an analysis-affecting parameter has changed |
-| `CheckDirectories` | `DIRECTORY CHECK` | `mainDir` and `storageDir` are the same path, or either is the installation itself |
-| `CheckMultiRun` | `MULTI-RUN CHECK` | The run table is missing, unparseable, or names a column that is not a parameter |
-
-`CheckMetadataFile` reports more than it refuses. It prints the pooling it worked out — which rows merged into which VCF column — and the pool sizes it will apply, before any compute is spent. A mistake there is visible in seconds rather than in a result months later.
-
-#### The consistency guards
-
-Three of those stages are not validating your input; they are checking that what you are about to run matches what produced the results already on disk. They exist because of how resume works: completed steps are skipped by looking for output files, not by checking what produced them, so a changed `poolSize` would leave one `Frequencies/` folder holding tables computed under two different thresholds, invisibly.
-
-| Record | Contents |
-|---|---|
-| `.poolseqflow_version` | The release that produced these results. A mismatch is a **hard stop** — nothing else is compared, because the parameter set itself moves between releases |
-| `.poolseqflow_params` | The analysis-affecting parameters, mirrored to a readable `run_parameters.txt` |
-| `.parameters.config` | Your configuration file, copied verbatim |
-| `.multirun.csv` | Your run table, copied verbatim, if you used one |
-| `.poolseqflow_metadata` | The `RG_*` and `param_*` columns and the row order, kept beside the results they describe |
-
-Path and resource parameters are excluded, along with the `software` entries — they change where and how fast work happens rather than what the answer is.
-
-When a guard trips, the run stops **before any work happens** and the report names what to delete. Deleting it is what clears the check. How much has to go depends on what changed: a reordered `metadata.csv` invalidates less than an edited tag value, and a changed pool size less again ([table](#editing-metadatacsv-after-a-run)).
-
----
-
-### Step 1: Build Reference Dictionaries
-
-`scripts/1_build_dictionaries.nf`
-
-Puts an uncompressed reference into `Reference/Dictionaries/` — decompressing it if it was gzipped, copying it if it was not — and builds three index sets there, in parallel:
-
-| Sub-step | Produces |
-|---|---|
-| `CreateBwaIndex` | `Ref.fasta.{amb,ann,bwt,pac,sa}` |
-| `CreateSamtoolsFaiIndex` | `Ref.fasta.fai` |
-| `BuildSnpEffDb` | `Reference/Dictionaries/snpEff/` and `snpEff.config` (only if `annotate = true`) |
-
-All of it lives under `mainDir`, beside the reference it was built from, and none of it is copied to `storageDir`. Dictionaries are working material: they are derived from your reference and can be rebuilt from it, so they are not a result to keep. Under a run table, runs sharing a reference build them **once**.
-
-The SnpEff database name is derived from the GFF filename — `reference.gff.gz` becomes database `reference.gff`. The build copies the reference and GFF into a SnpEff `data/` layout, generates a minimal config, and verifies that `.bin` files were produced before declaring success. Completion is marked by `.build_complete`, which is what the resume check looks for.
-
-Build options are `-gff3 -noCheckCds -noCheckProtein -v`. The two `-noCheck` flags suppress SnpEff's protein and CDS consistency checks, which fail on many non-model GFFs for reasons that do not affect variant annotation.
-
----
-
-### Step 2: Trim & QC
-
-`scripts/2_trim_reads.nf`
-
-Two sub-steps.
-
-**`TrimReads`** runs Trim Galore with `--fastqc --paired --retain_unpaired -q 25`, which removes adapters and low-quality 3′ ends and produces a FastQC report on the result.
-
-**`ClipReads`** parses that FastQC report and derives per-sample clip points from the per-base composition table, then applies them with cutadapt and re-runs FastQC on the output.
-
-The clipping algorithm, its failure modes and the one parameter worth tuning are covered in [Trimming & Clipping](#composition-aware-clipping).
-
-Trimmed reads are deleted once clipping has consumed them. `ClipReads` is the only step configured to retry on failure.
-
----
-
-### Step 3: Align {: #step-3-align }
-
-`scripts/3_align.nf`
-
-```bash
-bwa mem -K 10000000 -T 30 -t <threads> reference R1_clipped R2_clipped \
-  | samtools view -b -o <sample>.bam
-```
-
-| Option | Parameter | Effect |
-|---|---|---|
-| `-T 30` | `bwa.minScoreOutput` | Minimum alignment score to report |
-| `-K 10000000` | `bwa.batchSize` | Fixed bases per batch — makes output **deterministic** regardless of thread count |
-
-`-K` is worth knowing about. Without it, BWA processes a batch sized by thread count, so the same input aligned with different `threads` can produce slightly different output. Fixing the batch size makes a run reproducible across machines.
-
-`bwa.options` is the whole flag string, and it ships commented out **because the pipeline builds it for you** from the two values above. There is nothing to set: change `minScoreOutput` or `batchSize` and the string follows.
-
-```groovy
-// options      = "-K ${params.bwa.batchSize} -T ${params.bwa.minScoreOutput}"
-```
-
-Uncomment it only when you want flags those two cannot express — a different `-A`/`-B` scoring, say. From then on the string is used exactly as you write it and the two values above stop being read, so **`-K` is gone unless you put it back yourself**, and the run quietly loses the determinism the section above is about. `-t` is the exception: it is not in the string at either end, so the thread count still comes from the [`cores` ladder](#resources) whatever you pin here.
-
-Like the values it replaces, it is analysis-affecting — step 0 refuses a run whose string differs from the one recorded beside your existing alignments.
-
-Output goes to `Output/Aligned/` as unsorted BAM.
-
----
-
-### Step 4: Clean BAM Files
-
-`scripts/4_clean.nf`
-
-A single streamed pipeline of seven operations: name-sort, fixmate, coordinate-sort, mark and remove duplicates, add read groups, filter, index. The `@RG` string is assembled per sample from that sample's row in `metadata.csv`, skipping empty fields.
-
-Full detail, including why duplicates are removed rather than marked and what the MAPQ floor costs you: [Alignment & Cleaning](#alignment-cleaning).
-
-Output: `Output/Ready/<sample>_ready.bam` and `.bai`.
-
----
-
-### Step 5: Generate Reports
-
-`scripts/5_reports.nf`
-
-Three independent sub-steps per sample:
-
-| Sub-step | Command | Output |
-|---|---|---|
-| `AlignmentReport` | `bamtools stats` | `Output/Reports/Alignment/<sample>_alignment_report.txt` |
-| `CoverageReport` | `samtools coverage` | `Output/Reports/Coverage/<sample>_coverage_report.txt` |
-| `DepthProfile` | `samtools stats` | `Output/Reports/Depth/<sample>_depth_histogram.tsv` and `_depth_report.txt` |
-
-`DepthProfile` also decides the depth ceiling step 6 applies to that sample, which is why this step is no longer a leaf: it passes the BAM, its index and the chosen ceiling on to variant calling. It runs whatever `capBAM.maxDepth` is set to — the histogram is worth having even when nothing is capped, and the reports are what [step 6](#depth-capping) is judged by.
-
-Reading the depth report on every run is the habit worth forming. The capped BAM step 6 builds is transient, so this file is the only record of which reads were actually called for that sample.
-
----
-
-### Step 6: Variant Calling
-
-`scripts/6_variant_call.nf`
-
-```bash
-bcftools mpileup -B -C 50 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou -f reference <all BAMs> \
-  | bcftools call -m -A -v -Ov -o <name>.vcf
-```
-
-Before that, `CapBAM` truncates each BAM to the ceiling step 5 chose for it. It runs **only for samples that have one**: a sample the detector left alone, or a run with `capBAM.maxDepth = 0`, goes to bcftools with its ready BAM unchanged, and no `CapBAM` task appears in the trace. The capped BAM never reaches either storage root — it is built here, read by the pileup, and discarded, which is why step 5's reports are the durable record.
-
-One joint task over every BAM, producing a multi-sample VCF with `AD` and `DP` FORMAT fields. Every flag and its consequence: [Variant Calling](#variant-calling).
-
-**The BAMs are sorted before being handed to bcftools**, in `metadata.csv` row order. bcftools orders VCF columns by command-line order, so without this the column order would follow task-completion order — three consecutive runs on identical input gave three different orders.
-
-A header fix is applied afterwards: `INFO/MQ` is declared `Integer` by bcftools but can carry a float, so the declaration is rewritten to `Float`. Without it, strict VCF parsers reject the file.
-
----
-
-### Step 7: VCF → Allele Frequency Tables
-
-`scripts/7_vcf2freq.nf`
-
-Five sub-steps in a serial chain, each deleting its input once its output is safe:
-
-| # | Sub-step | Does |
-|---|---|---|
-| 1 | `SortRefAltByFrequency` | Re-encodes so the most-read allele is `REF`; recomputes `DP` from `AD`; sets `GT` to `./.` |
-| 2 | `FilterPotentialFalsePositives` | Splits multiallelics, applies the cross-sample support test, rejoins, re-normalises |
-| 3 | `DepthAndQualityFilter` | `bcftools view -e "FMT/DP<20"` then `vcftools --minQ 30` |
-| 4 | `SplitSNPsAndINDELs` | Two vcftools passes into a SNP VCF and an INDEL VCF |
-| 5 | `CalculateFrequencies` | Extracts `AD`, publishes it as the depth table, then divides to frequencies; runs once per split file |
-
-Sub-step 2 is the pool-aware core of the pipeline and is documented in full in [The Filter Chain](#6-false-positive-filter-step-7). The minimum credible frequency it enforces is
-
-$$f_{\min} = \frac{1}{2 \times \text{ploidy} \times \text{poolSize}}$$
-
-but the test is not a plain cutoff in either direction. An allele must reach that frequency in a *fraction of samples*, which is what lets the threshold sit so low — and each sample is judged against **its own** pool's threshold, taken from `param_poolSize`, rather than against one number for the whole run.
-
-Output: `Output/Frequencies/<name>_snp_freq.tsv` and `<name>_indel_freq.tsv`, each beside a `_depth.tsv` holding the read counts it was computed from. Formats: [Interpreting Results](#the-frequency-tables) and [The depth tables](#depth-tables).
-
----
-
-### Step 8: Annotate Variants {: #step-8-annotate-variants }
-
-`scripts/8_annotate_variants.nf` — optional, controlled by `annotate`.
-
-```bash
-bcftools norm -m - <name>.vcf | snpEff -v -stats snpeff_summary.html <db>
-```
-
-Splits multiallelic sites onto separate lines — SnpEff annotates one alternate allele per record — and annotates against the database built in step 1.
-
-!!! warning "This runs on the raw call set"
-
-    Step 8 takes step **6**'s output, not step 7's. It runs in parallel with the frequency branch, so `<name>_annotated.vcf` contains sites the step 7 filters removed, encoded against the original reference rather than the major allele. To attach annotations to your frequency tables, join on `CHROM`/`POS` and expect unmatched rows on the annotation side.
-
-Output: `Output/VCF/<name>_annotated.vcf`, `Output/Reports/snpeff_summary.html` and `Output/Reports/snpeff_summary.genes.txt`. SnpEff names the gene table after the summary and writes the two together, so they arrive and are replaced as a pair.
-
-Setting `annotate = false` skips this step and makes `gffFile` unnecessary — step 1 also stops building the SnpEff database.
-
-The parameters that control it — `annotate`, `gffFile` and the `snpEff` block — are in [Annotations](#annotations).
-
----
-
-### Promotion
-
-`scripts/9_completion.nf`
-
-Not an analysis step, and it produces nothing of its own. It moves each finished artifact from the working volume to permanent storage once nothing needs it any more, so every byte crosses between the two exactly once.
-
-An artifact enters `mainDir/Utilized/` precisely when a later step will read it again. Things with no consumer at all — the unpaired reads, the trimming reports, the FastQC output, both step 5 reports — go straight to `storageDir` and never appear there.
-
-What moves it is a **completion signal from the last step that reads it**, not the artifact itself. Which step that is can depend on your configuration: `<name>.vcf` is read by step 7 always and by step 8 only when `annotate = true`, with no ordering between them, so the gate has to wait for whichever set applies to this run.
-
-If a run is interrupted, artifacts stay in `Utilized/` and the skip checks find them there — a resumed run counts them as done and picks up where it stopped, rather than repeating the work because the file is not in its final place yet.
-
-## Resume Logic
-<!--@ page: resume -->
-
-PoolSeqFlow implements its own resume strategy rather than using Nextflow's. This page covers how it behaves; the reasoning behind replacing `-resume` is in [Design Decisions](#resume-is-filesystem-based).
-
-### Two directories
+Every folder `basicstats` publishes carries a `CITATIONS.md` and a `references.bib` with these already filled in, and `PoolSeqFlow analysis cite basicstats` prints them without running anything. **Cite the statistics, not only the software** — what a reader needs to check is the estimator, and the estimator is not the program that ran it.
 
 | | |
 |---|---|
-| **`mainDir`** | Where the pipeline runs and where everything it works on lives — your reads, your reference, the dictionaries built from it, `work/`, and outputs still being read. Not scratch: it holds your inputs, so it has to survive between runs |
-| **`storageDir`** | Where finished results are kept. Network storage, a group volume, a different mount |
+| [Nei 1973](#ref-nei1973diversity) | the gene diversity itself, summed over every allele at a site rather than over two |
+| [Ferretti et al. 2013](#ref-ferretti2013pool) | why a pooled estimate needs correcting at all: individuals are sampled into the pool, then reads are sampled from it |
+| [Hivert et al. 2018](#ref-hivert2018poolseq) | the effective sample size everything is weighted by, including which of the two forms in circulation this is |
 
-**They cannot be the same path**, and the run stops if they are. The two are storage tiers with different jobs, and an output moving from one to the other is the event that marks it finished — which cannot mean anything if they are one place.
+Full entries, with what each is cited for, are in the [Bibliography](#bibliography).
 
-Each output is **moved** out of `work/` and a symlink left behind. Consequences:
+## `association` { #association }
+<!--@ page: association | nav: association -->
 
-- **No duplication.** Nothing the pipeline produces exists twice on disk.
-- **One crossing.** An artifact moves between the two volumes exactly once, when the last step that needed it has finished.
-- **Automatic step-skipping.** Every step looks for its own outputs — in `storageDir` first, then on the working volume — and skips itself if they are there, regardless of the state of `work/`.
-- **Resilience.** The check depends on nothing but the storage the results are already in, so it survives cluster timeouts, reboots and `work/` cleanups.
-
-The order of that search matters. Permanent storage is consulted first so that a stray copy left on the working volume can never outrank a promoted one.
-
-### There is no `-resume`
-
-This strategy **replaces** Nextflow's `-resume`, and the wrapper never passes that flag. Two reasons it could not work here even if it were passed:
-
-- `cleanup = true` deletes task working directories once a run completes. `-resume` replays task outputs *from* those directories; after a successful run there is nothing to replay.
-- Several steps delete their own inputs once consumed. That leaves the upstream task's recorded outputs dangling, which invalidates the cache entry regardless.
-
-So `PoolSeqFlow run` is both "start" and "resume". `PoolSeqFlow resume` survives as a deprecated alias and prints a notice.
-
-To start genuinely from scratch:
+Each allele's frequency regressed on a phenotype you measured per pool, weighted by how precisely each pool's frequency was measured, with a p-value read off a permutation rather than a table.
 
 ```bash
-PoolSeqFlow reset
+PoolSeqFlow analysis association
 ```
 
-It lists exactly what it is about to remove, across both directories, and requires typing `DELETE_MY_ANALYSIS` to confirm. That covers `Output/` and `Logs/` in `storageDir`; on `mainDir`, the dictionaries built from your reference, anything not yet promoted, and `work/`; Nextflow's own history; and the `.parameters.config`, `.multirun.csv` and `.poolseqflow_*` records describing all of it. Those records go too, because leaving them would have the next run comparing your configuration against outputs that no longer exist.
+It reads the depth tables and your `metadata.csv`. The phenotype is a `pt_` column, declared in `analysis.metadata.phenotypes` and chosen for this module in `analysis.modules.association.phenotypes`.
 
-Your reads, your reference and your two configuration files are not touched.
+### What it assumes, and why that sentence comes first { #association-assumptions }
 
-### What a resumed run looks like
+**This is a model-based test.** It is not an assumption-light one, and there is no assumption-light one available: any test that weights pools by their precision has already conceded that they differ, and a null that then treats them as interchangeable contradicts its own statistic. So the assumptions are stated rather than hidden, and there are three.
 
-Every process is still submitted. Step-skipping happens *inside* each task, not before it, so a fully resumed run submits roughly one job per process per sample. Those jobs test for a file, create a symlink, copy two log files and exit — but on a scheduler they are real submissions with real queue time.
+1. **How precisely a frequency was measured.** For one allele at one site in one unit, the variance is `p(1−p) × (dispersion + 1/n_eff)` — read sampling and pool sampling through `n_eff`, plus whatever excess uneven pooling left behind. Only the *ratio* between units is ever a claim: multiplying every weight by a constant leaves the result unchanged, so a pool size wrong by the same factor everywhere costs nothing, and one wrong differently per unit costs calibration.
+2. **Units are independent.** A unit is one independent biological entity; two pools are two units unless `analysis.design.technicalRep` says they are one material measured twice.
+3. **A site's alleles are several views of one comparison**, which is what the next section is about.
 
-The log lines to look for are the `COMPLETED` messages that follow a "Found existing" line:
+Where those do not describe your experiment, the numbers will still be produced and will still be wrong. [`permutations.tsv`](#association-diagnostics) is what tells you so, and **if your design is one this does not fit, please come and say so** — the roster grows by someone describing a problem this cannot answer, and fitting your data to the nearest available analysis serves nobody.
 
-```text
-ALIGNING Sample1: Found existing BAM file
-ALIGNING Sample1: Found: /storage/project/Output/Aligned/Sample1.bam
-ALIGNING Sample1: Creating symbolic link...
-ALIGNING Sample1: COMPLETED
-```
+### A site with more than two alleles { #association-multiallelic }
 
-### Partial-stage resume
+**Every allele is fitted, the reference included, and the site's answer is the strongest of them.** Nothing is collapsed, nothing is dropped, and there is no correction for how many there were.
 
-Step 7 is a chain of five sub-steps, and each checks for the outputs of every *later* stage as well as its own. If the frequency tables already exist, the earlier sub-steps create an empty placeholder and exit rather than redoing work whose result was superseded. This is why a partially completed step 7 resumes correctly even though its intermediates have been deleted.
+That is worth unpacking, because it is where this module departs from what most tools do.
 
-### Interrupted moves
+**One regression per allele.** A triallelic site gives three fits — reference against the phenotype, first alternate against it, second alternate against it. Each allele has its own frequency and therefore its own variance under assumption 1 above; the weights are the same for all of them, because a weight describes how deeply that unit was read at that site and depth is a property of the site.
 
-A plain `mv` across a filesystem boundary is a copy followed by an unlink. A job killed mid-move would leave a **truncated file under its final name**, which existence-based resume would then accept as a completed step.
+**The site statistic is the largest |t| among them.** Written `S` in [`association.tsv`](#association-sites).
 
-All cross-filesystem moves go through `bin/atomic_mv.sh`, which stages inside a temporary directory of its own and renames into place. An interrupted move leaves nothing any check looks for, and the step simply runs again.
+**Why the reference row is not skipped.** A site's frequencies sum to 1, so the reference carries the negated sum of every alternate. When a phenotype pushes two alternates up together, neither is impressive alone and the reference falls by both — so the reference row is where that signal is, and an analysis that only looks at alternates cannot see it. Measured against a planted signal of exactly that shape, reading the alternates alone recovers **40% fewer** of the sites than reading every allele.
 
-### What resume does not protect you from
+`MajorAlleleToRef.py` has already made the reference the cohort's *major* allele, so "reference" here is not a privileged biological state — it is simply the commonest allele, and skipping it would privilege "not the commonest" for no reason.
 
-"The output exists" is not "the output is correct for your current settings". A file produced under `poolSize = 50` is indistinguishable from one produced under `poolSize = 100`.
+**Why more alleles is not an unfair advantage.** A site of four alleles offers four chances at a large |t| where a biallelic site offers two, which sounds like it should favour multiallelic sites. It does not, because the p-value is not read off a table: it is read against a null built by rearranging **that same site**, which has the same alleles, the same constraint that they sum to 1, and therefore the same number of chances. The comparison is like for like at every arity, so nothing needs correcting — no Bonferroni, no union bound.
 
-That gap is closed by the consistency guards at the start of a run, which record the release, the analysis parameters, the run table and the analysis-affecting parts of `metadata.csv` behind a set of outputs, and stop the run when any of them has changed. See [Step 0](#step-0-verify-environment).
+That is not an argument from first principles alone. Measured on null sites of two, three and four alleles, the false-positive rate is flat across arity, and the sites the module selects have the same allele counts as the genome it selected them from — which is what `arity_mean` and `arity_selected` in [`permutations.tsv`](#association-diagnostics) let you check on your own data. The union-bound alternative — take the smallest allele p and multiply by *k* − 1 — measured **37% above its nominal rate** at triallelic sites, which is why it is not used.
 
-### Cleaning up
+**What it costs.** A site of *k* alleles carries *k* − 1 free tests, not *k*: at a biallelic site the reference and alternate rows are the same test with the sign flipped, and their p-values are identical. So one site is one finding, whatever its arity, and the allele rows tell you which allele carries it rather than giving you several findings.
 
-| Command | Removes |
+### The smallest p your design can reach { #association-floor }
+
+**Before any of the output: a design of *n* units cannot report a p below `2 / n!`, however strong the signal.** Reversing a phenotype negates every slope and leaves the statistic alone, so the reversed arrangement always ties with the observed one and two of the rearrangements are always counted.
+
+| units | smallest p | can a site be significant at 0.05? |
+|---|---|---|
+| 4 | 0.083 | **no** |
+| 5 | 0.017 | yes |
+| 6 | 0.0028 | yes |
+| 8 | 0.00005 | yes |
+
+At four units the run says so in a sentence and the table is a **ranking of effect sizes, not a test**. That is a true statement about the experiment rather than a fault of the method, and it is the honest answer to a well-known failure of this kind of study: a modestly powered pool-seq scan read as though it were well powered produces scattered genome-wide significance from a single causal variant, which looks like a polygenic architecture and is noise [Long et al. 2026](#ref-long2026polygenicity). A floor is a structural refusal to draw that picture.
+
+The floor binds hardest when the pools are read to similar depths. Where depths differ a great deal the design carries more information than a bare count of units suggests, and the run can reach further down; `design_floor` and `floor` in [`permutations.tsv`](#association-diagnostics) are those two numbers side by side.
+
+### `association.tsv` — one row per site { #association-sites }
+
+Always complete: every site the module could read has a row, whether or not it produced a statistic.
+
+| Column | What |
 |---|---|
-| `PoolSeqFlow clean` | Nextflow work directories — the empty hash-prefix folders `cleanup = true` leaves behind — and any staging directory left by a killed transfer |
-| `PoolSeqFlow dryclean` | The empty directory tree `dryrun` created as a preview |
-| `PoolSeqFlow reset` | All progress, across both directories, after listing it and asking you to type a confirmation |
+| `phenotype`, `kind`, `chrom`, `pos` | which fit, which table, and where |
+| `k` | how many alleles the site holds, the reference included |
+| `n_observed`, `n_units` | units carrying data here, and units in the design |
+| `S` | the site statistic: the largest \|t\| over **every** allele |
+| `perm_p` | the published p, from the permutation |
+| `fdr_p` | `perm_p` corrected across sites, by default Benjamini–Hochberg [Benjamini & Hochberg 1995](#ref-benjamini1995fdr) |
+| `mean_weight` | the average effective sample size at this site |
+| `max_leverage` | how much of the slope one unit is carrying, which at six of them is the question a reader has |
+| `zero_variance` | 1 where an allele had no residual left; see below |
 
-`clean` is safe at any time and does not affect resume — nothing in `work/` is consulted by the skip logic. `reset` deletes results.
+**A flagged site's `S` is not comparable between implementations and must not be quoted.** Two alleles of a perfectly separated site are algebraically one test, and whether each lands on exactly zero residual or on 1e-32 decides between an infinite *t* and a merely enormous one — we have seen two builds of the same language disagree. `perm_p` is unaffected and remains the answer.
 
-Every file the pipeline and the analysis layer publish is written into a staging directory beside its destination, verified there, and only then renamed into place, so that a partly-written file is never visible under a final name. That staging directory is removed on every path the transfer can reach, including failure — but a process that is *killed* reaches none of them, and leaves one behind. `clean` collects them from both `mainDir` and `storageDir`, naming each one before it goes. They are named `.atomic_mv.*`, `.restore.*` and `.analysis_results.*`, and finding one is a sign a run was killed rather than allowed to stop.
+### `association_alleles.tsv` — one row per allele { #association-alleles }
 
-The preview itself is built in `dryRunDir`, which is `dryrun/` in the directory you launch from, beside `parameters.config`, unless you point it somewhere else. It is outside the `Output/` tree on both roots, so a preview is never mixed in among results. `dryclean` asks the same parameter where to look, and both commands check what they are about to delete first: a directory holding anything other than empty folders, a `README.txt` and a `members.txt` is not a preview, so they list what is in it and remove nothing. `dryrun` replaces a preview that passes that check without asking, because there is nothing in one to lose.
+The effect sizes, for the sites `reportBelow` and `reportTop` select. **This table is a selection and the site table is not**: at a hundred million sites the allele rows are a twenty-gigabyte file, which is a data dump rather than a result.
 
-`dryRun` is the other half, and it is the pipeline's own flag rather than a setting for you to make: the `dryrun` command sets it, and it is what stops step 0 writing. Every check still runs and every comparison is still made — the report says *would record* where a real run says *recording*. That is what keeps a preview from leaving a baseline behind for results that are never produced, and it is why `dryRun` and `dryRunDir` are among the handful of parameters kept out of the recorded manifest: a preview must not be able to look like a run.
+`b1` is the slope, `se` its standard error, and `t` and `p` the closed-form diagnostics. **`b1 > 0` means the allele is more frequent at the higher phenotype value** — for a categorical scale, at the level [`phenotype.tsv`](#association-phenotype) names as coded 1.
 
-!!! danger "Do not delete either directory's contents while a run is in flight"
+The parametric `p` is a diagnostic and not the answer. It is well calibrated on an ordinary site and makes impossible claims on a degenerate one — six reads of evidence will produce a *p* of 1e-9 that no design of six pools can support.
 
-    Task working directories contain symlinks into the volume the output was moved to. Removing the target breaks links that are actively in use, and the failure will not be obvious. That applies to the working volume as well as to permanent storage — an artifact waiting to be promoted is being read from where it is.
+### `permutations.tsv` — what the run assumed and what it absorbed { #association-diagnostics }
 
-## Directory Layout
-<!--@ page: directories -->
+A guard that passes tells you nothing. These are published so that someone reading your results, without rerunning them, can see what the model was asked to do on your behalf.
 
-There are three directories, and keeping them apart is most of understanding the layout: **the installation**, which is a tool; **`mainDir`**, which is your project and where the work happens; and **`storageDir`**, which holds finished results.
+| Column | What it means, and when to worry |
+|---|---|
+| `permutations`, `exhaustive` | how many rearrangements, and whether that was all of them |
+| `floor`, `design_floor` | the smallest p this run could reach, and the smallest the design can |
+| `dispersion` | the excess variance uneven pooling left behind, in units of `p(1−p)`. Large means the weights absorbed a lot; it is estimated from your data unless you set it |
+| `depth_phenotype_cor` | depth lined up with the phenotype. This breaks label-based tests badly and is the reason this module does not use one |
+| `lambda_gc` | genomic inflation. If it is 3, nothing in the table is a p-value |
+| `arity_mean`, `arity_selected`, `selected` | the allele counts of the sites selected against all sites. **They should agree**; multiallelic sites at the top of a table are a biological claim, and this is how you check it is one |
 
-### The installation
+### `phenotype.tsv` — the phenotype as it was read { #association-phenotype }
 
-```text
-~/.local/opt/PoolSeqFlow-<version>/
-├── bin/                          # Run by the pipeline; all executable, all on PATH
-│   ├── atomic_mv.sh              # Cross-filesystem moves, staged and renamed
-│   ├── cap_depth.awk             # Truncate a BAM to a depth ceiling
-│   ├── classify_manifest.sh      # Sorts a parameter change into added/changed/removed
-│   ├── config_migrate.sh         # Backs migrate_config
-│   ├── createDepthFile.sh        # Extract AD/DP columns from a VCF
-│   ├── depth2freq.awk            # Convert allelic depths to frequencies
-│   ├── depth_cutoff.py           # Choose a sample's depth ceiling from its histogram
-│   ├── filterFalsePositives.sh   # Cross-sample support filter
-│   ├── find_artifact.sh          # Locate an output across the storage tiers
-│   ├── MajorAlleleToRef.py       # Re-encode VCF with the major allele as REF
-│   ├── parse_metadata.py         # Read and validate metadata.csv
-│   ├── parse_multirun.py         # Read and validate the run table
-│   └── write_citations.py        # Writes CITATIONS.md and references.bib per run
-├── lib/                          # Sourced by another script, never run; not on PATH
-│   ├── tool_version.sh           # Asks each tool its version, one way per tool
-│   └── wrapper_lib.sh            # Machinery shared by the wrapper and the install checks
-├── install/
-│   ├── environment.yml           # Pinned conda environment
-│   ├── environment-analysis.yml  # Pinned conda environment for the analysis layer
-│   ├── check_install.sh          # Verifies an installation (PoolSeqFlow check)
-│   └── check_analysis_install.sh # The same for the analysis layer, R packages included
-├── scripts/
-│   ├── 0_verify_environment.nf   # The nine checks that gate everything else
-│   ├── 1_build_dictionaries.nf   # BWA, SAMtools and SnpEff indices from your reference
-│   ├── 2_trim_reads.nf           # Trim Galore, then composition-aware clipping
-│   ├── 3_align.nf                # BWA-MEM
-│   ├── 4_clean.nf                # Name-sort → fixmate → markdup → addRG → filter → index
-│   ├── 5_reports.nf              # Alignment and coverage reports
-│   ├── 6_variant_call.nf         # One joint bcftools mpileup and call
-│   ├── 7_vcf2freq.nf             # Normalise, filter, split, convert to frequencies
-│   ├── 8_annotate_variants.nf    # SnpEff, optional
-│   ├── 9_completion.nf           # Promotion: moving finished artifacts to storageDir
-│   ├── citations.nf              # Writes CITATIONS.md and references.bib for the run
-│   ├── metadata.nf               # Reading metadata.csv, and the projections from it
-│   ├── resolve_parameters.nf     # Computed parameters, and one parameter set per run
-│   └── variants.nf               # Which runs share which work, and where it goes
-├── manual/                       # This manual
-├── nextflow.config
-├── parameters.config.template
-├── metadata.csv.template
-├── multi-run.csv.example
-├── poolseqflow.nf                # Workflow entry point
-├── dryrun.nf                     # Entry point for the layout preview
-└── PoolSeqFlow                   # CLI wrapper, pipeline and analysis layer alike
-```
+One row per pool: the cell as you wrote it, the number the fit used, the unit it belongs to, and for a categorical scale which level became 1.
 
-One copy serves any number of projects, and it is replaced wholesale when you upgrade — which is why nothing of yours belongs in it. `bin/` is prepended to `PATH` by `nextflow.config`, which is how the helper scripts are callable by bare name inside process scripts.
+**Read this first.** A reversed case/control coding has no more of a check than `dd/MM` against `MM/dd` does, and printing the resolved answer is the only place either is caught.
 
-### What you provide, on `mainDir`
+### `qq.png` — the p-values against the uniform they should follow { #association-qq }
 
-```text
-/path/to/working/directory/  ← mainDir, and where you run from
-├── parameters.config
-├── metadata.csv
-├── metadata.csv.example     ← left by init; reference, nothing reads it
-├── Data/                    ← dataSource names this folder
-│   ├── Sample1_R1.fq.gz
-│   ├── Sample1_R2.fq.gz
-│   └── …
-└── Reference/
-    ├── reference.fasta.gz
-    └── reference.gff.gz     ← only if annotate = true
-```
+Always drawn. A permutation p is discrete, so the points sit on a ladder rather than a line, and the ladder's ceiling is your design's floor. A curve bending above the diagonal is inflation; the diagonal itself is what a null genome looks like.
 
-Either reference file may be gzipped or plain.
+### `manhattan_<sequence>.png` — association along a sequence { #association-manhattan }
 
-### What appears on `mainDir` as the run proceeds
+Drawn only for the sequences you name in `analysis.modules.association.chromosomes`, on the same rule `basicstats` follows: a genome has more sequences than anyone wants plots for.
 
-```text
-/path/to/working/directory/
-├── Reference/Dictionaries/       # Built from your reference in step 1
-│   ├── reference.fasta
-│   ├── reference.fasta.{amb,ann,bwt,fai,pac,sa}
-│   └── snpEff/
-├── Utilized/                     # Outputs still to be read; mirrors Output/'s tree
-└── work/                         # Nextflow's task directories
-```
+**A flat ceiling across one of these is your design's floor and not a feature of the data.**
 
-`Utilized/` empties itself as the run proceeds — each artifact moves to `storageDir` once the last step that needed it has finished, so a completed run leaves it empty. Under a run table each run gets its own, `Utilized_<RunID>`, because the runs share `mainDir` and would otherwise write to one path.
+### What it can be set to { #association-settings }
 
-`work/` is emptied by `cleanup = true` after a successful run, and `PoolSeqFlow clean` removes what is left. The dictionaries stay: they are derived from your reference and rebuilding them costs time for no gain.
-
-### What the pipeline produces, on `storageDir`
-
-```text
-/path/to/permanent/storage/
-├── Logs/                         # Per-step .log and .err, mirrored from every task
-└── Output/
-    ├── .poolseqflow_version      # The release that produced these results
-    ├── .poolseqflow_params       # The analysis parameters behind them
-    ├── .parameters.config        # Your configuration, copied verbatim
-    ├── .multirun.csv             # Your run table, copied verbatim, if you used one
-    ├── .poolseqflow_metadata     # The analysis-affecting columns of metadata.csv
-    ├── run_parameters.txt        # Readable mirror of .poolseqflow_params
-    ├── Trimmed/<sample>/         # Clipped FASTQs
-    ├── Unpaired/<sample>/        # Reads whose mate was discarded
-    ├── Aligned/                  # Raw BWA output
-    ├── Ready/                    # Cleaned, filtered, indexed BAMs
-    ├── VCF/                      # Call sets
-    ├── Frequencies/              # The result
-    └── Reports/
-        ├── Alignment/
-        ├── Coverage/
-        ├── Depth/                # Depth histogram and chosen ceiling, per sample
-        ├── Fastqc/<sample>/
-        ├── Trimming/<sample>/
-        ├── 0_verify_environment.txt
-        ├── snpeff_summary.{html,genes.txt}
-        └── PoolSeqFlow_pipeline_{report,timeline,trace,dag}.*
-```
-
-That is the shape for a single run.
-
-### Under a run table
-
-`Output/` and `Logs/` gain one level, and **only divergence is named**. Work every run shared goes under `All_Runs/`, work some of them shared under `Shared_<N>/`, and whatever a run did alone under its own `RunID`. Below each of those, the subtree is exactly the one above.
-
-Take three runs against two references, one of them filtered harder:
-
-```csv
-RunID,referenceFile,gffFile,vcffilter.minDP
-run_a1,ref_a.fasta.gz,ref_a.gff.gz,20
-run_a2,ref_a.fasta.gz,ref_a.gff.gz,40
-run_b,ref_b.fasta.gz,ref_b.gff.gz,20
-```
-
-```text
-/path/to/permanent/storage/Output/
-├── .poolseqflow_version          # The invocation's records stay at the root,
-├── .poolseqflow_params           #   describing the whole set of runs
-├── .parameters.config
-├── .multirun.csv
-├── run_parameters.txt
-│
-├── All_Runs/                     # every run agreed on the reads and the trimming
-│   ├── Trimmed/<sample>/
-│   ├── Unpaired/<sample>/
-│   └── Reports/
-│       ├── Fastqc/<sample>/
-│       ├── Trimming/<sample>/
-│       └── PoolSeqFlow_pipeline_{report,timeline,trace,dag}.*
-│
-├── Shared_1/                     # run_a1 and run_a2 share reference A
-│   ├── members.txt               #   -> "run_a1", "run_a2"
-│   ├── Aligned/
-│   ├── Ready/
-│   ├── VCF/
-│   └── Reports/{Alignment,Coverage}/
-│
-├── run_a1/                       # same reference, different minDP: only step 7 differs
-│   └── Frequencies/
-├── run_a2/
-│   └── Frequencies/
-│
-└── run_b/                        # a reference of its own, so it shares nothing past trimming
-    ├── Aligned/
-    ├── Ready/
-    ├── VCF/
-    ├── Reports/{Alignment,Coverage}/
-    └── Frequencies/
-```
-
-`Logs/` mirrors that shape exactly, so a step's log sits beside the output it produced.
-
-Three things are worth reading off it:
-
-- **The trimming is done once, not three times.** Every run reads the same FASTQ files with the same settings, so there is one set of trimmed reads under `All_Runs/`.
-- **`Shared_1` needs `members.txt`**, because a group number says nothing about which runs are in it. Numbers are assigned in order of appearance in the table, so reordering rows can move them.
-- **`run_a1` and `run_a2` hold only `Frequencies/`.** Everything earlier was identical between them and lives in `Shared_1`; the filtered VCFs that differ are intermediates and do not survive.
-
-`.poolseqflow_metadata` is the one record that does not sit at the root with the others. It describes the column order of a particular VCF, so it is kept beside that VCF — here, one in `Shared_1/` and one in `run_b/`.
-
-The Nextflow reports describe the whole invocation rather than any one run, so there is a single set under `All_Runs/Reports/`.
-
-A run that sets its own `storageDir` gets none of this. It has a results tree to itself, shares nothing, and repeats every step alone.
-
-### What survives a completed run {: #what-survives-a-completed-run }
-
-Several steps delete their inputs once the next stage has consumed them, and the deletion follows the symlink — the permanent copy goes too ([why](#steps-delete-their-own-inputs)). So the contents of `Output/VCF/` mid-run and after a completed run are not the same.
-
-With `vcf.fileName = 'Test'`:
-
-| File | Survives | Notes |
+| Setting | Default | What |
 |---|---|---|
-| `Test.vcf` | **Yes** | Raw call set from step 6 |
-| `Test_sort.vcf` | No | Deleted by the false-positive filter |
-| `Test_sort_fp.vcf` | No | Deleted by the depth/quality filter |
-| `Test_sort_fp_dq.vcf` | No | Deleted by the SNP/INDEL split |
-| `Test_sort_fp_dq_snp.vcf` | No | Deleted by frequency conversion |
-| `Test_sort_fp_dq_indel.vcf` | No | Deleted by frequency conversion |
-| `Test_annotated.vcf` | **Yes** | If `annotate = true`; annotates the *raw* call set |
-| `Test_snp_freq.tsv` | **Yes** | In `Frequencies/` |
-| `Test_indel_freq.tsv` | **Yes** | In `Frequencies/` |
+| `phenotypes` | — | which `pt_` column to fit. Required |
+| `permutations` | 10000 | the budget. The set is enumerated whole while it fits inside this, and sampled above it |
+| `fdr` | `BH` | anything `p.adjust` takes |
+| `dispersion` | estimated | the excess variance term. `0` weights by `n_eff` alone |
+| `reportBelow`, `reportTop` | 0.05, 1000 | which sites reach the allele table |
+| `chromosomes` | none | which sequences get a plot |
+| `binSize`, `workers`, `usecpp` | 100000, task cpus, true | how the work is divided and which implementation does it |
 
-So `Output/VCF/` holds exactly two files after a completed run: the raw call set, and the annotated one if you enabled annotation. **Every VCF step 7 produces is an intermediate**, including the fully filtered one — what that becomes is the frequency tables.
+**Enumerating is a correctness requirement, not a speed one.** A sampled p is `(1 + reached) / (1 + draws)` [Phipson & Smyth 2010](#ref-phipson2010permutation), and sampling a set small enough to enumerate can return a p below the smallest value your design supports. Leave `permutations` above `n!` for small designs.
 
-Likewise, `Output/Trimmed/<sample>/` keeps only the `_clipped.fq.gz` files after a completed run — the intermediate `_val_1`/`_val_2` files are removed once clipping has used them.
+### The compiled path { #association-compiled }
 
-`Output/Aligned/` and `Output/Ready/` are both kept. Nothing deletes a BAM.
+The per-site parse runs through **`allele_frequencies.cpp`, compiled on your machine, and that is the default**:
 
-### Sizing storage
+```bash
+PoolSeqFlow analysis association          # compiled, the default
+PoolSeqFlow analysis association nocpp    # plain R, for one run
+```
 
-Rough guidance for planning, per sample:
+Both produce the same numbers, which the test suite asserts by comparing the published tables byte for byte. `allele_frequencies.cpp` is published beside your results whether or not the run used it, and the header of `association.R` names the path that produced the numbers.
 
-| Directory | Relative size | Kept? |
-|---|---|---|
-| `Data/` | Your input | Yours |
-| `Trimmed/` | Slightly under input, after clipping | Yes |
-| `Unpaired/` | Small | Yes |
-| `Aligned/` | Comparable to trimmed input | Yes |
-| `Ready/` | Smaller — duplicates and filtered reads removed | Yes |
-| `VCF/` | Depends on variant density, not read count | Partly |
-| `Frequencies/` | Larger than the VCF it came from — one row per allele, not per site | Yes |
+### What to cite { #association-citations }
 
-The two BAM directories dominate. If disk is tight, `Output/Aligned/` is the safe thing to remove after a completed run: step 4 has consumed it, and only a re-run from alignment would need it back.
+Every folder `association` publishes carries a `CITATIONS.md` and a `references.bib` with these already filled in, and `PoolSeqFlow analysis cite association` prints them without running anything. **Cite the statistics, not only the software.**
 
-**`mainDir` needs room for more than scratch.** It holds your reads and reference permanently, the dictionaries built from them, and — while the run is going — every output that a later step still has to read. At peak that is most of a run's intermediates at once. `work/` itself stays small, because it holds symlinks rather than copies.
+| | |
+|---|---|
+| [Hivert et al. 2018](#ref-hivert2018poolseq) | the effective sample size each unit is weighted by, and which of the two forms in circulation this is |
+| [Phipson & Smyth 2010](#ref-phipson2010permutation) | why a sampled permutation p is `(1 + reached) / (1 + draws)` and never the raw share |
+| [Benjamini & Hochberg 1995](#ref-benjamini1995fdr) | the correction across sites, applied to the permutation p and never to the per-allele one |
+| [Long et al. 2026](#ref-long2026polygenicity) | what a modestly powered pool-seq scan produces when it is read as though it were well powered, which is why this module prints a floor rather than assuming one |
 
-The peak on `mainDir` falls as the run proceeds, since each artifact leaves for `storageDir` as soon as the last step needing it finishes. A completed run leaves `Utilized/` empty.
+Full entries, with what each is cited for, are in the [Bibliography](#bibliography).
 
 # Development History and Principles
 <!--@ section: development | nav: Development -->
@@ -4460,6 +4630,16 @@ The diversity statistic itself is [Nei 1973](#ref-nei1973diversity), the correct
 **Nei, M.** (1973). Analysis of Gene Diversity in Subdivided Populations. *Proceedings of the National Academy of Sciences* 70(12), 3321–3323. [10.1073/pnas.70.12.3321](https://doi.org/10.1073/pnas.70.12.3321)
 : The diversity statistic this module reports, H = 1 - sum(p_i^2), summed over every allele at a site rather than over two. It is defined for any number of alleles, which is why a triallelic site needs no collapsing here.
 
+#### Benjamini & Hochberg 1995 { #ref-benjamini1995fdr }
+
+**Benjamini, Y. & Hochberg, Y.** (1995). Controlling the False Discovery Rate: A Practical and Powerful Approach to Multiple Testing. *Journal of the Royal Statistical Society: Series B* 57(1), 289–300. [10.1111/j.2517-6161.1995.tb02031.x](https://doi.org/10.1111/j.2517-6161.1995.tb02031.x)
+: The default correction across sites, applied to the permutation p and never to the per-allele one. The number of tests passed to it is the count of sites that produced a statistic, so a site whose alleles were all invariant is excluded rather than counted as a test that failed to reject.
+
+#### Phipson & Smyth 2010 { #ref-phipson2010permutation }
+
+**Phipson, B. & Smyth, G. K.** (2010). Permutation P-values Should Never Be Zero: Calculating Exact P-values When Permutations Are Randomly Drawn. *Statistical Applications in Genetics and Molecular Biology* 9(1), Article 39. [10.2202/1544-6115.1585](https://doi.org/10.2202/1544-6115.1585)
+: Why a sampled permutation p is (1 + reached) / (1 + draws) rather than the raw share. The raw form can return zero, which no permutation p can be, and understates by about one over the number of draws. Only used where the set of rearrangements is too large to enumerate; an enumerated null already counts the identity and needs no correction.
+
 #### Ferretti et al. 2013 { #ref-ferretti2013pool }
 
 **Ferretti, L., Ramos-Onsins, S. E. & Pérez-Enciso, M.** (2013). Population genomics from pool sequencing. *Molecular Ecology* 22(22), 5561–5576. [10.1111/mec.12522](https://doi.org/10.1111/mec.12522)
@@ -4468,7 +4648,7 @@ The diversity statistic itself is [Nei 1973](#ref-nei1973diversity), the correct
 #### Hivert et al. 2018 { #ref-hivert2018poolseq }
 
 **Hivert, V., Leblois, R., Petit, E. J., Gautier, M. & Vitalis, R.** (2018). Measuring Genetic Differentiation from Pool-seq Data. *Genetics* 210(1), 315–330. [10.1534/genetics.118.300900](https://doi.org/10.1534/genetics.118.300900)
-: The effective sample size this module weights by, n_eff = n*d / (n + d - 1) for a pool of n chromosomes read to depth d. The paper does not write it in that form - it defines D2 as the sum of (d + n - 1)/n, which is the sum of d / n_eff under this form and under no other. Its pools are parameterised by HAPLOID size, which is what leaves n_eff, and everything weighted by it, general over ploidy.
+: The effective sample size the analysis layer weights by, n_eff = n*d / (n + d - 1) for a pool of n chromosomes read to depth d. The paper does not write it in that form - it defines D2 as the sum of (d + n - 1)/n, which is the sum of d / n_eff under this form and under no other. Its pools are parameterised by HAPLOID size, which is what leaves n_eff, and everything weighted by it, general over ploidy. It is HERE rather than in a module because analysis/lib/R/n_eff.R is library code and every module that weights anything calls it.
 
 ### Estimating from pooled reads
 
@@ -4481,6 +4661,11 @@ The diversity statistic itself is [Nei 1973](#ref-nei1973diversity), the correct
 
 **Kolaczkowski, B., Kern, A. D., Holloway, A. K. & Begun, D. J.** (2011). Genomic Differentiation Between Temperate and Tropical Australian Populations of Drosophila melanogaster. *Genetics* 187(1), 245–260. [10.1534/genetics.110.123059](https://doi.org/10.1534/genetics.110.123059)
 : One of the first genome-scale Pool-seq studies, and where its sampling properties are worked through from first principles - n chromosomes drawn from the population and sequenced to depth m, kept as two parameters rather than compressed into one. Worth reading precisely because it does not take the shortcut every effective-sample-size heuristic since has taken.
+
+#### Long et al. 2026 { #ref-long2026polygenicity }
+
+**Long, A. D., Hanson, K. M. & Macdonald, S. J.** (2026). The illusion of polygenicity in pool-seq genetic mapping studies: insufficient power can mask simple genetic architectures. *Genetics* 233(1), iyag068. [10.1093/genetics/iyag068](https://doi.org/10.1093/genetics/iyag068)
+: What a modestly powered pool-seq association study produces when it is read as though it were well powered: scattered genome-wide significance from a single causal variant, which looks like a polygenic architecture and is noise. It is cited here because this module's permutation floor is a structural answer to it - a design of few units cannot reach a small p however large the statistic - and because the limit it describes is the reason that floor is printed rather than assumed.
 
 ### Other software for pooled sequencing
 
