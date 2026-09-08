@@ -4,7 +4,7 @@ Measurements of whether the numbers the analysis layer publishes mean what they 
 
 ## This is not the test suite
 
-`test/` asserts exact values over eleven hand-computed sites: every count is written out, every expectation is derived by a plain Python loop, and a case fails when one number moves. That answers *is the arithmetic what we said it was*.
+`test/` asserts exact values over seventeen hand-computed sites: every count is written out, every expectation is derived by a plain Python loop, and a case fails when one number moves. That answers *is the arithmetic what we said it was*.
 
 This directory answers a different question — *does the method behave* — and it cannot be answered by any exact value. A false-positive rate is a rate; a power curve is a curve; the limit at which an assumption stops holding is found by pushing on it until it breaks. So the assertions here are distributional, the replicate counts are in the hundreds of thousands, and a run takes minutes rather than seconds. Mixing the two would make the suite slow and make its failures ambiguous.
 

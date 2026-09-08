@@ -161,8 +161,7 @@ site_statistic <- function(t, site, sites) {
 # The weights say Var(f) = sigma^2 / n_eff. Uneven contribution to a pool leaves an excess that
 # does not shrink with depth, so the truth is Var(f) = p(1-p) * (theta + 1/n_eff). This is theta
 # by method of moments: the scatter the units actually show, less the sampling variance the
-# weights predict. Clamped at zero, because a negative excess is noise rather than a unit more
-# precise than its own sampling.
+# weights predict. Clamped at zero.
 dispersion_of <- function(freq, weight, site) {
     held <- ncol(freq)
     centre <- rowMeans(freq)
@@ -369,7 +368,7 @@ for (entry in design$phenotypes[declared %in% chosen]) {
         if (nrow(table) == 0) next
 
         parsed <- parse_columns(as.list(table[pool_order]))
-        # Named, because a unit holds the NAMES of its pools and indexes the columns with them.
+        # Named: a unit holds the NAMES of its pools and indexes the columns with them.
         weight <- vapply(seq_along(pool_order),
                          function(i) n_eff(n_chrom[i], parsed$depth[, i]),
                          numeric(nrow(parsed$depth)))
@@ -506,8 +505,7 @@ write.table(do.call(rbind, lapply(design$phenotypes[declared %in% chosen], pheno
             file.path(out, "phenotype.tsv"), sep = "\t", quote = FALSE, row.names = FALSE,
             na = "NA")
 
-# Figures degrade rather than refuse: every number they show is in the tables beside them, so a
-# machine without ggplot2 gets the analysis and a message rather than nothing.
+# Figures degrade rather than refuse: every number they show is in the tables beside them.
 drawable <- requireNamespace("ggplot2", quietly = TRUE)
 if (!drawable) {
     message("association.R: ggplot2 is not installed, so no figures were drawn. Every number ",

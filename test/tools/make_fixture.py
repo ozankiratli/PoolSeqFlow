@@ -199,7 +199,7 @@ def main():
 
     # --- emit -----------------------------------------------------------------------------
     # The fixture is a mainDir: the layout a user prepares by hand before the first run -
-    # reads under Data/, reference and annotation under Reference/, RGTags.csv alongside
+    # reads under Data/, reference and annotation under Reference/, metadata.csv alongside
     # them. storageDir starts empty and the pipeline fills it, so nothing here belongs to it.
     out = args.out
     os.makedirs(os.path.join(out, "Data"), exist_ok=True)

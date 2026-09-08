@@ -27,9 +27,9 @@ def artifactClasses() {
     ]
 }
 
-// The classes a module's manifest asks for, checked against the classes there are.
-// resultsTargets() asks only whether `needs` contains each class it knows, so a name no class
-// answers to is never asked about at all and nothing else would notice it.
+// The classes a module's manifest asks for, checked against the classes there are. resultsTargets()
+// asks only whether `needs` contains each class it knows, so a name no class answers to would
+// otherwise go unread.
 def checkModuleNeeds(String module, List needs) {
     def known = artifactClasses().keySet()
     def unknown = needs.collect { need -> "${need}".toString() }.findAll { need -> !known.contains(need) }
@@ -145,9 +145,7 @@ def resultsTargets(Map plan, List runDefs, List selected, String module, List ne
 // The two calls are ordered: runDefinitions() copies each run's own parameters before
 // resolveParameters() fills the computed ones in.
 def analysisPlan(String module) {
-    // Before anything reads a setting: a reader asks for the key it wants by name, so a key the
-    // layer does not have is never asked about and the project silently runs under a default it
-    // did not choose.
+    // Before anything reads a setting.
     checkAnalysisScope()
     // runDefinitions() calls a helper in bin/, so where bin/ is has to be settled before it.
     // parameters.config sets dir.bin beside the entry script, which for a module is the module.

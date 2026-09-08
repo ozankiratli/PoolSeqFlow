@@ -55,7 +55,17 @@ Each hit is a candidate, not a verdict — some are legitimate. This is a review
 
 `parameters.config.template`, `metadata.csv.template` and `multi-run.csv.example` **ship to the user and are read while editing**. Their comments are the only help available at the point of use, so this filter does not apply to them. Do not cut them without asking.
 
-In `test/`, a comment recording the bug a case guards *is* its function — it is what stops the case being deleted as arbitrary. Apply the filter to decisions about the harness, not to the reason a regression test exists.
+### `dev/` and `test/` follow the opposite rule: keep everything but abandoned ideas
+
+**They carry a different role in the project.** Nothing in them ships, nothing in them computes a published number, and neither is read by someone trying to understand what the pipeline does — they are read by someone trying to understand *whether it is right*. There the reasoning IS the content: a measurement with no account of what it measured is a number nobody can act on, and a case with no record of the bug it guards is a case the next session deletes as arbitrary.
+
+So the source filter is **inverted** here. Keep the why. Keep the measurements, the alternatives weighed, the constraint that made a harness awkward, the reason an assertion is phrased the way it is. A `dev/` script that explains its own methodology at length is doing its job.
+
+**The one thing to cut is an abandoned idea** — an approach tried and dropped, described as though it were still how things work. That is the failure the source rule exists to prevent and it is just as damaging here: it reads to a later session as a current constraint. The test is not "is this a decision" but **"does this describe something that is still true?"** A superseded approach whose *finding* still governs the current design is not abandoned — keep it, and say which part is live.
+
+Z, 2026-09-08: *"We keep everything but abandoned ideas. They carry a different role in the project."*
+
+`dev/scripts/comment-audit.sh` therefore does not scan them by default. Name a path explicitly to scan one anyway; every hit there is expected and is not a finding.
 
 ## Other standing rules
 

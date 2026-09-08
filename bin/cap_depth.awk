@@ -61,6 +61,7 @@ BEGIN {
 }
 
 END {
+    # A BEGIN that exits still runs END, so the tally is not printed after the usage error.
     if (cap + 0 > 0)
         printf "cap_depth.awk: kept %d, dropped %d at cap %d\n", kept, dropped, cap > "/dev/stderr"
 }

@@ -1,6 +1,7 @@
 // Projections of the sample metadata file. One row per pair of FASTQ files: `SampleID` joins the
-// row to the reads, `RG_*` becomes the read group, `param_*` overrides a parameter for those
-// samples, and every other column is the user's own and is never interpreted.
+// row to the reads, `RG_*` becomes the read group, and `param_*` overrides a parameter for those
+// samples. Those are the only columns the PIPELINE reads. `exp_`, `pt_` and `cov_` are recorded
+// and read by the analysis layer; anything else is the user's own and is never interpreted.
 //
 // Nothing here reads the CSV: `resolveParameters()` parses it once into `run.metadata`.
 

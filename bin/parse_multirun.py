@@ -21,7 +21,7 @@ import re
 import sys
 
 # A dotted parameter name as it appears in parameters.config, with no `params.` prefix:
-# `referenceFile`, `trim_galore.quality`, `bcftools.maxDepth`.
+# `referenceFile`, `trim_galore.quality`, `variantCall.maxDepth`.
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
 RUN_ID = "RunID"

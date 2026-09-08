@@ -1,4 +1,19 @@
 #!/usr/bin/awk -f
+#
+# The depth table's read counts as per-allele frequencies, one row per allele.
+#
+#   depth2freq.awk < <vcf>_snp_depth.tsv > <vcf>_snp_freq.tsv
+#
+# In:  CHROM POS REF ALT, then one column per sample holding a comma-separated count list, REF
+#      first and then each ALT in the order the ALT column gives them.
+# Out: the same leading columns with ALT replaced by ALLELE, and one row per allele of a site,
+#      each carrying that allele's frequency in each sample.
+#
+# EVERY COLUMN FROM 5 ON IS CONVERTED THE SAME WAY, TOTAL_AD included.
+#
+# Frequencies print through awk's default CONVFMT, so each is a six-significant-digit rendering
+# of a ratio the input holds exactly, and a sample with no reads at a site prints 0 rather than
+# a blank. Anything computing from these numbers reads the DEPTH table instead.
 
 BEGIN {
     FS = OFS = "\t";

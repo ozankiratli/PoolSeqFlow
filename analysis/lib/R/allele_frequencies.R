@@ -4,10 +4,19 @@
 #
 #       $site     1 1 2 2 2      the site each allele row belongs to
 #       $alleles  2 3            how many alleles each site holds
-#       $depth    A 100 100      one row per SITE, one column per pool
-#                 B  40  30
-#       $freq     A 0.5 0.5 0.4 0.4 0.2       one row per ALLELE, one column per pool
-#                 B 0.75 0.25 1/3 1/3 1/3
+#
+#       $depth   one row per SITE, one column per pool
+#                     A     B
+#               [1,] 100    40
+#               [2,] 100    30
+#
+#       $freq    one row per ALLELE, one column per pool
+#                      A      B
+#               [1,] 0.500  0.750     site 1
+#               [2,] 0.500  0.250
+#               [3,] 0.400  0.333     site 2
+#               [4,] 0.400  0.333
+#               [5,] 0.200  0.333
 #
 # `columns` is one column of the depth table per pool: one comma-separated count list per site,
 # REF first and then each ALT. A site holds any number of alleles, so the frequencies are one
@@ -15,8 +24,7 @@
 # `rowsum(x, site)` is a per-site total and `depth[site, ]` is a per-allele depth.
 #
 # THE ALT COLUMN IS ONE LIST FOR THE WHOLE COHORT, so every pool's cell at a site holds one
-# count per allele. A site where they differ is refused: the columns would be describing
-# different alleles, and nothing downstream could tell which.
+# count per allele. A site where they differ is refused, naming the pool and the site.
 #
 # A pool with no reads at a site gets depth 0 and no frequency — there is nothing observed there
 # to be a frequency of. bcftools' missing value takes that pool's whole site with it, as it does

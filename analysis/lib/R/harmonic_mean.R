@@ -4,9 +4,10 @@
 # sum(w) / sum(w/x) over those rows is the harmonic mean over positions, without expanding the
 # histogram back into one entry per position.
 #
-# NA in either vector drops that pair. A value of zero gives zero, which is the harmonic mean's
-# own answer and the one effective size wants: a position carrying no reads carries no
-# information. A negative value is not a depth and stops here.
+# NA in either vector drops that pair, and nothing left to average returns NA - as do weights
+# summing to zero. A value of zero gives zero, which is the harmonic mean's own answer and the
+# one effective size wants: a position carrying no reads carries no information. A negative
+# value, in either vector, stops here.
 harmonic_mean <- function(x, w = NULL) {
     if (is.null(w)) w <- rep(1, length(x))
     if (length(w) != length(x)) {

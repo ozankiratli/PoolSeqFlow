@@ -24,25 +24,13 @@ def timeVariable() {
 
 // The prefix that marks a phenotype measured on the pool. Mirrored by PHENOTYPE_PREFIX in
 // bin/parse_metadata.py.
-//
-// Separate from exp_ because only an experimental variable identifies a series: designKeyColumns()
-// takes every exp_ column but time, and a trait value differs per pool, so admitting one there
-// would leave every series a single timepoint long.
 def phenotypePrefix() {
     return 'pt_'
 }
 
-// The prefix that marks a covariate measured on the pool. Mirrored by COVARIATE_PREFIX in
+// The prefix that marks a covariate measured on the pool - neither set nor the response: a cage
+// temperature, an altitude, a collection site. Mirrored by COVARIATE_PREFIX in
 // bin/parse_metadata.py.
-//
-// Neither set nor the response: a cage temperature, an altitude, a collection site. Its own prefix
-// for the same reason pt_ has one - designKeyColumns() takes every exp_ column but time, so a
-// temperature recorded at each timepoint would give every series length 1, which is the
-// dissolution the series settings can only be told to work around.
-//
-// A cov_ column is optional to DECLARE. Undeclared it is recorded, checked and reported like any
-// pool-level column; declared in analysis.metadata.covariates it also carries a typed value a
-// module can compute with.
 def covariatePrefix() {
     return 'cov_'
 }
@@ -86,8 +74,8 @@ def poolLevelColumns(List rows) {
 }
 
 // One analysis.metadata.missingValueEncoding entry as a matcher: `*` is any run of characters,
-// `?` is one, and everything else is literal. Matched whole and case sensitively - a project that
-// writes both NA and na lists both, because a level genuinely called `na` must stay a level.
+// `?` is one, and everything else is literal. Matched whole and case sensitively, so a project
+// that writes both NA and na lists both.
 // Pattern.compile and not a slashy string: the strict parser rejects an interpolated ~/.../.
 def missingValueMatcher(String glob) {
     def pattern = new StringBuilder()
@@ -99,8 +87,8 @@ def missingValueMatcher(String glob) {
     return java.util.regex.Pattern.compile("${pattern}".toString())
 }
 
-// The matchers this project declared, checked. An entry that matches everything would blank every
-// cell of every experimental column, so it is refused rather than obeyed.
+// The matchers this project declared, checked. An empty entry and one that matches every value
+// are both refused.
 def missingValueMatchers() {
     def declared = metadataSetting('missingValueEncoding') ?: []
     def entries = (declared instanceof List ? declared : [declared])
@@ -124,8 +112,7 @@ def missingValueMatchers() {
 }
 
 // A cell as the analysis layer reads it: the text, or empty when the project declared that
-// spelling to mean no value. Everything downstream already treats empty as missing, so an encoded
-// value becomes one rather than a second kind of absence.
+// spelling to mean no value. Everything downstream treats empty as missing.
 def readCell(Object raw, List matchers) {
     def value = "${raw ?: ''}".toString()
     if (value.isEmpty() || matchers.isEmpty()) return value
@@ -169,22 +156,14 @@ def designRefusal(String label, String pool, String column, Map byValue) {
 // Every row of one pool agrees on every exp_ and pt_ column, or the run stops here. `rows` are the
 // rows of all the runs one results directory covers, so two runs with different metadataFiles that
 // share a directory are checked against each other and not only against themselves.
-//
-// Both prefixes and not only exp_: a phenotype is measured on the pool, so a pool carrying two of
-// them is the same contradiction, and analysis.phenotype.column is confined to pt_ precisely so
-// that every column it can name has been through here.
 def checkTargetDesign(String label, List rows) {
-    // exp_ and pt_ only. A cov_ column may legitimately differ between the rows of one pool - two
-    // libraries really can have had two technicians, or been reared at two temperatures - so a
-    // disagreement there is a fact about the pool rather than a contradiction, and designSummary()
-    // records it instead. What you SET and what you MEASURED ON the pool cannot vary that way: one
-    // pool had one treatment, and one pool has one trait value.
+    // exp_ and pt_ only. A cov_ column may differ between the rows of one pool; designSummary()
+    // records that it did.
     def columns = experimentalColumns(rows) + phenotypeColumns(rows)
     if (columns.isEmpty()) return
 
     // Through readCell(), so a pool whose rows say 'NA' and nothing at all agree when the project
-    // has declared 'NA' to mean no value. Comparing the raw text would call that a contradiction
-    // and refuse a file the user wrote consistently.
+    // has declared 'NA' to mean no value.
     def matchers = missingValueMatchers()
 
     rows.groupBy { row -> poolOf(row) }.sort { a, b -> a.key <=> b.key }.each { pool, poolRows ->
@@ -208,8 +187,6 @@ def checkTimeSettings(Map settings, List columns) {
     def format = "${settings.format}".trim()
     def order = settings.order ?: []
 
-    // Anything outside the prefix escapes the pool-agreement refusal, and one pool could then
-    // carry two timepoints with nothing to stop it.
     if (!column.startsWith(experimentalPrefix())) {
         throw new IllegalArgumentException(
             "analysis.timeVar.column is '${column}', and a time variable has to be an " +
@@ -282,31 +259,18 @@ def checkTimeSettings(Map settings, List columns) {
     return true
 }
 
-// What a phenotype can be declared as - a measurement SCALE, not a storage type. Like
-// timeVar.kind and for the same reason, it is never inferred: 0 and 1 read as numbers as readily
-// as they encode two groups, and which of 'case' and 'control' means 1 is not in the data at all.
+// What a phenotype or a covariate can be declared as - a measurement SCALE, not a storage type,
+// and never inferred:
 //
-//   quantitative  a number. Counts and proportions are this too - a phenotype is a predictor,
-//                 and a predictor carries no distributional assumption.
-//   binary        PRESENCE AND ABSENCE. Affected or not, resistant or not. Exactly two levels,
-//                 ordered [absent, present].
-//   ordinal       groups whose ORDER means something and whose spacing does not.
-//   nominal       groups with no order at all.
-//
-// The three categorical kinds are not cardinalities, they are claims about the scale, and each
-// licenses something the others do not. An ordinal scale carries a trend; a nominal one carries
-// only "these differ"; a binary one names a reference state, which is what makes a case/control
-// design a case/control design rather than a comparison of two arbitrary groups.
-//
-// So two groups that are not an absence and a presence - coastal and inland, two host plants -
-// are `nominal` with two levels, not `binary`. The published result says which was declared.
+//   quantitative  a number, counts and proportions included
+//   binary        presence and absence. Exactly two levels, ordered [absent, present]
+//   ordinal       groups whose ORDER means something and whose spacing does not
+//   nominal       groups with no order at all
 def measurementKinds() {
     return ['quantitative', 'binary', 'ordinal', 'nominal']
 }
 
-// The kinds whose levels are named, and how many each takes. Only `binary` is fixed, because only
-// `binary` asserts a shape: one state is the absence of the other, and a third would leave neither
-// meaning.
+// The kinds whose levels are named, and how many each takes. `most: 0` is no upper bound.
 def measurementLevelRule() {
     return [ binary : [ least: 2, most: 2 ],
              ordinal: [ least: 2, most: 0 ],
@@ -314,17 +278,12 @@ def measurementLevelRule() {
 }
 
 // The phenotype declarations, checked against each other and against the columns this target has.
-//
-// A scope per column rather than a list, the shape analysis.metadata.covariates already has: a
-// declaration reads the way every other scope in this file does, a repeated column is impossible
-// by construction, and a project may declare every pt_ column it records. WHICH of them a module
-// tests against is that module's own setting, not the frame's.
+// A project may declare every pt_ column it records; which of them a module tests against is that
+// module's own setting.
 def checkPhenotypeSettings(Map declared, List columns) {
     declared.each { name, settings ->
         def column = "${name}".toString()
         def path = "analysis.metadata.phenotypes.${column}"
-        // Anything outside the prefix escapes the pool-agreement refusal, and one pool could then
-        // carry two phenotype values with nothing to stop it.
         if (!column.startsWith(phenotypePrefix())) {
             throw new IllegalArgumentException(
                 "${path} declares '${column}', and a phenotype has to be a " +
@@ -407,24 +366,12 @@ def phenotypeRefusal(String column, String pool, String value, String why) {
         "declared kind cannot hold stops the run rather than being dropped quietly.")
 }
 
-// Each pool's phenotype under the declared kind. Three fields per pool, and the difference between
-// them is the whole point:
-//
-//   shown   the cell as the file wrote it
-//   group   which declared level it is, by index, or null for a quantitative scale
-//   value   THE NUMBER A MODULE MAY FIT A SLOPE ON, or null when there is none
-//
-// `value` is null for a NOMINAL phenotype, and that is not an omission. Wing types spotted,
-// striped and curly have an index each, and fitting a slope on that index asserts curly is twice
-// as far from spotted as striped is. Null makes "you may not fit a rate on this" checkable by a
-// module rather than remembered by its author - the same thing analysis.timeVar does with
-// `position` for a categorical time axis.
-//
-// A blank cell is carried as null and named: recording the design is the frame's job and deciding
-// a pool cannot be fitted is the module's.
 // One column resolved against one declared scale, for every pool. Shared by the phenotype and by
-// every declared covariate: the scales are the same four and reading them twice would let the two
-// drift.
+// every declared covariate. Three fields per pool:
+//
+//   shown   the cell as the file wrote it, empty when blank
+//   group   which declared level it is, by index, or null for a quantitative scale
+//   value   the number a module may fit a slope on, or null when there is none
 def resolveScale(List pools, String setting, String column, String kind, List levels) {
     return pools.collect { entry ->
         def raw = "${entry.values[column] ?: ''}".trim()
@@ -512,8 +459,7 @@ def resolvePhenotypes(List pools, Map declared, List columns) {
                  levels: kind == 'quantitative' ? null : levels,
                  values: values ]
     }
-    // A pt_ column nobody declared. Reported once, on the covariate's rule: the difference
-    // between "recorded for the record" and "forgot to declare it" is not in the file.
+    // A pt_ column nobody declared, reported once for all of them.
     def undeclared = columns.findAll { column -> !declared.containsKey(column) }
     if (!undeclared.isEmpty()) {
         warnings << [ code  : 'phenotype-undeclared',
@@ -529,9 +475,6 @@ def resolvePhenotypes(List pools, Map declared, List columns) {
 }
 
 // The covariate declarations, checked against each other and against the columns this target has.
-//
-// analysis.metadata.covariates is a scope per column rather than a list, so a declaration reads
-// the way every other scope in this file does and a repeated column is impossible by construction.
 def checkCovariateSettings(Map declared, List columns) {
     declared.each { name, settings ->
         def column = "${name}".toString()
@@ -567,8 +510,7 @@ def checkCovariateSettings(Map declared, List columns) {
 }
 
 // Which of the recorded covariates are part of the design, and so are what a module adjusts for.
-// Empty means every one that has a declared scale - an undeclared cov_ column carries no typed
-// value, so there would be nothing of it to put in a model.
+// Empty means every one that has a declared scale.
 def designCovariates(Map declared, List columns, List chosen) {
     def declaredNames = declared.keySet().collect { name -> "${name}".toString() }
     if (chosen.isEmpty()) return declaredNames
@@ -628,8 +570,7 @@ def resolveCovariates(List pools, Map declared, List columns, List inDesign) {
                  inDesign: inDesign.contains(column),
                  values  : values ]
     }
-    // A covariate declared and left out of the design. On the record, because leaving one out is
-    // as much a decision as putting one in and neither is visible from the values.
+    // A covariate declared and left out of the design.
     def excluded = resolved.findAll { entry -> !entry.inDesign }.collect { entry -> entry.column }
     if (!excluded.isEmpty()) {
         warnings << [ code  : 'covariate-not-in-design',
@@ -637,8 +578,7 @@ def resolveCovariates(List pools, Map declared, List columns, List inDesign) {
                               "out, so ${excluded.size() == 1 ? 'it is' : 'they are'} reported " +
                               "and no module adjusts for ${excluded.size() == 1 ? 'it' : 'them'}." ]
     }
-    // A cov_ column nobody declared. Reported once, because the difference between "recorded for
-    // the record" and "forgot to declare it" is not in the file.
+    // A cov_ column nobody declared, reported once for all of them.
     def undeclared = columns.findAll { column -> !declared.containsKey(column) }
     if (!undeclared.isEmpty()) {
         warnings << [ code  : 'covariate-undeclared',
@@ -653,11 +593,9 @@ def resolveCovariates(List pools, Map declared, List columns, List inDesign) {
     return [ covariates: resolved, warnings: warnings ]
 }
 
-// The columns that identify one thing the experiment set up. Declared rather than inferred: a
-// variable recorded AT each timepoint - a temperature, a census - differs between the pools of one
-// series, so every series would have length 1 and the design would dissolve with no error.
-//
-// timeColumn is null for a project with no time axis, and then nothing is held back.
+// The columns that identify one thing the experiment set up: analysis.design.by where it is set,
+// every exp_ column but time otherwise. timeColumn is null for a project with no time axis, and
+// then nothing is held back.
 def designKeyColumns(List columns, String timeColumn, List by) {
     if (by.isEmpty()) return columns.findAll { column -> timeColumn == null || column != timeColumn }
 
@@ -678,9 +616,8 @@ def designKeyColumns(List columns, String timeColumn, List by) {
     return named
 }
 
-// Which of the key columns index repeats rather than naming a condition, checked. Two lists and
-// not one: biological replicates are independent and are what degrees of freedom are counted from,
-// technical ones are the same material measured twice and carry none.
+// Which of the key columns index repeats rather than naming a condition, checked. Returns the key
+// columns split three ways: condition, biological, technical.
 def replicateRoles(List keyColumns, String timeColumn, List biologicalRep, List technicalRep) {
     def biological = biologicalRep.collect { entry -> "${entry}".toString() }
     def technical = technicalRep.collect { entry -> "${entry}".toString() }
@@ -733,8 +670,7 @@ def designMembers(List pools, List series, List keyColumns) {
 
 // Members rolled up into the independent biological units they came from. Two members are one unit
 // when they agree on every condition and biological column AND a technical column tells them apart.
-// Nothing else merges them, and a module counting degrees of freedom or choosing strata reads
-// units, never members.
+// Nothing else merges them.
 //
 // A group whose members all carry the same technical key is a group nothing tells apart, so each
 // member stands alone - which is every untimed project with no technicalRep declared. A group that
@@ -810,8 +746,7 @@ def levelNames(Map time, List indices) {
 // analysis.design.series.incomplete, applied. Returns the timeline that survives and the series dropped.
 //
 // keepLeft and keepRight truncate the TIMELINE and not each series, so every series that survives
-// covers the same points. None of the four fills a gap in: carrying a frequency forward invents a
-// measurement that everything downstream then weights by a depth nobody observed.
+// covers the same points. None of the four fills a gap in.
 def applyIncomplete(String mode, Map time, Map covered, List warnings) {
     def full = time.levels.collect { level -> level.index }
     def ragged = covered.findAll { _label, indices -> indices != full }
@@ -876,9 +811,8 @@ def applyIncomplete(String mode, Map time, Map covered, List warnings) {
     return [ timeline: timeline, dropped: [] ]
 }
 
-// Every series in this target, ordered by time, after analysis.design.series.incomplete has been applied.
-// The timeline is truncated rather than each series individually, so what comes out is rectangular
-// and every series is comparable with every other.
+// Every series in this target, ordered by time, after analysis.design.series.incomplete has been
+// applied. The timeline is truncated and not each series, so what comes out is rectangular.
 def buildSeries(List pools, Map time, List keyColumns, String incomplete, List warnings) {
     def timeColumn = time.column
     def indexOf = [:]
@@ -941,9 +875,7 @@ def buildSeries(List pools, Map time, List keyColumns, String incomplete, List w
 // checkTargetDesign() has passed, so one row of a pool speaks for all of them.
 def designSummary(List rows) {
     def columns = experimentalColumns(rows)
-    // A pool's values carry both prefixes; `variables` and the series key take only exp_. A
-    // phenotype describes the pool and so belongs on it, but it is not a variable the experiment
-    // set, and designKeyColumns() would make one that differs per pool split every series.
+    // A pool's values carry all three prefixes; `variables` and the series key take only exp_.
     def valueColumns = poolLevelColumns(rows)
     def byPool = rows.groupBy { row -> poolOf(row) }.sort { a, b -> a.key <=> b.key }
     def matchers = missingValueMatchers()
@@ -951,7 +883,7 @@ def designSummary(List rows) {
 
     // A cov_ column that differs between the rows of one pool has no single value, so the pool
     // gets none and what it held is recorded instead. checkTargetDesign() has already refused the
-    // same state on an exp_ or pt_ column, where it is a contradiction rather than a circumstance.
+    // same state on an exp_ or pt_ column.
     def varies = []
 
     def pools = byPool.collect { pool, poolRows ->
@@ -978,9 +910,7 @@ def designSummary(List rows) {
 
     def settings = metadataSetting('timeVar')
     def warnings = []
-    // What the declared encodings actually blanked. A pattern wider than the user meant would
-    // otherwise remove values silently, and a design with fewer levels than the file has is not
-    // an error anywhere downstream - it is just a smaller design.
+    // What the declared encodings actually blanked.
     if (!encoded.isEmpty()) {
         def total = encoded.values().sum { held -> held.size() }
         warnings << [ code  : 'metadata-missing-encoded',
@@ -1024,8 +954,8 @@ def designSummary(List rows) {
     if (timeColumn != null) {
         def resolved = resolveTimeLevels(pools.collect { entry -> entry.values[timeColumn] }, settings)
         warnings.addAll(resolved.warnings)
-        // format and locale travel with the levels: 'these dates were in this order' is not
-        // reproducible from a published folder unless the folder says how they were read.
+        // format and locale travel with the levels, so a published folder says how the dates
+        // were read.
         time = [ column: timeColumn,
                  kind  : "${settings.kind}".trim(),
                  unit  : resolved.unit,
@@ -1089,9 +1019,8 @@ def designJson(Map summary) {
     return groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(summary))
 }
 
-// How the time axis was read, as three lines. The levels are printed IN THE ORDER THE ANALYSIS
-// WILL USE THEM, and as they resolved rather than as they were written: 07/03/2024 shown as
-// 2024-03-07 is the only thing that catches a user who meant July, and no check can.
+// How the time axis was read: one line where there is none, two where there is. The levels are
+// printed in the order the analysis will use them, and as they resolved rather than as written.
 def timeReportLines(Map time) {
     if (time == null) return ['TIME VARIABLE:         none - no time column, so nothing is a trajectory']
 
@@ -1105,11 +1034,7 @@ def timeReportLines(Map time) {
     return lines
 }
 
-// Every declared phenotype, and every pool's value as it resolved.
-//
-// The values are printed as WRITTEN beside what they became, which is the only thing that catches a
-// reversed binary encoding: [control, case] and [case, control] are both legal, both silent, and
-// give every slope the opposite sign. No check can tell which was meant.
+// Every declared phenotype, with each pool's value as WRITTEN beside what it became.
 def phenotypeReportLines(List phenotypes) {
     if (phenotypes.isEmpty()) {
         return ['PHENOTYPE:             none - analysis.metadata.phenotypes declares no column']
@@ -1134,8 +1059,7 @@ def phenotypeReportLines(List phenotypes) {
             lines << ("PHENOTYPE:                     ${held.size()} pools, " +
                       "${numbers.min()} to ${numbers.max()}").toString()
         }
-        // No slope may be fitted on an unordered scale, so the report says so rather than leaving
-        // a column of nulls to be read as a failure.
+        // An unordered scale carries no number, so the line says so instead of giving a range.
         if (phenotype.kind == 'nominal') {
             lines << ("PHENOTYPE:                     ${held.size()} pools over " +
                       "${held.collect { entry -> entry.shown }.unique().size()} groups; " +
@@ -1150,12 +1074,8 @@ def phenotypeReportLines(List phenotypes) {
     return lines
 }
 
-// The declared covariates, and every pool's value as it resolved.
-//
-// Printed for the same reason the phenotype is: what a covariate does to a result is confound it,
-// and a reader who cannot see that the high-phenotype pools were also the warm ones has no way to
-// suspect it. Nothing is adjusted for here - at six pools there are no degrees of freedom to
-// spend on one - so the report IS the whole of what the frame does with them.
+// The declared covariates, and every pool's value as it resolved. Nothing is adjusted for here:
+// the report is the whole of what the frame does with them.
 def covariateReportLines(List covariates) {
     if (covariates.isEmpty()) return []
     def fitted = covariates.count { covariate -> covariate.inDesign }
@@ -1179,9 +1099,7 @@ def covariateReportLines(List covariates) {
     return lines
 }
 
-// A count that varies across groups, as a range. Technical replication is legitimately unbalanced
-// - one sample sequenced three times for validation and another once - and a single number would
-// be a plausible-looking lie.
+// A count that varies across groups, as a range: the single number where it does not.
 def spread(List counts) {
     if (counts.isEmpty()) return '0'
     def low = counts.min()
@@ -1190,11 +1108,8 @@ def spread(List counts) {
 }
 
 // Which of the columns identifying the setup name a condition rather than a repeat, and what that
-// leaves as an independent unit. Printed whether or not the project has a time axis.
-//
-// EVERY key column is printed under exactly one role. A column left out of technicalRep is read as
-// a condition, which turns one treatment into three and hands a test strata that are the same DNA -
-// and no check can catch that, for the same reason none can catch dd/MM against MM/dd.
+// leaves as an independent unit. Printed whether or not the project has a time axis, and every key
+// column appears under exactly one role.
 def replicationReportLines(Map design) {
     if (design.units.isEmpty()) return []
     def lines = []
@@ -1242,8 +1157,7 @@ def seriesReportLines(Map design) {
 }
 
 // What is worth knowing and is not an error. Rendered from design.warnings, which the published
-// README renders too - written twice they would drift, and the folder would end up disagreeing
-// with the record beside it.
+// README renders too.
 def designNoteLines(Map design) {
     if (design.warnings.isEmpty()) return []
     def lines = ['DESIGN NOTES:          things that change what these numbers mean:']

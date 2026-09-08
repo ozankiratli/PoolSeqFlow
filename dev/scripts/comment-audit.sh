@@ -11,6 +11,9 @@
 # a hard failure would train the next pass to reword around the words instead of deleting the
 # decision behind them.
 #
+# dev/ and test/ are NOT scanned by default: they keep their reasoning, so every hit there would
+# be expected. Name one as a path to scan it anyway.
+#
 # The rule it serves is in CLAUDE.md.
 
 set -uo pipefail
@@ -34,7 +37,7 @@ for arg in "$@"; do
     case "$arg" in
         --words)  DO_BLOCKS=0 ;;
         --blocks) DO_WORDS=0 ;;
-        -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) PATHS+=("$arg") ;;
     esac
 done
@@ -43,8 +46,7 @@ if [ "${#PATHS[@]}" -eq 0 ]; then
     PATHS=("$REPO_ROOT/PoolSeqFlow" "$REPO_ROOT/analysis" "$REPO_ROOT/analysis.nf"
            "$REPO_ROOT/poolseqflow.nf" "$REPO_ROOT/dryrun.nf"
            "$REPO_ROOT/nextflow.config" "$REPO_ROOT/scripts" "$REPO_ROOT/bin"
-           "$REPO_ROOT/lib" "$REPO_ROOT/install" "$REPO_ROOT/dev/scripts"
-           "$REPO_ROOT/.github")
+           "$REPO_ROOT/lib" "$REPO_ROOT/install" "$REPO_ROOT/.github")
 fi
 
 files() {
@@ -53,7 +55,8 @@ files() {
         if [ -d "$p" ]; then
             find "$p" -type f \
                 \( -name '*.nf' -o -name '*.sh' -o -name '*.py' -o -name '*.awk' \
-                   -o -name '*.config' -o -name '*.yml' \) -print
+                   -o -name '*.config' -o -name '*.yml' \
+                   -o -name '*.R' -o -name '*.Rmd' -o -name '*.cpp' \) -print
         elif [ -f "$p" ]; then
             printf '%s\n' "$p"
         fi

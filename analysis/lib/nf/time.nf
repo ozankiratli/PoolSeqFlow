@@ -111,8 +111,7 @@ def duplicatePositionRefusal(String column, String rendered, List values) {
 }
 
 // Every distinct value of the time column, ordered, with the position each sits at. Warnings are
-// returned rather than printed: they reach the verification report and the published README from
-// one list, and rendering them twice is how the two would drift.
+// returned and not printed: the verification report and the published README render the same list.
 def resolveTimeLevels(List values, Map settings) {
     def distinct = values.findAll { value -> value != null && !"${value}".trim().isEmpty() }
                          .collect { value -> "${value}".toString() }.unique()

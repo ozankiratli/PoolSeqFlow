@@ -23,9 +23,6 @@ def analysisDefaults() {
 }
 
 // The settings that say how the metadata file is read.
-//
-// A module name cannot collide with one of these, and a misspelling here is refused rather than
-// ignored: both follow from these living in a scope of their own.
 def metadataDefaults() {
     return [ // Cells that mean "no value" beyond an empty one. Matched whole, case sensitively,
              // with * and ? as wildcards. Empty means only a blank cell is missing.
@@ -33,17 +30,14 @@ def metadataDefaults() {
              // The time axis. Empty kind means the project has not declared one.
              timeVar   : [ column: 'exp_time', kind: '', unit: '', order: [], format: '', locale: 'en' ],
              // What a pt_ column holds, one scope per column: `kind` and, for a categorical
-             // scale, `levels`. Open, because the columns are the project's own. A project may
-             // declare as many as it records; which one a module tests against is that module's
-             // own setting.
+             // scale, `levels`. Open - the columns are the project's own.
              phenotypes: [:],
              // What a cov_ column holds, on the same shape and the same four kinds. A cov_
              // column left out is recorded and reported; declaring one gives it a typed value.
              covariates: [:] ]
 }
 
-// The settings that say what the experiment was. A scope of its own beside metadata, so a module
-// name cannot collide with one of these and a misspelling here is refused rather than ignored.
+// The settings that say what the experiment was.
 def designDefaults() {
     return [ // Which exp_ columns identify one thing the experiment set up, and which of those
              // index repeats. Empty `by` means every exp_ variable but time; a key column in
@@ -68,10 +62,8 @@ def analysisScope() {
 // One scope's settings, merged key by key over its defaults, refusing a key the scope does not
 // have.
 //
-// Nextflow REPLACES a map rather than merging into it, so a project writing only
-// `timeVar { kind = 'numerical' }` would otherwise get a map holding kind and nothing else - and
-// the time column would default to nothing rather than to exp_time, failing as "no time column"
-// on a project that plainly has one.
+// Nextflow REPLACES a map rather than merging into it: a project writing only
+// `timeVar { kind = 'numerical' }` gets a map holding kind and nothing else.
 def mergeScope(String path, Map defaults, Object written) {
     if (!(written instanceof Map)) {
         throw new IllegalArgumentException(

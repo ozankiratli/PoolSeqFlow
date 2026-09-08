@@ -6,7 +6,8 @@
 # collapses to two numbers rather than one per site, exactly.
 #
 # `harmonic_depth` is harmonic_mean() over whatever set of positions is being summarised: the
-# depth histogram's genome-wide one, or the depths at called sites.
+# depth histogram's genome-wide one, or the depths at called sites. A harmonic depth of zero
+# gives NA, as n_eff() does; a pool of fewer than one chromosome, or a negative depth, stops here.
 pool_n_eff <- function(n_chrom, harmonic_depth) {
     if (any(n_chrom < 1, na.rm = TRUE)) stop("pool_n_eff: a pool holds at least one chromosome")
     if (any(harmonic_depth < 0, na.rm = TRUE)) stop("pool_n_eff: negative depth")

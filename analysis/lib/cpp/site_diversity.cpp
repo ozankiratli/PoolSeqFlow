@@ -2,12 +2,10 @@
 //
 // Same seam: a character vector of depth-table cells in, a list of two numeric vectors out. One
 // pass over the strings, parsing digits as it goes, so nothing between the input and the two
-// answers is ever allocated - which is what the vectorised R spends its time on once a genome
-// runs to tens of millions of sites.
+// answers is ever allocated.
 //
 // Sourced by Rcpp::sourceCpp at run time, so it is compiled on the machine that runs it. The
-// vectorised R beside it is the reference this is judged against, over a corpus of mixed-arity
-// sites; nothing compares the two at run time.
+// vectorised R beside it is the reference; nothing compares the two at run time.
 //
 // A compiled function holds a pointer into the process that built it, so it cannot be sent to
 // a parallel worker - each process sources this for itself.

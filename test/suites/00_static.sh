@@ -330,10 +330,22 @@ test_environment_yml_has_no_name_or_prefix_key() {
 # The tool list a user is told to expect and the one that is pinned have to agree, and the
 # epilogue that tells them how to fix a broken install has to name the right environment.
 test_check_install_hint_uses_the_versioned_environment() {
-    local out version
+    local out version status
     version=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/PoolSeqFlow" | head -1)
-    # Run standalone, with no ENV_NAME exported, which is the case the fallback exists for.
-    out=$(cd "$REPO_ROOT" && env -u ENV_NAME bash install/check_install.sh 2>&1)
+    # No ENV_NAME exported, which is the case the fallback exists for; and the pipeline's tools
+    # taken off PATH, because check_install.sh prints the epilogue ONLY when a check fails and
+    # exits 0 before reaching it otherwise. Read against the machine's own PATH this asserted on
+    # a branch it never entered, so it passed where the install was broken and failed where it
+    # worked. /usr/bin:/bin because an empty PATH kills the script at `dirname` long before the
+    # summary.
+    out=$(cd "$REPO_ROOT" && env -u ENV_NAME PATH=/usr/bin:/bin bash install/check_install.sh 2>&1)
+    status=$?
+    # The precondition, asserted rather than assumed: a machine carrying every tool on the bare
+    # PATH would otherwise fail below on an empty string, which reads like a broken epilogue.
+    if [ "$status" -eq 0 ]; then
+        fail_case "every check passed with the tools off PATH, so the epilogue was never reached"
+        return
+    fi
     # Compared as a whole line. A substring check for "conda activate PoolSeqFlow" matches
     # the versioned name too, so it can neither confirm nor deny anything useful here.
     local activate_line

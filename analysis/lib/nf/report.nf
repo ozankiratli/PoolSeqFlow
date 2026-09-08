@@ -1,9 +1,8 @@
 // The PDF a published analysis carries: every result in the folder, each under its own file
 // name.
 //
-// A FRAME CAPABILITY, not a module's. Every module already declares what it publishes and what
-// each file is, for the README; the same declarations build the report, so a module gets one
-// without writing a line and a module somebody else wrote gets one too.
+// A FRAME CAPABILITY, not a module's: it is built from the same output declarations as the README,
+// so a module writes nothing to get one.
 //
 // Knitted by knitr and turned into a PDF by pandoc with typst as the engine. Not
 // rmarkdown::pdf_document, which is bound to LaTeX and ignores the engine it is given.
@@ -23,8 +22,7 @@ def reportTemplate() {
 }
 
 // What the template renders from: where the folder is, what made it, and every file the module
-// declared with the summary it declared. `report.pdf` itself is left out - a report that lists
-// itself among the results is describing its own existence.
+// declared with the summary it declared. `report.pdf` itself is left out.
 def reportSpec(String module, Map target, String folder) {
     def entry = moduleEntry(module)
     def outputs = (moduleOutputs(module) + frameOutputs())
@@ -44,10 +42,7 @@ def reportSpec(String module, Map target, String folder) {
 
 // The shell that writes the report into `dest`.
 //
-// It does not fail the publish. Every number in the report is already in the folder as a file,
-// so a report that could not be built costs a reader convenience and costs the analysis
-// nothing - where refusing to publish over it would throw away work that is complete and
-// correct. What it must not do is fail quietly, so the reason is printed.
+// It does not fail the publish, and prints the reason when it cannot build one.
 def reportShell(String module, Map target, String dest) {
     def spec = reportSpec(module, target, dest).replace("'", "'\\''")
     def lines = []

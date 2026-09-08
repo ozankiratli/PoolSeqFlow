@@ -1,4 +1,16 @@
 #!/bin/bash
+#
+# Drop calls whose alternate is too rare, in too few samples, to be anything but error.
+#
+# A sample counts as carrying the alternate when its frequency reaches that pool's own
+# sensitivity; a record is kept when at least `threshold` of the samples do. The pipeline splits
+# every record to biallelic, filters, and rejoins:
+#
+#   norm -m -  ->  keep INFO/AD[1]>0  ->  the per-sample filter  ->  norm -m+
+#
+# THE `*` -> `X` -> `*` PAIR AROUND THE REJOIN IS LOAD-BEARING AND THE TWO GO TOGETHER. `norm
+# -m+` does not handle a spanning-deletion allele in ALT, so it is masked across the merge and
+# restored immediately after.
 
 # pipefail is load-bearing: the pipeline below ends in awk, which succeeds on empty input.
 set -euo pipefail

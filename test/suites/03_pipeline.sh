@@ -927,8 +927,9 @@ test_every_run_produces_its_own_complete_results() {
 # one run's work instead of three would still report SUCCESS.
 #
 # The two counts that are NOT N x runs are the point of the design: step 1 writes to mainDir,
-# which every run shares, so it is deduplicated by its output paths; and the two step-0 stages
-# that describe the machine rather than a run happen once.
+# which every run shares, so it is deduplicated by its output paths; and the step-0 stages that
+# describe the machine or the configuration rather than a run happen once. Which those are is
+# enumerated below.
 test_multi_run_fans_out_per_run_and_not_per_invocation() {
     needs_multirun || return
     local samples p

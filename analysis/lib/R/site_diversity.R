@@ -6,13 +6,11 @@
 # and then each ALT. A site holds any number of alleles, so the counts are flattened into one
 # vector and grouped, never held as a rectangle.
 #
-# THE GROUPING VECTOR IS THE SITE INDEX, REPEATED ONCE PER ALLELE. H sums p^2 over the ALLELES
-# of a site; summing over sites instead is a different quantity entirely and would return one
-# number where this returns one per site. rowsum() with that vector is what keeps them apart.
+# THE GROUPING VECTOR IS THE SITE INDEX, REPEATED ONCE PER ALLELE. H is 1 - sum(p^2) over the
+# ALLELES of one site; summing over sites instead would return one number where this returns one
+# per site. rowsum() with that vector is what keeps them apart.
 #
-# A site with no reads gets NA, by one assignment here rather than a branch per site. The
-# per-site form this replaced lives on in test/tools/r_lib_tests.R as the oracle it is
-# checked against, over mixed-arity sites.
+# A site with no reads gets NA, by one assignment here rather than a branch per site.
 site_diversity <- function(cells) {
     parts <- strsplit(as.character(cells), ",", fixed = TRUE)
     alleles <- lengths(parts)

@@ -32,8 +32,9 @@
 #                   always confirming before anything goes
 #  uninstall_all  - removes every PoolSeqFlow environment and installation
 #
-# Each subcommand takes no arguments. `analysis` takes one word of its own, and `analysis
-# modules` takes a second.
+# Each top-level subcommand takes no arguments. `analysis` takes one word of its own; a module
+# name takes an optional `nocpp` after it, and `analysis modules` takes a verb plus whatever
+# that verb acts on.
 # POOLSEQFLOW_PREFIX and POOLSEQFLOW_HOME adjust it.
 #
 # The analysis layer ships with the pipeline and is enabled separately: `analysis install`

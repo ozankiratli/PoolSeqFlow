@@ -1,4 +1,14 @@
 #!/bin/bash
+#
+# The depth table: one row per site, one column per sample, each cell the site's read counts
+# comma separated, REF first and then each ALT.
+#
+#   createDepthFile.sh -v joint.vcf > <vcf>_snp_depth.tsv
+#
+# The header is written here and the column names are the VCF's own sample names, in the VCF's
+# order. TOTAL_AD is INFO/AD, the cohort's counts, and holds integers - depth2freq.awk converts
+# it along with the sample columns, which is what leaves a frequency there in the FREQUENCY
+# table under the same name.
 
 # pipefail is load-bearing: the SAMPLENAMES pipeline below ends in `cut`, which succeeds
 # whatever bcftools did.

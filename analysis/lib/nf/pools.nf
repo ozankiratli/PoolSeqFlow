@@ -2,7 +2,7 @@
 // into it, how many chromosomes that is, and the smallest frequency the tables it produced carry.
 //
 // A module reads these off its target. `poolSizes()` and `ploidy` belong to the pipeline's own
-// scripts, which a module does not import - the library is what reads the pipeline.
+// scripts, which a module does not import.
 
 nextflow.enable.dsl=2
 
@@ -83,8 +83,7 @@ def poolGroupLine(List entries) {
 }
 
 // What the verification report says about the pools, per results directory. Pools of one size are
-// one line: a project usually has a single size, and what the block is for is the number every
-// frequency in the tables was read against.
+// grouped onto one line.
 def poolReportLines(List targets) {
     def lines = []
     targets.each { target ->

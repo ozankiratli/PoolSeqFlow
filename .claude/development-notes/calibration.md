@@ -198,6 +198,8 @@ Depths in ascending blocks over a phenotype that rises with the pool index, pool
 
 At a slope of 0.04 with even depth, power runs 0.17 at six pools, 0.28 at eight, 0.46 at twelve, 0.75 at twenty, 0.91 at thirty. Uneven depth costs roughly a fifth throughout. That table is what a researcher wants before they spend money.
 
+**Why this arm holds pooling even, which a first pass did not.** Run at Dirichlet concentration 1, the sweep showed the label scheme's failure largely *gone* — and that is not a contradiction of the table above, it is a second effect on top of it. Heavy pooling skew makes every pool noisy, and that noise swamps the depth differences that break exchangeability in the first place. So concentration and pool count interact, and a sweep that moved both would have reported their sum as if it were the effect of n. Pooling is held even here for that reason, and concentration is `breakdown`'s question instead. The interaction is real and is not measured anywhere: nothing establishes how much skew it takes to mask a given depth-phenotype correlation.
+
 ## Against an independently written tool
 
 `dev/validation/external.R`, against **BayPass 3.1** (Gautier 2015) — Fortran, Bayesian, MCMC, models population structure through an Ω matrix and returns a Bayes factor. Nothing about it resembles what we do except the question it answers.

@@ -316,9 +316,9 @@ TestSample5,TestSample5,Pop3,T1,affected,11.2,striped,high
 TestSample6,TestSample6,Pop3,T2,unaffected,8.7,curly,medium'
 
 # A pt_ column is pool-level for the same reason an exp_ one is, and it is the whole reason
-# analysis.phenotype.column is confined to the prefix: every column it can name has been
-# through checkTargetDesign(). Written without this, one pool carries two phenotypes and the
-# module fits whichever row it read first.
+# analysis.metadata.phenotypes may only declare one: every column it can name has been through
+# checkTargetDesign(). Written without this, one pool carries two phenotypes and the module
+# fits whichever row it read first.
 test_a_pool_whose_rows_disagree_on_a_phenotype_refuses() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,pt_wingspan

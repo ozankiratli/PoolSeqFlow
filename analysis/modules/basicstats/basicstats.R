@@ -74,8 +74,7 @@ write.table(table, file.path(out, "design.tsv"), sep = "\t", quote = FALSE,
 # The published tables.
 
 # Step 7 writes one depth table per variant kind, named <vcf>_snp_depth.tsv and
-# <vcf>_indel_depth.tsv. A name neither pattern answers to stops here: guessing which one it
-# was would put indels into a diversity estimate that says it excludes them.
+# <vcf>_indel_depth.tsv. A name neither pattern answers to stops here.
 kind_of <- function(path) {
     if (grepl("_snp_depth[.]tsv$", path)) return("snp")
     if (grepl("_indel_depth[.]tsv$", path)) return("indel")
@@ -202,9 +201,7 @@ site_rows <- do.call(rbind, lapply(seq_along(tables), function(i) {
 write.table(site_rows, file.path(out, "sites.tsv"), sep = "\t", quote = FALSE,
             row.names = FALSE)
 
-# Everything below is over the SNP table alone, which is what the module's gates state: an
-# indel's read counts are a different measurement and pooling the two would report a diversity
-# neither is.
+# Everything below is over the SNP table alone, which is what the module's gates state.
 snp <- tables[kinds == "snp"]
 if (length(snp) != 1) {
     stop("basicstats.R: this results directory holds ", length(snp), " SNP depth tables and ",
@@ -249,17 +246,11 @@ write.table(do.call(rbind, diversity_rows), file.path(out, "diversity.tsv"), sep
             quote = FALSE, row.names = FALSE)
 
 # ----------------------------------------------------------------------------------------
-# Effective sample size at two levels and from two sources.
+# Effective sample size at two levels and from two sources: the step 5 histograms, and the
+# called sites of the depth table. Every row names its source.
 #
-# The two sources are not one quantity measured twice and the table says so per row. A
-# histogram counts every position the library covered, before the depth ceiling and without a
-# mapping or base quality minimum; the called sites are what survived the whole filter chain,
-# every one of them carrying at least vcffilter.minDP reads in every sample. The called figure
-# is always the larger.
-#
-# There is no library-level row from the called sites, and there cannot be: the published
-# tables have one column per RG_Sample, so a merged pool's libraries are already summed in
-# them and nothing separates them again.
+# There is no library-level row from the called sites: the published tables have one column per
+# RG_Sample, so a merged pool's libraries are already summed in them.
 
 # `depth<TAB>positions`, as samtools stats reports coverage. No header.
 read_histogram <- function(path) {
@@ -294,9 +285,7 @@ for (entry in design$pools) {
     } else {
         # A merged pool's depth at a position is its libraries' depths added, and the harmonic
         # mean of a sum is not recoverable from the histograms of its parts. The sum of the
-        # parts' harmonic means is a LOWER bound on it - exact when the libraries cover
-        # positions in proportion to one another, and conservative otherwise. The manual says
-        # what that means for a number read off this row.
+        # parts' harmonic means is a LOWER bound on it, and the row is marked as one.
         summed <- sum(vapply(held, function(name) by_library[[name]]$depth, 0))
         neff_rows[[length(neff_rows) + 1]] <- data.frame(
             level = "pool", id = entry$pool, pool = entry$pool, source = "histogram",
@@ -330,10 +319,8 @@ if (length(missing) > 0) {
 # ----------------------------------------------------------------------------------------
 # Depth along a sequence, for the sequences you named and no others.
 #
-# Nothing is drawn until a name is given. A genome has more sequences than anyone wants plots
-# for, and which of them is worth looking at is the user's question rather than a default this
-# could guess; when none are named the candidates are listed with their site counts so a name
-# can be copied into the setting.
+# Nothing is drawn until a name is given. When none are named, the candidates are listed with
+# their site counts.
 #
 # It is depth at the CALLED sites, not coverage: the x axis is a called position and the gaps
 # between them are sites the pipeline did not call, not sites with no reads.

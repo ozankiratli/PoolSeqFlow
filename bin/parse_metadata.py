@@ -24,15 +24,9 @@ SEVEN KINDS OF COLUMN, and the prefix is what separates them:
                     temperature, an altitude, a collection site. Open, and never read here.
     anything else   design metadata. Recorded, never read by steps 0-8.
 
-exp_, pt_ AND cov_ ARE THREE PREFIXES BECAUSE ONLY exp_ SAYS WHAT THE EXPERIMENT SET UP. The
-analysis layer works out which pools are independent of each other, and which are one thing
-measured repeatedly, from the exp_ columns; a trait value or a temperature differs from pool to
-pool, so either one admitted there would make every pool its own unit and leave every series a
-single timepoint long - quietly, because a design with no repeated measurement is a legal design.
-
-All three describe the POOL. What differs between two rows of one pool - the lane, the run, the
-technician who handled one library - takes no prefix, and not because it does not matter: the
-reads are merged, so nothing downstream can attribute one to the row it came from.
+exp_, pt_ and cov_ all describe the POOL. What differs between two rows of one pool - the lane,
+the run, the technician who handled one library - takes no prefix: the reads are merged, so
+nothing downstream can attribute one to the row it came from.
 
 PARAM_POOLSIZE IS KEYED BY RG_Sample, NOT BY SampleID. Rows sharing an RG_Sample are one pool
 and become one VCF column, which carries one sensitivity, so those rows must agree on the size
@@ -110,8 +104,7 @@ def rows_of(path):
 
 def check(path):
     errors = []
-    # Reported and not refused: the caller exits 0 with these on stderr. They are facts about the
-    # file that no pipeline step acts on, so a run is sound whatever they say.
+    # Reported and not refused: the caller exits 0 with these on stderr.
     warnings = []
 
     try:
@@ -292,13 +285,9 @@ def check(path):
 
     # --- pool-level columns whose rows disagree ---
     #
-    # A WARNING AND NOT AN ERROR. The pipeline reads none of these columns, so nothing it computes
-    # depends on them and refusing here would stop a run over a fact about the metadata alone. The
-    # analysis layer decides what a disagreement means: a contradiction for exp_ and pt_, an
-    # ordinary circumstance for cov_, which is allowed to vary within a pool.
-    #
-    # Reported rather than passed over, because a run that says nothing is a run where a typo in a
-    # treatment name is discovered by an analysis, months later.
+    # A WARNING AND NOT AN ERROR: the pipeline reads none of these columns. The analysis layer
+    # decides what a disagreement means - a contradiction for exp_ and pt_, an ordinary
+    # circumstance for cov_, which is allowed to vary within a pool.
     by_pool = {}
     for lineno, fields in body:
         row = dict(zip(header, fields))

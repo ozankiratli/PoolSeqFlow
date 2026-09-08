@@ -5,8 +5,9 @@
 # SOURCED, never run. The wrapper reads it once INSTALL is resolved, which nf_config_value
 # needs.
 #
-# Reads four things the caller sets: INSTALL, POOLSEQFLOW_INSTALLED_HOME and POOLSEQFLOW_PREFIX
-# from the environment, and ENV_FILE for analysis_r_packages.
+# Reads five things from the environment: INSTALL, POOLSEQFLOW_INSTALLED_HOME and
+# POOLSEQFLOW_PREFIX from the caller, ENV_FILE for analysis_r_packages, and
+# POOLSEQFLOW_MODULE_INDEX where the user overrides the catalogue location.
 
 # Where installations live: POOLSEQFLOW_PREFIX, else an installed wrapper's own location,
 # else ~/.local.

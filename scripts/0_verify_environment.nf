@@ -143,9 +143,7 @@ def metadataChecks(Map plan) {
         }
 
         // Pool-level columns whose rows disagree. Reported and never refused: no step reads one,
-        // so nothing the pipeline computes depends on it, and what a disagreement MEANS is the
-        // analysis layer's to decide - a contradiction on exp_ and pt_, an ordinary circumstance
-        // on cov_. Silence would leave a mistyped treatment to be found by an analysis months on.
+        // and what a disagreement MEANS is the analysis layer's to decide.
         def disagreeing = []
         pools.keySet().sort().each { pool ->
             def poolRows = variant.metadata.findAll { row -> "${row.RG_Sample}".toString() == pool }
@@ -448,8 +446,8 @@ process CheckMetadataFile {
         : (["    log_message \"METADATA CHECK:        pools sized in the metadata file, the rest ${check.globalPoolSize}:\""] +
            check.poolOverrides.collect { entry ->
                "    log_message \"METADATA CHECK:            ${entry.pool} is ${entry.size} individuals\"" }).join('\n')
-    // Reported and never a FAIL: no step reads these columns, so the run is sound whatever they
-    // say, and only an analysis can judge what a disagreement means.
+    // Reported and never a FAIL: no step reads these columns, and only an analysis can judge
+    // what a disagreement means.
     disagreeBlock = check.disagreeing.isEmpty()
         ? '    :'
         : (['    log_message "METADATA CHECK:        these pool-level columns differ between the rows of one pool:"'] +
@@ -1362,8 +1360,9 @@ workflow VerifyEnvironment {
             .combine(CheckData.out.report.map { check, report -> tuple(check.checkKey, report) }, by: 0)
             .map { _key, item, verify -> tuple(item, verify) })
 
-    // The two stages describing the invocation rather than a run; both emit value channels. The
-    // software union is taken over the run list, in table order.
+    // Two more stages describing the invocation rather than a run, after CheckRunParameters
+    // above; both emit value channels. The software union is taken over the run list, in table
+    // order.
     CheckInstalledSoftware(context.map { ctx ->
         ctx.runs.collectMany { run -> run.software.values().collect { tool -> "${tool}".toString() } }
             .unique()

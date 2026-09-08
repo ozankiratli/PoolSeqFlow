@@ -6,7 +6,7 @@ test/run_tests.sh --cost static   everything that needs nothing installed (~40 s
 test/run_tests.sh --fast          skip what runs the pipeline (~2 min)
 test/run_tests.sh --suite guards --suite analysis_time   one or more, by name
 test/run_tests.sh --case citation only cases whose name matches
-test/run_tests.sh                 everything (~40 min, and the analysis layer is 30 of it)
+test/run_tests.sh                 everything (~50 min, and the analysis layer is most of it)
 test/run_tests.sh --list          the suites, with what each costs
 test/run_tests.sh --keep          leave the working directories behind for inspection
 ```
@@ -99,14 +99,15 @@ costs a bug nobody was looking for.
 ## What to run, and when
 
 Counts move with every stage, so read them off the run rather than from here —
-`grep -c '^test_' test/suites/*.sh` is the check. At the time of writing:
+`grep -hc '^test_' test/suites/*.sh analysis/modules/*/test/*.sh` is the check, and it has to
+name the module suites too or it undercounts. At the time of writing:
 
 | | Cases | Time | |
 |---|---|---|---|
-| `--cost static` | 229 | ~2 min | Needs nothing installed. The first thing to reach for |
-| `--fast` | 257 of 443 | ~2 min | The above, plus every case elsewhere that builds nothing |
-| `--suite <seam>` | varies | 3 s – 5 min | What you changed. `analysis_rlib` is 8 cases in three seconds |
-| everything | 443 | ~40 min | A release, or the end of a major feature |
+| `--cost static` | 236 | ~40 s | Needs nothing installed. The first thing to reach for |
+| `--fast` | 274 of 493 | ~2 min | The above, plus every case elsewhere that builds nothing |
+| `--suite <seam>` | varies | 3 s – 5 min | What you changed. `analysis_rlib` is 9 cases in three seconds |
+| everything | 493 | ~50 min | A release, or the end of a major feature |
 
 The two slow suites are slow for one reason: a Nextflow run costs about **21 seconds of
 startup**, flat, cached or not. Nothing in the pipeline dominates that at fixture scale, so

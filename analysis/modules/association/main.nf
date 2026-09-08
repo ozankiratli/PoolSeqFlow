@@ -15,8 +15,7 @@ include { PublishResults } from '../../lib/nf/results.nf'
 
 // The shared library files this module CALLS, in the order they are concatenated. Exactly this
 // list is folded into the script published beside the result, so a function the module does
-// not call does not travel with a result it did not compute. 00_static holds the two to one
-// another.
+// not call does not travel with a result it did not compute.
 def libraryFiles() {
     return ['n_eff.R', 'allele_frequencies.R', 'chunk_ranges.R']
 }
@@ -36,8 +35,7 @@ def settingDefaults() {
              usecpp      : true ]
 }
 
-// The compiled path is the default: every analysis environment carries a compiler, because
-// conda's r-base depends on one. `nocpp` after the module name turns it off for one run, and
+// The compiled path is the default. `nocpp` after the module name turns it off for one run, and
 // analysis.modules.association.usecpp turns it off for a project.
 def useCompiled(Map settings) {
     if (params.containsKey('nocpp')) return false

@@ -8,7 +8,7 @@
 #   test/run_tests.sh --case citation run only cases whose name contains "citation"
 #   test/run_tests.sh --changed       run the suites that cover what you have changed
 #   test/run_tests.sh --cost static   run only the suites that need nothing but a shell
-#   test/run_tests.sh --fast          skip the suites that run the pipeline
+#   test/run_tests.sh --fast          skip the cases that run the pipeline
 #   test/run_tests.sh --keep          leave the working directories behind for inspection
 #
 # --suite and --case may be given more than once and accumulate, so

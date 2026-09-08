@@ -10,7 +10,8 @@
 # depth; the manual says which is which and what this one follows.
 #
 # Vectorised over either argument. A site a pool has no reads at gets NA rather than 0: there is
-# no frequency there to weight, and a zero would average in as though there were.
+# no frequency there to weight, and a zero would average in as though there were. A pool of
+# fewer than one chromosome, or a negative depth, stops here.
 n_eff <- function(n_chrom, depth) {
     if (any(n_chrom < 1, na.rm = TRUE)) stop("n_eff: a pool holds at least one chromosome")
     if (any(depth < 0, na.rm = TRUE)) stop("n_eff: negative depth")

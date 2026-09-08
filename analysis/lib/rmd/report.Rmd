@@ -2,9 +2,8 @@
 # The PDF the frame writes beside every published analysis: every result it holds, each under
 # the name of the file it came from.
 #
-# Knitted to markdown and handed to pandoc, never rendered by rmarkdown::pdf_document - that
-# output format is bound to LaTeX and ignores --pdf-engine, so it succeeds wherever somebody
-# happens to have TeX and fails everywhere else.
+# Knitted to markdown and handed to pandoc, never rendered by rmarkdown::pdf_document, which is
+# bound to LaTeX and ignores --pdf-engine.
 #
 # The spec is written by analysis/lib/nf/report.nf and names the published folder, what
 # produced it, and every file the module declared with the summary it declared. Nothing here
@@ -13,8 +12,8 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 spec <- jsonlite::fromJSON(Sys.getenv("POOLSEQFLOW_REPORT_SPEC"), simplifyVector = FALSE)
 folder <- spec$folder
 
-# A table is shown in full up to this many rows. Past it the head is shown and the count said
-# out loud: a report that silently stops at row forty is a report that lies about the data.
+# A table is shown in full up to this many rows. Past it the head is shown and the full row
+# count is printed with it.
 ROW_CAP <- 40
 ```
 
@@ -53,10 +52,8 @@ for (output in spec$outputs) {
                     " rows. The whole table is in `", name, "`.\n", sep = "")
             }
         } else if (grepl("[.]png$", name)) {
-            # Scaled to the text width rather than placed at its own size. A module sizes a
-            # figure for looking at on its own; at that size the heading above it is pushed
-            # onto the previous page and the figure arrives with nothing saying which file it
-            # is, which is the one thing this report exists to do.
+            # Scaled to the text width, not placed at its own size: a figure sized for looking
+            # at on its own pushes the heading naming it onto the previous page.
             cat("\n![](", path, "){width=90%}\n", sep = "")
         } else {
             cat("\nNot rendered here - read `", name, "` itself.\n", sep = "")

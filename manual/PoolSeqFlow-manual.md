@@ -4081,7 +4081,7 @@ A guard that passes tells you nothing. These are published so that someone readi
 |---|---|
 | `permutations`, `exhaustive` | how many rearrangements, and whether that was all of them |
 | `floor`, `design_floor` | the smallest p this run could reach, and the smallest the design can |
-| `dispersion` | the excess variance uneven pooling left behind, in units of `p(1−p)`. Large means the weights absorbed a lot; it is estimated from your data unless you set it |
+| `dispersion` | the excess variance uneven pooling left behind, in units of `p(1−p)`. Large means the weights absorbed a lot; it is estimated from your data unless you set it. **A published `0` is a floor, not necessarily a measurement** — the method of moments can return a negative excess when the units scatter less than their own sampling variance predicts, which is noise and not a unit measured better than its depth allows, and it is reported as `0` |
 | `depth_phenotype_cor` | depth lined up with the phenotype. This breaks label-based tests badly and is the reason this module does not use one |
 | `lambda_gc` | genomic inflation. If it is 3, nothing in the table is a p-value |
 | `arity_mean`, `arity_selected`, `selected` | the allele counts of the sites selected against all sites. **They should agree**; multiallelic sites at the top of a table are a biological claim, and this is how you check it is one |
@@ -4177,7 +4177,7 @@ This is worth stating plainly, because the obvious way to judge a project's hist
 
 I have done little work after the first work was completed around June 2025. In around March 2026, I decided to package it and put it on my GitHub. That is the reason that the first commit is dated **2026-03-13**. **v1.0.0** was tagged thirteen days later, on **2026-03-26**, with 26 files in the tree. That is pretty much the "end" of the development of the main pipeline. A working pipeline existed before this repository did; what happened in March was that it was put under version control in order to release it. Everything in the first two phases above therefore has no commits behind it at all.
 
-The distribution compounds the impression. **Eight commits reach v1.0.1; the other 146 come after it**, and 126 of the 154 fall in a single month, August 2026. The fast development in August was also a necessity rather than just AI enabled development. During August 2026 I spent around 200 hours on the development to help a colleague use this tool and analyze data in September 2026. That is where I made all engineering decisions rather than scientific ones to make the tool accessible by a larger base of scientists. So the log reads as a project built almost entirely in one month — and that is the month the agent arrived. What it actually shows is when the work started being recorded at this granularity, not when it was done. The tree tells the same story from the other side: 26 files at v1.0.1, 163 today, almost all of the growth being the analysis layer, the test suite and this manual rather than the pipeline itself.
+The distribution compounds the impression. **Eight commits reach v1.0.1; every other commit in the repository comes after it**, and the great majority of those fall in a single month, August 2026. The fast development in August was also a necessity rather than just AI enabled development. During August 2026 I spent around 200 hours on the development to help a colleague use this tool and analyze data in September 2026. That is where I made all engineering decisions rather than scientific ones to make the tool accessible by a larger base of scientists. So the log reads as a project built almost entirely in one month — and that is the month the agent arrived. What it actually shows is when the work started being recorded at this granularity, not when it was done. The tree tells the same story from the other side: 26 files at v1.0.1 and many times that today, almost all of the growth being the analysis layer, the test suite and this manual rather than the pipeline itself.
 
 ### What the rewrite changed, and what it kept
 
@@ -4308,7 +4308,7 @@ So: the suite below tells me I have not broken what I built. It does not tell me
 
 ### The shape of it
 
-There are **474 test cases in 17 suites**. Sixteen ship with the pipeline and cover the wrapper, configuration migration, parameter resolution, the change guards, the helper programs, the dry run, the analysis frame and the static checks; the seventeenth ships inside an analysis module, because a module's tests belong to the module and travel with it when it is published separately.
+The suites are organised by **seam** rather than by file: the wrapper, configuration migration, parameter resolution, the change guards, the helper programs, the dry run, the analysis frame and the static checks each get one. Most ship with the pipeline, and **each analysis module ships its own**, because a module's tests belong to the module and travel with it when it is published separately. `test/run_tests.sh --list` prints the current set with what each one costs; there is no case count written here, because it moves with every stage and a number in a manual is a number that goes quietly out of date.
 
 Most of them are not testing what people usually mean by a test. The failures this pipeline can produce are rarely crashes — they are a run that completes, reports success, and gives a number that is quietly wrong, because a filter was applied with the wrong pool's threshold or a step reused an artifact that was produced under different settings. So a large share of the suite exists to catch a *plausible* result rather than a broken one.
 
@@ -4318,11 +4318,11 @@ The whole thing takes about three quarters of an hour, and that is the real prob
 
 Every suite declares what it costs to run, in its own header:
 
-| Class | Suites | What it needs |
-|---|---|---|
-| `static` | 5 | Nothing installed. Reads files, runs the shell and Python helpers directly |
-| `jvm` | 11 | A JVM, to build and inspect a workflow without executing it |
-| `pipeline` | 1 | A real end-to-end run against the committed fixture data |
+| Class | What it needs |
+|---|---|
+| `static` | Nothing installed. Reads files, runs the shell and Python helpers directly |
+| `jvm` | A JVM, to build and inspect a workflow without executing it |
+| `pipeline` | A real end-to-end run against the committed fixture data |
 
 The `static` set finishes in seconds on a machine with nothing set up at all, which makes it the loop I develop in. The full run belongs to a release, not to a change.
 
