@@ -495,7 +495,7 @@ Choosing 3 removes `PoolSeqFlow-3.0.0` and `PoolSeqFlow-3.0.0-analysis`. To remo
 | `PoolSeqFlow analysis install` | Create this release's analysis conda environment, which carries R, then verify it |
 | `PoolSeqFlow analysis check` | Verify an existing analysis installation — tools, R packages, entry point |
 | `PoolSeqFlow analysis modules available` | List the modules published for this release's table contract |
-| `PoolSeqFlow analysis modules install <module> [version]` | Install one, newest readable version unless you name it |
+| `PoolSeqFlow analysis modules install <module> [version]` | Install one, newest readable version unless you name it. Also installs [what it runs on](#module-packages) |
 | `PoolSeqFlow analysis modules list` | List the modules installed for this release, and name any that are broken |
 | `PoolSeqFlow analysis modules uninstall <module>` | Remove one module, after confirmation. Results it produced are untouched |
 | `PoolSeqFlow analysis complete` | Move finished analyses and shared intermediates from `mainDir/Analysis/` to `storageDir/Analysis/`, after confirmation. A name already taken in permanent storage stops it with nothing moved |
@@ -3086,7 +3086,7 @@ PoolSeqFlow analysis modules list              # what is installed for this rele
 PoolSeqFlow analysis modules uninstall mds     # remove one, after confirming
 ```
 
-All of them read the installation rather than your project, so they work from anywhere and none needs a `parameters.config`. `list` and `available` need nothing else either. **`install` needs the analysis environment**, because installing a module also installs what it runs on; `uninstall` uses it when it is there and says so when it is not.
+All of them read the installation rather than your project, so they work from anywhere and none needs a `parameters.config`. `list` and `available` need no environment. **`install` does**, because installing a module also installs what it runs on; `uninstall` uses the environment when it is there and says so when it is not.
 
 **`install` pins by name.** Without a version it takes the newest one this release can read; with one it takes exactly that. **Name the version in your methods section**, and install that version to reproduce the analysis — a module carries its own version precisely so it can move without the pipeline moving, which means two runs of "the same module" are not necessarily the same code. Every analysis prints the module version it ran in its header, and installing writes a `.source` file beside the module recording where it came from and the checksum it matched.
 
@@ -3102,18 +3102,23 @@ All of them read the installation rather than your project, so they work from an
 
 #### What installing a module does to your environment { #module-packages }
 
-**There is one analysis environment per release and every module shares it.** A module that needs an R package the release does not ship names it in its manifest, pinned to an exact version, and `modules install` puts it in that shared environment. The three modules shipped with this release name nothing: they run on base R plus what the environment already carries.
+**There is one analysis environment per release and every module shares it.** A module that needs an R package the release does not ship names it in its manifest, pinned to an exact version, and `modules install` puts it in that shared environment. No module shipped with this release names one — they run on base R plus what the environment already carries — so this is what you will see when you install one of the modules published separately:
 
 ```
 Installing what fst runs on, into 'PoolSeqFlow-3.0.0-analysis':
     r-poolfstat=3.0.0
 ```
 
-**Nothing already in the environment is allowed to move.** A pin that names a package the environment already holds at a different version is refused outright, before conda is asked, so a module can never quietly downgrade something another module — or the release itself — is running on. Beyond that the install is made with conda's `--freeze-installed`, which lets the solver add whatever the new package needs while refusing to change anything else. The worst a module can do is fail to install, and it fails having changed nothing:
+**Nothing already in the environment is allowed to move.** A pin naming a package the environment already holds at a different version is refused before conda is asked at all, so a module can never quietly downgrade something another module — or the release itself — is running on:
+
+> ERROR: these pins disagree with what 'PoolSeqFlow-3.0.0-analysis' already holds:
+>     r-poolfstat=2.9.0 (installed 3.0.0)
+
+Beyond that the install is made with conda's `--freeze-installed`, which lets the solver add whatever the new package needs while refusing to change anything else. So the worst a module can do is fail to install, and it fails having changed nothing:
 
 > ERROR: fst v1.0.0 needs packages this release's analysis environment cannot take without moving something already in it. The module was not installed and the environment was not changed.
 
-That is a compatibility question between a release and a module, settled when each is published rather than on your machine. The answer is a build of that module published for the release you have.
+Either way it is a compatibility question between a release and a module, settled when each is published rather than on your machine. The answer is a build of that module published for the release you have.
 
 **Uninstalling takes back only what nothing else asks for.** If two modules both name `r-poolfstat=3.0.0`, removing one leaves it installed for the other. And because `conda remove` takes everything that depends on what it is given, the removal is planned before it is run: if taking a package out would take something else with it, nothing is removed and the module stays installed.
 
@@ -4968,7 +4973,7 @@ PoolSeqFlow is licensed under the [Apache License 2.0](https://github.com/ozanki
 
 The tools it invokes carry their own licenses, which are not affected by this one.
 
-**Analysis modules carry their own license, and it is not always this one.** A module is a separate work that is versioned and installed separately, and the terms it is published under are in its `manifest.json` and printed in the report of every analysis it produces. The three that ship with this release — `basicstats`, `association` and `mds` — are GPL-3.0-or-later, because each compiles its hot path with `Rcpp` and does so by default. `verify` belongs to the frame and is Apache-2.0 with the rest of the pipeline. If you redistribute what a module produced, read the line the report gives you.
+**Analysis modules carry their own license, and it is not always this one.** A module is a separate work that is versioned and installed separately, and the terms it is published under are in its `manifest.json` and printed in the report of every analysis it produces. `basicstats`, `association` and `mds` are GPL-3.0-or-later, because each compiles its hot path with `Rcpp` and does so by default. `verify` belongs to the frame and is Apache-2.0 with the rest of the pipeline. If you redistribute what a module produced, read the line the report gives you.
 
 ### Contact
 

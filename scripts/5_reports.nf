@@ -112,8 +112,8 @@ process DepthProfile {
     tuple val(run), val(pair_id), path(ready_bam), path(ready_bai)
 
     // The BAM and its index pass straight through; step 6 reads them. The histogram and the
-    // report are a completion signal like the other two processes', and are separate from
-    // `profile` because step 6 reads that tuple by position.
+    // report are a completion signal like the other two processes'. They are a second emit:
+    // step 6 reads `profile` by position, so nothing may be added to that tuple.
     output:
     tuple val(run), val(pair_id), path(ready_bam), path(ready_bai),
           path("${pair_id}_depth_cap.txt"), emit: profile

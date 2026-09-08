@@ -82,7 +82,7 @@ Z, 2026-09-08: *"We keep everything but abandoned ideas. They carry a different 
 
 Not one line of code may change. Per file, diff the non-comment lines against `HEAD`. For Python, a docstring is not a `#` comment and the line count misleads — prove it with an AST comparison that strips docstrings.
 
-Then `nextflow lint .` (zero errors **and** zero warnings, 32 files) and `bash test/run_tests.sh --fast`, which is under a minute. Check the passed count against the run before it rather than only the exit status: a filter that matches nothing also reports success.
+Then `nextflow lint .` (zero errors **and** zero warnings) and `bash test/run_tests.sh --fast`, which is under a minute. Check both counts — files linted, cases passed — against the run before it rather than only the exit status: a filter that matches nothing also reports success. Neither number is written down here, because both move with every file added.
 
 ## What to run while building
 

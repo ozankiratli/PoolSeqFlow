@@ -720,8 +720,7 @@ uninstall_module() {
     fi
     # A package another installed module also declares stays: the environment is shared, and
     # what leaves with this module is what nothing left behind asks for. With no analysis
-    # environment there is nothing to take them out of, and the store is still the user's to
-    # tidy - `analysis install` puts back whatever the modules left in it need.
+    # environment there is nothing to take them out of, so nothing does.
     mine=$(module_packages "$dir/manifest.json" | cut -d= -f1 | sort -u)
     others=$(store_packages "$MODULE_STORE" "$name" | cut -d= -f1 | sort -u)
     going=$(printf '%s\n' "$mine" | grep -vxF "$others" || true)

@@ -830,9 +830,10 @@ run_analysis_launcher_with_envs() {
     if [ -n "${LAUNCHER_STORE_MODULE:-}" ]; then
         local store="$sb/analysis/modules/$LAUNCHER_STORE_MODULE"
         mkdir -p "$store"
-        # Never read here - the wrapper looks for the directory and main.nf, and the manifest is
-        # the analysis layer's to parse - but an installed module has one, and `modules list`
-        # tells a directory holding one from a directory that is merely there.
+        # The wrapper reads this now: `packages` is what install, uninstall and the payload
+        # wipe all take from it, through store_packages(). It was the analysis layer's alone
+        # until the module store gained dependencies. `modules list` also uses its presence to
+        # tell a directory holding a module from a directory that is merely there.
         printf '{"name":"%s","version":"0.0.1","contract":"freq-1","packages":[%s],"summary":"stub"}\n' \
             "$LAUNCHER_STORE_MODULE" "${LAUNCHER_STORE_MODULE_PACKAGES:-}" > "$store/manifest.json"
         [ -n "${LAUNCHER_STORE_MODULE_INCOMPLETE:-}" ] || : > "$store/main.nf"

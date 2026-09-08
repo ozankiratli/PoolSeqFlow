@@ -16,26 +16,33 @@
 # reached, that a module declaring nothing issues no install, that a removal reads its plan
 # first. It can prove nothing about whether a solve SUCCEEDS, because a stub always says yes.
 #
-# The whole guarantee of the design is a solver behavior: `--freeze-installed` adds a package
-# and its dependencies while refusing to move anything already installed. Whether that holds
-# for a given pair of modules is a question only a real solver answers, and it is a
-# release-time question - Z, 2026-09-03: "there is no real union, we test it here."
+# The guarantee is a solver behavior, so only a solver settles it - a release-time question,
+# Z, 2026-09-03: "there is no real union, we test it here."
+#
+# THE FIRST RUN OF THIS SCRIPT FOUND THAT `--freeze-installed` DOES LESS THAN IT SOUNDS. It
+# refuses to change a package the solve reaches on its own; a package NAMED ON THE COMMAND LINE
+# it installs at the version asked for, downgrading what is there. A fixture pinning
+# r-glue=1.8.0 against a baseline holding 1.8.1 downgraded it and reported success. That is why
+# conda_install_packages refuses a disagreeing pin before conda is asked, and why the check for
+# it below is here.
 #
 # WHAT IT DOES
 # ------------
 # Builds the baseline analysis environment from install/environment-analysis.yml under a
-# throwaway name, then, for every module in analysis/modules/ that declares packages plus two
-# fixture modules built here:
+# throwaway name, then:
 #
-#   1. installs each module's packages with --freeze-installed and checks the solve succeeded
-#   2. loads each one in R, because installing and importing are different failures
-#   3. installs the next module and checks the first one's versions did not move
-#   4. removes one and checks the survivors are still there and still load
-#   5. checks the baseline never lost a package
+#   1. installs whatever the shipped modules declare, and checks the baseline did not move
+#   2. installs fixture-a's pins and checks the solve succeeded
+#   3. loads each one in R, because installing and importing are different failures
+#   4. asks for a pin over a version the environment holds, and checks it is refused
+#   5. installs fixture-b, which shares one pin, and checks fixture-a's versions did not move
+#   6. removes what only fixture-a asked for, and checks fixture-b's survives and still loads
+#   7. checks the baseline never lost a package across any of it
 #
-# The fixture modules exist because F1, F2 and F3 declare nothing - cmdscale, p.adjust, pt and
-# eigen are base R - so without them this script would have nothing to exercise and would pass
-# by having done no work. They pin real conda-forge packages that are not in the baseline.
+# The fixtures exist because F1, F2 and F3 declare nothing - cmdscale, p.adjust, pt and eigen
+# are base R - so without them this script would pass by having done no work. They pin real
+# conda-forge packages, and step 0 checks they are not in the baseline: the first pair chosen
+# WAS, which made four checks meaningless before anyone noticed.
 
 set -euo pipefail
 
@@ -85,13 +92,30 @@ conda env create -n "$ENV_NAME" -f "$BASELINE_FILE" >/dev/null
 BASELINE_PACKAGES=$(env_versions)
 printf '   %s packages\n' "$(printf '%s\n' "$BASELINE_PACKAGES" | wc -l | tr -d ' ')"
 
-# Whatever the shipped modules declare, plus the fixtures. A shipped module that declares
-# nothing contributes nothing here and that is correct; the fixtures are what make the run
-# meaningful either way.
+# Whatever the shipped modules declare. None does today, so this is a no-op that becomes the
+# most important check in the script the moment one gains a dependency: it is the release's own
+# environment being asked to take its own modules' pins.
 SHIPPED=$(store_packages "$REPO_ROOT/analysis/modules")
 if [ -n "$SHIPPED" ]; then
-    say "Shipped modules declare packages, so they are checked too"
+    say "Installing what the shipped modules declare"
     printf '   %s\n' $SHIPPED
+    # shellcheck disable=SC2086
+    if OUT=$(conda_install_packages "$ENV_NAME" $SHIPPED 2>&1); then
+        ok "the release's own modules install into the release's own environment"
+    else
+        bad "a module shipped in this release cannot install into its environment:"
+        printf '%s\n' "$OUT" | tail -6 | sed 's/^/         /'
+    fi
+    MOVED=$(comm -23 <(printf '%s\n' "$BASELINE_PACKAGES") <(env_versions) || true)
+    if [ -z "$MOVED" ]; then
+        ok "and moved nothing the baseline pins"
+    else
+        bad "and moved these baseline packages:"
+        printf '%s\n' "$MOVED" | sed 's/^/         /'
+    fi
+    BASELINE_PACKAGES=$(env_versions)
+else
+    say "No shipped module declares a package, so the fixtures below are the whole run"
 fi
 
 # The two fixture modules are pins rather than directories: what is being exercised is the
