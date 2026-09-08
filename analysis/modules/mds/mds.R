@@ -169,7 +169,7 @@ if (nzchar(shape_by)) {
 
 # Classical multidimensional scaling from a matrix of SQUARED distances.
 #
-# The squared distances are double centred into a Gram matrix and that is decomposed, which is
+# The squared distances are double centered into a Gram matrix and that is decomposed, which is
 # what cmdscale does internally with the distances it is given. Taking that step here rather than
 # calling cmdscale keeps the corrected distances out of a square root: they are already squared
 # distances, and the small negative entries an unbiased estimator produces have no root.
@@ -178,8 +178,8 @@ if (nzchar(shape_by)) {
 ordinate <- function(squared, dimensions) {
     n <- nrow(squared)
     if (n < 2) stop("ordinate: an ordination needs at least two pools")
-    centring <- diag(n) - 1 / n
-    gram <- -0.5 * (centring %*% squared %*% centring)
+    centering <- diag(n) - 1 / n
+    gram <- -0.5 * (centering %*% squared %*% centering)
     # eigen(symmetric = TRUE) reads one triangle; the halves differ in the last bits after the
     # multiplications above.
     gram <- (gram + t(gram)) / 2

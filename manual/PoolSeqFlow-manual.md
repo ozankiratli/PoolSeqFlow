@@ -269,7 +269,7 @@ Finished results do not go here. They go to `storageDir`, which has to be a diff
 
 Then edit `parameters.config`: `mainDir`, `storageDir`, `readPattern`, `referenceFile`, `poolSize` and `ploidy` at minimum. The reference and the annotation may be gzipped or plain — the pipeline takes either and unpacks what it needs into `Reference/Dictionaries/`.
 
-Analysing one set of reads under several parameter sets — two reference genomes, say? Run `PoolSeqFlow init_multi` instead. It does everything `init` does, switches `multiRun` on, and copies `multi-run.csv.example` into the project. It does not write the run table itself, for the same reason it does not write `metadata.csv`.
+Analyzing one set of reads under several parameter sets — two reference genomes, say? Run `PoolSeqFlow init_multi` instead. It does everything `init` does, switches `multiRun` on, and copies `multi-run.csv.example` into the project. It does not write the run table itself, for the same reason it does not write `metadata.csv`.
 
 ### 4. Verify it any time { #check }
 
@@ -566,7 +566,7 @@ Run it in your project directory. It backs your file up, rebuilds it from the cu
 
 It also ends with a list of **files to move yourself**, and moves none of them. If you are upgrading from 2.2.0 or older, there will be several, because the layout changed: your reads, reference and sample table used to live under the storage directory and now belong on `mainDir`. It prints the exact `mv` commands, having checked which files are actually there — read them before running them.
 
-One group in that list matters more than the rest. `.poolseqflow_params` and its neighbours are the records the change guard compares against — they are how "has anything changed since these results were produced" gets answered. Leave them behind and the next run finds no record, decides the project is new, and writes down your *current* configuration as though it had produced the results already on disk. The guard would then report that nothing has changed, having quietly stopped guarding.
+One group in that list matters more than the rest. `.poolseqflow_params` and its neighbors are the records the change guard compares against — they are how "has anything changed since these results were produced" gets answered. Leave them behind and the next run finds no record, decides the project is new, and writes down your *current* configuration as though it had produced the results already on disk. The guard would then report that nothing has changed, having quietly stopped guarding.
 
 **Treat the migrated config as a starting point, not an answer.** Migration can only recognize a parameter that still exists *and still means the same thing*. A parameter whose behavior changed while its value still looks like an ordinary number or string is carried across and is silently wrong. Always read the report, and compare afterwards.
 
@@ -1025,7 +1025,7 @@ bcftools call -m -A -v -Ov
 
 For each site it sorts the alleles by `INFO/AD` — the read count summed across every sample — and reorders `REF`, `ALT`, `INFO/AD`, `INFO/DP`, `FORMAT/AD` and `FORMAT/DP` to match. `DP` is recomputed as the sum of the reordered `AD`, so depth and allelic depth cannot disagree.
 
-**Why do it at all.** The reference genome is one individual's assembly. There is no reason its allele should be the common one in your population, and when it is not, every frequency in that row is reported against a rare baseline. Two studies on the same species then report mirror-image frequencies for the same site. Normalising to the major allele makes rows comparable across samples, across runs and across projects.
+**Why do it at all.** The reference genome is one individual's assembly. There is no reason its allele should be the common one in your population, and when it is not, every frequency in that row is reported against a rare baseline. Two studies on the same species then report mirror-image frequencies for the same site. Normalizing to the major allele makes rows comparable across samples, across runs and across projects.
 
 **Two consequences worth knowing.**
 
@@ -1588,7 +1588,7 @@ Five sub-steps in a serial chain, each deleting its input once its output is saf
 | # | Sub-step | Does |
 |---|---|---|
 | 1 | `SortRefAltByFrequency` | Re-encodes so the most-read allele is `REF`; recomputes `DP` from `AD`; sets `GT` to `./.` |
-| 2 | `FilterPotentialFalsePositives` | Splits multiallelics, applies the cross-sample support test, rejoins, re-normalises |
+| 2 | `FilterPotentialFalsePositives` | Splits multiallelics, applies the cross-sample support test, rejoins, re-normalizes |
 | 3 | `DepthAndQualityFilter` | `bcftools view -e "FMT/DP<20"` then `vcftools --minQ 30` |
 | 4 | `SplitSNPsAndINDELs` | Two vcftools passes into a SNP VCF and an INDEL VCF |
 | 5 | `CalculateFrequencies` | Extracts `AD`, publishes it as the depth table, then divides to frequencies; runs once per split file |
@@ -1767,7 +1767,7 @@ There are three directories, and keeping them apart is most of understanding the
 │   ├── 4_clean.nf                # Name-sort → fixmate → markdup → addRG → filter → index
 │   ├── 5_reports.nf              # Alignment and coverage reports
 │   ├── 6_variant_call.nf         # One joint bcftools mpileup and call
-│   ├── 7_vcf2freq.nf             # Normalise, filter, split, convert to frequencies
+│   ├── 7_vcf2freq.nf             # Normalize, filter, split, convert to frequencies
 │   ├── 8_annotate_variants.nf    # SnpEff, optional
 │   ├── 9_completion.nf           # Promotion: moving finished artifacts to storageDir
 │   ├── citations.nf              # Writes CITATIONS.md and references.bib for the run
@@ -2619,7 +2619,7 @@ cutadapt -u Clip5 -U Clip5 -l readLengthLimit -o R1_clipped.fq.gz -p R2_clipped.
 
 **Both mates get the same treatment.** `Clip5` is the *larger* of the two 5′ bounds and the length limit applies to both files, so R1 and R2 come out the same length. The alternative — clipping each mate to its own measured range — would leave mates of different lengths for no downstream benefit.
 
-**The length limit is the more permissive of the two.** Because `readLengthLimit` takes the `max`, a read whose own usable range ended earlier is kept to the longer mate's length, retaining a few cycles past its own bound. This favours read length over strict adherence to the tolerance. If that trade is wrong for your data, tighten `at_gc_error` — which pulls both bounds in — rather than trying to change the rule.
+**The length limit is the more permissive of the two.** Because `readLengthLimit` takes the `max`, a read whose own usable range ended earlier is kept to the longer mate's length, retaining a few cycles past its own bound. This favors read length over strict adherence to the tolerance. If that trade is wrong for your data, tighten `at_gc_error` — which pulls both bounds in — rather than trying to change the rule.
 
 #### When it refuses to run
 
@@ -3063,7 +3063,7 @@ PoolSeqFlow analysis install     # builds this release's analysis environment
 PoolSeqFlow analysis check       # what it found: R, the packages, the tools
 ```
 
-The pipeline is complete without it, and a machine that only ever analyses results copied from elsewhere can install this layer and not the pipeline.
+The pipeline is complete without it, and a machine that only ever analyzes results copied from elsewhere can install this layer and not the pipeline.
 
 ### Running a module
 
@@ -4030,7 +4030,7 @@ That is worth unpacking, because it is where this module departs from what most 
 
 `MajorAlleleToRef.py` has already made the reference the cohort's *major* allele, so "reference" here is not a privileged biological state — it is simply the commonest allele, and skipping it would privilege "not the commonest" for no reason.
 
-**Why more alleles is not an unfair advantage.** A site of four alleles offers four chances at a large |t| where a biallelic site offers two, which sounds like it should favour multiallelic sites. It does not, because the p-value is not read off a table: it is read against a null built by rearranging **that same site**, which has the same alleles, the same constraint that they sum to 1, and therefore the same number of chances. The comparison is like for like at every arity, so nothing needs correcting — no Bonferroni, no union bound.
+**Why more alleles is not an unfair advantage.** A site of four alleles offers four chances at a large |t| where a biallelic site offers two, which sounds like it should favor multiallelic sites. It does not, because the p-value is not read off a table: it is read against a null built by rearranging **that same site**, which has the same alleles, the same constraint that they sum to 1, and therefore the same number of chances. The comparison is like for like at every arity, so nothing needs correcting — no Bonferroni, no union bound.
 
 That is not an argument from first principles alone. Measured on null sites of two, three and four alleles, the false-positive rate is flat across arity, and the sites the module selects have the same allele counts as the genome it selected them from — which is what `arity_mean` and `arity_selected` in [`permutations.tsv`](#association-diagnostics) let you check on your own data. The union-bound alternative — take the smallest allele p and multiply by *k* − 1 — measured **37% above its nominal rate** at triallelic sites, which is why it is not used.
 
@@ -4189,7 +4189,7 @@ Each pool, the unit it belongs to, its experimental variables, and its coordinat
 
 The corrected distance, the uncorrected sum beside it, what the correction removed, and how many sites the pair was averaged over.
 
-**Read the `sites` column.** Every pair is averaged over *its own* sites, not over a count shared across the matrix. A pool with no reads at a site drops that site for its own pairs and leaves every other pair intact, so two distances in one run can rest on different numbers of sites. A pair whose count is much lower than its neighbours' is a pair whose distance is measured less well, and the matrix does not say so anywhere else.
+**Read the `sites` column.** Every pair is averaged over *its own* sites, not over a count shared across the matrix. A pool with no reads at a site drops that site for its own pairs and leaves every other pair intact, so two distances in one run can rest on different numbers of sites. A pair whose count is much lower than its neighbors' is a pair whose distance is measured less well, and the matrix does not say so anywhere else.
 
 Two kinds of site drop out for a pair. One is an ordinary missing cell. The other is subtler: **a site where a pool has exactly one read**. Effective sample size is exactly 1 at depth 1 whatever the pool holds, and one gene copy carries no within-pool diversity for the correction to work from, so such a site is dropped rather than guessed at.
 
@@ -4205,9 +4205,9 @@ Negative eigenvalues carrying a few percent of the total are ordinary for pool-s
 
 ### `mds.png` — the pools on the leading two axes { #mds-plot }
 
-Points labelled by pool, on the leading two axes, with each axis label carrying its share of the absolute eigenvalue sum.
+Points labeled by pool, on the leading two axes, with each axis label carrying its share of the absolute eigenvalue sum.
 
-**`colorBy` and `shapeBy` each take an `exp_` column, and they compose.** Colouring by the treatment and shaping by the timepoint puts both factors on one plot, which is usually the question — whether the pools group by the thing you set up, or by when you sampled them:
+**`colorBy` and `shapeBy` each take an `exp_` column, and they compose.** Coloring by the treatment and shaping by the timepoint puts both factors on one plot, which is usually the question — whether the pools group by the thing you set up, or by when you sampled them:
 
 ```groovy
 colorBy = 'exp_population'
@@ -4236,7 +4236,7 @@ text(coords$dim1, coords$dim2, coords$pool, pos = 3, cex = 0.7)
 
 **Six pools make six points, and six points always look like they have structure.** Nothing in this module says whether the arrangement is more than sampling noise. A block bootstrap over linkage blocks, with the replicate ordinations Procrustes-aligned, is what would give you a confidence region around each point; it is not in this release, and until it is, an `mds.png` is a description of the data and not evidence of grouping.
 
-**Distances are not comparable across targets.** `filterFalsePositives.sh` keeps a site only if the alternate clears a per-pool threshold in a fraction of the samples, and `MajorAlleleToRef.py` re-polarises on cohort totals. Both depend on which pools were in the run, so a distance between two pools computed from a six-pool run is not the same quantity as the distance between the same two pools computed from a twelve-pool run. Compare within a target, never across.
+**Distances are not comparable across targets.** `filterFalsePositives.sh` keeps a site only if the alternate clears a per-pool threshold in a fraction of the samples, and `MajorAlleleToRef.py` re-polarizes on cohort totals. Both depend on which pools were in the run, so a distance between two pools computed from a six-pool run is not the same quantity as the distance between the same two pools computed from a twelve-pool run. Compare within a target, never across.
 
 **Indels are read apart.** By default this reads the SNP tables alone, matching how everything else in the frame counts indels separately. `analysis.modules.mds.includeIndels` changes that.
 
@@ -4281,7 +4281,7 @@ Every folder `mds` publishes carries a `CITATIONS.md` and a `references.bib` wit
 | | |
 |---|---|
 | [Nei 1972](#ref-nei1972distance) | the distance itself — the *minimum* distance of that paper, not the standard distance `D` defined alongside it |
-| [Gower 1966](#ref-gower1966mds) | the ordination itself: squared distances double centred and decomposed, which is what `cmdscale` implements and where the negative eigenvalues come from |
+| [Gower 1966](#ref-gower1966mds) | the ordination itself: squared distances double centered and decomposed, which is what `cmdscale` implements and where the negative eigenvalues come from |
 | [Hivert et al. 2018](#ref-hivert2018poolseq) | the effective sample size the sampling correction is scaled by, and which of the two forms in circulation this is |
 
 Full entries, with what each is cited for, are in the [Bibliography](#bibliography).
@@ -4454,7 +4454,7 @@ So: the suite below tells me I have not broken what I built. It does not tell me
 
 ### The shape of it
 
-The suites are organised by **seam** rather than by file: the wrapper, configuration migration, parameter resolution, the change guards, the helper programs, the dry run, the analysis frame and the static checks each get one. Most ship with the pipeline, and **each analysis module ships its own**, because a module's tests belong to the module and travel with it when it is published separately. `test/run_tests.sh --list` prints the current set with what each one costs; there is no case count written here, because it moves with every stage and a number in a manual is a number that goes quietly out of date.
+The suites are organized by **seam** rather than by file: the wrapper, configuration migration, parameter resolution, the change guards, the helper programs, the dry run, the analysis frame and the static checks each get one. Most ship with the pipeline, and **each analysis module ships its own**, because a module's tests belong to the module and travel with it when it is published separately. `test/run_tests.sh --list` prints the current set with what each one costs; there is no case count written here, because it moves with every stage and a number in a manual is a number that goes quietly out of date.
 
 Most of them are not testing what people usually mean by a test. The failures this pipeline can produce are rarely crashes — they are a run that completes, reports success, and gives a number that is quietly wrong, because a filter was applied with the wrong pool's threshold or a step reused an artifact that was produced under different settings. So a large share of the suite exists to catch a *plausible* result rather than a broken one.
 
@@ -4774,7 +4774,7 @@ The diversity statistic itself is [Nei 1973](#ref-nei1973diversity), the correct
 #### Gower 1966 { #ref-gower1966mds }
 
 **Gower, J. C.** (1966). Some Distance Properties of Latent Root and Vector Methods Used in Multivariate Analysis. *Biometrika* 53(3/4), 325–338. [10.2307/2333639](https://doi.org/10.2307/2333639)
-: The ordination this module draws: a matrix of squared distances double centred into a Gram matrix, whose leading eigenvectors are the coordinates. It is what R's own cmdscale cites and implements, and the source of the negative eigenvalues this module publishes rather than hides - they are what a distance matrix that no flat space holds exactly produces.
+: The ordination this module draws: a matrix of squared distances double centered into a Gram matrix, whose leading eigenvectors are the coordinates. It is what R's own cmdscale cites and implements, and the source of the negative eigenvalues this module publishes rather than hides - they are what a distance matrix that no flat space holds exactly produces.
 
 #### Nei 1972 { #ref-nei1972distance }
 
@@ -4804,7 +4804,7 @@ The diversity statistic itself is [Nei 1973](#ref-nei1973diversity), the correct
 #### Hivert et al. 2018 { #ref-hivert2018poolseq }
 
 **Hivert, V., Leblois, R., Petit, E. J., Gautier, M. & Vitalis, R.** (2018). Measuring Genetic Differentiation from Pool-seq Data. *Genetics* 210(1), 315–330. [10.1534/genetics.118.300900](https://doi.org/10.1534/genetics.118.300900)
-: The effective sample size the analysis layer weights by, n_eff = n*d / (n + d - 1) for a pool of n chromosomes read to depth d. The paper does not write it in that form - it defines D2 as the sum of (d + n - 1)/n, which is the sum of d / n_eff under this form and under no other. Its pools are parameterised by HAPLOID size, which is what leaves n_eff, and everything weighted by it, general over ploidy. It is HERE rather than in a module because analysis/lib/R/n_eff.R is library code and every module that weights anything calls it.
+: The effective sample size the analysis layer weights by, n_eff = n*d / (n + d - 1) for a pool of n chromosomes read to depth d. The paper does not write it in that form - it defines D2 as the sum of (d + n - 1)/n, which is the sum of d / n_eff under this form and under no other. Its pools are parameterized by HAPLOID size, which is what leaves n_eff, and everything weighted by it, general over ploidy. It is HERE rather than in a module because analysis/lib/R/n_eff.R is library code and every module that weights anything calls it.
 
 ### Estimating from pooled reads
 

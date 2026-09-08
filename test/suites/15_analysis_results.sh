@@ -405,7 +405,7 @@ test_an_intermediate_records_the_frame_that_derived_it() {
 }
 
 # THE RISKY TRANSFER. Named files, one at a time, out of a directory that holds other things -
-# a wholesale copy is how a neighbour comes back with them.
+# a wholesale copy is how a neighbor comes back with them.
 #
 # It COPIES: permanent storage keeps its copy, so a cycle costs one transfer instead of two and
 # the next `complete` has something to discard rather than something to send again.
@@ -468,7 +468,7 @@ test_complete_moves_the_analyses_and_the_intermediates() {
 }
 
 # THE RISK, IN THE OTHER DIRECTION. RestoreIntermediates already proves a move back does not
-# carry off a neighbour; this is the same guarantee on the way out.
+# carry off a neighbor; this is the same guarantee on the way out.
 test_complete_leaves_permanent_storage_alone() {
     analysis_completable || return
     local store; store=$(analysis_archived)

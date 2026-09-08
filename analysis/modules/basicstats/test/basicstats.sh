@@ -284,7 +284,7 @@ test_a_merged_pool_reports_a_bound() {
     done
 }
 
-# A PLOT ONLY FOR WHAT YOU NAMED. The default draws nothing, which is the behaviour a genome
+# A PLOT ONLY FOR WHAT YOU NAMED. The default draws nothing, which is the behavior a genome
 # with hundreds of scaffolds needs; the run has to say what it could have drawn instead, or the
 # setting is undiscoverable.
 test_a_depth_plot_is_drawn_only_for_named_sequences() {
@@ -398,7 +398,7 @@ test_a_worker_compiles_the_hot_path_for_itself() {
     assert_file "$sb/manycpp/diversity.tsv" \
         "the compiled path must survive being handed to a worker: $(cat "$sb/manycpp/out.txt" 2>/dev/null)"
     assert_eq "" "$(diff "$sb/one/diversity.tsv" "$sb/manycpp/diversity.tsv" 2>&1)" \
-        "and give what the vectorised R in one process gives"
+        "and give what the vectorized R in one process gives"
 }
 
 # A parallel run needs doFuture, and the module must say so rather than dropping to one worker:

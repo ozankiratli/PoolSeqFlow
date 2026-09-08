@@ -20,7 +20,7 @@ dependencies:
   - bcftools=1.24
   - htslib=1.24
   - python
-  # GNU behaviour for the shell helpers, which is not what macOS provides.
+  # GNU behavior for the shell helpers, which is not what macOS provides.
   - bash
   - coreutils
   # bin/atomic_mv.sh copies an artifact with rsync and compares it against its source with

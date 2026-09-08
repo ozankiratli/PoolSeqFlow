@@ -173,7 +173,7 @@ test_the_frame_version_does_not_hijack_the_release() {
         "and frameVersion() must not read the release"
     assert_contains "$code" 'frame.version' "it reads its own file instead"
     # A params key would be settable from a project's analysis.config, and a provenance record
-    # the analysed project can rewrite records nothing.
+    # the analyzed project can rewrite records nothing.
     assert_not_contains "$cfg" "frameVersion" "and it is not a parameter either"
 }
 
@@ -230,7 +230,7 @@ test_the_analysis_settings_default_without_a_config_block() {
 }
 
 # The installation is what the environment variable says, and a run that cannot find it stops
-# with that sentence rather than with a helper missing from a path nobody recognises.
+# with that sentence rather than with a helper missing from a path nobody recognizes.
 test_a_run_that_cannot_find_its_installation_refuses() {
     analysis_ready single || return
     local status

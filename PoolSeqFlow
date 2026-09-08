@@ -233,7 +233,7 @@ choose_installation_to_uninstall() {
     printf 'Which one should be removed? [1-%d, or q to cancel] ' "$count" >&2
     read -r choice
     case "$choice" in
-        q|Q|"") echo "Cancelled. Nothing was removed." >&2; return 1 ;;
+        q|Q|"") echo "Canceled. Nothing was removed." >&2; return 1 ;;
         *[!0-9]*) echo "Not a number: $choice. Nothing was removed." >&2; return 1 ;;
     esac
     if [ "$choice" -lt 1 ] || [ "$choice" -gt "$count" ]; then
@@ -1027,7 +1027,7 @@ case $COMMAND in
         echo ""
         echo " Migration is a convenience, not a guarantee. It carries across settings"
         echo " whose parameter still exists and has the same meaning. It cannot know"
-        echo " about a parameter whose behaviour changed in a way that still looks"
+        echo " about a parameter whose behavior changed in a way that still looks"
         echo " like a plain value, so a migrated file can be silently wrong."
         echo ""
         echo " Read the report below, then diff your file against the template:"
@@ -1234,7 +1234,7 @@ EOF
                 if ! env_exists "$ENV_NAME"; then
                     echo ""
                     echo "Note: the pipeline environment '$ENV_NAME' is not installed. The analysis"
-                    echo "layer reads results a pipeline run produced, so this machine can analyse"
+                    echo "layer reads results a pipeline run produced, so this machine can analyze"
                     echo "results copied from elsewhere but cannot produce them."
                 fi
                 echo ""
@@ -1537,7 +1537,7 @@ EOF
         ;;
     uninstall)
         PREFIX=$(install_prefix)
-        # Decided first, and may be an installation other than this wrapper's. Cancelling,
+        # Decided first, and may be an installation other than this wrapper's. Canceling,
         # or having no way to ask, stops here.
         TARGET=$(choose_installation_to_uninstall "$PREFIX") || exit 1
 

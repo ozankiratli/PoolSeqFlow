@@ -1,6 +1,6 @@
 {
   "name": "association",
-  "version": "20260908.001",
+  "version": "20260908.002",
   "contract": "freq-1",
   "license": "Apache-2.0",
   "summary": "each allele's frequency regressed on a phenotype measured per pool, with a permutation p",
@@ -19,7 +19,7 @@
     "A site where an allele has no residual left is flagged rather than read. Two alleles of one perfectly separated site are algebraically the same test, and whether each lands on exactly zero or on 1e-32 decides between an infinite t and a merely enormous one, so those numbers are not comparable between implementations and the flag says so.",
     "Pool sizes and ploidy come from the project's metadata as the frame resolved them, not from anything this module infers. Ploidy enters once, through n_chrom = ploidy * poolSize inside n_eff, so nothing here is limited to diploids.",
     "bin/cap_depth.awk keeps reads in coordinate order until the cap rather than subsampling, so at a capped position the retained reads are biased toward those mapping earliest. That is an allele-frequency bias and not only a depth truncation.",
-    "filterFalsePositives.sh admits an allele that clears half of one chromosome's frequency in a fraction of the samples, and MajorAlleleToRef.py re-polarises on cohort totals. Both depend on which pools were in the run, so a result from six pools is not the same quantity as one from twelve and the two are not comparable across targets."
+    "filterFalsePositives.sh admits an allele that clears half of one chromosome's frequency in a fraction of the samples, and MajorAlleleToRef.py re-polarizes on cohort totals. Both depend on which pools were in the run, so a result from six pools is not the same quantity as one from twelve and the two are not comparable across targets."
   ],
   "outputs": [
     {

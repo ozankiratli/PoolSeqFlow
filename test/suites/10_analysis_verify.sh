@@ -48,7 +48,7 @@ test_a_project_with_no_results_refuses() {
     write_sandbox_config "$sb"
     analysis_write_time_config "$sb"
     status=$(run_analysis "$sb" verify)
-    assert_status 1 "$status" "there is nothing to analyse"
+    assert_status 1 "$status" "there is nothing to analyze"
     local report; report=$(analysis_report "$sb")
     assert_contains "$report" "No results recorded in" "should say the project has none"
     assert_contains "$report" "PoolSeqFlow run" "and how to produce some"

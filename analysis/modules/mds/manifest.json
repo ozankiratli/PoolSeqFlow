@@ -1,6 +1,6 @@
 {
   "name": "mds",
-  "version": "20260908.001",
+  "version": "20260908.002",
   "contract": "freq-1",
   "license": "Apache-2.0",
   "summary": "the pools placed by Nei's minimum distance, on a classical MDS (principal coordinates analysis)",
@@ -19,10 +19,10 @@
     "AT SIX POOLS AN ORDINATION IS SIX POINTS AND WILL ALWAYS SHOW STRUCTURE. Nothing here says whether the arrangement is more than sampling noise; a block bootstrap over linkage blocks with Procrustes alignment is what would give a confidence region and it is not in this release.",
     "Computed from the DEPTH table alone. Every published frequency is a six-significant-digit rendering of a ratio the depth table holds exactly, and a cell with no reads is published there as 0 rather than as missing.",
     "Read over the SNP tables alone unless analysis.modules.mds.includeIndels says otherwise, matching how every other module in this frame counts indels apart.",
-    "A spanning-deletion allele reaching the SNP table as a * or an X is one allele of that site like any other: it carries reads, so it carries frequency, and dropping it would renormalise the site to something no pool was sequenced at.",
+    "A spanning-deletion allele reaching the SNP table as a * or an X is one allele of that site like any other: it carries reads, so it carries frequency, and dropping it would renormalize the site to something no pool was sequenced at.",
     "Pool sizes and ploidy come from the project's metadata as the frame resolved them, not from anything this module infers. Ploidy enters once, through n_chrom = ploidy * poolSize inside n_eff, so nothing here is limited to diploids. A pool of one chromosome is refused: the correction has nothing to divide by at any site.",
     "bin/cap_depth.awk keeps reads in coordinate order until the cap rather than subsampling, so at a capped position the retained reads are biased toward those mapping earliest. That is an allele-frequency bias and not only a depth truncation.",
-    "filterFalsePositives.sh admits an allele that clears half of one chromosome's frequency in a fraction of the samples, and MajorAlleleToRef.py re-polarises on cohort totals. Both depend on which pools were in the run, so a distance from six pools is not the same quantity as one from twelve and the two are not comparable across targets."
+    "filterFalsePositives.sh admits an allele that clears half of one chromosome's frequency in a fraction of the samples, and MajorAlleleToRef.py re-polarizes on cohort totals. Both depend on which pools were in the run, so a distance from six pools is not the same quantity as one from twelve and the two are not comparable across targets."
   ],
   "outputs": [
     {

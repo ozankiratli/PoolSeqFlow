@@ -11,9 +11,11 @@ REPORTS BY DEFAULT AND CONVERTS ONLY WHEN ASKED, for the reason comment-audit.sh
 a hit is a candidate and not a verdict. A blind rewrite over this repository breaks four kinds
 of thing, and three of them break silently.
 
-  1. IDENTIFIERS THAT CROSS FILES. `process Analyse` is named in three modules and read back out
-     of the Nextflow trace by task_count() in the test harness. Renaming the process without the
-     assertions is a suite that passes while measuring nothing.
+  1. IDENTIFIERS THAT CROSS FILES. A process name reaches the Nextflow trace, which the test
+     harness reads back through task_count(); renaming one without its assertions leaves a suite
+     that passes while measuring nothing. The modules' own `Analyse` was renamed to `Analyze` on
+     2026-09-08 after checking that nothing read it, which is the check to repeat rather than the
+     conclusion to reuse.
   2. THIRD-PARTY API. ggplot2 takes `colour` and `color` as synonyms, so those are safe; R's
      `grey()`/`gray()` likewise. Anything else from a package is not ours to spell.
   3. QUOTED TEXT. Journal names in references.bib and anything inside a citation `note` are
@@ -79,27 +81,43 @@ ROOTS = {
     "travell": "travel",
     "grey": "gray",
     "fibre": "fiber",
+    # British in every form, and neither is ever an identifier. The bare verb and the ambiguous
+    # plural are in the risky table below, for reasons that do not apply to these two.
+    "analysed": "analyzed",
+    "analysing": "analyzing",
 }
 
-# Roots that are also identifiers, domain terms or third-party API somewhere in this tree. Each
-# is reported with its line so a person decides; --all converts them anyway.
+# Roots that are also identifiers or that a regex cannot judge. Each is reported with its line so
+# a person decides; --all converts them anyway.
 #
 # `analyse` CANNOT BE SHORTENED TO `analys`, which is inside `analysis` - 1763 of those here.
-# It therefore misses `analysing`, which is listed separately.
+#
+# `analyse` CANNOT BE SHORTENED TO `analys`, which is inside `analysis` - 1763 of those here. And
+# it carries a lookahead because the bare root is inside `analyses`: without it every plural is
+# reported twice and the count reads as work left over when there is none.
+#
+# `catalogue` IS ON NEITHER LIST, and that is the finding rather than an omission. Merriam
+# Webster gives "catalog also catalogue": both are current American English, so there is nothing
+# here to correct. It is also this project's name for a specific thing - the shell variable
+# `catalogue`, the functions `modules_catalogue` and `modules_catalogue_stamped`, six test case
+# names and the wrapper's own output - so converting it renames fourteen identifiers to settle a
+# preference. Listing it at all invites a later pass to "fix" it.
 RISKY = {
-    "analyse": "analyze",
-    "analysing": "analyzing",
-    "catalogu": "catalog",
+    "analyse(?!s)": "analyze",
+    "analyses": "analyzes",
 }
 
-# Why each risky term is risky, printed beside its hits.
+# Why each risky root is risky, printed beside its hits.
 WHY = {
-    "analyse": "`process Analyse` is in three modules and is read out of the Nextflow trace by "
-               "task_count(); and `analyses` is the plural of `analysis` as often as it is the "
-               "verb, which no regex can tell apart",
-    "analysing": "see `analyse`",
-    "catalogu": "the module catalogue is a domain term with a file format (`#!index-format`) "
-                "and a wrapper subcommand built around it",
+    "analyse(?!s)":
+        "the bare root is what a process or function gets named, so a hit here may be an "
+        "identifier rather than a spelling. The modules' own process was renamed to `Analyze` "
+        "on 2026-09-08 after checking that nothing read it back out of a trace; repeat that "
+        "check rather than assuming it of a new one",
+    "analyses":
+        "USUALLY NOT AN ERROR: it is the plural of `analysis`, which is correct American "
+        "English, and only rarely the British verb. Measured over this tree, 25 of 27 were the "
+        "noun. Read every one before touching it",
 }
 
 # Paths never scanned. docs/ and dist/ are generated and .git is not text.

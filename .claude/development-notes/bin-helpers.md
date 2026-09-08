@@ -4,7 +4,7 @@
 
 Small programs the pipeline shells out to. Several exist because logic in a Nextflow process costs a JVM start to test, while a script in here is unit-testable in milliseconds — that cost model is the single biggest influence on what lives here.
 
-Not all of `bin/` is covered here. `cap_depth.awk` and `depth_cutoff.py` are in `depth-cutoff.md`, and `config_migrate.sh` in `config-migration.md`. **`MajorAlleleToRef.py` has no note anywhere**, which is a gap worth closing: it re-polarises every site on cohort totals, which is why a distance or a frequency from a six-pool run is not the same quantity as one from a twelve-pool run.
+Not all of `bin/` is covered here. `cap_depth.awk` and `depth_cutoff.py` are in `depth-cutoff.md`, and `config_migrate.sh` in `config-migration.md`. **`MajorAlleleToRef.py` has no note anywhere**, which is a gap worth closing: it re-polarizes every site on cohort totals, which is why a distance or a frequency from a six-pool run is not the same quantity as one from a twelve-pool run.
 
 ## `atomic_mv.sh` — why staging exists
 

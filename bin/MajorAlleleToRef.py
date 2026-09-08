@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Re-polarise a VCF so REF is the allele the whole cohort read most.
+"""Re-polarize a VCF so REF is the allele the whole cohort read most.
 
     MajorAlleleToRef.py in.vcf out.vcf
 
@@ -7,7 +7,7 @@ The order comes from the SITE-level INFO/AD, so one ordering is applied to every
 no sample decides its own. REF and ALT, INFO/AD and each sample's FORMAT/AD are reordered
 together, and INFO/DP and FORMAT/DP are rewritten from the sums of the reordered counts.
 
-FORMAT/GT IS SET TO './.' ON EVERY SAMPLE. Re-polarising invalidates the genotype calls the
+FORMAT/GT IS SET TO './.' ON EVERY SAMPLE. Re-polarizing invalidates the genotype calls the
 caller wrote, and there is no pooled genotype to replace them with.
 
 Header lines are copied through untouched, so the ##contig and ##FORMAT declarations still

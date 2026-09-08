@@ -13,7 +13,7 @@ Two halves of one job, and both are needed:
 
 ## Everything the dry run is lives in one file, process included
 
-The one place the pipeline departs from *entry points at the top, processes in `scripts/`*. It is deliberate: nothing else will ever include `DryRunTree`, and splitting it would put half of a self-contained feature somewhere it has no neighbours.
+The one place the pipeline departs from *entry points at the top, processes in `scripts/`*. It is deliberate: nothing else will ever include `DryRunTree`, and splitting it would put half of a self-contained feature somewhere it has no neighbors.
 
 ## The tree comes from the plan and nothing else
 

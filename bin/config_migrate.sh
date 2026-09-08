@@ -8,7 +8,7 @@
 # The template defines the parameter set for this release. Your own settings are carried
 # across wherever the same parameter still exists; anything the template computes for
 # itself (paths, thread counts, tool option strings) is taken from the template so the
-# migrated file picks up this release's behaviour.
+# migrated file picks up this release's behavior.
 #
 # The original is copied to parameters.config.bak before anything is written.
 #

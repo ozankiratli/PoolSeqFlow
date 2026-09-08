@@ -61,7 +61,7 @@ def selectedRuns(List runDefs) {
     def names = (asList ? wanted.collect { n -> "${n}".toString() } : ["${wanted}".toString()]).unique()
     if (names.isEmpty()) {
         throw new IllegalArgumentException(
-            "analysis.runs is an empty list, so it selects nothing. Name the runs to analyse, " +
+            "analysis.runs is an empty list, so it selects nothing. Name the runs to analyze, " +
             "or set it to 'all'.")
     }
 

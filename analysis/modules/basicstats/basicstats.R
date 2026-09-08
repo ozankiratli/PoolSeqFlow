@@ -385,6 +385,6 @@ cat("basicstats: ", nrow(snp), " SNP sites, ",
     sum(site_rows$sites) - nrow(snp), " indel sites, over ",
     length(chrom_levels), " sequence", if (length(chrom_levels) == 1) "" else "s", "\n", sep = "")
 cat("basicstats: diversity computed by the ",
-    if (isTRUE(OPTS$usecpp)) "compiled" else "vectorised R",
+    if (isTRUE(OPTS$usecpp)) "compiled" else "vectorized R",
     " path, in bins of ", OPTS$binSize, " sites over ",
     OPTS$workers, if (OPTS$workers == 1) " worker" else " workers", "\n", sep = "")

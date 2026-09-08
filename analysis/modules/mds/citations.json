@@ -32,6 +32,6 @@
     "pages": "325--338",
     "year": "1966",
     "doi": "10.2307/2333639",
-    "note": "The ordination this module draws: a matrix of squared distances double centred into a Gram matrix, whose leading eigenvectors are the coordinates. It is what R's own cmdscale cites and implements, and the source of the negative eigenvalues this module publishes rather than hides - they are what a distance matrix that no flat space holds exactly produces."
+    "note": "The ordination this module draws: a matrix of squared distances double centered into a Gram matrix, whose leading eigenvectors are the coordinates. It is what R's own cmdscale cites and implements, and the source of the negative eigenvalues this module publishes rather than hides - they are what a distance matrix that no flat space holds exactly produces."
   }
 }

@@ -41,7 +41,7 @@ test_a_time_column_outside_the_prefix_refuses() {
     assert_contains "$(analysis_output)" "has to be an exp_ column" "and the refusal says why"
 }
 
-# A numerical axis is an interval scale, so a rate is meaningful and has to be labelled.
+# A numerical axis is an interval scale, so a rate is meaningful and has to be labeled.
 test_numerical_time_requires_a_unit() {
     analysis_ready single || return
     analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'numerical' }"

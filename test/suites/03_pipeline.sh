@@ -131,7 +131,7 @@ test_indels_survive_to_the_frequency_table() {
 # and the proper-pair filter, so it is deliberately not asserted anywhere.
 #
 # Rows are matched on the allele BASE, not on "the row where REF differs from ALLELE".
-# MajorAlleleToRef.py re-polarises every site to the cohort major allele, so a planted ALT
+# MajorAlleleToRef.py re-polarizes every site to the cohort major allele, so a planted ALT
 # routinely becomes the REF and the latter test would compare against the wrong row.
 test_sites_planted_absent_stay_absent() {
     needs_run || return
@@ -606,7 +606,7 @@ test_the_annotation_summary_is_published() {
 
 # The annotated VCF without the two lines that differ between two runs of the same annotation.
 # Both are provenance the tools stamp in themselves: snpEff writes its own command line into
-# ##SnpEffCmd, which names the normalised input by the mktemp name that task gave it, and
+# ##SnpEffCmd, which names the normalized input by the mktemp name that task gave it, and
 # bcftools writes a wall-clock Date into ##bcftools_normCommand. Everything else - the rest of
 # the header and every variant - has to be identical.
 annotated_vcf_body() {

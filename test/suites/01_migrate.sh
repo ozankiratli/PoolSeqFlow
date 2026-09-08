@@ -214,7 +214,7 @@ test_a_parameter_that_became_a_knob_is_not_reported_as_dropped() {
 }
 
 # The depth ceiling needs more than a one-line report entry: the value did not move, the
-# mechanism did, and a user who wants the old behaviour needs two settings changed.
+# mechanism did, and a user who wants the old behavior needs two settings changed.
 test_the_depth_ceiling_change_is_explained() {
     migrate_config_with -e 's|^    variantCall {|    bcftools {|' \
                         -e 's|^        maxDepth        = 0|        maxDepth        = 2000|'
@@ -223,7 +223,7 @@ test_the_depth_ceiling_change_is_explained() {
     assert_contains "$MIGRATE_OUTPUT" "capBAM.maxDepth" "and the knob that replaced it"
     # The escape hatch matters most: someone reproducing old results has to get back exactly.
     assert_contains "$MIGRATE_OUTPUT" "capBAM.maxDepth = 0" \
-        "and how to restore the old behaviour exactly"
+        "and how to restore the old behavior exactly"
 }
 
 # A config with no ceiling set has nothing to explain, so the note must stay away.

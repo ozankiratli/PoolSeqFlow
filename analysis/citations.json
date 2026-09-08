@@ -32,7 +32,7 @@
     "pages": "315--330",
     "year": "2018",
     "doi": "10.1534/genetics.118.300900",
-    "note": "The effective sample size the analysis layer weights by, n_eff = n*d / (n + d - 1) for a pool of n chromosomes read to depth d. The paper does not write it in that form - it defines D2 as the sum of (d + n - 1)/n, which is the sum of d / n_eff under this form and under no other. Its pools are parameterised by HAPLOID size, which is what leaves n_eff, and everything weighted by it, general over ploidy. It is HERE rather than in a module because analysis/lib/R/n_eff.R is library code and every module that weights anything calls it."
+    "note": "The effective sample size the analysis layer weights by, n_eff = n*d / (n + d - 1) for a pool of n chromosomes read to depth d. The paper does not write it in that form - it defines D2 as the sum of (d + n - 1)/n, which is the sum of d / n_eff under this form and under no other. Its pools are parameterized by HAPLOID size, which is what leaves n_eff, and everything weighted by it, general over ploidy. It is HERE rather than in a module because analysis/lib/R/n_eff.R is library code and every module that weights anything calls it."
   },
   "nei1972": {
     "name": "Nei's minimum genetic distance",

@@ -36,7 +36,7 @@ index 82e8221..c64e9d3 100644
 +
  ### Reading the tables correctly
  
- **`REF` is the major allele, not the reference genome's base.** Step 7 re-encodes each site so the most-read allele becomes `REF` ([why](#5-major-allele-normalisation-step-7)). This makes rows comparable across samples and runs, but it means `REF` will often disagree with the FASTA you supplied. If you need the assembly's base, take it from the assembly.
+ **`REF` is the major allele, not the reference genome's base.** Step 7 re-encodes each site so the most-read allele becomes `REF` ([why](#5-major-allele-normalization-step-7)). This makes rows comparable across samples and runs, but it means `REF` will often disagree with the FASTA you supplied. If you need the assembly's base, take it from the assembly.
 @@ -1174,6 +1192,7 @@ Those two are the whole of it. Every VCF step 7 produces — `_sort`, `_sort_fp`
  | `Coverage/<sample>_coverage_report.txt` | `samtools coverage` | Per-contig depth and breadth |
  | `Depth/<sample>_depth_histogram.tsv` | `samtools stats` | The sample's whole depth distribution, one line per depth |
@@ -108,7 +108,7 @@ index 82e8221..c64e9d3 100644
  
  ### Step 6: Variant Calling
 @@ -2371,7 +2421,7 @@ Five sub-steps in a serial chain, each deleting its input once its output is saf
- | 2 | `FilterPotentialFalsePositives` | Splits multiallelics, applies the cross-sample support test, rejoins, re-normalises |
+ | 2 | `FilterPotentialFalsePositives` | Splits multiallelics, applies the cross-sample support test, rejoins, re-normalizes |
  | 3 | `DepthAndQualityFilter` | `bcftools view -e "FMT/DP<20"` then `vcftools --minQ 30` |
  | 4 | `SplitSNPsAndINDELs` | Two vcftools passes into a SNP VCF and an INDEL VCF |
 -| 5 | `CalculateFrequencies` | Extracts `AD` and divides to frequencies; runs once per split file |
@@ -453,7 +453,7 @@ index ef60928..4df4697 100644
 +    assert_contains "$CB_OUT" "n_ge_1	n_ge_5	n_ge_10" "the header should name the thresholds"
 +}
 +
-+# A bin boundary off by one shifts every count into its neighbour, which no total would reveal.
++# A bin boundary off by one shifts every count into its neighbor, which no total would reveal.
 +test_callable_bins_puts_boundaries_where_they_belong() {
 +    helpers_sandbox
 +    cb 'chr1	1000	9

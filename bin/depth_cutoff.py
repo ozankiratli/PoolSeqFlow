@@ -74,7 +74,7 @@ def profile(counts):
 
 
 def smooth(mass, window):
-    """A centred moving average, with the window truncated at both ends."""
+    """A centered moving average, with the window truncated at both ends."""
     if window <= 1:
         return list(mass)
     half = window // 2
@@ -137,7 +137,7 @@ def choose(counts):
         )
 
     return 0, (
-        f"coverage centres on depth {anchor_depth(counts)} and falls away without rising "
+        f"coverage centers on depth {anchor_depth(counts)} and falls away without rising "
         f"again, so there is nothing to cut and the sample is left uncapped"
     )
 

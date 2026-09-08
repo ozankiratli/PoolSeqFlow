@@ -199,7 +199,7 @@ test_uninstall_refuses_to_choose_a_version_without_a_terminal() {
 test_install_reports_environments_left_from_other_versions() {
     run_launcher_with_envs "base PoolSeqFlow PoolSeqFlow-0.1.0" install
     assert_contains "$LAUNCHER_OUTPUT" "Other PoolSeqFlow environments" "should report what else is installed"
-    assert_contains "$LAUNCHER_OUTPUT" "unversioned" "the legacy env should be labelled, not called a version"
+    assert_contains "$LAUNCHER_OUTPUT" "unversioned" "the legacy env should be labeled, not called a version"
     assert_contains "$LAUNCHER_OUTPUT" "uninstall_all" "should offer the bulk removal command"
 }
 
@@ -947,7 +947,7 @@ test_uninstall_lists_the_legacy_environment_beside_the_versions() {
     run_launcher_with_envs "base PoolSeqFlow $VERSIONED_ENV PoolSeqFlow-0.1.0" uninstall < /dev/null
     assert_status 1 "$LAUNCHER_STATUS" "several installations with nothing to ask should refuse"
     assert_contains "$LAUNCHER_OUTPUT" "unversioned - predates per-version environments" \
-        "the legacy environment should be offered, and labelled for what it is"
+        "the legacy environment should be offered, and labeled for what it is"
     assert_contains "$LAUNCHER_OUTPUT" "PoolSeqFlow-0.1.0" "beside the other versions"
     assert_contains "$LAUNCHER_OUTPUT" "3 PoolSeqFlow installations" \
         "and counted with them"

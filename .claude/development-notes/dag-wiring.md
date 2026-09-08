@@ -81,4 +81,4 @@ Each task appends to `Logs/<step>/*_nextflow.log`, one writer per file, so tasks
 
 Only the current run is collected: every block carries the session id that wrote it, so blocks from earlier runs in the same file are skipped. The combined file is overwritten each run; the full history stays in the per-process logs.
 
-**One combined log per Logs directory, not one per invocation.** Under multi-run each run has its own and the shared work has the project's, so the combined log sits beside the per-process logs it summarises rather than mixing three runs into one file under whichever root happened to be the base.
+**One combined log per Logs directory, not one per invocation.** Under multi-run each run has its own and the shared work has the project's, so the combined log sits beside the per-process logs it summarizes rather than mixing three runs into one file under whichever root happened to be the base.

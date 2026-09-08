@@ -81,7 +81,7 @@ def choose_positions(rng, genome_len, genes, counts, spacing, edge):
     """Pick well-separated variant positions, preferring gene interiors.
 
     Sites are kept `spacing` apart so bcftools calls them as separate records instead of
-    merging neighbours into one multi-nucleotide record, and clear of the contig edges so
+    merging neighbors into one multi-nucleotide record, and clear of the contig edges so
     whole fragments can reach them. Returns one sorted list per entry in `counts`.
     """
     taken = set()
@@ -265,7 +265,7 @@ def main():
     # exp_population/exp_time are experimental variables. They carry what used to be
     # crammed into the DS field as Pop1_T1_Rep1, and no pipeline step reads them - which is the
     # point of having them here: the suite runs with a design present, and the analysis layer
-    # has one to summarise.
+    # has one to summarize.
     with open(os.path.join(out, "metadata.csv"), "w") as fh:
         fh.write("SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,"
                  "exp_population,exp_time\n")

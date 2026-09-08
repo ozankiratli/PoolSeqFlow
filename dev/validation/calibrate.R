@@ -149,7 +149,7 @@ section_parametric <- function(replicates) {
 # ---------------------------------------------------------------------------------------
 # permutation: the published p, over the same null sites
 #
-# The whole set of relabellings is enumerated at six pools, so this is the exact test and not an
+# The whole set of relabelings is enumerated at six pools, so this is the exact test and not an
 # approximation of it. Its granularity is 1/720, which is why the smallest alpha the parametric
 # section reports is missing here: no site can attain it, and that is the floor the module prints
 # in its own header.
@@ -158,7 +158,7 @@ section_parametric <- function(replicates) {
 # method and by nothing else.
 #
 # THE GATE IS ONE-SIDED. A permutation test over discrete data is conservative: shallow reads of
-# a rare allele put the same frequency in several pools, tied relabellings then give tied
+# a rare allele put the same frequency in several pools, tied relabelings then give tied
 # statistics, and every tie counts toward the p-value. Rejecting below alpha is the test being
 # safe; rejecting above it is the test being wrong. The ratio is printed either way, because a
 # user who asked for 0.01 and got a quarter of it is owed the number.
@@ -167,9 +167,9 @@ section_permutation <- function(replicates) {
     n_chrom <- 100
     sites   <- max(2000L, replicates %/% 10L)
     y       <- rnorm(pools)
-    labels  <- relabellings(y)
+    labels  <- relabelings(y)
 
-    cat(sprintf("  %d pools, n_chrom %d, %d sites per cell, all %d relabellings\n\n",
+    cat(sprintf("  %d pools, n_chrom %d, %d sites per cell, all %d relabelings\n\n",
                 pools, n_chrom, sites, nrow(labels)))
     cat(sprintf("%7s %6s %9s %11s %11s %11s %11s\n",
                 "depth", "p", "kept", "perm .05", "param .05", "perm .01", "param .01"))
@@ -246,7 +246,7 @@ section_units <- function(replicates) {
 
     cat(sprintf("  %d units of %d pools, n_chrom %d, depth %d, p %.2f\n", units, per_unit,
                 n_chrom, depth, p))
-    cat(sprintf("  %d sites per cell, %d sampled relabellings, alpha %.2f\n\n",
+    cat(sprintf("  %d sites per cell, %d sampled relabelings, alpha %.2f\n\n",
                 sites, draws, alpha))
     cat(sprintf("%12s %11s %11s %11s %11s %11s\n",
                 "dispersion", "pools df10", "pools df4", "means df4", "perm pool", "perm unit"))
@@ -353,7 +353,7 @@ section_weights <- function(replicates) {
     alignment <- function(depths) if (sd(depths) == 0) NA_real_ else cor(y, depths)
 
     cat(sprintf("  %d pools of %d individuals at ploidy %d, p %.2f\n", pools, n_ind, ploidy, p))
-    cat(sprintf("  %d poolings per cell, %d sites each, %d relabellings, alpha %.2f\n\n",
+    cat(sprintf("  %d poolings per cell, %d sites each, %d relabelings, alpha %.2f\n\n",
                 reps, sites, draws, alpha))
     cat(sprintf("%9s %12s %10s %10s %10s %10s %10s\n", "depth", "concentration", "cor(y,d)",
                 "param mean", "param sd", "perm mean", "perm sd"))
@@ -450,7 +450,7 @@ section_dispersion <- function(replicates) {
     spreads <- c(Inf, 1)
 
     cat(sprintf("  %d pools of %d individuals, n_chrom %d, p %.2f\n", pools, n_ind, n_chrom, p))
-    cat(sprintf("  %d poolings per cell, %d sites each, %d relabellings, alpha %.2f\n\n",
+    cat(sprintf("  %d poolings per cell, %d sites each, %d relabelings, alpha %.2f\n\n",
                 reps, sites, draws, alpha))
     cat(sprintf("%9s %14s %10s %11s %11s %11s\n", "depth", "concentration", "theta",
                 "n_eff", "two-term", "equal"))
@@ -524,7 +524,7 @@ section_exchangeable <- function(replicates) {
                      aligned = c(30L, 30L, 200L, 200L, 1000L, 1000L))
 
     cat(sprintf("  %d pools of %d individuals, n_chrom %d, p %.2f\n", pools, n_ind, n_chrom, p))
-    cat(sprintf("  %d poolings per cell, %d sites each, %d relabellings, alpha %.2f\n\n",
+    cat(sprintf("  %d poolings per cell, %d sites each, %d relabelings, alpha %.2f\n\n",
                 reps, sites, draws, alpha))
     cat(sprintf("%9s %14s %10s %12s %12s %12s\n", "depth", "concentration", "cor(y,d)",
                 "labels", "residuals", "resid+theta"))
@@ -600,7 +600,7 @@ section_breakdown <- function(replicates) {
 
     cat(sprintf("  %d pools of %d individuals, depths aligned with the phenotype (cor %.3f)\n",
                 pools, n_ind, cor(y, depths)))
-    cat(sprintf("  %d poolings per cell, %d sites each, %d relabellings, alpha %.2f\n\n",
+    cat(sprintf("  %d poolings per cell, %d sites each, %d relabelings, alpha %.2f\n\n",
                 reps, sites, draws, alpha))
     cat(sprintf("%14s %9s %10s %10s %11s %12s %12s\n", "concentration", "eff.pool",
                 "theta true", "theta est", "labels", "residuals", "resid+theta"))
@@ -664,8 +664,8 @@ section_floor <- function(replicates) {
     sites <- max(500L, replicates %/% 200L)
     y <- c(0, 0, 0, 1, 1, 1)
 
-    moves <- relabellings(seq_len(pools))
-    assignments <- unique(relabellings(y))
+    moves <- relabelings(seq_len(pools))
+    assignments <- unique(relabelings(y))
 
     cat(sprintf("  binary phenotype, %d against %d, %d sites per pooling, %d poolings\n",
                 sum(y == 0), sum(y == 1), sites, reps))
@@ -697,11 +697,11 @@ section_floor <- function(replicates) {
             byLabel <- over / nrow(assignments)
 
             root <- sqrt(held)
-            centre <- rowSums(held * values) / rowSums(held)
-            z <- (values - centre) * root
+            center <- rowSums(held * values) / rowSums(held)
+            z <- (values - center) * root
             over <- integer(length(top))
             for (row in seq_len(nrow(moves))) {
-                rebuilt <- centre + z[, moves[row, ], drop = FALSE] / root
+                rebuilt <- center + z[, moves[row, ], drop = FALSE] / root
                 under <- abs(weighted_fit(rebuilt, held, y)$t)
                 under[!is.finite(under)] <- Inf
                 over <- over + (under >= top - 1e-12)
@@ -770,13 +770,13 @@ section_arity <- function(replicates) {
 
             root <- sqrt(weight)
             total <- rowSums(weight)
-            centre <- rowSums(weight[drawn$site, ] * drawn$freq) / total[drawn$site]
-            z <- (drawn$freq - centre) * root[drawn$site, ]
+            center <- rowSums(weight[drawn$site, ] * drawn$freq) / total[drawn$site]
+            z <- (drawn$freq - center) * root[drawn$site, ]
 
             over <- integer(sites)
             for (draw in seq_len(draws)) {
                 moved <- sample(pools)
-                rebuilt <- centre + z[, moved, drop = FALSE] / root[drawn$site, , drop = FALSE]
+                rebuilt <- center + z[, moved, drop = FALSE] / root[drawn$site, , drop = FALSE]
                 under <- site_statistic(fit_multi(rebuilt, weight, drawn$site, y)$t,
                                         drawn$site, sites)
                 reached <- !is.na(under) & under >= observed
@@ -879,11 +879,11 @@ section_power <- function(replicates) {
             observed <- site_statistic(fit$t, drawn$site, sites)
 
             root <- sqrt(weight)
-            centre <- rowSums(weight[drawn$site, ] * drawn$freq) / rowSums(weight)[drawn$site]
-            z <- (drawn$freq - centre) * root[drawn$site, ]
+            center <- rowSums(weight[drawn$site, ] * drawn$freq) / rowSums(weight)[drawn$site]
+            z <- (drawn$freq - center) * root[drawn$site, ]
             over <- integer(sites)
             for (draw in seq_len(draws)) {
-                rebuilt <- centre + z[, sample(pools), drop = FALSE] / root[drawn$site, ,
+                rebuilt <- center + z[, sample(pools), drop = FALSE] / root[drawn$site, ,
                                                                            drop = FALSE]
                 under <- site_statistic(fit_multi(rebuilt, weight, drawn$site, y)$t,
                                         drawn$site, sites)
@@ -951,11 +951,11 @@ section_pools <- function(replicates) {
         mean(sampled_p(over, draws) <= alpha)
     }
 
-    cat(sprintf("  n_chrom %d, %d sites per pooling, %d poolings, %d relabellings, alpha %.2f\n",
+    cat(sprintf("  n_chrom %d, %d sites per pooling, %d poolings, %d relabelings, alpha %.2f\n",
                 n_chrom, sites, reps, draws, alpha))
     cat(sprintf("  pooling EVEN throughout; power measured at slope %.2f\n\n",
                 slope))
-    # The smallest p a design of this size can reach by relabelling at all. Reversing the
+    # The smallest p a design of this size can reach by relabeling at all. Reversing the
     # phenotype negates the slope and leaves |t| alone, so the reversal always ties with the
     # observed one and the floor is TWO over the number of orderings, never one.
     cat(sprintf("%6s %9s %10s %10s %12s %14s %12s %14s\n", "pools", "depth", "cor(y,d)",

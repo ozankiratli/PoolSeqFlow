@@ -6,7 +6,7 @@
 // Done here rather than by overriding partials/header.html: that partial is
 // ~100 lines of Jinja and overriding it means inheriting its maintenance on
 // every Material release, for one anchor. This targets two stable class names
-// instead, and if it ever stops matching, the result is the current behaviour
+// instead, and if it ever stops matching, the result is the current behavior
 // rather than a broken header.
 //
 // The href is read off the logo anchor rather than computed, so it stays correct

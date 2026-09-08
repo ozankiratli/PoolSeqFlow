@@ -23,7 +23,7 @@ The frequency tables are NOT written here. `bin/depth2freq.awk` derives them fro
 tables, and the fixture runs that same converter, so the pair cannot drift from the contract.
 
 EXPLICIT, NOT SAMPLED. Every read count below is written out, and `expected.tsv` is computed
-from them by the plain loops at the bottom of this file - no vectorisation, no library, nothing
+from them by the plain loops at the bottom of this file - no vectorization, no library, nothing
 shared with the R under test. The corpus is small enough to check by hand, and the docstring of
 each expectation says how.
 
@@ -97,7 +97,7 @@ MIN_READS = 2
 # catch a module that forgot to weight.
 #
 # The values sum to 84 and the plain mean is exactly 14, so a fit that ignored the weights is
-# recognisable by hand; the weighted mean is not 14 at any site, because the weights are that
+# recognizable by hand; the weighted mean is not 14 at any site, because the weights are that
 # site's depths.
 PHENOTYPE_COLUMN = "pt_wingspan"
 PHENOTYPE = [12.4, 15.1, 9.8, 18.6, 11.2, 16.9]
@@ -175,7 +175,7 @@ SNP_SITES = [
     # changes. Both sites carry `separated` for that reason.
     #
     # Its permutation p is 2/20 = 0.1. An infinite t, three pools against three, and a tenth is
-    # the smallest p the design can produce - the complementary labelling always ties.
+    # the smallest p the design can produce - the complementary labeling always ties.
     ("chr10", 1600, "A", ["G"], [
         [100, 0], [80, 0], [0, 400], [60, 0], [0, 300], [0, 40]]),
 
@@ -352,7 +352,7 @@ def wls(y, f, w):
     rss = sum(wi * (fi - b0 - b1 * yi) ** 2 for wi, yi, fi in zip(w, y, f))
     # The weighted scatter about the mean, which `rss` is judged against rather than against
     # zero. A perfectly separated site has no residual left, but whether the sum lands on
-    # exactly 0.0 or on 1e-32 is which order the terms cancelled in - and that differs between
+    # exactly 0.0 or on 1e-32 is which order the terms canceled in - and that differs between
     # Python BUILDS, not only between Python and R. Testing for zero makes the flag guarding
     # the unreproducible numbers as unreproducible as they are.
     tss = sum(wi * (fi - fbar) ** 2 for wi, fi in zip(w, f))
@@ -430,18 +430,18 @@ def residual_p(counts, y, moves):
     root = [math.sqrt(wi) for wi in w]
     total = sum(w)
 
-    centres, standardised = [], []
+    centers, standardised = [], []
     for j in range(len(counts[0])):
         f = [cell[j] / depth for cell, depth in zip(counts, depths)]
-        centre = sum(wi * fi for wi, fi in zip(w, f)) / total
-        centres.append(centre)
-        standardised.append([(fi - centre) * ri for fi, ri in zip(f, root)])
+        center = sum(wi * fi for wi, fi in zip(w, f)) / total
+        centers.append(center)
+        standardised.append([(fi - center) * ri for fi, ri in zip(f, root)])
 
     reached = 0
     for move in moves:
         best = float("nan")
-        for j in range(len(centres)):
-            rebuilt = [centres[j] + standardised[j][move[i]] / root[i] for i in range(len(w))]
+        for j in range(len(centers)):
+            rebuilt = [centers[j] + standardised[j][move[i]] / root[i] for i in range(len(w))]
             t = wls(y, rebuilt, w)["t"]
             if not math.isnan(t) and (math.isnan(best) or abs(t) > best):
                 best = abs(t)

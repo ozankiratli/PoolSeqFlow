@@ -54,7 +54,7 @@ test_the_shared_r_library_agrees_with_the_filters_thresholds() {
 # The whole column at once, which is what a genome-scale run needs and what the per-site
 # function is the reference for. The trap it exists to fall into is summing p^2 over SITES
 # instead of over the ALLELES of a site: one number where there should be one per site.
-test_the_shared_r_library_vectorises_over_a_whole_column() {
+test_the_shared_r_library_vectorizes_over_a_whole_column() {
     if ! have_r; then skip_case "no Rscript"; return; fi
     local status; status=$(r_lib_section site_diversity)
     assert_status 0 "$status" "site_diversity: $R_LIB_OUTPUT"

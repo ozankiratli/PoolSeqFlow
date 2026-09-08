@@ -69,7 +69,7 @@ def plannedDirectories(Map plan, List runDefs) {
     entries << [path: "${params.dir.sessionReports}".toString(),
                 what: "Nextflow's dag, trace and timeline, and the summaries the steps write"]
 
-    // Each folder labelled with the steps that fill it. A folder can belong to several, so they
+    // Each folder labeled with the steps that fill it. A folder can belong to several, so they
     // accumulate rather than being taken from the first seen.
     def folderSteps = [:]
     plan.steps.each { step ->

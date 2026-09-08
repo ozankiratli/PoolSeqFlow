@@ -43,7 +43,7 @@ test_selecting_several_runs_covers_each_directory_once() {
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     local report; report=$(analysis_report "$ANALYSIS_SB")
     assert_contains "$report" "2 of 3 runs, in 1 results directory" \
-        "two runs sharing a directory are analysed once"
+        "two runs sharing a directory are analyzed once"
     # The label lines only. What sits under a directory is indented further, and a plain
     # substring match counts those too.
     assert_count 1 "$(printf '%s\n' "$report" | grep -cE '^RUN SELECTION: {13}[^ ]')" \

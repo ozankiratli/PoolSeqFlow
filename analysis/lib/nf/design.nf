@@ -218,7 +218,7 @@ def checkTimeSettings(Map settings, List columns) {
     if (kind == 'numerical' && unit.isEmpty()) {
         throw new IllegalArgumentException(
             "analysis.timeVar.kind is 'numerical' and no unit is set.\n" +
-            "The numbers are distances, so a rate is meaningful and has to be labelled - per " +
+            "The numbers are distances, so a rate is meaningful and has to be labeled - per " +
             "generation, per day. Set analysis.timeVar.unit to one of:\n" +
             "    ${timeUnits().keySet().join(', ')}\n" +
             "'step' is for an axis that is evenly spaced in something you have not named.")
@@ -760,7 +760,7 @@ def applyIncomplete(String mode, Map time, Map covered, List warnings) {
         throw new IllegalArgumentException(
             "${ragged.size()} of ${covered.size()} series do not cover every ${time.column}:\n" +
             "${named}${ragged.size() > 5 ? "\n    ... and ${ragged.size() - 5} more" : ''}\n" +
-            "A ragged panel analysed as a complete one is a wrong answer that looks like a right " +
+            "A ragged panel analyzed as a complete one is a wrong answer that looks like a right " +
             "one, so this refuses by default. Choose what should happen with " +
             "analysis.design.series.incomplete:\n" +
             "    'drop'       leave the incomplete series out\n" +

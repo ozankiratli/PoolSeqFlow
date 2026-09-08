@@ -127,7 +127,7 @@ if (wanted("pool_sensitivity")) {
 if (wanted("site_diversity")) {
     # ONE SITE AT A TIME, which is the shape site_diversity() replaced and which survives here
     # as the oracle rather than in the library. It is three lines and correct by inspection;
-    # the vectorised form is not, and that asymmetry is the whole reason to keep it.
+    # the vectorized form is not, and that asymmetry is the whole reason to keep it.
     per_site <- function(cell) {
         counts <- split_counts(cell)
         total <- sum(counts)
@@ -136,7 +136,7 @@ if (wanted("site_diversity")) {
         1 - sum(p * p)
     }
 
-    # THE CASE THE VECTORISED FORM EXISTS TO GET WRONG. 1 - sum(p^2) sums over the ALLELES of a
+    # THE CASE THE VECTORIZED FORM EXISTS TO GET WRONG. 1 - sum(p^2) sums over the ALLELES of a
     # site; summing over sites instead collapses these answers into one number, and every arity
     # below contributes a different count of terms to the grouping.
     cells <- c("50,50", "40,40,20", "25,25,25,25", "100,0", "70,30")
@@ -158,7 +158,7 @@ if (wanted("site_diversity")) {
     check("500 mixed-arity sites agree, one by one",
           max(abs(site_diversity(many)$h - vapply(many, per_site, 0)), na.rm = TRUE), 0)
 
-    # The values themselves, hand-computed, so a change to the vectorised form and the oracle
+    # The values themselves, hand-computed, so a change to the vectorized form and the oracle
     # at once still fails.
     check("an even biallelic site", got$h[1], 0.5)
     # 2p(1-p) is what H reduces to on two alleles, and the reason it is not written that way is
@@ -184,7 +184,7 @@ if (wanted("site_diversity")) {
     empty <- site_diversity(c("30,10", "0,0", "20,20"))
     check("no reads is no diversity", empty$h[2], NA_real_)
     check("no reads is depth zero", empty$depth[2], 0)
-    check("its neighbours are untouched", empty$h[3], 0.5)
+    check("its neighbors are untouched", empty$h[3], 0.5)
 
     # bcftools' missing value takes the site with it rather than counting as zero reads.
     missing <- site_diversity(c("30,10", "30,."))
@@ -259,7 +259,7 @@ if (wanted("allele_frequencies")) {
     empty <- allele_frequencies(list(A = c("30,10", "0,0", "20,20")))
     check("no reads is depth zero", empty$depth[2, 1], 0)
     check("and no frequency", empty$freq[3, 1], NA_real_)
-    check("its neighbours are untouched", empty$freq[5, 1], 0.5)
+    check("its neighbors are untouched", empty$freq[5, 1], 0.5)
 
     # bcftools' missing value takes that pool's whole site with it, as it does in
     # site_diversity(): a site is not partly observed for a pool.

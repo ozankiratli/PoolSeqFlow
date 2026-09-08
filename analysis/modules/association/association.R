@@ -114,18 +114,18 @@ fit_alleles <- function(freq, weight, site, y) {
     observed <- rowSums(weight > 0)
     total <- rowSums(weight)
     phen <- matrix(y, nrow = nrow(weight), ncol = ncol(weight), byrow = TRUE)
-    centred <- phen - rowSums(weight * phen) / total
-    sxx <- rowSums(weight * centred * centred)
+    centered <- phen - rowSums(weight * phen) / total
+    sxx <- rowSums(weight * centered * centered)
 
     wide <- weight[site, , drop = FALSE]
-    across <- centred[site, , drop = FALSE]
+    across <- centered[site, , drop = FALSE]
     middle <- freq - rowSums(wide * freq) / total[site]
     slope <- rowSums(wide * across * middle) / sxx[site]
     spent <- rowSums(wide * (middle - slope * across)^2)
     scatter <- rowSums(wide * middle * middle)
 
     # RELATIVE, NOT AGAINST ZERO. A perfectly separated site has no residual left, but whether
-    # the sum lands on exactly 0 or on 1e-32 is which order the terms cancelled in: the corpus's
+    # the sum lands on exactly 0 or on 1e-32 is which order the terms canceled in: the corpus's
     # Python reaches 0 and this reaches 1e-32 on the same counts, so a test for zero fires in one
     # and not the other. Anything at the level of the rounding error in `scatter` is a fit with
     # nothing left over, whichever way it fell.
@@ -164,9 +164,9 @@ site_statistic <- function(t, site, sites) {
 # weights predict. Clamped at zero.
 dispersion_of <- function(freq, weight, site) {
     held <- ncol(freq)
-    centre <- rowMeans(freq)
-    spread <- (rowSums(freq * freq) - held * centre * centre) / (held - 1)
-    scale <- centre * (1 - centre)
+    center <- rowMeans(freq)
+    spread <- (rowSums(freq * freq) - held * center * center) / (held - 1)
+    scale <- center * (1 - center)
     excess <- (spread - scale * rowMeans(1 / weight)[site]) / scale
     max(0, mean(excess[is.finite(excess)]))
 }
@@ -207,8 +207,8 @@ rearrangements <- function(units, budget) {
 permutation_p <- function(freq, weight, site, sites, y, observed, budget) {
     moves <- rearrangements(ncol(weight), budget)
     root <- sqrt(weight)
-    centre <- rowSums(weight[site, , drop = FALSE] * freq) / rowSums(weight)[site]
-    z <- (freq - centre) * root[site, , drop = FALSE]
+    center <- rowSums(weight[site, , drop = FALSE] * freq) / rowSums(weight)[site]
+    z <- (freq - center) * root[site, , drop = FALSE]
 
     # ONE REARRANGEMENT SERVES EVERY SITE, so binning is an allocation strategy and not a change
     # to the null: a bin holds a contiguous run of sites and every bin sees the same
@@ -222,7 +222,7 @@ permutation_p <- function(freq, weight, site, sites, y, observed, budget) {
         seen <- observed[range[1]:range[2]]
         found <- integer(here)
         for (row in seq_len(nrow(moves$rows))) {
-            rebuilt <- centre[rows] + z[rows, moves$rows[row, ], drop = FALSE] /
+            rebuilt <- center[rows] + z[rows, moves$rows[row, ], drop = FALSE] /
                 root[site[rows], , drop = FALSE]
             under <- site_statistic(fit_alleles(rebuilt, held, index, y)$t, index, here)
             found <- found + (!is.na(under) & under >= seen - 1e-12)
@@ -335,9 +335,9 @@ read_depth_table <- function(path) {
 top_leverage <- function(weight, y) {
     total <- rowSums(weight)
     phen <- matrix(y, nrow = nrow(weight), ncol = ncol(weight), byrow = TRUE)
-    centred <- phen - rowSums(weight * phen) / total
-    sxx <- rowSums(weight * centred * centred)
-    held <- weight * (1 / total + centred * centred / sxx)
+    centered <- phen - rowSums(weight * phen) / total
+    sxx <- rowSums(weight * centered * centered)
+    held <- weight * (1 / total + centered * centered / sxx)
     do.call(pmax, c(lapply(seq_len(ncol(held)), function(j) held[, j]), list(na.rm = TRUE)))
 }
 
@@ -521,7 +521,7 @@ if (drawable && any(!is.na(sites_table$perm_p))) {
                    observed = -log10(seen), stringsAsFactors = FALSE)
     }))
     figure <- ggplot2::ggplot(frame, ggplot2::aes(x = expected, y = observed)) +
-        ggplot2::geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+        ggplot2::geom_abline(slope = 1, intercept = 0, color = "gray60") +
         ggplot2::geom_point(size = 0.5, alpha = 0.6) +
         ggplot2::facet_wrap(~ phenotype, ncol = 1) +
         ggplot2::labs(title = "Permutation p-values against the uniform they should follow",
@@ -555,6 +555,6 @@ for (chrom in wanted) {
 
 cat("association: ", length(unit_pools), " units over ", length(pool_order), " pools, ",
     nrow(sites_table), " site rows, ", sum(!is.na(sites_table$perm_p)), " tested\n", sep = "")
-cat("association: parsed by the ", if (isTRUE(OPTS$usecpp)) "compiled" else "vectorised R",
+cat("association: parsed by the ", if (isTRUE(OPTS$usecpp)) "compiled" else "vectorized R",
     " path, in bins of ", OPTS$binSize, " sites over ", OPTS$workers,
     if (OPTS$workers == 1) " worker" else " workers", "\n", sep = "")

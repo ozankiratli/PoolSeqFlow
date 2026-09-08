@@ -20,15 +20,15 @@ To rebuild the favicon after a change: take `logo-small.svg`, wrap the mark in
 <g transform="translate(32,32) scale(0.883) translate(-32,-33.67)"> … </g>
 ```
 
-and multiply every stroke width by 1.13 to cancel the 0.883 scale. The scale and offset come from the mark's bounding box (x 14.8–49.2, y 3.1–64.3, centre 32,33.67) fitted into the tile with 5 units of padding.
+and multiply every stroke width by 1.13 to cancel the 0.883 scale. The scale and offset come from the mark's bounding box (x 14.8–49.2, y 3.1–64.3, center 32,33.67) fitted into the tile with 5 units of padding.
 
 ## The helix recipe
 
-Each half-period is a single cubic: it starts and ends on the centre line, with both control points pushed to the same side.
+Each half-period is a single cubic: it starts and ends on the center line, with both control points pushed to the same side.
 
     control offset = amplitude x 4/3
 
-The 4/3 is because a cubic Bézier never reaches its control points — it peaks at three quarters of the way there. So to bulge 6 units off centre, put the controls 8 out. Mirror the offset for the second strand. Rungs sit at each half-period's midpoint, spaced by the **amplitude**, not the control offset.
+The 4/3 is because a cubic Bézier never reaches its control points — it peaks at three quarters of the way there. So to bulge 6 units off center, put the controls 8 out. Mirror the offset for the second strand. Rungs sit at each half-period's midpoint, spaced by the **amplitude**, not the control offset.
 
 Current values:
 

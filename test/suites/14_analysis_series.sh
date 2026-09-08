@@ -35,7 +35,7 @@ test_a_series_key_naming_the_time_column_refuses() {
     assert_contains "$(analysis_output)" "which is the time column" "and the refusal says so"
 }
 
-# A ragged panel analysed as a complete one is a wrong answer that looks like a right one.
+# A ragged panel analyzed as a complete one is a wrong answer that looks like a right one.
 test_an_incomplete_series_refuses_by_default() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
@@ -175,7 +175,7 @@ test_technical_replicates_roll_up_into_independent_units() {
 
 # THE MISASSIGNMENT NOTHING CAN CATCH. Leave a technical column out of technicalRep and it is
 # read as a condition - one treatment becomes four, and a test gets strata that are the same
-# DNA. So every key column is printed under a role, which is the only defence there is.
+# DNA. So every key column is printed under a role, which is the only defense there is.
 test_every_key_column_is_printed_under_a_role() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_REPLICATE_METADATA"

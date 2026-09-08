@@ -27,7 +27,7 @@ Permuting a phenotype freely stops being valid once covariates are in the model,
 
 ## Weighted Frisch–Waugh–Lovell is exact, so covariates keep the closed form
 
-Verified against `lm(f ~ y + z, weights = w)`: residualising both response and predictor on the covariates and running the simple weighted fit reproduces **b1 and its standard error to 12 significant figures** — provided the degrees of freedom come from the *full* model and not from the residual regression. That is the whole reason covariates do not cost F2 its vectorised closed form. Per-site weights make the residualisation per site, but it stays one small solve per site, independent of allele count.
+Verified against `lm(f ~ y + z, weights = w)`: residualising both response and predictor on the covariates and running the simple weighted fit reproduces **b1 and its standard error to 12 significant figures** — provided the degrees of freedom come from the *full* model and not from the residual regression. That is the whole reason covariates do not cost F2 its vectorized closed form. Per-site weights make the residualisation per site, but it stays one small solve per site, independent of allele count.
 
 ## Degrees of freedom, and the refusal that falls out of them
 
@@ -45,7 +45,7 @@ The plan says to *"permute the phenotype labels with their weights attached"*. *
 
 Committed with the corpus at `e3eb887`:
 
-- **`assocb.smallest_p` = 0.1** — the 3-vs-3 floor, reached by a site whose *t* is literally infinite. The complementary labelling always ties, so 2/20 is the floor and no site in such a design can be genome-wide significant. The quantitative floor is 1/720 and `chr2:550` reaches it.
+- **`assocb.smallest_p` = 0.1** — the 3-vs-3 floor, reached by a site whose *t* is literally infinite. The complementary labeling always ties, so 2/20 is the floor and no site in such a design can be genome-wide significant. The quantitative floor is 1/720 and `chr2:550` reaches it.
 - **`chr2:550`** is triallelic with |t_REF| = 22.2 against 7.65 for the best alternate: minimising over alternates alone gives p = 0.0016 where maximising over every allele gives 2.4e-5. It is the case that would catch a dropped REF row.
 - **`chr1:700`**: weighted t = 5.35 against unweighted 4.74, so a fit that ignores `n_eff` fails it.
 - **`chr10:1600` and `chr10:1800`** give identical statistics from 740 alternate reads and from 3.

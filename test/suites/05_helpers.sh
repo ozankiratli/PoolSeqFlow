@@ -1259,7 +1259,7 @@ a directory onto a directory with something in it|dir|fulldir
 CASES
 }
 
-# The one cell where behaviour changed when the guards went: rename(2) replaces an EMPTY
+# The one cell where behavior changed when the guards went: rename(2) replaces an EMPTY
 # directory rather than refusing it. Nothing is lost - an empty directory holds nothing - and
 # no caller reaches it, but it is a change and it is asserted rather than discovered.
 test_atomic_mv_replaces_an_empty_directory() {

@@ -11,14 +11,14 @@
            a node sits where Inkscape shows it and stroke widths are literal
          - the neck is aligned: both vessel curves and the helix now start at
            x=32 (they were at 31.891, 32.337 and 31.950)
-         - the three pools are centred on 32 as well, evenly spaced +/-13.555
+         - the three pools are centered on 32 as well, evenly spaced +/-13.555
          - two empty leftover groups removed, stale comments rewritten
        Nothing was redrawn - every curve keeps its original control offsets.
 
        GEOMETRY
-         Helix half-period = one cubic, start and end on the centre line, both
+         Helix half-period = one cubic, start and end on the center line, both
          controls pushed the same side. Control offset = amplitude x 4/3.
-           top helix:  centre x=32, half-period 12.77, control dx 7.59
+           top helix:  center x=32, half-period 12.77, control dx 7.59
            pool helix: half-period 6.93, control dx 3.98
          Rungs sit at each half-period midpoint, spaced by the amplitude.
 
@@ -61,7 +61,7 @@
         <path stroke-width="1.92" opacity="0.85" d="M-2.88 3.46H2.88"/>
         <path stroke-width="1.92" opacity="0.85" d="M-2.88 10.39H2.88"/>
       </g>
-      <g id="pool-centre" transform="translate(32,44.255)">
+      <g id="pool-center" transform="translate(32,44.255)">
         <path d="m0 0c3.982 1.980 3.982 4.949 0 6.929c-3.982 1.980-3.982 4.949 0 6.929"/>
         <path opacity="0.55"
               d="m0 0c-3.982 1.980-3.982 4.949 0 6.929c3.982 1.980 3.982 4.949 0 6.929"/>

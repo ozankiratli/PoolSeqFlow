@@ -5,7 +5,7 @@
 # The harmonic mean is what averages n_eff, because 1/n_eff is linear in 1/depth — so a pool
 # collapses to two numbers rather than one per site, exactly.
 #
-# `harmonic_depth` is harmonic_mean() over whatever set of positions is being summarised: the
+# `harmonic_depth` is harmonic_mean() over whatever set of positions is being summarized: the
 # depth histogram's genome-wide one, or the depths at called sites. A harmonic depth of zero
 # gives NA, as n_eff() does; a pool of fewer than one chromosome, or a negative depth, stops here.
 pool_n_eff <- function(n_chrom, harmonic_depth) {

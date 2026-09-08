@@ -370,7 +370,7 @@ test_an_empty_declaration_block_reaches_the_frame_as_nothing() {
         "the block declared nothing the frame could see"
     assert_contains "$report" \
         "pt_status, pt_wingspan, pt_wing, pt_resistance are phenotype columns this project records and does not declare" \
-        "and every one is named as undeclared, which is the only defence there is"
+        "and every one is named as undeclared, which is the only defense there is"
 }
 
 # Outside the prefix a column escapes the pool-agreement refusal above, so the two rules are
@@ -429,7 +429,7 @@ test_a_quantitative_phenotype_refuses_a_value_that_is_not_a_number() {
 # THE ECHO-BACK, which does more work than any check here. A reversed binary encoding is legal,
 # silent, and reverses every slope; no check can tell [control, case] from [case, control].
 # Printing each pool's written value beside the number it became is the only place a user sees
-# it. Same defence as the time levels printed in the order the analysis will use them.
+# it. Same defense as the time levels printed in the order the analysis will use them.
 test_the_report_states_the_phenotype_as_it_resolved() {
     analysis_ready single || return
     analysis_write_metadata "$ANALYSIS_SB" "$ANALYSIS_PHENOTYPE_METADATA"

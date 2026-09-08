@@ -5,7 +5,7 @@
 // answers is ever allocated.
 //
 // Sourced by Rcpp::sourceCpp at run time, so it is compiled on the machine that runs it. The
-// vectorised R beside it is the reference; nothing compares the two at run time.
+// vectorized R beside it is the reference; nothing compares the two at run time.
 //
 // A compiled function holds a pointer into the process that built it, so it cannot be sent to
 // a parallel worker - each process sources this for itself.

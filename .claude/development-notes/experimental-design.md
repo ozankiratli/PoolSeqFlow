@@ -96,9 +96,9 @@ Z, the same day, proposing the shape themselves: `metadata.phenotypes { pt_wings
 
 **Which phenotype an analysis tests against is a module setting**, `analysis.modules.<name>.phenotypes`, and it lands with F2 rather than now: `moduleSettings()` checks a scope against *that module's* declared list, so there is nowhere to put it until the module exists. What the frame does today is resolve every declared phenotype and report all of them.
 
-That retires the rule that a project analyses one phenotype at a time under its own `folderName`. `folderName` goes back to being only about where output lands.
+That retires the rule that a project analyzes one phenotype at a time under its own `folderName`. `folderName` goes back to being only about where output lands.
 
-**One thing measured rather than assumed:** an empty config block reaches `params` as *nothing*, so `pt_wingspan { }` cannot be refused — the frame never sees the key. Recorded in `shell-and-nextflow-gotchas.md`, with a case that asserts the behaviour rather than a case that asserts a refusal which cannot happen. The undeclared-column warning is what covers it.
+**One thing measured rather than assumed:** an empty config block reaches `params` as *nothing*, so `pt_wingspan { }` cannot be refused — the frame never sees the key. Recorded in `shell-and-nextflow-gotchas.md`, with a case that asserts the behavior rather than a case that asserts a refusal which cannot happen. The undeclared-column warning is what covers it.
 
 ## The report
 
@@ -117,7 +117,7 @@ SERIES:                    8 series over 2 timepoints
 
 ## What is still undefended, and it is the same gap as before
 
-A technical column left out of `technicalRep` is read as a condition and the unit count doubles. No check can catch it — both readings are internally consistent, exactly as `dd/MM` and `MM/dd` are. Printing every key column under exactly one role is the whole defence, and it is now printed for untimed projects too, which is where it was missing.
+A technical column left out of `technicalRep` is read as a condition and the unit count doubles. No check can catch it — both readings are internally consistent, exactly as `dd/MM` and `MM/dd` are. Printing every key column under exactly one role is the whole defense, and it is now printed for untimed projects too, which is where it was missing.
 
 ## A fixture that describes an impossible state, not fixed here
 

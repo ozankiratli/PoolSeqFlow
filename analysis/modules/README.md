@@ -20,7 +20,7 @@ nextflow.enable.dsl=2
 include { analysisPlan } from '../../lib/nf/plan.nf'
 include { PublishResults } from '../../lib/nf/results.nf'
 
-process Analyse {
+process Analyze {
     input:
     val target          // target.classes.frequencies.dir  - where the published tables are
 
@@ -34,11 +34,11 @@ process Analyse {
 }
 
 workflow {
-    PublishResults(Analyse(channel.fromList(analysisPlan('mymodule').targets)))
+    PublishResults(Analyze(channel.fromList(analysisPlan('mymodule').targets)))
 }
 ```
 
-`analysisPlan` takes the module's own name and returns one target per results directory the invocation covers. `PublishResults` takes what you produced for one of them and installs it in `target.results`. The artifact classes it marks required are the `needs` from your `manifest.json`, so you state what you read once and nothing repeats it. It recomputes the pipeline's own partition of the runs, so two runs that produced the same tables are one target and are analysed once.
+`analysisPlan` takes the module's own name and returns one target per results directory the invocation covers. `PublishResults` takes what you produced for one of them and installs it in `target.results`. The artifact classes it marks required are the `needs` from your `manifest.json`, so you state what you read once and nothing repeats it. It recomputes the pipeline's own partition of the runs, so two runs that produced the same tables are one target and are analyzed once.
 
 A module ships no configuration. `PoolSeqFlow analysis` assembles it — the installation's `analysis/frame.config`, then the project's `analysis.config`, then `<module>.config` — and `frame.config` carries what the pipeline gets from `nextflow.config`, which Nextflow does not read for a module: `bin/` on the task PATH, conda, and the resource ceiling.
 
@@ -77,7 +77,7 @@ A name no class answers to is refused while the DAG is built. Without that it wo
 7. **Never write into the results tree.** Copy what you need out of it; a module that moves a published artifact damages the run that produced it. The pipeline's results are inputs and nothing else.
 8. **Key on header names, never on column position.** Sample column order was non-deterministic before v2.1.1, so a module that counts columns reads some projects wrongly and every one of them silently.
 9. **`TOTAL_AD` holds a depth-weighted frequency, not a count.** The name is inherited and wrong. Read it as what it is.
-10. **Take the results directories from `analysisPlan`, never from directory names.** It recomputes the pipeline's own partition, so two runs whose tables are the same file are one target and are analysed once. Parsing `Shared_2` out of a path is guessing at what the plan already knows.
+10. **Take the results directories from `analysisPlan`, never from directory names.** It recomputes the pipeline's own partition, so two runs whose tables are the same file are one target and are analyzed once. Parsing `Shared_2` out of a path is guessing at what the plan already knows.
 
 ### Configuration
 

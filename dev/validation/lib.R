@@ -12,10 +12,10 @@
 # disagreement is read in standard errors rather than in percent: the same 1% gap is decisive at
 # one grid point and meaningless at another.
 moments <- function(x) {
-    centred  <- x - mean(x)
-    variance <- mean(centred^2)
+    centered  <- x - mean(x)
+    variance <- mean(centered^2)
     list(variance = variance,
-         se       = sqrt((mean(centred^4) - variance^2) / length(x)))
+         se       = sqrt((mean(centered^4) - variance^2) / length(x)))
 }
 
 # ---------------------------------------------------------------------------------------
@@ -92,7 +92,7 @@ simulate_effect <- function(sites, depths, n_chrom, base, slope, y) {
     list(freq = freq, depth = matrix(depths, nrow = sites, ncol = length(depths), byrow = TRUE))
 }
 
-# Multinomial counts by stick-breaking, so it vectorises over sites where rmultinom does not.
+# Multinomial counts by stick-breaking, so it vectorizes over sites where rmultinom does not.
 # `prob` is one row of allele probabilities per site and `size` one count per site.
 multinomial_rows <- function(size, prob) {
     out <- matrix(0, nrow = nrow(prob), ncol = ncol(prob))
@@ -167,7 +167,7 @@ simulate_split <- function(sites, depths, n_chrom, slope, y) {
 # ---------------------------------------------------------------------------------------
 # Estimators. These MAY call the library, and are what the measurements judge.
 
-# The weighted simple regression of each site's frequency on the phenotype, vectorised over
+# The weighted simple regression of each site's frequency on the phenotype, vectorized over
 # sites: one row of the matrices is one site, one column is one pool.
 #
 # `spent` is the weighted residual sum of squares and `total` the weighted sum of squares about
@@ -191,10 +191,10 @@ weighted_fit <- function(freq, wt, y) {
 fit_multi <- function(freq, weight, site, y) {
     phen <- matrix(y, nrow = nrow(weight), ncol = ncol(weight), byrow = TRUE)
     total <- rowSums(weight)
-    centred <- phen - rowSums(weight * phen) / total
-    sxx <- rowSums(weight * centred * centred)
+    centered <- phen - rowSums(weight * phen) / total
+    sxx <- rowSums(weight * centered * centered)
     wide <- weight[site, , drop = FALSE]
-    across <- centred[site, , drop = FALSE]
+    across <- centered[site, , drop = FALSE]
     middle <- freq - rowSums(wide * freq) / total[site]
     slope <- rowSums(wide * across * middle) / sxx[site]
     spent <- rowSums(wide * (middle - slope * across)^2)
@@ -219,9 +219,9 @@ site_statistic <- function(t, site, sites) {
 # The p-value from a SAMPLED permutation null: one added to both the count and the total.
 #
 # Dividing the raw count by the number of draws returns 0 for a statistic no draw reached, and no
-# permutation p can be 0 - the observed labelling is always one of the labellings. Measured on
+# permutation p can be 0 - the observed labeling is always one of the labelings. Measured on
 # data satisfying every assumption of the model, the raw form rejects at 0.0569 where it was asked
-# for 0.05, at 300 draws. An enumerated null needs no such correction: the observed labelling is
+# for 0.05, at 300 draws. An enumerated null needs no such correction: the observed labeling is
 # already in the set being counted.
 #
 # AND SAMPLING A SET SMALL ENOUGH TO ENUMERATE BREAKS THE FLOOR. At four pools there are 24
@@ -229,12 +229,12 @@ site_statistic <- function(t, site, sites) {
 # luck alone - measured at 0.0155. Enumerate whenever the set fits.
 sampled_p <- function(reached, draws) (1 + reached) / (1 + draws)
 
-# Every relabelling of a phenotype of this length, as one row each. 720 at six pools, which is
+# Every relabeling of a phenotype of this length, as one row each. 720 at six pools, which is
 # the whole null the permutation p is read off.
-relabellings <- function(x) {
+relabelings <- function(x) {
     if (length(x) == 1) return(matrix(x, nrow = 1))
     do.call(rbind, lapply(seq_along(x),
-                          function(i) cbind(x[i], relabellings(x[-i]))))
+                          function(i) cbind(x[i], relabelings(x[-i]))))
 }
 
 # Permuting a quantity that IS exchangeable, instead of the labels.
@@ -251,8 +251,8 @@ relabellings <- function(x) {
 # between sites survives into the null and a genome-wide maximum still means something.
 residual_p <- function(freq, weight, y, draws) {
     root <- sqrt(weight)
-    centre <- rowSums(weight * freq) / rowSums(weight)
-    z <- (freq - centre) * root
+    center <- rowSums(weight * freq) / rowSums(weight)
+    z <- (freq - center) * root
 
     fit <- weighted_fit(freq, weight, y)
     keep <- !fit$degenerate
@@ -261,7 +261,7 @@ residual_p <- function(freq, weight, y, draws) {
     over <- integer(length(seen))
     for (draw in seq_len(draws)) {
         moved <- sample(ncol(freq))
-        rebuilt <- centre[keep] + z[keep, moved, drop = FALSE] / root[keep, , drop = FALSE]
+        rebuilt <- center[keep] + z[keep, moved, drop = FALSE] / root[keep, , drop = FALSE]
         under <- abs(weighted_fit(rebuilt, held, y)$t)
         under[!is.finite(under)] <- Inf
         over <- over + (under >= seen)
@@ -281,13 +281,13 @@ residual_permutation <- function(freq, weight, y, draws, alpha) {
 # still sum to one. Permuting alleles independently would not, and would be a different null.
 residual_p_multi <- function(freq, weight, site, sites, y, draws) {
     root <- sqrt(weight)
-    centre <- rowSums(weight[site, , drop = FALSE] * freq) / rowSums(weight)[site]
-    z <- (freq - centre) * root[site, , drop = FALSE]
+    center <- rowSums(weight[site, , drop = FALSE] * freq) / rowSums(weight)[site]
+    z <- (freq - center) * root[site, , drop = FALSE]
 
     observed <- site_statistic(fit_multi(freq, weight, site, y)$t, site, sites)
     over <- integer(sites)
     for (draw in seq_len(draws)) {
-        rebuilt <- centre + z[, sample(ncol(freq)), drop = FALSE] / root[site, , drop = FALSE]
+        rebuilt <- center + z[, sample(ncol(freq)), drop = FALSE] / root[site, , drop = FALSE]
         under <- site_statistic(fit_multi(rebuilt, weight, site, y)$t, site, sites)
         over <- over + (!is.na(under) & under >= observed)
     }
@@ -304,9 +304,9 @@ residual_p_multi <- function(freq, weight, site, sites, y, draws) {
 # This is what makes the standardised residuals exchangeable when the pooling was uneven, and it
 # is a diagnostic worth printing in its own right: it says what the weights had to absorb.
 theta_of <- function(freq, weight) {
-    centre <- rowMeans(freq)
+    center <- rowMeans(freq)
     spread <- apply(freq, 1, var)
-    scale <- centre * (1 - centre)
+    scale <- center * (1 - center)
     excess <- (spread - scale * rowMeans(1 / weight)) / scale
     max(0, mean(excess[is.finite(excess)]))
 }

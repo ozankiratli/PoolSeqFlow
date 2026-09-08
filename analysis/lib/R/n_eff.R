@@ -9,7 +9,7 @@
 # The -1 is not a slip. A second form, n*d/(n + d), is also in circulation and differs at low
 # depth; the manual says which is which and what this one follows.
 #
-# Vectorised over either argument. A site a pool has no reads at gets NA rather than 0: there is
+# Vectorized over either argument. A site a pool has no reads at gets NA rather than 0: there is
 # no frequency there to weight, and a zero would average in as though there were. A pool of
 # fewer than one chromosome, or a negative depth, stops here.
 n_eff <- function(n_chrom, depth) {

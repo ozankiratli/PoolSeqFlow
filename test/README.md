@@ -194,7 +194,7 @@ deliberately never asserted against the plant.
 
 Two details worth knowing when writing assertions against the frequency tables:
 
-- `MajorAlleleToRef.py` re-polarises every site to the cohort major allele, so a planted
+- `MajorAlleleToRef.py` re-polarizes every site to the cohort major allele, so a planted
   ALT routinely becomes the REF. Match rows on the allele **base**, never on "the row where
   REF differs from ALLELE".
 - Sites where no sample varies are absent by design — fixed-for-the-same-allele everywhere

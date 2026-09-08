@@ -60,7 +60,7 @@ The corresponding trap is that "uncapped" must be *visible*. A sample the detect
 
 ## Everything is oriented towards not capping
 
-Each of the detector's three tests — the trough fraction, the rise factor, the minimum rise mass — can only fail in the direction of leaving the sample alone, and the anchor rule is chosen the same way. An unrecognisable histogram therefore comes out reported rather than guessed at. This is deliberate and it is the property to preserve if the constants are ever retuned: a false cap silently truncates real coverage and the frequency tables that come out of it look perfectly ordinary, while a missed cap is visible in the published report.
+Each of the detector's three tests — the trough fraction, the rise factor, the minimum rise mass — can only fail in the direction of leaving the sample alone, and the anchor rule is chosen the same way. An unrecognizable histogram therefore comes out reported rather than guessed at. This is deliberate and it is the property to preserve if the constants are ever retuned: a false cap silently truncates real coverage and the frequency tables that come out of it look perfectly ordinary, while a missed cap is visible in the published report.
 
 ## How the capping itself is done
 

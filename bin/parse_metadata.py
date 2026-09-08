@@ -76,7 +76,7 @@ TIME_VARIABLE = "exp_time"
 PHENOTYPE_PREFIX = "pt_"
 COVARIATE_PREFIX = "cov_"
 
-# The param_ columns with rules of their own, beyond being recognised.
+# The param_ columns with rules of their own, beyond being recognized.
 POOL_SIZE = "param_poolSize"
 CAP_MAX_DEPTH = "param_capMaxDepth"
 ADAPTER_COLUMNS = ("param_adapter1", "param_adapter2")
@@ -143,7 +143,7 @@ def check(path):
                 f"and never interprets."
             )
         elif f"param_{column}" in PARAM_COLUMNS:
-            # A recognised name with the prefix missing, which would pass as design metadata.
+            # A recognized name with the prefix missing, which would pass as design metadata.
             errors.append(
                 f"line {header_line}: '{column}' is missing its prefix - write "
                 f"'param_{column}' if you mean to override {PARAM_COLUMNS['param_' + column]} "

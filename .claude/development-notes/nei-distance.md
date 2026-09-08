@@ -88,12 +88,12 @@ So `nei_distance.R`, `add_distance.R` and `mean_distance.R` are library files (o
 
 ## Questions that were settled by precedent rather than re-argued
 
-- **The `*` spanning deletion.** It reaches the SNP table and its frequency is depth-dependent in a way an ordinary allele's is not, and a site carrying it is multiallelic by construction — so it lands in exactly the bucket that gets extra weight. `basicstats` already ruled: it is one allele of the site like any other, and dropping it would renormalise the site to something no pool was sequenced at. `mds` carries the same gate rather than inventing a second answer.
+- **The `*` spanning deletion.** It reaches the SNP table and its frequency is depth-dependent in a way an ordinary allele's is not, and a site carrying it is multiallelic by construction — so it lands in exactly the bucket that gets extra weight. `basicstats` already ruled: it is one allele of the site like any other, and dropping it would renormalize the site to something no pool was sequenced at. `mds` carries the same gate rather than inventing a second answer.
 - **Pools, not units.** Rule 17c collapses to units because degrees of freedom come from units. An ordination is not a test and has no degrees of freedom, and two pools of one unit landing apart is the thing an ordination is read to see. `mds.tsv` carries the unit as a label so a reader can tell which points should have coincided.
 
 ## Two implementation traps, both found by building it
 
-- **`D_m` is a squared distance and `cmdscale` squares what it is given.** `cmdscale(D_m)` ordinates a quartic; `cmdscale(sqrt(D_m))` hits `NaN` on the negative entries the design deliberately does not floor. `ordinate()` double-centres directly, which is what `cmdscale` does internally, needs no square root, and is what lets the "not floored at zero" promise be kept. `test_the_coordinates_reproduce_the_distance_matrix` is the guard.
+- **`D_m` is a squared distance and `cmdscale` squares what it is given.** `cmdscale(D_m)` ordinates a quartic; `cmdscale(sqrt(D_m))` hits `NaN` on the negative entries the design deliberately does not floor. `ordinate()` double-centers directly, which is what `cmdscale` does internally, needs no square root, and is what lets the "not floored at zero" promise be kept. `test_the_coordinates_reproduce_the_distance_matrix` is the guard.
 - **`n_eff` is exactly 1 at depth 1, whatever the pool holds** — `n·d/(n + d − 1)` with `d = 1` is `n/n`. So the correction divides by zero at any single-read site, and since observed `h` is 0 there it arrives as `0/0`. Made an explicit NA and a dropped site. The same expression is 1 for `n_chrom = 1` at *every* depth, which is a single haploid individual and is refused at load.
 
 Related: `depth-cutoff.md` for how depth reaches a published number elsewhere, and `calibration.md` for the corpus this module's expectations were added to.

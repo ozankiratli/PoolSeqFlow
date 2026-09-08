@@ -250,7 +250,7 @@ test_every_path_through_the_distance_agrees() {
 
 # THE ORDINATION IS OF SQUARED DISTANCES AND cmdscale SQUARES WHAT IT IS GIVEN, so handing it
 # the matrix directly would ordinate a quartic. This is the case that would fail if the double
-# centring were ever replaced by a cmdscale call on the distances themselves.
+# centering were ever replaced by a cmdscale call on the distances themselves.
 test_the_coordinates_reproduce_the_distance_matrix() {
     if ! have_r; then skip_case "no Rscript"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/mds-coords")

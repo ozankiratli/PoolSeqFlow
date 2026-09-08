@@ -993,7 +993,7 @@ CURRENT_PARAMS
         log_message "PIPELINE VERSION:      ${release}"
     fi
 
-    # The multi-run table, as written. Line endings and trailing blanks are normalised, nothing
+    # The multi-run table, as written. Line endings and trailing blanks are normalized, nothing
     # else.
     if [ -n "${liveTable}" ]; then
         sed -e 's/\\r\$//' -e 's/[[:space:]]*\$//' -e '/^\$/d' "${liveTable}" > current_table.csv
@@ -1016,7 +1016,7 @@ CURRENT_PARAMS
                 esac
             done < <(diff "${storedTable}" current_table.csv | grep -E '^[<>]')
             log_message ""
-            log_message "RUN PARAMETERS:        Every cell of that table is a setting some run was analysed"
+            log_message "RUN PARAMETERS:        Every cell of that table is a setting some run was analyzed"
             log_message "RUN PARAMETERS:        under, and which runs share a results directory is decided by"
             log_message "RUN PARAMETERS:        it - so an edit can also move work between directories that"
             log_message "RUN PARAMETERS:        already hold results. Adding a run counts: it can regroup the"

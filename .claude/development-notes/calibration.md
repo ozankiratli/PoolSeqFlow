@@ -26,7 +26,7 @@ The far tail is **not** measured. At 200,000 sites the α = 1e-4 column counts t
 
 ## The permutation p is conservative over discrete counts, by a factor worth printing
 
-Over the exhaustive 720 relabellings at six pools, no cell rejects more often than its α. **At depth 30 with a 5% allele it runs at 0.36 of the α it was asked for** — 0.0036 against a nominal 0.01. Shallow reads of a rare allele put identical counts in several pools; tied relabellings then give tied statistics, and every tie counts toward the p-value.
+Over the exhaustive 720 relabelings at six pools, no cell rejects more often than its α. **At depth 30 with a 5% allele it runs at 0.36 of the α it was asked for** — 0.0036 against a nominal 0.01. Shallow reads of a rare allele put identical counts in several pools; tied relabelings then give tied statistics, and every tie counts toward the p-value.
 
 That is the test being safe, not broken, so the gate on it is one-sided. But a user who asks for 0.01 and gets 0.0036 is owed the number, and it belongs in the manual beside the floor.
 
@@ -169,7 +169,7 @@ And the triallelic site the multiallelic decision exists for, where both alterna
 
 ## Three corrections to the harness, and one of them is a trap the module inherits
 
-**`count/B` is not a permutation p-value.** The raw fraction can return 0, and no permutation p can be 0 — the observed labelling is always one of the labellings. On data satisfying every assumption of the model it rejected at 0.0569 against a nominal 0.05 at B = 300. **The valid form is `(1 + count)/(1 + B)`, and a module that samples permutations rather than enumerating them inherits this directly.** An enumerated null needs no correction: the observed labelling is already in the set being counted. Probed to be sufficient — exhaustive 720 gives 0.0508, sampled 300, 1000 and 3000 give 0.0466, 0.0517 and 0.0508.
+**`count/B` is not a permutation p-value.** The raw fraction can return 0, and no permutation p can be 0 — the observed labeling is always one of the labelings. On data satisfying every assumption of the model it rejected at 0.0569 against a nominal 0.05 at B = 300. **The valid form is `(1 + count)/(1 + B)`, and a module that samples permutations rather than enumerating them inherits this directly.** An enumerated null needs no correction: the observed labeling is already in the set being counted. Probed to be sufficient — exhaustive 720 gives 0.0508, sampled 300, 1000 and 3000 give 0.0466, 0.0517 and 0.0508.
 
 **A binomial margin over sites is too tight, because sites are not independent trials.** Every site inside one run shares a phenotype and the same permutation draws. At 100,000 sites that margin called the harness's own control a failure. The gate now uses the spread measured across independent poolings, which assumes nothing about what happens inside one.
 
@@ -192,7 +192,7 @@ Depths in ascending blocks over a phenotype that rises with the pool index, pool
 
 `resid+θ` is calibrated at every n from 6 to 30 and matches or beats the label scheme on power throughout.
 
-**Four pools is not an analysis.** The floor is 2/4! = 0.083, so α = 0.05 cannot be reached by relabelling at all, and the power column is incoherent — 0.0306 one way and 0.0004 the other. That is a refusal.
+**Four pools is not an analysis.** The floor is 2/4! = 0.083, so α = 0.05 cannot be reached by relabeling at all, and the power column is incoherent — 0.0306 one way and 0.0004 the other. That is a refusal.
 
 **And the n = 4 row exposes a trap the module has to keep avoiding.** The label scheme shows 0.0155 there, which should be impossible against a floor of 0.083. It happens because the harness *sampled* 150 draws from a set of only 24 orderings, and `(1 + r)/(1 + B)` then reaches below the true floor by luck alone. **Sampling a permutation set small enough to enumerate silently breaks the floor guarantee**, so enumerating when the set fits is a correctness requirement and not an optimisation, and it wants a case that would notice if someone changed it.
 

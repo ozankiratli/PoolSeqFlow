@@ -1,6 +1,6 @@
 {
   "name": "basicstats",
-  "version": "20260908.002",
+  "version": "20260908.003",
   "contract": "freq-1",
   "summary": "site counts, depth, effective pool size and gene diversity, per pool",
   "needs": [
@@ -11,7 +11,7 @@
     "Depth is the sum of a pool's comma-separated cell in the depth table: reads supporting any allele at that site, after step 7's depth, quality and false-positive filters.",
     "Every statistic is computed over CALLED SITES only. Sites the pipeline did not call are absent from the tables and are not counted as invariant.",
     "Depth and diversity are computed over the SNP table alone. Indels are counted in sites.tsv and enter nothing else.",
-    "A spanning-deletion allele reaching the SNP table as a * or an X is one allele of that site like any other: it carries reads, so it carries frequency, and dropping it would renormalise the site to something no pool was sequenced at.",
+    "A spanning-deletion allele reaching the SNP table as a * or an X is one allele of that site like any other: it carries reads, so it carries frequency, and dropping it would renormalize the site to something no pool was sequenced at.",
     "A merged pool's genome-wide effective size is a LOWER BOUND, not a measurement: the harmonic mean of summed depths cannot be recovered from its libraries' histograms, so the parts' harmonic means are added instead. neff.tsv marks every such row.",
     "A site is segregating for a pool when an allele other than that pool's OWN major one reaches max(detection limit, minReads / depth). The cohort's major allele is not used: a pool fixed for what the cohort calls alternate is not segregating.",
     "A pool of one chromosome is refused: the unbiased correction n_eff/(n_eff - 1) divides by zero there, and a single haploid genome has no segregating sites to measure.",

@@ -65,7 +65,7 @@ def histogramFiles(Map target) {
 //
 // The design and the pool figures both come off the target: the frame resolved them once, under
 // the settings the project declared, so every module in a project reads one answer.
-process Analyse {
+process Analyze {
     tag "${target.label}"
 
     input:
@@ -95,7 +95,7 @@ process Analyse {
     // The published script's header: the frame version that defined the library, which
     // implementation of the per-site loop ran, and the settings that shaped the work.
     header = ["# basicstats, PoolSeqFlow analysis frame ${frameVersion()}",
-              "# ${useCompiled(settings) ? 'site_diversity.cpp, compiled at run time' : 'site_diversity(), vectorised R'}" +
+              "# ${useCompiled(settings) ? 'site_diversity.cpp, compiled at run time' : 'site_diversity(), vectorized R'}" +
               ", in bins of ${settings.binSize} sites over ${workers} worker(s)",
               "# minReads ${settings.minReads}"].join('\n').replace("'", "'\\''")
 
@@ -125,5 +125,5 @@ process Analyse {
 workflow {
     def targets = analysisPlan('basicstats').targets
                       .collect { target -> [ target, depthTables(target), histogramFiles(target) ] }
-    PublishResults(Analyse(channel.fromList(targets)))
+    PublishResults(Analyze(channel.fromList(targets)))
 }

@@ -68,7 +68,7 @@ def depthTables(Map target) {
 //
 // The design and the pool figures both come off the target: the frame resolved them once, under
 // the settings the project declared, so every module in a project reads one answer.
-process Analyse {
+process Analyze {
     tag "${target.label}"
 
     input:
@@ -101,7 +101,7 @@ process Analyse {
     // The published script's header: the frame version that defined the library, which
     // implementation ran, and the settings that shaped the work.
     header = ["# mds, PoolSeqFlow analysis frame ${frameVersion()}",
-              "# ${useCompiled(settings) ? 'allele_frequencies.cpp and nei_distance.cpp, compiled at run time' : 'allele_frequencies() and nei_distance(), vectorised R'}" +
+              "# ${useCompiled(settings) ? 'allele_frequencies.cpp and nei_distance.cpp, compiled at run time' : 'allele_frequencies() and nei_distance(), vectorized R'}" +
               ", in bins of ${settings.binSize} sites over ${workers} worker(s)",
               "# Nei's minimum distance, corrected for sampling, over " +
               "${settings.includeIndels ? 'SNPs and indels' : 'SNPs'}; ${settings.dimensions} axes",
@@ -134,5 +134,5 @@ process Analyse {
 workflow {
     def targets = analysisPlan('mds').targets
                       .collect { target -> [ target, depthTables(target) ] }
-    PublishResults(Analyse(channel.fromList(targets)))
+    PublishResults(Analyze(channel.fromList(targets)))
 }

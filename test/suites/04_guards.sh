@@ -569,7 +569,7 @@ test_a_pool_size_edit_does_not_ask_for_the_bams_back() {
 #
 # These build their own sandbox rather than copying the shared baseline. Flipping multiRun on
 # a copy would change the parameter SET against a manifest recorded without it, so the run
-# would fail the change guard instead of reaching the check under test - a real behaviour, and
+# would fail the change guard instead of reaching the check under test - a real behavior, and
 # the wrong one to be measuring here.
 multirun_sandbox() {
     local name="$1" table="$2" sb
@@ -1093,7 +1093,7 @@ c,
 
 # The same rule against Z's own example: the references are permuted between runs. Every value
 # that appears in the table still appears in it, and every run still has a different one from its
-# neighbours - so nothing about the SET of parameters changed, only which run holds which.
+# neighbors - so nothing about the SET of parameters changed, only which run holds which.
 test_permuting_a_column_between_runs_stops_the_run() {
     if ! have_tools; then skip_case "no conda environment"; return; fi
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi

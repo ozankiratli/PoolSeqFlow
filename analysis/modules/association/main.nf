@@ -63,7 +63,7 @@ def depthTables(Map target) {
 //
 // The design and the pool figures both come off the target: the frame resolved them once, under
 // the settings the project declared, so every module in a project reads one answer.
-process Analyse {
+process Analyze {
     tag "${target.label}"
 
     input:
@@ -99,7 +99,7 @@ process Analyse {
     // implementation of the parse ran, and the settings that shaped the work. The permutation
     // budget is here because it sets the smallest p a run can report.
     header = ["# association, PoolSeqFlow analysis frame ${frameVersion()}",
-              "# ${useCompiled(settings) ? 'allele_frequencies.cpp, compiled at run time' : 'allele_frequencies(), vectorised R'}" +
+              "# ${useCompiled(settings) ? 'allele_frequencies.cpp, compiled at run time' : 'allele_frequencies(), vectorized R'}" +
               ", in bins of ${settings.binSize} sites over ${workers} worker(s)",
               "# phenotype ${settings.phenotypes.join(', ')}, up to ${settings.permutations} rearrangements, ${settings.fdr} across sites",
               "# beta > 0 means the allele is more frequent at the higher phenotype value"].join('\n').replace("'", "'\\''")
@@ -129,5 +129,5 @@ process Analyse {
 workflow {
     def targets = analysisPlan('association').targets
                       .collect { target -> [ target, depthTables(target) ] }
-    PublishResults(Analyse(channel.fromList(targets)))
+    PublishResults(Analyze(channel.fromList(targets)))
 }

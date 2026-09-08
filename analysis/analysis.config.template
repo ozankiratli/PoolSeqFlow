@@ -22,7 +22,7 @@
 
 params {
     analysis {
-        // WHICH RUNS TO ANALYSE.
+        // WHICH RUNS TO ANALYZE.
         //
         //     'all'                       every run in the project            (the default)
         //     'reference_a'               one run, by the RunID you gave it
@@ -34,7 +34,7 @@ params {
         // `all` is a keyword and a list is always run names, so a run you have actually named
         // `all` is selected by writing ['all'].
         //
-        // Runs that produced the SAME tables share one results directory, and it is analysed
+        // Runs that produced the SAME tables share one results directory, and it is analyzed
         // once however many of them you name. The verification report at the start of every
         // module says which directory each selected run landed in, and names any run whose
         // results you are also reading without having asked for them.

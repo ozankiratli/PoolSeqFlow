@@ -88,7 +88,7 @@ The companion notes are `dag-wiring.md` for channel shape and `parameter-resolut
 
 ---
 
-**An EMPTY config block reaches `params` as nothing at all.** Measured 2026-09-07: `phenotypes { pt_wingspan { }; pt_other { levels = ['a','b'] } }` arrives as `[pt_other:[levels:[a, b]]]` — `pt_wingspan` is *absent*, not present and empty. So a checker that iterates a declaration scope cannot refuse an empty declaration: it never sees one, and it cannot tell that block from a column nobody wrote about. This bites any open scope declared per column — `analysis.metadata.phenotypes` and `analysis.metadata.covariates` both. **The defence is to report what is UNdeclared**, which covers the empty block for free; a test case asserting that an empty block refuses will fail, and correctly.
+**An EMPTY config block reaches `params` as nothing at all.** Measured 2026-09-07: `phenotypes { pt_wingspan { }; pt_other { levels = ['a','b'] } }` arrives as `[pt_other:[levels:[a, b]]]` — `pt_wingspan` is *absent*, not present and empty. So a checker that iterates a declaration scope cannot refuse an empty declaration: it never sees one, and it cannot tell that block from a column nobody wrote about. This bites any open scope declared per column — `analysis.metadata.phenotypes` and `analysis.metadata.covariates` both. **The defense is to report what is UNdeclared**, which covers the empty block for free; a test case asserting that an empty block refuses will fail, and correctly.
 
 ---
 
@@ -181,7 +181,7 @@ That escape is written out in words above for the same reason: the first draft o
 
 **snpEff's `-stats` writes TWO files.** It derives the gene table's name from the summary's, so `-stats snpeff_summary.html` also writes `snpeff_summary.genes.txt` beside it. Measured against a real run 2026-09-02; the plan and the manual had both recorded one file.
 
-**The annotated VCF is not byte-reproducible across two runs of the same annotation.** `##SnpEffCmd` records the mktemp name of the normalised input and `##bcftools_normCommand` records a wall-clock `Date=`. Both are the tools' own provenance and neither is a defect — but any "the VCF is unchanged" assertion has to exclude those two lines.
+**The annotated VCF is not byte-reproducible across two runs of the same annotation.** `##SnpEffCmd` records the mktemp name of the normalized input and `##bcftools_normCommand` records a wall-clock `Date=`. Both are the tools' own provenance and neither is a defect — but any "the VCF is unchanged" assertion has to exclude those two lines.
 
 **`samtools stats -c min,max,step` emits COV rows only for the depths that OCCUR.** Measured on a hand-built BAM: `-c 1,20,1` over depths 1 and 2 gives two rows, not twenty, and no open-bin row at all when nothing exceeds the ceiling. This is what makes `capBAM.histogramMax` unable to change a result — every value a run completes at yields the identical histogram — and it is why that parameter is excluded from the recorded manifest.
 

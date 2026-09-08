@@ -13,7 +13,7 @@
 #
 #   RG_*         A read group tag: RG_Sample, RG_Library, RG_Platform, RG_PlatformUnit,
 #                RG_Description, RG_Center, RG_Date, RG_FlowOrder. A blank cell omits that
-#                tag. Nothing else may start with RG_; an unrecognised one is refused.
+#                tag. Nothing else may start with RG_; an unrecognized one is refused.
 #
 #   param_*      A parameter from parameters.config, overridden for these samples only:
 #                param_poolSize, param_capMaxDepth, param_adapter1, param_adapter2. A blank

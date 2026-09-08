@@ -32,7 +32,7 @@
   --md-default-fg-color--lightest: rgba(72, 82, 102, 0.4);
 
   /* The header deliberately matches the page rather than sitting on a slab of
-     colour; separation comes from a hairline rule further down. */
+     color; separation comes from a hairline rule further down. */
   --md-primary-fg-color: #252a34;
   --md-primary-fg-color--light: #2f3542;
   --md-primary-fg-color--dark: #1b1e26;
@@ -193,7 +193,7 @@
 }
 
 /* The site title is wrapped in a link by javascripts/header-link.js. It should
-   look exactly as it did - the affordance is the cursor, not a colour change. */
+   look exactly as it did - the affordance is the cursor, not a color change. */
 .md-header__topic .md-header__topic-link {
   color: inherit;
   text-decoration: none;
@@ -416,7 +416,7 @@
 
 /* Material's .md-button draws itself in --md-primary-fg-color, which in this
    theme is the page background so the header can sit flush. That makes the
-   button invisible, so it needs its own colour. */
+   button invisible, so it needs its own color. */
 .md-typeset .md-button {
   color: var(--md-typeset-a-color);
   border-color: var(--md-typeset-a-color);

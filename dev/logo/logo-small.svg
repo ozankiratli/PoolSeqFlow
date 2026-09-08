@@ -17,7 +17,7 @@
             helices. The strokes keep their exact x positions (18.445, 32,
             45.555) and vertical extent, so the silhouette is unchanged.
          2. Strokes are heavier throughout: at 0.375 scale a 2.38 stroke renders
-            at 0.9px and greys out against the background.
+            at 0.9px and grays out against the background.
        The single helix also drops to two rungs from the full file's two - it
        already had the minimum that reads.
 
@@ -53,7 +53,7 @@
          outer two so the round caps clear the vessel wall. -->
     <g id="pooled-strokes" stroke-width="4.2" opacity="0.9">
       <path id="pool-left"   d="M18.445 46.5V56.2"/>
-      <path id="pool-centre" d="M32 44.8V57.6"/>
+      <path id="pool-center" d="M32 44.8V57.6"/>
       <path id="pool-right"  d="M45.555 46.5V56.2"/>
     </g>
   </g>
