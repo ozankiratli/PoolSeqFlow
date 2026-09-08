@@ -87,3 +87,19 @@ test_the_shared_r_library_reads_a_depth_cell() {
     local status; status=$(r_lib_section split_counts)
     assert_status 0 "$status" "split_counts: $R_LIB_OUTPUT"
 }
+
+# The distance two pools are placed by, and the sampling correction that is the whole reason it
+# is this statistic and not the sum of absolute differences.
+test_the_shared_r_library_measures_the_distance_between_pools() {
+    if ! have_r; then skip_case "no Rscript"; return; fi
+    local status; status=$(r_lib_section nei_distance)
+    assert_status 0 "$status" "nei_distance: $R_LIB_OUTPUT"
+}
+
+# Every pair is averaged over its OWN sites. Dividing the matrix by one shared count would make
+# the pair with more sites look the further apart.
+test_the_shared_r_library_averages_each_pair_over_its_own_sites() {
+    if ! have_r; then skip_case "no Rscript"; return; fi
+    local status; status=$(r_lib_section mean_distance)
+    assert_status 0 "$status" "mean_distance: $R_LIB_OUTPUT"
+}

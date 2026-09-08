@@ -596,6 +596,61 @@ def association_expectations():
     return "\n".join(lines) + "\n"
 
 
+def mds_expectations():
+    """Nei's minimum distance between every pair of pools, over the SNP table.
+
+    D = (J_A + J_B) / 2 - J_AB per site, then averaged over the sites the pair shares. J is the
+    probability that two chromosomes from one pool carry the same allele, summed over EVERY
+    allele of the site including the reference.
+
+    The corrected form replaces each J with its unbiased estimator, sum(p^2) - h / (n_eff - 1),
+    which is (n * sum(p^2) - 1) / (n - 1) written the way the R writes it. J_AB takes no such
+    term: the two pools are sequenced independently, so nothing correlates their draws.
+
+    Plain loops, sharing nothing with nei_distance() in the library. Both the raw and the
+    corrected totals run over ONE site set, which is why the skips below are taken before either
+    is added to rather than per column.
+    """
+    lines = []
+
+    def put(key, value):
+        lines.append("%s\t%.12g" % (key, value))
+
+    for a in range(len(POOLS)):
+        for b in range(a + 1, len(POOLS)):
+            raw_total = 0.0
+            adjusted_total = 0.0
+            counted = 0
+            for _, _, _, _, cells in SNP_SITES:
+                depth_a = float(sum(cells[a]))
+                depth_b = float(sum(cells[b]))
+                if depth_a <= 0 or depth_b <= 0:
+                    continue
+                size_a = n_eff(N_CHROM, depth_a)
+                size_b = n_eff(N_CHROM, depth_b)
+                # One gene copy carries no diversity for the correction to work from, and
+                # n_eff is exactly 1 at depth 1 whatever the pool holds.
+                if size_a <= 1.0 or size_b <= 1.0:
+                    continue
+                freq_a = [c / depth_a for c in cells[a]]
+                freq_b = [c / depth_b for c in cells[b]]
+                within_a = sum(p * p for p in freq_a)
+                within_b = sum(p * p for p in freq_b)
+                between = sum(p * q for p, q in zip(freq_a, freq_b))
+                raw_total += 0.5 * (within_a + within_b) - between
+                adjusted_total += 0.5 * ((within_a - (1.0 - within_a) / (size_a - 1.0)) +
+                                         (within_b - (1.0 - within_b) / (size_b - 1.0))) - between
+                counted += 1
+
+            key = "mds.%s.%s" % (POOLS[a], POOLS[b])
+            put(key + ".sites", counted)
+            put(key + ".distance", adjusted_total / counted)
+            put(key + ".raw", raw_total / counted)
+            put(key + ".correction", (raw_total - adjusted_total) / counted)
+
+    return "\n".join(lines) + "\n"
+
+
 def pool_values(merged):
     """The experimental variables each pool carries, as test/data/base/metadata.csv gives them:
     three populations of two samples each, every population sampled at both timepoints.
@@ -778,7 +833,7 @@ def main():
         extra = "\n".join(lines) + "\n"
 
     with open(os.path.join(side, "expected.tsv"), "w") as handle:
-        handle.write(expectations() + association_expectations() + extra)
+        handle.write(expectations() + association_expectations() + mds_expectations() + extra)
 
     # What the frame resolves and hands a module, for a case that calls the module's R without
     # a Nextflow run around it. The pools and the design are test/data/base/metadata.csv's.

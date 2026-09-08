@@ -147,3 +147,39 @@ Every degree of freedom counted so far. `df = n_observed − 2 − q` over units
 ### Where it sits
 
 After the roster is fuller — F4 onwards, once there are enough modules that "what does this layer do about covariates" has a real answer instead of one module's opinion. Z, 2026-09-07, on the interim: *"since the results and metadata will be aligned, the user might be able to handle it themselves."*
+
+---
+
+## Plotting as a published, re-runnable script — Z, 2026-09-08
+
+The idea, in Z's words: *"What we can do is maybe move the plot code outside of mds (and all modules), print the code and let the user make the plot they want to make by manually editing the code. We output the scripts anyway."*
+
+Raised while deciding whether `mds` should take a color palette setting. The answer to that was no — how many levels a variable has, whether it is ordered, and whether a reader needs the categories distinguishable or merely grouped are properties of the experiment, and every way of getting a palette wrong is quiet. This is the idea that makes the refusal generous instead of merely restrictive.
+
+### What it would buy
+
+**It ends a settings surface that otherwise grows forever.** `mds` already carries `colorBy`, `shapeBy` and `dimensions`; `basicstats` carries `chromosomes` for its depth panels; `association` carries `chromosomes` again plus `reportBelow` and `reportTop`. Every one of those exists because a plot needed a decision made for it, and the next request is always another one — facet by this, log that axis, drop that pool, order the levels my way. A script the user owns answers all of them at once and adds no setting.
+
+**The escape hatch is already half there and nobody can use it.** Each module publishes its own `.R` beside the result with the shared library folded in, so the plotting code ships today. What stops anyone editing it is that re-running it recomputes everything: for `mds` that is the whole distance matrix over every depth table. A plot script reading the published TSVs would redraw in seconds.
+
+**It puts the choice where the knowledge is.** A palette is the clearest case, but the same is true of axis limits, label placement and which sequences are worth a panel at all.
+
+### What it would break, and this is the part that decides the shape
+
+**The PDF report is built from the PNGs.** `analysis/lib/rmd/report.Rmd:54` walks the published files and embeds every `.png` it finds. A module that publishes no figure contributes none, and the report every analysis carries — F1's, and one of the reasons the analysis layer is worth running at all — becomes a page of tables.
+
+So the version that survives is **not** "modules stop plotting". It is: the plot becomes a standalone script that reads the published TSVs, and the module runs it once. The default figure still exists, the report is unchanged, and the script beside it is re-runnable against `mds.tsv` without recomputing a distance. Z's idea, with the report constraint folded in.
+
+**It is a frame convention, not one module's choice.** `analysis/modules/README.md` is explicit that `basicstats` is the template and a second shape must not be invented, so this lands in all three modules or none. That is what keeps it out of F3.
+
+### The decision it still needs
+
+Whether the published plot script carries its settings substituted in, or reads `options.json` beside it. Substituting makes the script self-contained and editable with no other file; reading keeps one source of truth and means the script and the run cannot disagree. Both are defensible and the answer shapes the template every later module copies.
+
+### What already exists to build on
+
+Every module already publishes its own `.R` and its compiled sources, `PublishResults` already takes whatever lands in `published/`, and `report.Rmd` already discovers files rather than being told about them — so a new `*_plot.R` needs no wiring. `mds.tsv` and `eigenvalues.tsv` are already sufficient to redraw `mds.png` without touching a depth table, and the manual's `mds` section carries a base-R snippet that does exactly that.
+
+### Where it sits
+
+At or just before **E5b**, which is already the pass that makes the three modules read well beside one another. Not in F3: it touches `basicstats` and `association`, both committed, plus the report.

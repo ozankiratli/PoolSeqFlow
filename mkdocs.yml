@@ -167,6 +167,7 @@ nav:
       - In common: modules/common.md
       - basicstats: modules/basicstats.md
       - association: modules/association.md
+      - mds: modules/mds.md
   - Development:
       - development/index.md
       - History: development/history.md

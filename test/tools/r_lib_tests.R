@@ -324,6 +324,75 @@ if (wanted("chunk_ranges")) {
     refuses("a negative count", chunk_ranges(-1, 10))
 }
 
+if (wanted("nei_distance")) {
+    # ONE SITE, TWO POOLS, correction switched off by an infinite effective size.
+    # A = (0.6, 0.4), B = (0.3, 0.7). J_A = 0.52, J_B = 0.58, J_AB = 0.46.
+    # (0.52 + 0.58) / 2 - 0.46 = 0.09, which is also 1/2 * (0.09 + 0.09).
+    one <- nei_distance(cbind(c(0.6, 0.4), c(0.3, 0.7)), c(1, 1), matrix(Inf, 1, 2))
+    check("Nei's minimum distance, biallelic", one$raw[1, 2], 0.09)
+    check("nothing to correct at infinite n_eff", one$corrected[1, 2], 0.09)
+    check("one site counted", one$sites[1, 2], 1)
+    check("the matrix is symmetric", one$raw[2, 1], 0.09)
+    check("a pool is no distance from itself", one$raw[1, 1], 0)
+
+    # THE SUM RUNS OVER EVERY ALLELE INCLUDING THE REFERENCE, so a triallelic site contributes
+    # three terms. A = (0.5, 0.3, 0.2), B = (0.2, 0.3, 0.5): J_A = J_B = 0.38, J_AB = 0.29,
+    # (0.38 + 0.38) / 2 - 0.29 = 0.09.
+    tri <- nei_distance(cbind(c(0.5, 0.3, 0.2), c(0.2, 0.3, 0.5)), c(1, 1, 1),
+                        matrix(Inf, 1, 2))
+    check("triallelic", tri$raw[1, 2], 0.09)
+
+    # THE CORRECTION IS THE UNBIASED HOMOZYGOSITY, (n * sum(p^2) - 1) / (n - 1), which is
+    # sum(p^2) - h / (n - 1). At n_eff = 51, J_A = 0.52 and h_A = 0.48: 0.52 - 0.48/50 = 0.5104.
+    # At n_eff = 26 for B, 0.58 - 0.42/25 = 0.5632. (0.5104 + 0.5632) / 2 - 0.46 = 0.0768.
+    adj <- nei_distance(cbind(c(0.6, 0.4), c(0.3, 0.7)), c(1, 1), matrix(c(51, 26), 1))
+    check("the unbiased form", adj$corrected[1, 2], 0.0768)
+    check("raw is left uncorrected beside it", adj$raw[1, 2], 0.09)
+
+    # SUMS, NOT MEANS, so bins add. Two sites of 0.09 accumulate to 0.18 over two sites.
+    two <- nei_distance(cbind(c(0.6, 0.4, 0.6, 0.4), c(0.3, 0.7, 0.3, 0.7)), c(1, 1, 2, 2),
+                        matrix(Inf, 2, 2))
+    check("two sites accumulate", two$raw[1, 2], 0.18)
+    check("and are counted", two$sites[1, 2], 2)
+    folded <- add_distance(add_distance(NULL, one), one)
+    check("the same total, one bin at a time", folded$raw[1, 2], two$raw[1, 2])
+    check("with the same site count", folded$sites[1, 2], two$sites[1, 2])
+
+    # A POOL WITH NO READS DROPS THAT SITE FOR ITS OWN PAIRS AND LEAVES THE OTHERS ALONE, so
+    # two pairs of one run can rest on different numbers of sites. B is missing at site 2.
+    gap <- nei_distance(cbind(c(0.6, 0.4, 0.5, 0.5), c(0.3, 0.7, NA, NA), c(0.2, 0.8, 0.1, 0.9)),
+                        c(1, 1, 2, 2), matrix(Inf, 2, 3))
+    check("the pair with the gap loses the site", gap$sites[1, 2], 1)
+    check("the pair without it keeps both", gap$sites[1, 3], 2)
+
+    # n_eff IS 1 AT DEPTH 1 WHATEVER THE POOL HOLDS, and one gene copy has no diversity to
+    # correct with: h is zero by construction and the correction lands on 0/0.
+    check("n_eff at depth 1", n_eff(100, 1), 1)
+    spent <- nei_distance(cbind(c(0.6, 0.4), c(0.3, 0.7)), c(1, 1), matrix(c(1, 80), 1))
+    check("the site drops rather than returning NaN", spent$sites[1, 2], 0)
+    check("and takes the raw sum with it", spent$raw[1, 2], 0)
+
+    refuses_with("pools that do not match", "read in the same order",
+                 nei_distance(cbind(c(0.6, 0.4)), c(1, 1), matrix(Inf, 1, 2)))
+    refuses_with("sites that do not match", "one parse of one table",
+                 nei_distance(cbind(c(0.6, 0.4), c(0.3, 0.7)), c(1, 1), matrix(Inf, 2, 2)))
+}
+
+if (wanted("mean_distance")) {
+    total <- matrix(c(0, 0.18, 0.18, 0), 2)
+    counts <- matrix(c(0, 2, 2, 0), 2)
+    check("the per-site mean", mean_distance(total, counts)[1, 2], 0.09)
+    check("a pool is no distance from itself", mean_distance(total, counts)[1, 1], 0)
+
+    # EACH PAIR IS DIVIDED BY ITS OWN COUNT. A-B saw 2 sites and A-C saw 4; dividing both by
+    # one shared count would make the pair with more sites look the further apart.
+    uneven <- mean_distance(matrix(c(0, 0.18, 0.36, 0.18, 0, 0, 0.36, 0, 0), 3),
+                            matrix(c(0, 2, 4, 2, 0, 0, 4, 0, 0), 3))
+    check("A-B over its two sites", uneven[1, 2], 0.09)
+    check("A-C over its four", uneven[1, 3], 0.09)
+    check("a pair with no site in common", uneven[2, 3], NA_real_)
+}
+
 if (wanted("split_counts")) {
     check("two alleles, first value", split_counts("30,5")[1], 30)
     check("two alleles, second value", split_counts("30,5")[2], 5)

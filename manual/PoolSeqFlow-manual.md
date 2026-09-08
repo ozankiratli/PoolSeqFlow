@@ -3074,7 +3074,7 @@ cd /path/to/project
 PoolSeqFlow analysis verify
 ```
 
-Three ship with the release — `verify`, `basicstats` and `association` — and each has a page of its own under [Shipped Modules](#shipped-modules), which is where what they compute and what they assume is written down. Every other module is installed separately and published on its own timetable.
+Four ship with the release — `verify`, `basicstats`, `association` and `mds` — and each has a page of its own under [Shipped Modules](#shipped-modules), which is where what they compute and what they assume is written down. Every other module is installed separately and published on its own timetable.
 
 ### The modules installed here { #analysis-modules }
 
@@ -3759,6 +3759,7 @@ Most modules are installed separately. These are the ones a release carries, so 
 | `verify` | Reports what the analysis layer can see of your project, and produces nothing. Run it first when something is not being found | nothing |
 | [`basicstats`](#basicstats) | Site counts, depth, effective pool size and gene diversity, per pool | the frequency and depth tables |
 | [`association`](#association) | Each allele's frequency against a phenotype you measured per pool, with a permutation p | the depth tables, and a `pt_` column |
+| [`mds`](#mds) | Every pool placed as a point, by Nei's minimum distance corrected for sampling | the depth tables |
 
 Run one at a time, from your project directory:
 
@@ -3774,19 +3775,22 @@ Each has a page of its own here. What comes first is what they have in common.
 
 ### How long the per-site work takes { #analysis-compiled }
 
-Every module here reads the same thing: one comma-separated list of read counts per pool per site, in the depth tables. On a genome running to tens of millions of called sites, splitting those strings is where the time goes — not the statistics computed from them. So each of the derivations that does it has two implementations, and **the compiled one is the default**. Both produce the same numbers; the choice is only ever about time.
+Every module here reads the same thing: one comma-separated list of read counts per pool per site, in the depth tables. On a genome running to tens of millions of called sites, splitting those strings is most of the time a module spends, and for `basicstats` and `association` it is essentially all of it. So each of the derivations that does per-site work has two implementations, and **the compiled one is the default**. Both produce the same numbers; the choice is only ever about time.
 
 Measured on an Intel i7-7700HQ at 2.8 GHz with R 4.6.1 and GCC 16.2, over a corpus of 3.2 million sites — 92% biallelic, 7% triallelic, 1% tetrallelic, which is what a called cohort looks like. CPU time, scaled to what 100 million called sites would cost in one pass:
 
 | Derivation | Reads | Vectorized R | Compiled | Ratio |
 |---|---|---|---|---|
-| `site_diversity` | one pool | 131 s | 11 s | 12× |
-| `allele_frequencies` | one pool | 103 s | 16 s | 6× |
-| `allele_frequencies` | six pools | 715 s | 70 s | 10× |
+| `site_diversity` | one pool | 135 s | 11 s | 12× |
+| `allele_frequencies` | one pool | 104 s | 16 s | 7× |
+| `allele_frequencies` | six pools | 675 s | 69 s | 10× |
+| `nei_distance` | six pools | 710 s | 22 s | 32× |
 
-**Take the ratio as about ten, not as a precise figure.** It is not constant, and it is not constant in a direction worth knowing about: on a corpus small enough to sit in cache the compiled path looks two to three times better than this, and below about ten thousand sites the whole call is shorter than the clock can resolve, so a figure extrapolated from a small test corpus will flatter it by a wide margin. At three million sites one pool's cells are already 48 MB — past any current L3 — and both implementations spend their time waiting on memory rather than on arithmetic. That is the regime a genome is in. A machine with more memory bandwidth than a 2017 laptop does better than this table on both columns.
+**The last row is a different kind of work and its ratio should not be averaged with the others.** The three parsers split strings, and what limits them is memory traffic; `nei_distance` reads what a parser already produced and does arithmetic on it. Its vectorized form makes one pass per *pair* of pools — fifteen at six pools — so what compiling removes is interpreted call overhead that grows with the square of the pool count, not with the site count. Expect its ratio to climb with more pools where the parsers' will not. It is also the reason `mds` is the one module whose statistic costs about as much as reading the table for it.
 
-What the table is really for is the decision it supports: **twelve minutes of a six-pool run spent splitting strings, against one.** That is why the compiled path is the default rather than something to ask for, and why a module offering it stops rather than quietly falling back when it cannot build one.
+**For the three parsers, take the ratio as about ten, not as a precise figure.** It is not constant, and it is not constant in a direction worth knowing about: on a corpus small enough to sit in cache the compiled path looks two to three times better than this, and below about ten thousand sites the whole call is shorter than the clock can resolve, so a figure extrapolated from a small test corpus will flatter it by a wide margin. At three million sites one pool's cells are already 48 MB — past any current L3 — and both implementations spend their time waiting on memory rather than on arithmetic. That is the regime a genome is in. A machine with more memory bandwidth than a 2017 laptop does better than this table on both columns.
+
+What the table is really for is the decision it supports. For `association`, reading a hundred million sites across six pools is **eleven minutes of splitting strings against one**. For `mds`, which pays for the parse and the distance both, it is **twenty-three minutes against a minute and a half**. That is why the compiled path is the default rather than something to ask for, and why a module offering it stops rather than quietly falling back when it cannot build one.
 
 `dev/scripts/bench-compiled-paths.R` is what produced the table, and re-running it on your own machine is how you find out what these numbers are where you work.
 
@@ -4137,6 +4141,148 @@ Every folder `association` publishes carries a `CITATIONS.md` and a `references.
 | [Phipson & Smyth 2010](#ref-phipson2010permutation) | why a sampled permutation p is `(1 + reached) / (1 + draws)` and never the raw share |
 | [Benjamini & Hochberg 1995](#ref-benjamini1995fdr) | the correction across sites, applied to the permutation p and never to the per-allele one |
 | [Long et al. 2026](#ref-long2026polygenicity) | what a modestly powered pool-seq scan produces when it is read as though it were well powered, which is why this module prints a floor rather than assuming one |
+
+Full entries, with what each is cited for, are in the [Bibliography](#bibliography).
+
+## `mds` { #mds }
+<!--@ page: mds | nav: mds -->
+
+Every pool placed as a point, so that pools which resemble each other sit close together. The distance between two pools is Nei's minimum distance, corrected for the fact that neither pool's frequencies were measured exactly, and the picture is a classical multidimensional scaling of that distance matrix.
+
+**This is classical — metric — scaling, which is the same method as principal coordinates analysis (PCoA).** It is not NMDS. Non-metric scaling keeps only the *rank order* of the distances and finds a configuration by iteratively minimising stress; what this does is an eigendecomposition that uses the distances themselves, so the plotted gaps are proportional to the distances rather than merely ordered like them. If you are used to `metaMDS` in `vegan`, this is `cmdscale`/`wcmdscale` — closer to `ape::pcoa` — and the eigenvalue table below is the thing NMDS has no equivalent of.
+
+```bash
+PoolSeqFlow analysis mds
+```
+
+It reads the depth tables and nothing else. There is nothing to declare and nothing to choose before running it — no phenotype, no time axis, no grouping. That makes it the first thing worth running on a new cohort: it answers "do these samples look like what I think they are" before any model is fitted to them.
+
+### What it measures, and what the correction is for { #mds-statistic }
+
+For two pools A and B at one site, with `J` the probability that two chromosomes drawn from the same pool carry the same allele and `J_AB` the probability that one drawn from each does:
+
+```
+distance = (J_A + J_B) / 2 − J_AB
+```
+
+which expands to `½ × Σ (f_A − f_B)²` over **every** allele of the site, the reference included. A triallelic site contributes three terms. No allele is privileged and none is dropped — which matters here, because `MajorAlleleToRef.py` makes the reference the cohort's *major* allele, so dropping it would discard the most informative row rather than a redundant one. The site values are averaged over sites.
+
+**The correction is the part that earns its keep.** `J` read off a sample is biased upward: two *reads* from one pool agree more often than two *chromosomes* do, and the shallower the pool the larger that excess. Uncorrected, the excess does not cancel — it depends on `1/n_A + 1/n_B`, so it inflates shallow–shallow pairs more than shallow–deep ones and those more than deep–deep. Simulated on six pools drawn from **one** population differing only in read depth, two at 30× and four at 400×, the two shallow pools come out as the *most distant pair in the matrix* and the leading axes separate the cohort by depth. There is one population. The corrected distance removes that: the same simulation leaves no depth ordering worth reading, with a residual roughly two orders of magnitude below the artefact it replaced.
+
+`distance.tsv` publishes the uncorrected sum beside the corrected one, so how much was subtracted is something you can look at rather than take on trust.
+
+The correction subtracts each pool's own diversity at a site, scaled by its effective sample size there, so it inherits everything `n_eff` does — including that ploidy enters exactly once, through `n_chrom = ploidy × poolSize`. Nothing here is limited to diploids.
+
+### Distances can come out negative, and that is correct { #mds-negative }
+
+**They are not floored at zero.** An unbiased estimator of a quantity that is truly zero lands either side of zero, so two pools drawn from the same population produce a small negative number about as often as a small positive one. Flooring them would turn an honest "these are indistinguishable" into a spurious "these differ by a little", and would bias every distance in the matrix upward at exactly the pairs where you most want the answer to be *no difference*.
+
+Read a negative entry as **indistinguishable at this depth**. Its magnitude is noise, not a measurement.
+
+### `mds.tsv` — one row per pool { #mds-coordinates }
+
+Each pool, the unit it belongs to, its experimental variables, and its coordinate on each axis.
+
+**The ordination places pools, not units.** Nothing is collapsed first, and that is deliberate: two pools of one biological unit landing far apart is precisely what you look at an ordination to find out, and averaging them beforehand would hide it. The `unit` column is there so you can see which points *should* have coincided. This is the one place in the analysis layer where pools rather than units are the unit of analysis, and it is because nothing here is a test — there are no degrees of freedom to get wrong.
+
+### `distance.tsv` — one row per pair { #mds-distance }
+
+The corrected distance, the uncorrected sum beside it, what the correction removed, and how many sites the pair was averaged over.
+
+**Read the `sites` column.** Every pair is averaged over *its own* sites, not over a count shared across the matrix. A pool with no reads at a site drops that site for its own pairs and leaves every other pair intact, so two distances in one run can rest on different numbers of sites. A pair whose count is much lower than its neighbours' is a pair whose distance is measured less well, and the matrix does not say so anywhere else.
+
+Two kinds of site drop out for a pair. One is an ordinary missing cell. The other is subtler: **a site where a pool has exactly one read**. Effective sample size is exactly 1 at depth 1 whatever the pool holds, and one gene copy carries no within-pool diversity for the correction to work from, so such a site is dropped rather than guessed at.
+
+### `eigenvalues.tsv` — how much each axis carries { #mds-eigenvalues }
+
+Every eigenvalue, with its share of the scatter under both denominators, the running totals, and which axes were plotted.
+
+**Some eigenvalues can be negative, and they are published rather than dropped.** Classical scaling assumes the distances fit a flat Euclidean space; a real distance matrix need not, and the leftover shows up as negative eigenvalues. That creates a reporting trap worth knowing about: divide by the *signed* sum and the leading two axes can add up to more than 100%, which is not a typo but an artefact of the denominator. Divide by the sum of absolute values and they cannot. Both columns are here, the plot's axis labels use the second, and the eigenvalue column keeps its signs so you can see how much of the structure is not flat.
+
+Negative eigenvalues carrying a few percent of the total are ordinary for pool-seq data and are not a reason to distrust the picture. A large negative share means the distances are genuinely not embeddable and the two-dimensional plot is a poorer summary than its axis labels suggest.
+
+**The axis signs are pinned.** An eigenvector has a direction but not a sign, so the same data can plot mirrored on two machines and read as though something changed. Each axis is turned so that its largest coordinate is positive.
+
+### `mds.png` — the pools on the leading two axes { #mds-plot }
+
+Points labelled by pool, on the leading two axes, with each axis label carrying its share of the absolute eigenvalue sum.
+
+**`colorBy` and `shapeBy` each take an `exp_` column, and they compose.** Colouring by the treatment and shaping by the timepoint puts both factors on one plot, which is usually the question — whether the pools group by the thing you set up, or by when you sampled them:
+
+```groovy
+colorBy = 'exp_population'
+shapeBy  = 'exp_time'
+```
+
+Either is refused by name if it is not an experimental variable this project declares.
+
+**Shapes are R's plotting symbols and colors are `ggplot2`'s default scale — neither is curated here.** `ggplot2` on its own stops at six shapes and silently assigns none to a seventh, which would drop those pools from the plot with a warning a Nextflow task swallows; naming R's symbols explicitly is what carries a seventh level and past it. The first six are `ggplot2`'s own, so a plot of six or fewer groups is the one it would have drawn anyway. Past 26 there are no more symbols in R and `shapeBy` says so rather than dropping pools — use `colorBy`, whose default scale takes any number of levels.
+
+**There is no palette setting, and that is deliberate.** How many levels a variable has, whether it is ordered, and whether a reader needs the categories distinguishable or merely grouped are all properties of your experiment rather than of this module — and every way of getting a palette wrong is quiet. Too few colors and `ggplot2` recycles them; a continuous scale on a discrete variable falls back to something else without stopping. What you get instead is the data:
+
+```r
+# Redraw it however you like: mds.tsv is the whole figure, four columns of it
+coords <- read.delim("mds.tsv")
+eigen  <- read.delim("eigenvalues.tsv")
+plot(coords$dim1, coords$dim2, pch = 19, col = factor(coords$exp_population),
+     xlab = sprintf("axis 1 (%.1f%%)", 100 * eigen$share_absolute[1]),
+     ylab = sprintf("axis 2 (%.1f%%)", 100 * eigen$share_absolute[2]))
+text(coords$dim1, coords$dim2, coords$pool, pos = 3, cex = 0.7)
+```
+
+`mds.tsv` carries every axis `dimensions` asked for, not only the two that were drawn, so a third axis is a column away rather than another run.
+
+### What it does not tell you { #mds-limits }
+
+**Six pools make six points, and six points always look like they have structure.** Nothing in this module says whether the arrangement is more than sampling noise. A block bootstrap over linkage blocks, with the replicate ordinations Procrustes-aligned, is what would give you a confidence region around each point; it is not in this release, and until it is, an `mds.png` is a description of the data and not evidence of grouping.
+
+**Distances are not comparable across targets.** `filterFalsePositives.sh` keeps a site only if the alternate clears a per-pool threshold in a fraction of the samples, and `MajorAlleleToRef.py` re-polarises on cohort totals. Both depend on which pools were in the run, so a distance between two pools computed from a six-pool run is not the same quantity as the distance between the same two pools computed from a twelve-pool run. Compare within a target, never across.
+
+**Indels are read apart.** By default this reads the SNP tables alone, matching how everything else in the frame counts indels separately. `analysis.modules.mds.includeIndels` changes that.
+
+### What it can be set to { #mds-settings }
+
+```groovy
+analysis {
+    modules {
+        mds {
+            dimensions    = 2       // how many axes to write coordinates for
+            colorBy      = ''      // an exp_ column to color the points by; empty means one color
+            shapeBy       = ''      // an exp_ column to shape them by; at most six levels
+            includeIndels = false   // read the SNP tables alone
+            chromosomes   = []      // restrict to these sequences; empty means all
+            binSize       = 100000  // sites parsed and accumulated at a time
+            workers       = 0       // 0 means the cores Nextflow gave the task
+            usecpp        = true    // the compiled path, below
+        }
+    }
+}
+```
+
+`binSize` is a memory knob and changes no result: the distances are sums over sites, so a bin boundary falls between two sites and every bin size adds up the same terms. It exists because the per-allele frequency matrix for a whole genome would be tens of gigabytes, and accumulating a bin at a time means it never has to exist. What it can move is the last bit or two of a published number, because floating-point addition is not associative and a different bin size adds the same terms in a different order — the same reason the compiled path and the vectorized R agree to about fifteen digits rather than to all seventeen.
+
+### The compiled path { #mds-compiled }
+
+`mds` runs both its per-site parse and its distance accumulation through compiled code by default — `allele_frequencies.cpp` and `nei_distance.cpp`, compiled on your machine:
+
+```bash
+PoolSeqFlow analysis mds          # compiled, the default
+PoolSeqFlow analysis mds nocpp    # the vectorized R, same numbers
+```
+
+For a whole project, `analysis.modules.mds.usecpp = false` does the same permanently. Both produce the same numbers; what the choice costs is in [How long the per-site work takes](#analysis-compiled), along with what to do when the compiled path will not build.
+
+The distance accumulation is worth compiling for a different reason than the parsers are, and the ratio in that table reflects it: the vectorized form makes one pass per *pair* of pools, so its cost grows with the square of the pool count in interpreted calls, where the parsers grow with the site count in memory traffic.
+
+### What to cite { #mds-citations }
+
+Every folder `mds` publishes carries a `CITATIONS.md` and a `references.bib` with these already filled in, and `PoolSeqFlow analysis cite mds` prints them without running anything. **Cite the statistics, not only the software.**
+
+| | |
+|---|---|
+| [Nei 1972](#ref-nei1972distance) | the distance itself — the *minimum* distance of that paper, not the standard distance `D` defined alongside it |
+| [Gower 1966](#ref-gower1966mds) | the ordination itself: squared distances double centred and decomposed, which is what `cmdscale` implements and where the negative eigenvalues come from |
+| [Hivert et al. 2018](#ref-hivert2018poolseq) | the effective sample size the sampling correction is scaled by, and which of the two forms in circulation this is |
 
 Full entries, with what each is cited for, are in the [Bibliography](#bibliography).
 
@@ -4624,6 +4770,16 @@ The diversity statistic itself is [Nei 1973](#ref-nei1973diversity), the correct
 <!-- generated: bibliography -->
 
 ### The statistics PoolSeqFlow computes
+
+#### Gower 1966 { #ref-gower1966mds }
+
+**Gower, J. C.** (1966). Some Distance Properties of Latent Root and Vector Methods Used in Multivariate Analysis. *Biometrika* 53(3/4), 325–338. [10.2307/2333639](https://doi.org/10.2307/2333639)
+: The ordination this module draws: a matrix of squared distances double centred into a Gram matrix, whose leading eigenvectors are the coordinates. It is what R's own cmdscale cites and implements, and the source of the negative eigenvalues this module publishes rather than hides - they are what a distance matrix that no flat space holds exactly produces.
+
+#### Nei 1972 { #ref-nei1972distance }
+
+**Nei, M.** (1972). Genetic Distance between Populations. *The American Naturalist* 106(949), 283–292. [10.1086/282771](https://doi.org/10.1086/282771)
+: The distance the analysis layer places pools by, D_m = (J_X + J_Y)/2 - J_XY, where J is the probability that two chromosomes carry the same allele. It is the MINIMUM distance of this paper and not the standard distance D, which is defined in the same one and is a log of a ratio; the minimum distance is linear in the J terms, so averaging over loci and averaging over sites are the same operation and no ratio-of-averages question arises. What is applied here beyond the paper is the sampling correction: each J is replaced by its unbiased estimator from a sample of n_eff chromosomes, and J_XY takes none because the two pools are sequenced independently. It is HERE rather than in a module because analysis/lib/R/nei_distance.R is library code.
 
 #### Nei 1973 { #ref-nei1973diversity }
 

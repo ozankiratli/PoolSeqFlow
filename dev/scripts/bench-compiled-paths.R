@@ -29,6 +29,7 @@ for (f in list.files(file.path(repo, "analysis/lib/R"), pattern = "[.]R$", full.
 }
 Rcpp::sourceCpp(file.path(repo, "analysis/lib/cpp/allele_frequencies.cpp"))
 Rcpp::sourceCpp(file.path(repo, "analysis/lib/cpp/site_diversity.cpp"))
+Rcpp::sourceCpp(file.path(repo, "analysis/lib/cpp/nei_distance.cpp"))
 
 # A published depth table is overwhelmingly biallelic. A uniform draw over arities would give
 # the compiled path more digits to parse per site than a real cohort does.
@@ -79,8 +80,23 @@ for (n in sizes) {
     row("`allele_frequencies`", "six pools", n,
         cpu(function() allele_frequencies(cells)),
         cpu(function() allele_frequencies_cpp(cells)))
+
+    # nei_distance reads what the parse returns rather than the cells, so the corpus is parsed
+    # once here and only the accumulation is timed.
+    #
+    # ITS RATIO IS NOT THE PARSERS' RATIO AND SHOULD NOT BE AVERAGED WITH THEM. The two above
+    # are string splits, memory-bandwidth bound, and land near ten. This one is k(k-1)/2
+    # separate rowsum() passes over the allele matrix — fifteen at six pools — so what the
+    # compiled form removes is interpreted call overhead that scales with the PAIR count, not
+    # with the site count. Expect it to climb with more pools where the parsers' will not.
+    parsed <- allele_frequencies_cpp(cells)
+    ne <- vapply(seq_len(POOLS), function(i) n_eff(100, parsed$depth[, i]),
+                 numeric(nrow(parsed$depth)))
+    row("`nei_distance`", "six pools", n,
+        cpu(function() nei_distance(parsed$freq, parsed$site, ne)),
+        cpu(function() nei_distance_cpp(parsed$freq, as.integer(parsed$site), ne)))
     cat("\nseconds are per 100 million called sites, in one pass\n\n")
 
-    rm(cells, one)
+    rm(cells, one, parsed, ne)
     gc(FALSE)
 }

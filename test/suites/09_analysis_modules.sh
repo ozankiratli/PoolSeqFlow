@@ -14,15 +14,15 @@
 # The module roster.
 test_an_unknown_module_refuses_before_any_task() {
     analysis_ready single || return
-    local status; status=$(run_analysis "$ANALYSIS_SB" mds)
+    local status; status=$(run_analysis "$ANALYSIS_SB" demo)
     assert_status 1 "$status" "a module that does not exist must stop the run"
-    assert_contains "$(analysis_output)" "'mds' is not installed" \
+    assert_contains "$(analysis_output)" "'demo' is not installed" \
         "should name what was asked for"
     # Both kinds of module, sorted: one the release ships into the store, and the frame's own
     # built-in, which is in no directory at all.
-    assert_contains "$(analysis_output)" "Available here: association, basicstats, verify" \
+    assert_contains "$(analysis_output)" "Available here: association, basicstats, mds, verify" \
         "and list what there is"
-    assert_no_file "$ANALYSIS_SB/main/Analysis/Results/mds/0_verify_analysis.txt" \
+    assert_no_file "$ANALYSIS_SB/main/Analysis/Results/demo/0_verify_analysis.txt" \
         "nothing should have run"
 }
 
@@ -31,12 +31,12 @@ test_an_unknown_module_refuses_before_any_task() {
 # into the source.
 test_a_module_installed_into_the_store_joins_the_roster() {
     analysis_ready single || return
-    analysis_install_module mds \
-        '{"name":"mds","version":"1.4.2","contract":"freq-1","summary":"scaling over frequencies"}'
-    local status; status=$(run_analysis "$ANALYSIS_SB" mds)
+    analysis_install_module demo \
+        '{"name":"demo","version":"1.4.2","contract":"freq-1","summary":"scaling over frequencies"}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" demo)
     assert_status 0 "$status" "an installed module should be found"
     local report; report=$(analysis_report "$ANALYSIS_SB")
-    assert_contains "$report" "mds v1.4.2 - scaling over frequencies" \
+    assert_contains "$report" "demo v1.4.2 - scaling over frequencies" \
         "the report carries the module's OWN version, not the release's"
     assert_contains "$report" "speaks table contract freq-1" "and the contract it reads"
 }
@@ -45,11 +45,11 @@ test_a_module_installed_into_the_store_joins_the_roster() {
 # pipeline, which is the whole reason the two are separate.
 test_a_module_version_is_not_the_release_version() {
     analysis_ready single || return
-    analysis_install_module mds \
-        '{"name":"mds","version":"9.9.9","contract":"freq-1","summary":"scaling over frequencies"}'
-    run_analysis "$ANALYSIS_SB" mds > /dev/null
+    analysis_install_module demo \
+        '{"name":"demo","version":"9.9.9","contract":"freq-1","summary":"scaling over frequencies"}'
+    run_analysis "$ANALYSIS_SB" demo > /dev/null
     local report; report=$(analysis_report "$ANALYSIS_SB")
-    assert_contains "$report" "mds v9.9.9" "the module reports its own version"
+    assert_contains "$report" "demo v9.9.9" "the module reports its own version"
     assert_contains "$report" "PoolSeqFlow ${EXPECTED_VERSION:-2.2.0}" \
         "while the results still carry the pipeline release"
 }
@@ -100,8 +100,8 @@ test_a_module_needing_an_unknown_artifact_class_refuses() {
 
 test_a_manifest_missing_a_field_refuses() {
     analysis_ready single || return
-    analysis_install_module mds '{"name":"mds","version":"1.0.0"}'
-    local status; status=$(run_analysis "$ANALYSIS_SB" mds)
+    analysis_install_module demo '{"name":"demo","version":"1.0.0"}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" demo)
     assert_status 1 "$status" "an incomplete manifest must stop the run"
     assert_contains "$(analysis_output)" "has no 'contract'" "naming the field that is missing"
 }
@@ -110,11 +110,11 @@ test_a_manifest_missing_a_field_refuses() {
 # disagreeing means one of them would never be reachable.
 test_a_manifest_that_disagrees_with_its_directory_refuses() {
     analysis_ready single || return
-    analysis_install_module mds \
+    analysis_install_module demo \
         '{"name":"pca","version":"1.0.0","contract":"freq-1","summary":"wrong name"}'
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a mismatched manifest must stop even an unrelated module"
-    assert_contains "$(analysis_output)" "installed in a directory named 'mds'" \
+    assert_contains "$(analysis_output)" "installed in a directory named 'demo'" \
         "naming both sides of the disagreement"
 }
 
@@ -123,9 +123,9 @@ test_a_manifest_that_disagrees_with_its_directory_refuses() {
 # folder - the wrapper's own check happens after, when the folder is already gone.
 test_a_module_with_a_manifest_but_no_pipeline_refuses() {
     analysis_ready single || return
-    analysis_install_module mds \
-        '{"name":"mds","version":"1.4.2","contract":"freq-1","summary":"scaling over frequencies"}'
-    rm "$ANALYSIS_SB/install/analysis/modules/mds/main.nf"
+    analysis_install_module demo \
+        '{"name":"demo","version":"1.4.2","contract":"freq-1","summary":"scaling over frequencies"}'
+    rm "$ANALYSIS_SB/install/analysis/modules/demo/main.nf"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a module with no main.nf must stop even an unrelated module"
     assert_contains "$(analysis_output)" "has a manifest but no main.nf" \
@@ -139,9 +139,9 @@ test_a_module_with_a_manifest_but_no_pipeline_refuses() {
 # main.nf is, at DAG-build time, before the verification clears a results folder.
 test_a_module_without_citations_refuses() {
     analysis_ready single || return
-    analysis_install_module mds \
-        '{"name":"mds","version":"1.4.2","contract":"freq-1","summary":"scaling over frequencies"}'
-    rm "$ANALYSIS_SB/install/analysis/modules/mds/citations.json"
+    analysis_install_module demo \
+        '{"name":"demo","version":"1.4.2","contract":"freq-1","summary":"scaling over frequencies"}'
+    rm "$ANALYSIS_SB/install/analysis/modules/demo/citations.json"
     local status; status=$(run_analysis "$ANALYSIS_SB" verify)
     assert_status 1 "$status" "a module with no citations.json must stop even an unrelated module"
     assert_contains "$(analysis_output)" "has no citations.json" "naming what is missing"
