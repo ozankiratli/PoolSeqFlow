@@ -54,6 +54,77 @@ DOCS = REPO / "docs"
 MKDOCS = REPO / "mkdocs.yml"
 STATIC = ("assets", "stylesheets", "javascripts")
 
+# The module repository, copied into the site verbatim: the catalogue the wrapper fetches and
+# the tarballs its rows point at. Published in the same deploy as the page below, so a row can
+# never advertise a download that is not there yet.
+REPO_DIR = REPO / "modules-repo"
+REPO_PATH = "modules-repo"
+
+
+def module_repo_page():
+    """The published-modules page, rendered from the catalogue the wrapper reads.
+
+    One source: the table a person reads and the file the tool fetches are the same rows, so
+    they cannot disagree about what is published. Columns are found by name, exactly as the
+    wrapper finds them, so a column added later appears here without this being touched.
+    """
+    catalogue = REPO_DIR / "index.tsv"
+    lines = [
+        "# Published modules",
+        "",
+        "Analysis modules you can install into an existing PoolSeqFlow, each published on its own timetable rather than with a release.",
+        "",
+        "```bash",
+        "PoolSeqFlow analysis modules available          # the same list, from your installation",
+        "PoolSeqFlow analysis modules install <name>     # the newest your release can run",
+        "```",
+        "",
+    ]
+    rows, header = [], []
+    if catalogue.exists():
+        for line in catalogue.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            fields = line.split("\t")
+            if not header:
+                header = fields
+                continue
+            rows.append(dict(zip(header, fields)))
+
+    if not rows:
+        lines += [
+            "No module is published yet. The modules that ship inside a release — `basicstats`, `association` and `mds` — are installed with it and are not listed here.",
+            "",
+        ]
+    else:
+        lines += [
+            "| Module | Version | Needs | License | What it does |",
+            "|---|---|---|---|---|",
+        ]
+        for row in rows:
+            needs = " · ".join(
+                part for part in (
+                    f"PoolSeqFlow {row['environment']}" if row.get("environment") else "",
+                    f"frame {row['frame']}" if row.get("frame") else "",
+                ) if part
+            ) or "any release"
+            url = row.get("url", "")
+            name = f"[{row.get('name', '')}]({url})" if url else row.get("name", "")
+            lines.append(
+                f"| {name} | {row.get('version', '')} | {needs} | "
+                f"{row.get('license', '—')} | {row.get('summary', '')} |"
+            )
+        lines.append("")
+
+    lines += [
+        "Each row names the oldest release and analysis frame it runs on. `install` takes the newest version **your** release can run rather than the newest that exists, so an installation that is behind gets a version that works instead of one that fails when it is first used.",
+        "",
+        "The catalogue itself is [index.tsv](index.tsv), and it is what the wrapper reads. `POOLSEQFLOW_MODULE_INDEX` points an installation at a different one — a mirror inside an institution, or a machine with no route to the internet.",
+        "",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 DIRECTIVE = re.compile(r"^<!--@\s*(.*?)\s*-->\s*$")
 FENCE = re.compile(r"^\s*(```|~~~)")
@@ -535,6 +606,9 @@ def main() -> int:
         (DOCS / orphan).unlink()
     for name in STATIC:
         shutil.copytree(MANUAL.parent / name, DOCS / name, dirs_exist_ok=True)
+    if REPO_DIR.is_dir():
+        shutil.copytree(REPO_DIR, DOCS / REPO_PATH, dirs_exist_ok=True)
+        (DOCS / REPO_PATH / "index.md").write_text(module_repo_page(), encoding="utf-8")
     for directory in sorted(DOCS.rglob("*"), reverse=True):
         if directory.is_dir() and not any(directory.iterdir()):
             directory.rmdir()

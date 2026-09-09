@@ -696,8 +696,12 @@ test_modules_install_pins_a_named_version() {
 # The archive becomes code that runs on this machine, so it is verified before it is unpacked.
 test_modules_install_refuses_a_tampered_download() {
     local index; index=$(modules_catalogue)
+    # The checksum column is found BY NAME, as the wrapper finds it. Edited by position this
+    # silently corrupted a different column when the layout gained two, and the case then
+    # passed a download it was meant to refuse.
     awk -F'\t' 'BEGIN { OFS = "\t" }
-        $1 == "probe" && $2 == "0.2.0" { $5 = "0000000000000000000000000000000000000000000000000000000000000000" }
+        !hdr { hdr = 1; for (i = 1; i <= NF; i++) if ($i == "sha256") sha = i; print; next }
+        $1 == "probe" && $2 == "0.2.0" { $sha = "0000000000000000000000000000000000000000000000000000000000000000" }
         { print }' "$index" > "$index.tampered"
     LAUNCHER_MODULE_INDEX="$index.tampered"
     run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
@@ -724,6 +728,81 @@ test_modules_install_will_not_replace_an_installed_module() {
     assert_status 0 "$LAUNCHER_STATUS" "it is not an error, only a no-op"
     assert_contains "$LAUNCHER_OUTPUT" "already installed" "saying so"
     assert_contains "$LAUNCHER_OUTPUT" "modules uninstall probe" "and how to replace it"
+}
+
+# ---------------------------------------------------------------------------------------
+# ONE CATALOGUE SERVES SEVERAL RELEASES. A row says the oldest frame and release it needs, so
+# an installation that is behind takes an earlier version of a module rather than the newest
+# one and a failure the first time it is used.
+
+test_modules_install_takes_the_newest_version_this_release_can_run() {
+    local dir; dir=$(guard_path "$TEST_TMPDIR/module-catalogue-compat")
+    rm -rf "$dir"; mkdir -p "$dir"
+    MODULE_RELEASE_ENV="1.0.0" make_module_release "$dir" probe 1.0.0 > /dev/null
+    MODULE_RELEASE_ENV="99.0.0" make_module_release "$dir" probe 2.0.0 > /dev/null
+    LAUNCHER_MODULE_INDEX="$dir/index.tsv"
+    LAUNCHER_STORE_MODULE=""
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE MODULE_RELEASE_ENV
+    assert_status 0 "$LAUNCHER_STATUS" "the older compatible version should install: $LAUNCHER_OUTPUT"
+    assert_contains "$LAUNCHER_OUTPUT" "probe v1.0.0" "and it should be the one this release can run"
+    assert_contains "$LAUNCHER_OUTPUT" "published up to v2.0.0" "saying what it passed over"
+    assert_contains "$(cat "$LAUNCHER_STORE/probe/.source" 2>/dev/null)" "1.0.0" \
+        "with the source record naming what was actually taken"
+}
+
+test_modules_install_refuses_when_no_published_version_fits() {
+    local dir; dir=$(guard_path "$TEST_TMPDIR/module-catalogue-nofit")
+    rm -rf "$dir"; mkdir -p "$dir"
+    MODULE_RELEASE_ENV="99.0.0" make_module_release "$dir" probe 2.0.0 > /dev/null
+    LAUNCHER_MODULE_INDEX="$dir/index.tsv"
+    LAUNCHER_STORE_MODULE=""
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE MODULE_RELEASE_ENV
+    assert_status 1 "$LAUNCHER_STATUS" "nothing installable should stop the install"
+    assert_contains "$LAUNCHER_OUTPUT" "PoolSeqFlow 99.0.0" "naming the release it wants"
+    assert_no_file "$LAUNCHER_STORE/probe/main.nf" "and nothing should reach the store"
+}
+
+# A row demanding a frame newer than the installation carries is refused the same way, and this
+# is the axis `contract` does not cover: the module imports the library by name.
+test_modules_install_refuses_a_row_needing_a_newer_frame() {
+    local dir; dir=$(guard_path "$TEST_TMPDIR/module-catalogue-frame")
+    rm -rf "$dir"; mkdir -p "$dir"
+    MODULE_RELEASE_FRAME="20990101.001" make_module_release "$dir" probe 2.0.0 > /dev/null
+    LAUNCHER_MODULE_INDEX="$dir/index.tsv"
+    LAUNCHER_STORE_MODULE=""
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE MODULE_RELEASE_FRAME
+    assert_status 1 "$LAUNCHER_STATUS" "a frame this installation does not have should stop it"
+    assert_contains "$LAUNCHER_OUTPUT" "20990101.001" "naming the frame it wants"
+}
+
+# THE PROPERTY THAT KEEPS A NEW COLUMN FROM FORCING A NEW MAJOR RELEASE. Columns are matched by
+# name out of the header row, so a catalogue carrying one this release has never heard of is
+# read correctly and the extra ignored - and one written before a column existed leaves that
+# field empty rather than shifting every field after it.
+test_a_catalogue_column_this_release_does_not_know_is_ignored() {
+    local dir; dir=$(guard_path "$TEST_TMPDIR/module-catalogue-extra")
+    rm -rf "$dir"; mkdir -p "$dir"
+    make_module_release "$dir" probe 1.0.0 > /dev/null
+
+    # Rewrite the catalogue with the columns shuffled, one this release cannot know appended,
+    # and `summary` moved ahead of `url` - all of which a positional reader would get wrong.
+    local idx="$dir/index.tsv" row
+    row=$(tail -1 "$idx")
+    local f_url f_sha
+    f_url=$(printf '%s' "$row" | cut -f6); f_sha=$(printf '%s' "$row" | cut -f7)
+    printf 'summary\tname\tsignature\tversion\tcontract\turl\tsha256\n' > "$idx"
+    printf 'planted probe\tprobe\tnot-a-column-this-release-knows\t1.0.0\tfreq-1\t%s\t%s\n' \
+        "$f_url" "$f_sha" >> "$idx"
+
+    LAUNCHER_MODULE_INDEX="$idx"
+    LAUNCHER_STORE_MODULE=""
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE
+    assert_status 0 "$LAUNCHER_STATUS" "a reordered catalogue with an extra column should install: $LAUNCHER_OUTPUT"
+    assert_file "$LAUNCHER_STORE/probe/main.nf" "taking the url from the column named url"
 }
 
 # ---------------------------------------------------------------------------------------

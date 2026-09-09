@@ -1,7 +1,7 @@
 #!/bin/bash
 # Checks that need no data: syntax, release packaging, version consistency.
 # cost: static
-# covers: PoolSeqFlow install/ dev/scripts/ analysis/modules-index.tsv .gitattributes
+# covers: PoolSeqFlow install/ dev/scripts/ modules-repo/index.tsv .gitattributes
 # covers: analysis/citations.json install/citations.json install/references.bib
 # covers: analysis/references.bib manual/references.bib
 
@@ -133,23 +133,37 @@ test_the_release_archive_gate_passes() {
 # published after a release is installable into it. A copy inside the tarball would be a second
 # answer to what can be installed, frozen on the day the release was built.
 test_the_module_catalogue_never_reaches_a_release() {
-    local index="analysis/modules-index.tsv"
+    local index="modules-repo/index.tsv"
     [ -f "$REPO_ROOT/$index" ] || { fail_case "$index is missing"; return; }
-    local attr; attr=$(cd "$REPO_ROOT" && git check-attr export-ignore -- "$index")
-    assert_contains "$attr" "set" "the catalogue must be export-ignore'd out of a release"
+    # The archive itself, not `git check-attr`: the catalogue is covered by a directory pattern
+    # now, and check-attr reports `unspecified` for a file inside one even though git archive
+    # excludes it - `test/run_tests.sh` answers the same way. What matters is the tarball.
     local listing; listing=$(working_tree_archive)
     [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
-    assert_not_contains "$listing" "modules-index" "and must not appear in the tarball"
+    assert_not_contains "$listing" "modules-repo" \
+        "the catalogue and the tarballs beside it must not reach a release"
+    # And the release must not be able to fall back to a copy of its own: a frozen catalogue
+    # inside a tarball would be a second answer to what can be installed.
+    assert_not_contains "$listing" "index.tsv" "nor any copy of it under another name"
 }
 
 # Its columns are what the wrapper reads by position, so a reordered header would install the
 # wrong thing from the right row.
 test_the_module_catalogue_header_is_the_one_the_wrapper_reads() {
-    local header
-    header=$(grep -v '^[[:space:]]*#' "$REPO_ROOT/analysis/modules-index.tsv" \
+    local header wanted column
+    header=$(grep -v '^[[:space:]]*#' "$REPO_ROOT/modules-repo/index.tsv" \
              | grep -v '^[[:space:]]*$' | head -1)
-    assert_eq "$(printf 'name\tversion\tcontract\turl\tsha256\tsummary')" "$header" \
-        "the catalogue's columns"
+    # Taken from the wrapper rather than written out here: the columns are matched by name, so
+    # the coupling to assert is that every name it looks for is in the header - not that the
+    # header is a particular string, which would only say the two literals were typed alike.
+    wanted=$(sed -n 's/^MODULE_INDEX_COLUMNS="\(.*\)"$/\1/p' "$REPO_ROOT/lib/wrapper_lib.sh")
+    assert_eq "yes" "$([ -n "$wanted" ] && echo yes)" "the wrapper should name the columns it reads"
+    for column in $wanted; do
+        printf '%s' "$header" | tr '\t' '\n' | grep -qxF "$column" \
+            || fail_case "the catalogue has no '$column' column, and the wrapper reads one"
+    done
+    # And the header is tab-separated, which is what makes those names findable at all.
+    assert_contains "$header" "$(printf '\t')" "the header should be tab-separated"
 }
 
 # The catalogue is fetched from the default branch at RUN TIME, so a release meets whatever is
@@ -157,7 +171,7 @@ test_the_module_catalogue_header_is_the_one_the_wrapper_reads() {
 # instead of reading the wrong field out of each row; the test above cannot protect a wrapper
 # that has already shipped.
 test_the_module_catalogue_declares_its_layout_and_its_version() {
-    local index="$REPO_ROOT/analysis/modules-index.tsv"
+    local index="$REPO_ROOT/modules-repo/index.tsv"
     local format version supported
     format=$(sed -n 's|^#![[:space:]]*index-format:[[:space:]]*\(.*\)$|\1|p' "$index" | head -1 | tr -d ' ')
     version=$(sed -n 's|^#![[:space:]]*index-version:[[:space:]]*\(.*\)$|\1|p' "$index" | head -1 | tr -d ' ')
@@ -201,7 +215,7 @@ test_the_frame_version_moves_with_a_change_and_not_with_the_calendar() {
     printf 'frame {}\n' > "$sb/analysis/frame.config"
     printf '20260101.001\n' > "$sb/analysis/frame.version"
     printf 'f <- function() 1\n' > "$sb/analysis/lib/R/thing.R"
-    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/analysis/modules-index.tsv"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules-repo/index.tsv"
     printf '{"name": "demo", "version": "20260101.001"}\n' > "$sb/analysis/modules/demo/manifest.json"
     printf 'workflow {}\n' > "$sb/analysis/modules/demo/main.nf"
     printf 'echo case\n' > "$sb/analysis/modules/demo/test/demo.sh"
@@ -261,7 +275,7 @@ test_the_release_gate_refuses_what_it_cannot_check() {
     printf 'frame {}\n' > "$sb/origin/analysis/frame.config"
     printf '20260101.001\n' > "$sb/origin/analysis/frame.version"
     printf 'f <- function() 1\n' > "$sb/origin/analysis/lib/R/thing.R"
-    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/origin/analysis/modules-index.tsv"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/origin/modules-repo/index.tsv"
     # Two commits, because a shallow clone of a one-commit repository is not shallow.
     (cd "$sb/origin" && git init -q . && git add -A \
         && GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
@@ -309,7 +323,7 @@ test_a_committed_module_change_without_a_version_bump_is_caught() {
     printf 'frame {}\n' > "$sb/analysis/frame.config"
     printf '20260101.001\n' > "$sb/analysis/frame.version"
     printf 'f <- function() 1\n' > "$sb/analysis/lib/R/thing.R"
-    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/analysis/modules-index.tsv"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules-repo/index.tsv"
     printf '{"name": "demo", "version": "20260101.001"}\n' > "$sb/analysis/modules/demo/manifest.json"
     printf 'workflow {}\n' > "$sb/analysis/modules/demo/main.nf"
     printf 'echo case\n' > "$sb/analysis/modules/demo/test/demo.sh"

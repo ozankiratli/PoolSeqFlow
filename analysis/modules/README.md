@@ -147,7 +147,7 @@ PoolSeqFlow analysis modules uninstall <name>     # remove one, after confirming
 
 `list` and `uninstall` read this directory and nothing else — no environment, no project — so they answer from anywhere. `list` marks a directory that holds a manifest and no `main.nf`, which is the state that stops every analysis run.
 
-`available` and `install` read the **catalogue**, over the network, from `analysis/modules-index.tsv` on the repository's default branch. **A release carries no copy of it** — it is `export-ignore`d — because a module published after a release still has to be installable into it. `POOLSEQFLOW_MODULE_INDEX` points them at a URL or a local path instead, for a mirror inside an institution or a machine with no network.
+`available` and `install` read the **catalogue**, over the network, from `modules-repo/index.tsv` on the repository's default branch. **A release carries no copy of it** — it is `export-ignore`d — because a module published after a release still has to be installable into it. `POOLSEQFLOW_MODULE_INDEX` points them at a URL or a local path instead, for a mirror inside an institution or a machine with no network.
 
 ## Publishing a module
 

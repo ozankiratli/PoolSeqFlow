@@ -58,10 +58,15 @@ CONCEPT_DOI="10.5281/zenodo.19245611"
 
 # The catalogue of modules that can be installed. It is export-ignored, so a release carries no
 # copy and this URL is the only source.
-MODULE_INDEX_URL="https://raw.githubusercontent.com/ozankiratli/PoolSeqFlow/main/analysis/modules-index.tsv"
+#
+# THE SITE AND NOT THE REPOSITORY, so that the catalogue and the tarballs it points at are
+# published in one deploy: a row can never advertise a download that is not there yet. Every
+# release compiles this address in and asks for it for as long as it is installed, so moving it
+# means serving both forever.
+MODULE_INDEX_URL="https://ozankiratli.github.io/PoolSeqFlow/modules-repo/index.tsv"
 
-# The catalogue column layout this release can read. The rows are parsed BY POSITION, so a
-# layout this release does not know is refused rather than misread.
+# The catalogue column layout this release can read. Columns are matched by NAME, so this is
+# not bumped for a new one - only for a change no older release could read at all.
 MODULE_INDEX_FORMAT="1"
 
 # Where to read the index from. POOLSEQFLOW_MODULE_INDEX overrides it with a URL or a local
@@ -106,10 +111,64 @@ module_contract() {
         "$INSTALL/analysis/lib/nf/modules.nf" 2>/dev/null | head -1
 }
 
-# The index's data rows: tab-separated, comments and the header dropped, blank lines dropped.
-# Columns are name, version, contract, url, sha256, summary.
+# The order this release reads a catalogue row in, whatever order the file writes them in.
+MODULE_INDEX_COLUMNS="name version contract frame environment url sha256 summary"
+
+# What separates the fields of a normalized row, and it is NOT the tab the file uses.
+#
+# A tab is IFS whitespace, so `IFS=$'\t' read` collapses a run of them into one delimiter and
+# an empty field simply disappears - every later field then lands in the wrong variable. A row
+# leaving `frame` and `environment` empty would have had its url read as its frame and its
+# checksum as its environment, and the install would have fetched a checksum. A unit separator
+# is not whitespace, so each one delimits and empty fields survive.
+MODULE_INDEX_SEP=$'\037'
+
+# The analysis frame version this installation carries, from the file that is its only home.
+# A module's row says the oldest frame it runs on, and this is what that is compared against.
+installed_frame_version() {
+    grep -vE '^[[:space:]]*(#|$)' "$INSTALL/analysis/frame.version" 2>/dev/null \
+        | head -1 | tr -d ' '
+}
+
+# The index's data rows, each with its fields put in MODULE_INDEX_COLUMNS order.
+#
+# THE COLUMNS ARE MATCHED BY NAME, from the header row - the first line that is neither a
+# comment nor blank. A catalogue carrying a column this release has never heard of is read
+# correctly and the extra dropped; one missing a column this release knows yields an empty
+# field for it. That is what lets a later release add a column without stranding every release
+# published before it, and it is why the layout number is reserved for a change that is
+# genuinely incompatible - a required column renamed, or one whose meaning changed.
 module_index_rows() {
-    grep -v '^[[:space:]]*#' "$1" | grep -v '^[[:space:]]*$' | grep -v '^name[[:space:]]' || true
+    awk -F'\t' -v want="$MODULE_INDEX_COLUMNS" -v sep="$MODULE_INDEX_SEP" '
+        /^[[:space:]]*(#|$)/ { next }
+        !header { header = 1; for (i = 1; i <= NF; i++) at[$i] = i; next }
+        {
+            n = split(want, col, " ")
+            line = ""
+            for (c = 1; c <= n; c++) {
+                i = at[col[c]]
+                line = line (c > 1 ? sep : "") (i ? $i : "")
+            }
+            print line
+        }' "$1" 2>/dev/null || true
+}
+
+# Whether the first dotted numeric version is no newer than the second. Both `YYYYMMDD.NNN`
+# frames and `X.Y.Z` releases are compared the same way, componentwise, with a missing
+# component counting as zero. An empty first argument is "no requirement" and passes.
+version_at_most() {
+    [ -n "${1:-}" ] || return 0
+    [ -n "${2:-}" ] || return 1
+    awk -v a="$1" -v b="$2" '
+        BEGIN {
+            n = split(a, x, "."); m = split(b, y, ".")
+            for (i = 1; i <= (n > m ? n : m); i++) {
+                p = (i <= n ? x[i] + 0 : 0); q = (i <= m ? y[i] + 0 : 0)
+                if (p < q) exit 0
+                if (p > q) exit 1
+            }
+            exit 0
+        }'
 }
 
 # The checksum of a file, or nothing when no tool on this machine can produce one.

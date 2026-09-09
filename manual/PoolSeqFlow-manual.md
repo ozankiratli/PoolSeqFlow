@@ -3090,6 +3090,8 @@ All of them read the installation rather than your project, so they work from an
 
 **`install` pins by name.** Without a version it takes the newest one this release can read; with one it takes exactly that. **Name the version in your methods section**, and install that version to reproduce the analysis — a module carries its own version precisely so it can move without the pipeline moving, which means two runs of "the same module" are not necessarily the same code. Every analysis prints the module version it ran in its header, and installing writes a `.source` file beside the module recording where it came from and the checksum it matched.
 
+**The same list is on the website**, at [Published modules](https://ozankiratli.github.io/PoolSeqFlow/modules-repo/) — the page and the catalogue are generated from the same rows and published in the same deploy, so what it shows is what `available` will tell you.
+
 **`available` reads a catalogue over the network** and a release carries no copy of it, so a module published long after a release is still installable into it. What it lists is filtered to the table contract this release speaks; a module written against a later contract is shown and marked rather than hidden, so being told to install something that cannot work here gives you a reason instead of a blank. If your machine has no route to the internet, or your institution keeps a mirror, `POOLSEQFLOW_MODULE_INDEX` points at a URL or a file instead.
 
 **A download is verified before it is unpacked.** A module is code that runs on your machine, so the checksum in the catalogue is checked first, and a mismatch stops the install having written nothing.

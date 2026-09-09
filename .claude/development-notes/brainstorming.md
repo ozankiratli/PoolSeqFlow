@@ -183,3 +183,76 @@ Every module already publishes its own `.R` and its compiled sources, `PublishRe
 ### Where it sits
 
 At or just before **E5b**, which is already the pass that makes the three modules read well beside one another. Not in F3: it touches `basicstats` and `association`, both committed, plus the report.
+
+---
+
+## A module repository served from the site — Z, 2026-09-09
+
+Z's framing: *"we make a repo with tarballs into the website. The 'official' repo... third-parties would need to make their own repos and additional repos are allowed."*
+
+**Not an index page — a package repository.** The site serves the catalogue AND the tarballs it points at, the way a distribution's archive does. Third parties stand up their own, and PoolSeqFlow can be pointed at more than one. (An earlier draft of this entry described only the index; that was a misreading and the difference is the whole engineering problem below.)
+
+**Deferred deliberately, and the repository stays exactly as it is.** Z, 2026-09-09: *"We won't work on it yet. It might be a future date task (nothing urgent, nobody besides me is developing this yet). No third-party apps for now, but our infrastructure allows expansion."*
+
+### What it would buy
+
+**A published address that does not encode the file's path in the repository.** `MODULE_INDEX_URL` today is `raw.githubusercontent.com/ozankiratli/PoolSeqFlow/main/analysis/modules-index.tsv`, so moving or renaming that file breaks every installed copy. A site URL decouples the two. Neither survives an organization or repository rename, so that is the only stability difference and it is real but narrow.
+
+**A human-readable catalogue.** `modules available` is the only way to see what is published; there is no page. One generator emitting both the TSV the wrapper fetches and the table a person reads is this project's existing pattern, and it makes the two unable to disagree.
+
+**Somewhere for a third-party module's manual fragment to land.** This is the part that matters beyond tidiness: a module published separately declares `outputs[].url` because it has no heading in the shipped manual, and there is nowhere on the site for that page to be. E5b lists this as its one unsolved item. A page per module under the repository section is exactly that place.
+
+### The hard problem: a site deploy replaces everything, and a package repository may not
+
+A published version's bytes have to be identical forever. The catalogue pins them by sha256, and `install <name> <version>` promises the same code every time. A GitHub Pages deploy is a wholesale replacement of build output, so a tarball regenerated on each deploy either breaks its digest — installs start failing — or has its digest regenerated with it, in which case a pinned version silently means something new. That is worse, because nothing reports it.
+
+**Measured, 2026-09-09.** `git archive` is reproducible only from a commit:
+
+| what is archived | mtime it stamps | two builds seconds apart |
+|---|---|---|
+| a tree — `HEAD:analysis/modules/mds` | **now** | different digests |
+| a commit — `HEAD -- analysis/modules/mds` | the commit date | **identical digests** |
+
+The catch is the shape: the installer requires the archive to unpack to `<name>/`, and only the tree form gives that. `git archive --mtime` settles both at once, measured byte-identical across builds and with the right root:
+
+```
+git archive --format=tar --mtime="@<commit timestamp>" --prefix=<name>/ <ref>:analysis/modules/<name> | gzip -n
+```
+
+`--mtime` is a recent `git archive` flag — present in 2.55 here. A build using it should assert a minimum git version rather than discover its absence as silently drifting digests.
+
+### What the repository is actually FOR, which the note first got wrong
+
+**No module is downloadable today, at any version.** The catalogue has zero rows and nothing hosts a tarball; the three shipped modules arrive inside the release and that is all. An earlier draft of this entry said multiple versions "already work" because the catalogue format carries a version column and `install <name> <version>` pins on it — that is the format being *able to express* it, not the thing existing. Z, 2026-09-09: *"nobody can download a different version of any module today."*
+
+So the repository is not a convenience over an existing mechanism. **It is what would make module distribution exist at all, and multiple versions and backwards compatibility with it** — someone on an older pipeline being able to fetch a module version that still runs there. Z: *"it changes if we have a repo. We can start having backwards compatibility and all."*
+
+**Publishing has to be a deliberate act.** Deriving the set of published versions from git history was raised and rejected — Z, 2026-09-09: *"I don't want you to derive it from the history."* Every intermediate version bump would become a published release, including ones made mid-development and never meant to leave. Whatever marks a version as published, it is something a person does on purpose.
+
+A module's own repository does not have this problem, because the module is at the root there and the commit form gives the right shape directly. It is only the first-party monorepo case that needs the re-rooting.
+
+**Size and bandwidth are not a concern.** A module is a handful of text files, tens of kilobytes; Pages' limits are measured in gigabytes.
+
+### What it would break, and the one bug it would ship with
+
+**`.github/workflows/docs.yml` has a `paths:` filter** — `manual/**`, `mkdocs.yml`, `CHANGELOG.md`, `build_docs.py`, itself. `analysis/modules-index.tsv` is not on it. Wired naively, adding a module row would not rebuild the site, the catalogue would silently stay stale, and the symptom is a module that cannot be installed with nothing saying why. One line, easy to miss.
+
+**Publishing a module becomes a merge plus a site deploy** rather than a merge alone. Still not a release, so the property that matters — a module appearing without a PoolSeqFlow release — survives.
+
+### Two facts that bound when this can be decided
+
+**The URL becomes permanent at 3.0.0.** No released version has the module system: v2.2.0 carries neither `MODULE_INDEX_URL` nor `analysis/modules-index.tsv`. So 3.0.0 is the first release that will ever read a catalogue, and from then on every released copy has the address compiled into its own `lib/wrapper_lib.sh` and asks for it forever. Changing it later means serving both addresses indefinitely. **Keeping the raw URL is therefore a decision with a permanent consequence, not a deferral of one.**
+
+**`POOLSEQFLOW_MODULE_INDEX` substitutes, it does not add.** `module_index_source()` is `${POOLSEQFLOW_MODULE_INDEX:-$MODULE_INDEX_URL}` — one value. So "additional repositories are allowed" is true of the *shape* and not yet of the code: today you can point a machine at a different catalogue, not at several at once. Several would need a list, a precedence rule for a name published in two of them, and a decision about whether a row may be shadowed. None of that is written.
+
+What third-party repositories need beyond that is nothing: `fetch_url` already takes any URL, the digest already makes the host a question of integrity rather than trust, and `#!index-format` already refuses a layout this release cannot read. A third-party repository is a catalogue and some tarballs at an address — the download machinery is done.
+
+### What already exists to build on
+
+The catalogue's two headers already separate layout from content — `#!index-format` is refused on, `#!index-version` never is, precisely so a release can read a catalogue newer than itself. `fetch_url` already takes a URL, a path or `file://`. The digest in each row already makes the URL's host a matter of integrity rather than trust. And the site is already generated wholly from one source, which is the pattern a repository section would follow.
+
+### Where it sits
+
+After 3.0.0, and nothing about it is urgent while Z is the only person developing modules.
+
+**One thing gets harder by waiting, and the cost of getting it wrong is bounded.** `MODULE_INDEX_FORMAT="1"` compiles into every released copy and `require_module_index_format` is an exact-match refusal, so catalogue columns added later — `frame` and `environment`, which is what would let the repository hand an older pipeline a version that still runs on it — are unreadable by 3.0.0. The consequence is not data loss or a broken install: a 3.0.0 user who wants a module published later is told to upgrade. That may simply be acceptable for the first release of the module system, and it is Z's call rather than a deadline anyone has to meet.

@@ -484,7 +484,7 @@ get_module_index() {
         echo "  Neither curl nor wget is on PATH, so nothing can be downloaded." >&2
     else
         echo "  Check the connection, or point POOLSEQFLOW_MODULE_INDEX at a copy:" >&2
-        echo "      POOLSEQFLOW_MODULE_INDEX=/path/to/modules-index.tsv $(basename "$0") analysis modules available" >&2
+        echo "      POOLSEQFLOW_MODULE_INDEX=/path/to/index.tsv $(basename "$0") analysis modules available" >&2
     fi
     exit 1
 }
@@ -511,7 +511,7 @@ require_module_index_format() {
 # What can be installed, and whether this release can read it. Contract and version come from
 # the catalogue; whether a module is already here comes from the store.
 available_modules() {
-    local index contract name version row_contract url sha summary rows=0 state
+    local index contract name version row_contract row_frame row_env url sha summary rows=0 state
     index=$(mktemp)
     trap 'rm -f "$index"' RETURN
     get_module_index "$index"
@@ -531,11 +531,16 @@ available_modules() {
     echo "Catalogue ${catalogue:-unversioned}, read from $(module_index_source)"
     echo ""
     printf '    %-16s %-10s %-12s %s\n' NAME VERSION CONTRACT ''
-    while IFS=$'\t' read -r name version row_contract url sha summary; do
+    local frame_here; frame_here=$(installed_frame_version)
+    while IFS="$MODULE_INDEX_SEP" read -r name version row_contract row_frame row_env url sha summary; do
         [ -n "$name" ] || continue
         rows=$((rows + 1))
         if [ -n "$contract" ] && [ "$row_contract" != "$contract" ]; then
             state="reads $row_contract - not this release"
+        elif ! version_at_most "$row_frame" "$frame_here"; then
+            state="needs analysis frame $row_frame"
+        elif ! version_at_most "$row_env" "$VERSION"; then
+            state="needs PoolSeqFlow $row_env"
         elif [ -d "$MODULE_STORE/$name" ]; then
             state="installed"
         else
@@ -560,6 +565,8 @@ available_modules() {
 install_module() {
     local name="$1" want="${2:-}" index contract line version row_contract url sha summary
     local tmp tarball unpacked dest specs spec
+    local candidates row newest="" line="" frame_here row_frame row_env
+    local _n _v _c _rest newest_v newest_frame newest_env
     case $name in
         ''|*[!A-Za-z0-9_-]*)
             echo "ERROR: '$name' is not a module name." >&2
@@ -589,24 +596,66 @@ install_module() {
         exit 1
     fi
 
-    # The newest row for this name whose contract this release speaks, or the exact version
-    # asked for. sort -V puts the highest last.
-    line=$(module_index_rows "$index" | awk -F'\t' -v n="$name" -v c="$contract" -v w="$want" '
+    # Every row for this name whose contract this release speaks, or the exact version asked
+    # for, newest first.
+    candidates=$(module_index_rows "$index" | awk -F"$MODULE_INDEX_SEP" -v n="$name" -v c="$contract" -v w="$want" '
         $1 != n { next }
         w != "" && $2 != w { next }
         c != "" && $3 != c { next }
-        { print }' | sort -t"$(printf '\t')" -k2,2V | tail -1)
+        { print }' | sort -t"$MODULE_INDEX_SEP" -k2,2Vr)
 
-    if [ -z "$line" ]; then
+    if [ -z "$candidates" ]; then
         echo "ERROR: no module '$name'${want:+ at version $want} is published for this release." >&2
         echo "" >&2
         echo "What is available:" >&2
         available_modules >&2
         exit 1
     fi
-    IFS=$'\t' read -r name version row_contract url sha summary <<EOF
+
+    # THE NEWEST ONE THIS RELEASE CAN RUN, WHICH IS NOT ALWAYS THE NEWEST ONE THERE IS. A row
+    # says the oldest frame and release it needs, so an installation that is behind takes an
+    # earlier version instead of taking the newest and failing the first time it is used.
+    frame_here=$(installed_frame_version)
+    while IFS= read -r row; do
+        [ -n "$row" ] || continue
+        [ -n "$newest" ] || newest="$row"
+        IFS="$MODULE_INDEX_SEP" read -r _n _v _c row_frame row_env _rest <<ROW
+$row
+ROW
+        if version_at_most "$row_frame" "$frame_here" && version_at_most "$row_env" "$VERSION"; then
+            line="$row"
+            break
+        fi
+    done <<EOF
+$candidates
+EOF
+
+    if [ -z "${line:-}" ]; then
+        IFS="$MODULE_INDEX_SEP" read -r _n newest_v _c newest_frame newest_env _rest <<ROW
+$newest
+ROW
+        echo "ERROR: every published '$name'${want:+ at version $want} needs more than this" >&2
+        echo "  installation has. The newest is v$newest_v, and it needs:" >&2
+        [ -z "$newest_frame" ] || echo "      analysis frame $newest_frame, and this is ${frame_here:-unreadable}" >&2
+        [ -z "$newest_env" ] || echo "      PoolSeqFlow $newest_env, and this is $VERSION" >&2
+        echo "" >&2
+        echo "  Upgrade PoolSeqFlow, or name a version published for this one:" >&2
+        echo "      $(basename "$0") analysis modules available" >&2
+        exit 1
+    fi
+
+    IFS="$MODULE_INDEX_SEP" read -r name version row_contract row_frame row_env url sha summary <<EOF
 $line
 EOF
+    # Said out loud: taking an older version than exists is a decision, not a detail.
+    if [ "$line" != "$newest" ]; then
+        IFS="$MODULE_INDEX_SEP" read -r _n newest_v _rest <<ROW
+$newest
+ROW
+        echo "NOTE: '$name' is published up to v$newest_v, which needs a newer PoolSeqFlow than"
+        echo "      this one. Installing v$version, the newest this release can run."
+        echo ""
+    fi
 
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"; rm -f "$index"' RETURN

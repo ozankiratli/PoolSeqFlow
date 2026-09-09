@@ -47,7 +47,7 @@ done
 # it is named in this list too.
 excluded='docs/ .github/ mkdocs.yml .gitignore .gitattributes dev/ Project/ test/
           .claude/ CLAUDE.md
-          analysis/modules/*/test/ analysis/modules-index.tsv'
+          analysis/modules/*/test/ modules-repo/index.tsv'
 
 # Whether one tracked path is meant to reach the archive at all.
 ships() {

@@ -617,9 +617,14 @@ make_module_release() {
     else
         sha=$(shasum -a 256 "$tarball" | awk '{print $1}')
     fi
-    [ -f "$dir/index.tsv" ] || printf 'name\tversion\tcontract\turl\tsha256\tsummary\n' > "$dir/index.tsv"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$name" "$version" "$contract" "$tarball" "$sha" "planted $name" >> "$dir/index.tsv"
+    # MODULE_RELEASE_FRAME and MODULE_RELEASE_ENV say what the row demands of the installation.
+    # Empty is the ordinary case and means no requirement, which is also what a catalogue
+    # written before those columns existed yields.
+    [ -f "$dir/index.tsv" ] || \
+        printf 'name\tversion\tcontract\tframe\tenvironment\turl\tsha256\tsummary\n' > "$dir/index.tsv"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$name" "$version" "$contract" "${MODULE_RELEASE_FRAME:-}" "${MODULE_RELEASE_ENV:-}" \
+        "$tarball" "$sha" "planted $name" >> "$dir/index.tsv"
     printf '%s' "$dir/index.tsv"
 }
 
