@@ -244,6 +244,112 @@ test_the_frame_version_moves_with_a_change_and_not_with_the_calendar() {
         "but its main.nf changing is:"$'\n'"$out"
 }
 
+# THE RELEASE GATE REFUSES TO ANSWER RATHER THAN ANSWERING WRONGLY.
+#
+# A shallow clone does not make the checker quiet, which is what makes this worth a case. The
+# grafted tip reads as having created every file, so the module and catalogue checks see the
+# version line as added in that commit and report a missed bump as fine - measured, with a
+# module changed two commits earlier and never bumped. release.yml's checkout was shallow, which
+# is exactly how the gate would have been wired in.
+#
+# The same repository serves both halves, so it is built once.
+test_the_release_gate_refuses_what_it_cannot_check() {
+    local sb out
+    sb=$(guard_path "$TEST_TMPDIR/release-gate")
+    rm -rf "$sb"; mkdir -p "$sb/origin/dev/scripts" "$sb/origin/analysis/lib/R"
+    cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$sb/origin/dev/scripts/"
+    printf 'frame {}\n' > "$sb/origin/analysis/frame.config"
+    printf '20260101.001\n' > "$sb/origin/analysis/frame.version"
+    printf 'f <- function() 1\n' > "$sb/origin/analysis/lib/R/thing.R"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/origin/analysis/modules-index.tsv"
+    # Two commits, because a shallow clone of a one-commit repository is not shallow.
+    (cd "$sb/origin" && git init -q . && git add -A \
+        && GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
+           git -c user.email=t@t -c user.name=t commit -qm base --date='2026-01-01T00:00:00Z' \
+        && printf 'g <- function() 2\n' >> analysis/lib/R/thing.R \
+        && printf '20260102.001\n' > analysis/frame.version \
+        && git add -A \
+        && GIT_COMMITTER_DATE='2026-01-02T00:00:00Z' \
+           git -c user.email=t@t -c user.name=t commit -qm second --date='2026-01-02T00:00:00Z') \
+        > /dev/null 2>&1 \
+        || { skip_case "could not build a repository to check in"; return; }
+
+    # The control: with history and a clean tree it answers, and answers yes.
+    out=$(cd "$sb/origin" && bash dev/scripts/check-analysis-versions.sh --release 2>&1)
+    assert_contains "$out" "up to date" \
+        "a clean tree with history should pass the gate:"$'\n'"$out"
+
+    # A shallow clone: every check would pass by having asked nothing.
+    if ! git clone -q --depth 1 "file://$sb/origin" "$sb/shallow" > /dev/null 2>&1; then
+        skip_case "could not make a shallow clone"
+    else
+        out=$(cd "$sb/shallow" && bash dev/scripts/check-analysis-versions.sh --release 2>&1 || true)
+        assert_contains "$out" "REFUSED" "a shallow clone must be refused:"$'\n'"$out"
+        assert_contains "$out" "fetch-depth" "and say how to fix the checkout"
+        # Without --release it stays usable: a developer's clone is their business.
+        out=$(cd "$sb/shallow" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
+        assert_not_contains "$out" "REFUSED" "while the everyday run is not refused"
+    fi
+
+    # An uncommitted change under analysis/ is dated by mtime, which on a fresh checkout is
+    # checkout time and says nothing about when the work was done.
+    printf 'h <- function() 3\n' >> "$sb/origin/analysis/lib/R/thing.R"
+    out=$(cd "$sb/origin" && bash dev/scripts/check-analysis-versions.sh --release 2>&1 || true)
+    assert_contains "$out" "REFUSED" "a dirty analysis/ must be refused at a release:"$'\n'"$out"
+    assert_contains "$out" "thing.R" "naming what is uncommitted"
+}
+
+# THE MODULE CHECK MUST BITE ON A CLEAN TREE, WHICH IS THE ONLY STATE A RELEASE IS EVER IN.
+# It used to run only against uncommitted work, so every module passed a release unexamined.
+test_a_committed_module_change_without_a_version_bump_is_caught() {
+    local sb out
+    sb=$(guard_path "$TEST_TMPDIR/module-version-committed")
+    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/R" "$sb/analysis/modules/demo/test"
+    cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$sb/dev/scripts/"
+    printf 'frame {}\n' > "$sb/analysis/frame.config"
+    printf '20260101.001\n' > "$sb/analysis/frame.version"
+    printf 'f <- function() 1\n' > "$sb/analysis/lib/R/thing.R"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/analysis/modules-index.tsv"
+    printf '{"name": "demo", "version": "20260101.001"}\n' > "$sb/analysis/modules/demo/manifest.json"
+    printf 'workflow {}\n' > "$sb/analysis/modules/demo/main.nf"
+    printf 'echo case\n' > "$sb/analysis/modules/demo/test/demo.sh"
+    (cd "$sb" && git init -q . && git add -A \
+        && GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
+           git -c user.email=t@t -c user.name=t commit -qm base --date='2026-01-01T00:00:00Z') \
+        > /dev/null 2>&1 \
+        || { skip_case "could not build a repository to check in"; return; }
+
+    # Commit a change to what the module computes, and do not move its version.
+    (cd "$sb" && printf 'process P {}\n' >> analysis/modules/demo/main.nf && git add -A \
+        && GIT_COMMITTER_DATE='2026-01-02T00:00:00Z' \
+           git -c user.email=t@t -c user.name=t commit -qm 'change demo' \
+               --date='2026-01-02T00:00:00Z') > /dev/null 2>&1
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
+    assert_contains "$out" "module 'demo'" \
+        "a committed module change with a stale version must be caught:"$'\n'"$out"
+
+    # And a commit that moves the version along with the change is not reported.
+    (cd "$sb" && printf 'process Q {}\n' >> analysis/modules/demo/main.nf \
+        && printf '{"name": "demo", "version": "20260103.001"}\n' > analysis/modules/demo/manifest.json \
+        && git add -A \
+        && GIT_COMMITTER_DATE='2026-01-03T00:00:00Z' \
+           git -c user.email=t@t -c user.name=t commit -qm 'change demo and bump' \
+               --date='2026-01-03T00:00:00Z') > /dev/null 2>&1
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
+    assert_not_contains "$out" "module 'demo'" \
+        "while a change committed with its bump is not:"$'\n'"$out"
+
+    # A module's own cases are not the module: analysis/modules/*/test/ is export-ignored, so
+    # nothing there reaches a published module.
+    (cd "$sb" && printf 'echo more\n' >> analysis/modules/demo/test/demo.sh && git add -A \
+        && GIT_COMMITTER_DATE='2026-01-04T00:00:00Z' \
+           git -c user.email=t@t -c user.name=t commit -qm 'a case only' \
+               --date='2026-01-04T00:00:00Z') > /dev/null 2>&1
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
+    assert_not_contains "$out" "module 'demo'" \
+        "and a commit touching only its cases is not the module changing:"$'\n'"$out"
+}
+
 test_release_archive_carries_the_runtime() {
     local listing
     listing=$(working_tree_archive)

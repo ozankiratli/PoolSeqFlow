@@ -2,7 +2,13 @@
 #
 # Has anything changed without its version moving?
 #
-# Usage: dev/scripts/check-analysis-versions.sh
+# Usage: dev/scripts/check-analysis-versions.sh [--release]
+#
+# --release is the gate a release passes through, and it is stricter in one way that matters:
+# it refuses to answer at all when it cannot. Mid-development the checks below skip a question
+# they have no data for, which is right - work is uncommitted, history is local, a version is
+# legitimately behind. At a release a skipped question is indistinguishable from a passed one,
+# and a gate that reports success over a check it did not run is worse than no gate.
 #
 # Three versions, each covering a different set of files, and each only useful if it is bumped
 # when that set changes. Nothing in the pipeline forces that, so this is what catches a missed
@@ -19,8 +25,55 @@
 
 set -euo pipefail
 
+RELEASE=0
+case "${1:-}" in
+    '')        ;;
+    --release) RELEASE=1 ;;
+    *)
+        echo "Usage: $(basename "$0") [--release]" >&2
+        exit 1
+        ;;
+esac
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 cd "$REPO"
+
+# A SHALLOW CLONE DOES NOT ANSWER WITH SILENCE. IT ANSWERS WRONGLY, IN BOTH DIRECTIONS.
+#
+# Git treats the grafted tip of a shallow clone as having no parent, so every file reads as
+# created in that commit. Measured against a repository built for it:
+#
+#   the module and catalogue checks ask whether the commit that changed a thing also moved its
+#   version, and there the whole file shows as added - version line included - so a module
+#   changed three commits ago without a bump is reported as fine. It fails OPEN.
+#
+#   the frame check asks which day a path last changed, and gets the tip commit's date whatever
+#   the path. It fires on a frame nobody touched. It fails CLOSED, on the wrong commit.
+#
+# So the answer is refused rather than reported.
+shallow() { [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" != "false" ]; }
+
+if [ "$RELEASE" -eq 1 ]; then
+    if shallow; then
+        echo "REFUSED: this is a shallow clone or not a git repository, so the history these" >&2
+        echo "  checks read is not here. They would answer from the tip commit alone, which" >&2
+        echo "  reads as having created every file - a missed version bump goes unreported." >&2
+        echo "  Check out with full history - fetch-depth: 0 on actions/checkout." >&2
+        exit 1
+    fi
+    # The uncommitted paths are dated by mtime, which on a fresh checkout is checkout time and
+    # says nothing about when the work was done.
+    if [ -n "$(git status --porcelain -- analysis 2>/dev/null)" ]; then
+        echo "REFUSED: analysis/ has uncommitted changes, and a release is cut from a clean" >&2
+        echo "  tree. Commit or stash them first:" >&2
+        git status --porcelain -- analysis | sed 's/^/      /' >&2
+        exit 1
+    fi
+elif shallow; then
+    echo "WARNING: this is a shallow clone, so everything below is read from the tip commit"
+    echo "  alone and is not reliable. Nothing here is a release gate; use --release for that."
+    echo ""
+fi
 
 STALE=0
 
@@ -82,7 +135,16 @@ FRAME_VERSION=analysis/frame.version
 # the price of one bump a day, and it is paid in development rather than in a release.
 ver_day=$(frame_version_day "$FRAME_VERSION")
 src_day=$(last_change_day "${FRAME_SOURCES[@]}")
-if [ -n "${ver_day:-}" ] && [ -n "${src_day:-}" ] && [ "$ver_day" -lt "$src_day" ]; then
+if [ -z "${ver_day:-}" ] || [ -z "${src_day:-}" ]; then
+    # Neither day is readable in a checkout with no history, and the comparison below would
+    # then pass on both being empty.
+    if [ "$RELEASE" -eq 1 ]; then
+        report "the frame version could not be compared against the frame" \
+            "analysis/frame.version reads: ${ver_day:-<unreadable>}" \
+            "last change to the frame:     ${src_day:-<no history for it>}" \
+            "A release does not pass a check that did not run."
+    fi
+elif [ "$ver_day" -lt "$src_day" ]; then
     if dirty "${FRAME_SOURCES[@]}"; then
         report "the frame changed and analysis/frame.version still says ${ver_day}" \
             "uncommitted: $(git status --porcelain -- "${FRAME_SOURCES[@]}" | awk '{print $NF}' | tr '\n' ' ')" \
@@ -138,10 +200,22 @@ if [ -d analysis/modules ]; then
         # NOT THE MODULE'S OWN CASES. `analysis/modules/*/test/` carries export-ignore, so those
         # files are in no published module and can change nothing a user installs - and the
         # version is what an installation and every published result record the module BY.
-        if dirty "$dir" ":(exclude)${dir}test" \
-           && ! git diff HEAD -- "${dir}manifest.json" | grep -q '^+.*"version"'; then
-            report "module '$name' changed and its manifest version did not" \
-                "bump it: dev/scripts/bump-analysis-version.sh module $name"
+        if dirty "$dir" ":(exclude)${dir}test"; then
+            if ! git diff HEAD -- "${dir}manifest.json" | grep -q '^+.*"version"'; then
+                report "module '$name' changed and its manifest version did not" \
+                    "bump it: dev/scripts/bump-analysis-version.sh module $name"
+            fi
+        else
+            # Committed, which is the state a release is cut in: the last commit that touched
+            # the module has to be the one that moved its version. Without this the loop asks
+            # nothing at all of a clean tree, and every module passes a release unexamined.
+            last=$(git log -1 --format=%H -- "$dir" ":(exclude)${dir}test" 2>/dev/null || true)
+            if [ -n "${last:-}" ] \
+               && ! git show "$last" -- "${dir}manifest.json" | grep -q '^+.*"version"'; then
+                report "module '$name' last changed in a commit that did not move its version" \
+                    "commit:  $(git log -1 --format='%h %ad %s' --date=short -- "$dir" ":(exclude)${dir}test")" \
+                    "bump it: dev/scripts/bump-analysis-version.sh module $name"
+            fi
         fi
     done
 fi

@@ -24,6 +24,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # verify-archive.sh builds from a git ref, and check-analysis-versions.sh reads which
+          # commit last touched each versioned thing. A shallow clone gives the second one the
+          # tip commit for every path, which reports a missed version bump as fine.
+          fetch-depth: 0
 
       - name: Work out the version and check everything agrees on it
         id: version
@@ -73,6 +78,13 @@ jobs:
           echo "version=$declared" >> "$GITHUB_OUTPUT"
           echo "name=PoolSeqFlow-$declared" >> "$GITHUB_OUTPUT"
           echo "Building PoolSeqFlow-$declared"
+
+      # Three versions cover the analysis layer and nothing in the pipeline forces any of them
+      # to move: analysis/frame.version, the catalogue's #!index-version, and each module's own
+      # manifest version. Mid-development one is legitimately behind, which is why this is not
+      # in the test suite and is a release gate instead.
+      - name: Every analysis version moved with what it covers
+        run: dev/scripts/check-analysis-versions.sh --release
 
       # The same script ci.yml runs on every pull request.
       - name: Build and verify the archive
