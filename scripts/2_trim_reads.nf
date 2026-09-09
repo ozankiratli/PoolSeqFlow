@@ -65,6 +65,9 @@ process TrimReads {
     // `cpus` reserves the full footprint - --cores N runs N+4 threads - so map back to workers.
     trim_cores = task.cpus > 4 ? task.cpus - 4 : 1
 
+    // FastQC's -t is how many FILES it works on at once, not threads per file, so it is
+    // cores.fastqc and not task.cpus: a pair cannot use more than two whatever the run reserves.
+
     """
     set -eo pipefail
 
@@ -100,7 +103,7 @@ process TrimReads {
     else
         echo "TRIMMING READS ${pair_id}: Trimming paired reads..."
         ${run.software.trim_galore} ${trim_options} \\
-            --cores ${trim_cores} --fastqc_args "-t ${task.cpus}" \\
+            --cores ${trim_cores} --fastqc_args "-t ${run.cores.fastqc}" \\
             --basename ${pair_id} ${read1} ${read2}
 
         # Split by whether anything reads it again: the zips are ClipReads' input and go to the
@@ -330,8 +333,8 @@ process ClipReads {
         ${run.software.cutadapt} ${run.cutadapt.options} --cores ${task.cpus} -u \$Clip5 -U \$Clip5 -l \$readLengthLimit \
             -o ${pair_id}_R1_clipped.fq.gz -p ${pair_id}_R2_clipped.fq.gz ${trimmed_read1} ${trimmed_read2}
 
-        echo "CLIPPING READS ${pair_id}: QC on clipped reads..." 
-        ${run.software.fastqc} ${run.fastqc.options} -t ${task.cpus} ${pair_id}_R1_clipped.fq.gz ${pair_id}_R2_clipped.fq.gz
+        echo "CLIPPING READS ${pair_id}: QC on clipped reads..."
+        ${run.software.fastqc} ${run.fastqc.options} -t ${run.cores.fastqc} ${pair_id}_R1_clipped.fq.gz ${pair_id}_R2_clipped.fq.gz
 
         echo "CLIPPING READS ${pair_id}: Cleaning up..." 
         rm -r \$fqcDir1 \$fqcDir2

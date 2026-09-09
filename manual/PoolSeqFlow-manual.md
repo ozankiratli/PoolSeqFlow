@@ -2415,7 +2415,7 @@ Every tool's thread count is derived from `threads`. **Do not set the per-tool c
 
 Three details explain the shape of that table.
 
-**Tools are quantized to where their scaling flattens.** BWA and cutadapt take the largest power of two at or below `threads`, capped at 8. Past that point the published scaling for these tools returns very little, so the cores are better spent on another task. FastQC is given two because step 2 only ever hands it a pair of files, and one thread per file is all it can use.
+**Tools are quantized to where their scaling flattens.** BWA and cutadapt both take `cores.ladder` — the largest power of two at or below `threads`, capped at 8. Past that point the published scaling for these tools returns very little, so the cores are better spent on another task. FastQC is given `cores.fastqc`, which is two, because its `-t` counts *files* rather than threads per file and step 2 only ever hands it a pair. Measured on a pair of 2M-read files: `-t 2` is 1.93× faster than `-t 1`, and `-t 4`, `-t 6` and `-t 8` are no faster at all while each thread past the second costs roughly 250 MB of resident memory. Given eight files instead it scales to 4.8×, which is what the number is sized against.
 
 **Trim Galore's `--cores N` really runs N+4 threads** — N workers, two decompressors, a batcher and a writer. The ladder picks the largest N whose *full footprint* still fits in `threads`, which is why 4 cores yields `--cores 1` rather than `--cores 4`. The `--cores 1` case is the exception: it bypasses the worker pool entirely and is genuinely single-threaded.
 
@@ -2423,7 +2423,7 @@ Three details explain the shape of that table.
 
 ### How the numbers reach the tools
 
-Each process declares what it needs with the `cpus` directive and passes that same number to its tool as `task.cpus`, so there is exactly one value per task and nothing can drift:
+Each process declares what it needs with the `cpus` directive and passes that same number to its tool as `task.cpus`, so there is exactly one value per task and nothing can drift. The two exceptions are the two above: Trim Galore is given the worker count its reservation maps back to, and FastQC is given `cores.fastqc` rather than the reservation it runs inside, because neither number is the one the task holds.
 
 ```groovy
 process Align {
