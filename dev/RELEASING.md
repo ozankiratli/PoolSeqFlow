@@ -59,13 +59,21 @@ It builds the baseline, installs what the shipped modules declare, and checks a 
 
 Every check must say `ok`. A failure here is a compatibility problem between this release and a module, and it is settled by publishing, not on a user's machine.
 
+### Run `00_static` again, against the files that were just written
+
+```
+bash test/run_tests.sh --suite 00_static
+```
+
+**`prep-version.sh` runs the suite at `[3/5]` and exports at `[4/5]`, so the files it writes are never seen by the suite that approved them.** The cases that read them — no `name:` or `prefix:` key, no absolute home path, and no package leaving a shipped file — only bite on a run after the export.
+
 ### Read both diffs
 
 ```
 git diff install/environment.yml install/environment-analysis.yml
 ```
 
-A pin that moved is a change to what every result was produced under.
+A pin that moved is a change to what every result was produced under. Classify before reading line by line: a version that moved, a build string that moved on its own (a conda-forge rebuild, usually because `libgcc` moved), a package added, a package **removed**. Removals are the ones to stop on, and the first pinned export of `environment-analysis.yml` will show a large *added* count that is not new software — the hand-written spec named what you ask for and an export names what you get, so the transitive dependencies become explicit all at once.
 
 To export one environment by hand, or to ask whether an export would be accepted without writing anything:
 

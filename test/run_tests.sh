@@ -129,10 +129,15 @@ analysis_rscript() {
 export -f analysis_rscript
 
 # True when the frame can build a PDF report: pandoc to convert and typst to typeset. Both are
-# pinned in the analysis environment, so this is about the machine the suite runs on rather
-# than about the release.
+# pinned in the analysis environment and the frame runs them with it active, so the ENVIRONMENT
+# is what is asked and not the machine.
+#
+# It asked the machine until 2026-09-09, through `command -v`. A developer's own /usr/sbin/typst
+# answered yes for five days while the shipped environment carried none, so every report case
+# passed against a binary no user would receive. That is the whole reason this reads a prefix.
 have_report_tools() {
-    command -v pandoc > /dev/null 2>&1 && command -v typst > /dev/null 2>&1
+    [ -n "$TEST_ANALYSIS_ENV" ] || return 1
+    [ -x "$TEST_ANALYSIS_ENV/bin/pandoc" ] && [ -x "$TEST_ANALYSIS_ENV/bin/typst" ]
 }
 export -f have_report_tools
 

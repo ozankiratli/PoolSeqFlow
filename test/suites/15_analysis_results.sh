@@ -129,7 +129,9 @@ test_a_published_folder_carries_a_readme_linking_every_file_to_the_manual() {
 # own - a figure sized for looking at pushes the heading onto the page before it.
 test_a_published_folder_carries_one_pdf_of_everything_in_it() {
     analysis_ready single || return
-    if ! have_report_tools; then skip_case "no pandoc and typst"; return; fi
+    if ! have_report_tools; then
+        skip_case "the analysis environment has no pandoc and typst"; return
+    fi
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     analysis_install_module writer "$ANALYSIS_LINKED_MANIFEST" "$ANALYSIS_WRITER_MAIN"
     local status; status=$(analysis_run_module writer)

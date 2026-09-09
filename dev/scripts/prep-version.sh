@@ -124,6 +124,45 @@ if ! CHECK_OUT=$(bash dev/scripts/export-environment.sh --check "$SOURCE_ANALYSI
     exit 1
 fi
 
+# Every package a shipped environment file names, as bare names. Only the dependencies: block,
+# so the channel list is not read as packages, and only up to the first `=`, because a version
+# is what the update is about to move.
+spec_packages() {
+    awk '/^dependencies:/ { d = 1; next }
+         /^[a-z]/         { d = 0 }
+         d && /^ *- / { sub(/^ *- */, ""); sub(/[=<> ].*/, ""); if ($0 != "") print }' "$1" | sort -u
+}
+
+# What an environment holds that its own shipped file does not name is fine - that is what the
+# solver added. What the file names and the environment does NOT hold means the environment was
+# built before that line existed. Cloning it then carries the gap into the export, and the
+# package leaves the release without anything saying so.
+missing_from_env() {
+    local file="$1" env="$2" held pkg
+    held=$(conda list -n "$env" --export 2>/dev/null | sed -n 's/^\([^#=][^=]*\)=.*/\1/p')
+    while read -r pkg; do
+        [ -n "$pkg" ] || continue
+        printf '%s\n' "$held" | grep -qxF "$pkg" || printf '%s\n' "$pkg"
+    done < <(spec_packages "$file")
+}
+
+STALE=""
+for pair in "install/environment.yml:$SOURCE_ENV" \
+            "install/environment-analysis.yml:$SOURCE_ANALYSIS_ENV"; do
+    f="${pair%%:*}"; e="${pair#*:}"
+    gone=$(missing_from_env "$f" "$e")
+    [ -n "$gone" ] && STALE="$STALE$e is missing, of what $f names:"$'\n'"$(printf '%s' "$gone" | sed 's/^/    /')"$'\n'
+done
+if [ -n "$STALE" ]; then
+    printf 'ERROR: a source environment is older than the file it was built from.\n\n' >&2
+    printf '%s\n' "$STALE" >&2
+    echo "Cloning it would carry that gap into the export, and the package would leave the" >&2
+    echo "release with nothing saying so. Rebuild the environment before preparing a release:" >&2
+    echo "    ./PoolSeqFlow analysis uninstall && ./PoolSeqFlow analysis install" >&2
+    echo "or add what is missing to the environment by hand and run this again." >&2
+    exit 1
+fi
+
 STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
 LOGDIR="dev/logs/prep-$NEW-$STAMP"
 mkdir -p "$LOGDIR"

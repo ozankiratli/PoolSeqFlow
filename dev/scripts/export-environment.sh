@@ -2,7 +2,8 @@
 #
 # Regenerate a shipped environment file from an installed PoolSeqFlow environment.
 #
-# Usage:  dev/scripts/export-environment.sh [--check] [environment-name [output-file]]
+# Usage:  dev/scripts/export-environment.sh [--check] [--allow-removals]
+#                                           [environment-name [output-file]]
 #
 # With no argument the pipeline environment belonging to this working copy's version is
 # exported, so the shipped file always describes the release it travels with. Pass a name to
@@ -14,6 +15,11 @@
 # spends an hour solving and testing an environment it would then be refused permission to
 # freeze.
 #
+# --allow-removals permits an export that names FEWER packages than the file it replaces. That
+# is refused by default because this regenerates from a LIVE environment: anything the file
+# asked for that the environment never actually held is dropped here, permanently, and the
+# release loses it with nothing saying so. typst went exactly that way on 2026-09-09.
+#
 # Two keys are stripped from conda's output:
 #
 #   prefix:  an absolute path into whoever ran the export.
@@ -23,7 +29,14 @@
 set -euo pipefail
 
 CHECK_ONLY=0
-if [ "${1-}" = "--check" ]; then CHECK_ONLY=1; shift; fi
+ALLOW_REMOVALS=0
+while :; do
+    case "${1-}" in
+        --check)          CHECK_ONLY=1;     shift ;;
+        --allow-removals) ALLOW_REMOVALS=1; shift ;;
+        *) break ;;
+    esac
+done
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 
@@ -113,6 +126,31 @@ trap 'rm -f "$TMP"' EXIT
     echo "# ($NAMED_AFTER), which is what $INSTALL_CMD supplies with -n."
     conda env export --name "$ENV_NAME" | sed -e '/^name:/d' -e '/^prefix:/d'
 } > "$TMP"
+
+# Every package a shipped environment file names, as bare names: the dependencies: block only,
+# so the channel list is not read as packages, and only up to the first '=' so a version move
+# is not a removal.
+spec_names() {
+    awk '/^dependencies:/ { d = 1; next }
+         /^[a-z]/         { d = 0 }
+         d && /^ *- / { sub(/^ *- */, ""); sub(/[=<> ].*/, ""); if ($0 != "") print }' "$1" | sort -u
+}
+
+if [ -f "$OUTPUT" ] && [ "$ALLOW_REMOVALS" -eq 0 ]; then
+    LEAVING=$(comm -23 <(spec_names "$OUTPUT") <(spec_names "$TMP"))
+    if [ -n "$LEAVING" ]; then
+        echo "export-environment: this export would drop packages ${OUTPUT#"$REPO_ROOT"/} names:" >&2
+        printf '%s\n' "$LEAVING" | sed 's/^/    /' >&2
+        echo "" >&2
+        echo "'$ENV_NAME' does not hold them, so the export describes a release without them." >&2
+        echo "Usually the environment predates the line that asks for them. Put them in and" >&2
+        echo "export again:" >&2
+        echo "    conda install -n $ENV_NAME $(printf '%s ' $LEAVING)" >&2
+        echo "" >&2
+        echo "If they are meant to go, say so: --allow-removals" >&2
+        exit 1
+    fi
+fi
 
 mv "$TMP" "$OUTPUT"
 trap - EXIT

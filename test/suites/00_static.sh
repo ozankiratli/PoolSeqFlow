@@ -450,6 +450,56 @@ test_environment_yml_has_no_name_or_prefix_key() {
     done
 }
 
+# A PACKAGE MUST NOT LEAVE A SHIPPED ENVIRONMENT FILE WITHOUT SOMEBODY SAYING SO.
+#
+# export-environment.sh regenerates these from a LIVE environment, so anything the file asked
+# for that the environment did not actually hold is dropped at the next export, silently and
+# permanently. typst went that way on 2026-09-09: it was added to the analysis spec on
+# 2026-09-04, the maintainer's environment predated that and never had it, and the first pinned
+# export wrote a release whose analysis environment could not typeset the PDF report every
+# published analysis carries.
+#
+# The baseline is the last release TAG where the file existed there, so the answer does not
+# move with every commit. environment-analysis.yml did NOT exist at v2.2.0 - the analysis layer
+# is new in 3.0 - and against a tag alone this case compared nothing for the very file typst
+# left, and passed. It falls back to HEAD, which is what has teeth right after an export and
+# before the commit: exactly where the drop happens.
+#
+# A package that genuinely goes is a decision. Committing the removal is what records it.
+test_no_package_leaves_a_shipped_environment_file() {
+    local f
+
+    # Bare names out of the dependencies: block only, so the channel list is not read as
+    # packages, and only up to the first '=', because a version moves at every release.
+    local names='/^dependencies:/ { d = 1; next }
+                 /^[a-z]/         { d = 0 }
+                 d && /^ *- / { sub(/^ *- */, ""); sub(/[=<> ].*/, ""); if ($0 != "") print }'
+
+    local tag; tag=$(cd "$REPO_ROOT" && git tag --sort=-v:refname | head -1)
+    local checked=0
+    for f in environment.yml environment-analysis.yml; do
+        local base was gone
+        base=""
+        if [ -n "$tag" ]; then
+            was=$(cd "$REPO_ROOT" && git show "$tag:install/$f" 2>/dev/null | awk "$names" | sort -u)
+            [ -n "$was" ] && base="$tag"
+        fi
+        if [ -z "$base" ]; then
+            was=$(cd "$REPO_ROOT" && git show "HEAD:install/$f" 2>/dev/null | awk "$names" | sort -u)
+            [ -n "$was" ] && base="HEAD"
+        fi
+        [ -n "$base" ] || continue         # the file is new and has no committed form yet
+        checked=$((checked + 1))
+        gone=$(comm -23 <(printf '%s\n' "$was") \
+                        <(awk "$names" "$REPO_ROOT/install/$f" | sort -u))
+        assert_eq "" "$gone" \
+            "$f names fewer packages than at $base; these left:"$'\n'"$gone"
+    done
+
+    # A baseline neither file could be compared against is a pass over nothing.
+    assert_eq "2" "$checked" "both environment files should have had a baseline to compare against"
+}
+
 # The tool list a user is told to expect and the one that is pinned have to agree, and the
 # epilogue that tells them how to fix a broken install has to name the right environment.
 test_check_install_hint_uses_the_versioned_environment() {
