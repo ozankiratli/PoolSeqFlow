@@ -210,7 +210,8 @@ test_the_analysis_version_scripts_are_there_and_runnable() {
 # answer depends on whether the tree it reads is dirty - which this one's is not, most days.
 test_the_frame_version_moves_with_a_change_and_not_with_the_calendar() {
     local sb; sb=$(guard_path "$TEST_TMPDIR/version-rule")
-    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/R" "$sb/analysis/modules/demo/test"
+    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/R" \
+                           "$sb/analysis/modules/demo/test" "$sb/modules-repo"
     cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$sb/dev/scripts/"
     printf 'frame {}\n' > "$sb/analysis/frame.config"
     printf '20260101.001\n' > "$sb/analysis/frame.version"
@@ -270,7 +271,8 @@ test_the_frame_version_moves_with_a_change_and_not_with_the_calendar() {
 test_the_release_gate_refuses_what_it_cannot_check() {
     local sb out
     sb=$(guard_path "$TEST_TMPDIR/release-gate")
-    rm -rf "$sb"; mkdir -p "$sb/origin/dev/scripts" "$sb/origin/analysis/lib/R"
+    rm -rf "$sb"; mkdir -p "$sb/origin/dev/scripts" "$sb/origin/analysis/lib/R" \
+                           "$sb/origin/modules-repo"
     cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$sb/origin/dev/scripts/"
     printf 'frame {}\n' > "$sb/origin/analysis/frame.config"
     printf '20260101.001\n' > "$sb/origin/analysis/frame.version"
@@ -318,7 +320,8 @@ test_the_release_gate_refuses_what_it_cannot_check() {
 test_a_committed_module_change_without_a_version_bump_is_caught() {
     local sb out
     sb=$(guard_path "$TEST_TMPDIR/module-version-committed")
-    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/R" "$sb/analysis/modules/demo/test"
+    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/R" \
+                           "$sb/analysis/modules/demo/test" "$sb/modules-repo"
     cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$sb/dev/scripts/"
     printf 'frame {}\n' > "$sb/analysis/frame.config"
     printf '20260101.001\n' > "$sb/analysis/frame.version"

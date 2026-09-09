@@ -1977,7 +1977,7 @@ Everything the pipeline does is set in `parameters.config`. There are no command
 
 This page sorts the parameters by what they actually affect, which is the distinction that matters most: some change your numbers, some change only where files land or how fast the run goes, and some are computed for you and should not be edited at all.
 
-### Three kinds of parameter
+### Parameters, by what changing one does
 
 #### Parameters that change your results
 

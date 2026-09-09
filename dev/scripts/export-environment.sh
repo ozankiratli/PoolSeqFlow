@@ -2,12 +2,17 @@
 #
 # Regenerate a shipped environment file from an installed PoolSeqFlow environment.
 #
-# Usage:  dev/scripts/export-environment.sh [environment-name [output-file]]
+# Usage:  dev/scripts/export-environment.sh [--check] [environment-name [output-file]]
 #
 # With no argument the pipeline environment belonging to this working copy's version is
 # exported, so the shipped file always describes the release it travels with. Pass a name to
 # export a different one. A name ending in -analysis goes to install/environment-analysis.yml
 # and any other to install/environment.yml; the second argument overrides that.
+#
+# --check runs the module-package refusal below and stops there, writing nothing. It answers
+# "would an export of this environment be accepted?", which prep-version.sh asks before it
+# spends an hour solving and testing an environment it would then be refused permission to
+# freeze.
 #
 # Two keys are stripped from conda's output:
 #
@@ -16,6 +21,9 @@
 #            install passes -n, naming the environment after the release.
 
 set -euo pipefail
+
+CHECK_ONLY=0
+if [ "${1-}" = "--check" ]; then CHECK_ONLY=1; shift; fi
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 
@@ -82,6 +90,11 @@ if [ -n "$CARRIED" ]; then
     echo "    ./PoolSeqFlow analysis modules uninstall <module>" >&2
     echo "or rebuild the environment from the shipped file and export that." >&2
     exit 1
+fi
+
+if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo "'$ENV_NAME' carries nothing an analysis module declares - an export would be accepted."
+    exit 0
 fi
 
 # Through a temporary file: a failed export must not leave a truncated file behind.

@@ -144,3 +144,19 @@ The DOI still exists twice: here and in `install/citations.json`, which the per-
 - **`install/check_install.sh` was left alone**, and `check_analysis_install.sh` is a separate script rather than a mode of it. The pipeline checker resolves its tool list through `nextflow config` from `params.software`; the analysis layer has no such block, and its interesting checks are R packages, which the pipeline knows nothing about. Sharing `lib/tool_version.sh` gets the useful commonality — identical version reporting — without forcing one script to serve two contracts.
 - **`list` shows `PoolSeqFlow-<version>-analysis` as a flat entry.** Z ruled this fine (2026-08-30): it is cosmetic grouping, not a correctness bug.
 - **`.gitattributes` gives `analysis/` nothing**, which is correct — it must NOT be `export-ignore`d, and it is not. Verified: `git archive HEAD` carries the directory. It has two entries since, both narrow and neither touching the directory itself: `analysis/modules/*/test/`, because a module's cases travel with the module, and `analysis/modules-index.tsv`, because a frozen copy of the catalogue inside a tarball would be a second answer to what can be installed.
+
+## AMENDMENT 2026-09-09 — item 2 of "Still to do before v3.0.0" is built
+
+**`dev/scripts/prep-version.sh` now prepares both environments.** It clones `PoolSeqFlow-<current>` and `PoolSeqFlow-<current>-analysis` into `PoolSeqFlow-update` and `PoolSeqFlow-update-analysis`, updates each, runs the full suite with `TEST_CONDA_ENV` and `TEST_ANALYSIS_ENV` pointed at both, and exports both only if it passes. `--from-analysis <env>` names a different source. Item 1 above is unchanged and is still done by the release itself: the first pinned `environment-analysis.yml` is what step 2 of `dev/RELEASING.md` writes.
+
+Three things settled while building it.
+
+**The suite finds an analysis environment by globbing `PoolSeqFlow-*-analysis` and taking the first with an `Rscript`.** That is whichever name sorts first, not the one being prepared, so the scratch environment has to be named explicitly through `TEST_ANALYSIS_ENV` — a glob would have tested the release environment and exported the scratch one, silently.
+
+**The refusal to export an environment carrying module packages had to be askable separately.** `export-environment.sh --check` runs that guard and stops, writing nothing. Without it the question was asked at step 4, after the clone, the two solves and the full suite — an hour on the wrong side of an answer the source environment already determined, because the clone inherits its packages.
+
+**Both environments carry Nextflow and nothing was comparing them.** `install/environment-analysis.yml`'s own header says it carries the pipeline environment's version, but the two solve independently and no test asserts it. The script reports a divergence as a warning rather than refusing: it is the suite that says whether a pair works, and a hard refusal here would be a release policy nobody has set.
+
+**The `-analysis` suffix on the scratch name is load-bearing.** `export-environment.sh` decides which file an environment belongs in by matching `*-analysis` against its name, so `PoolSeqFlow-update-analysis` routes itself and needs no output argument.
+
+Found in passing, and fixed: three fixtures in `test/suites/00_static.sh` wrote `modules-repo/index.tsv` into a directory their `mkdir -p` never created. The redirect failed, the catalogue was absent, and `check-analysis-versions.sh` skips its catalogue check entirely when the file is missing — so all three cases passed while covering nothing there. Fallout from the catalogue move in `e384928`, where the old path's parent (`analysis/`) came for free. Measured after the fix: with the file planted, a row changed without the header moving reports `BEHIND: the catalogue changed and its #!index-version did not`; without it, nothing.

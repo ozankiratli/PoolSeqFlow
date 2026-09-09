@@ -4,19 +4,24 @@
 # then record what was proven.
 #
 # Usage:  dev/scripts/prep-version.sh <new-version>          e.g. 2.3.0
-#         dev/scripts/prep-version.sh <new-version> --from <env>
+#         dev/scripts/prep-version.sh <new-version> --from <env> --from-analysis <env>
+#
+# A release ships two environments and both are prepared here: the one the pipeline runs in,
+# and the one an analysis module runs in.
 #
 # What it does, in order:
 #
-#   1. Clones the environment for the version this working copy currently declares into a
-#      scratch environment, PoolSeqFlow-update.
-#   2. Runs `conda update --all` there, so the tools move as one mutually consistent set
+#   1. Clones both environments for the version this working copy currently declares into
+#      scratch environments, PoolSeqFlow-update and PoolSeqFlow-update-analysis.
+#   2. Runs `conda update --all` in each, so the tools move as one mutually consistent set
 #      rather than one package at a time.
-#   3. Runs the full test suite against it.
-#   4. Only if that passes: exports it to install/environment.yml and removes it.
+#   3. Runs the full test suite against both at once.
+#   4. Only if that passes: exports them to install/environment.yml and
+#      install/environment-analysis.yml, then removes them.
 #
-# Nothing is exported when the tests fail, and the scratch environment is left in place. Output
-# lands in dev/logs/prep-<version>-<timestamp>/, including a table of which packages moved.
+# Nothing is exported when the tests fail, and the scratch environments are left in place.
+# Output lands in dev/logs/prep-<version>-<timestamp>/, including a table per environment of
+# which packages moved.
 #
 # This does not bump the version or touch the CHANGELOG - run dev/scripts/bump-version.sh
 # afterwards. It does not commit anything.
@@ -25,7 +30,7 @@ set -euo pipefail
 
 NEW="${1-}"
 if [[ ! "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Usage: $0 <new-version> [--from <environment>]   (e.g. 2.3.0)" >&2
+    echo "Usage: $0 <new-version> [--from <env>] [--from-analysis <env>]   (e.g. 2.3.0)" >&2
     exit 1
 fi
 shift
@@ -37,9 +42,11 @@ CURRENT="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' PoolSeqFlow | head -1)"
 [ -n "$CURRENT" ] || { echo "ERROR: no VERSION= line in ./PoolSeqFlow" >&2; exit 1; }
 
 SOURCE_ENV=""
+SOURCE_ANALYSIS_ENV=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --from) SOURCE_ENV="${2-}"; shift ;;
+        --from-analysis) SOURCE_ANALYSIS_ENV="${2-}"; shift ;;
         *) echo "unknown option: $1" >&2; exit 1 ;;
     esac
     shift
@@ -49,16 +56,23 @@ env_exists() {
     conda env list | awk '{print $1}' | grep -qxF "$1"
 }
 
-# One fixed name, not PoolSeqFlow-<new>. It does not outlive the run that made it.
+# One fixed name each, not PoolSeqFlow-<new>. Neither outlives the run that made it. The
+# analysis one ends in -analysis, which is what export-environment.sh reads to decide which
+# file an environment belongs in.
 UPDATE_ENV="PoolSeqFlow-update"
+UPDATE_ANALYSIS_ENV="$UPDATE_ENV-analysis"
 
 # A leftover means an earlier run failed and was not cleaned up.
-if env_exists "$UPDATE_ENV"; then
-    echo "ERROR: '$UPDATE_ENV' already exists." >&2
+LEFTOVER=""
+for e in "$UPDATE_ENV" "$UPDATE_ANALYSIS_ENV"; do
+    env_exists "$e" && LEFTOVER="$LEFTOVER $e"
+done
+if [ -n "$LEFTOVER" ]; then
+    echo "ERROR: already present:$LEFTOVER" >&2
     echo "" >&2
-    echo "That is left over from an earlier preparation run, most likely one whose tests" >&2
-    echo "failed. Investigate or discard it before starting again:" >&2
-    echo "    conda env remove -n $UPDATE_ENV" >&2
+    echo "Left over from an earlier preparation run, most likely one whose tests failed." >&2
+    echo "Investigate or discard before starting again:" >&2
+    for e in $LEFTOVER; do echo "    conda env remove -n $e" >&2; done
     exit 1
 fi
 
@@ -81,6 +95,35 @@ if [ -z "$SOURCE_ENV" ]; then
 fi
 env_exists "$SOURCE_ENV" || { echo "ERROR: no environment named '$SOURCE_ENV'" >&2; exit 1; }
 
+# The analysis environment is named per version too. It arrived with the analysis layer, so
+# there is no unversioned form to fall back to the way the pipeline one has.
+SOURCE_ANALYSIS_ENV="${SOURCE_ANALYSIS_ENV:-PoolSeqFlow-$CURRENT-analysis}"
+if ! env_exists "$SOURCE_ANALYSIS_ENV"; then
+    echo "ERROR: no analysis environment named '$SOURCE_ANALYSIS_ENV'." >&2
+    echo "" >&2
+    echo "A release ships install/environment-analysis.yml as well, and it has to describe a" >&2
+    echo "solve the suite passed against. Build one first:" >&2
+    echo "    ./PoolSeqFlow analysis install" >&2
+    echo "or name an existing one with --from-analysis <env>." >&2
+    exit 1
+fi
+
+# Whether the analysis export would be accepted at all. An installed module puts its own
+# packages into the shared analysis environment, and export-environment.sh refuses to fold
+# those into the baseline every project installs from. Asked now: the clone inherits them, so
+# the export below reaches the same answer, an hour of solving and testing later.
+if ! CHECK_OUT=$(bash dev/scripts/export-environment.sh --check "$SOURCE_ANALYSIS_ENV" 2>&1); then
+    if [ -n "$CHECK_OUT" ]; then
+        printf '%s\n' "$CHECK_OUT" >&2
+    else
+        # It reads conda through a pipeline that discards conda's stderr, so a conda that
+        # fails outright ends the script with a status and nothing to read.
+        echo "ERROR: export-environment.sh --check '$SOURCE_ANALYSIS_ENV' failed silently." >&2
+        echo "Run it by hand to see what conda says." >&2
+    fi
+    exit 1
+fi
+
 STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
 LOGDIR="dev/logs/prep-$NEW-$STAMP"
 mkdir -p "$LOGDIR"
@@ -89,56 +132,91 @@ say() { printf '%s\n' "$*" | tee -a "$LOGDIR/summary.txt"; }
 
 say "PoolSeqFlow release preparation"
 say "  target version : $NEW"
-say "  starting from  : $SOURCE_ENV"
-say "  scratch env    : $UPDATE_ENV  (removed once the export succeeds)"
+say "  pipeline env   : $SOURCE_ENV  ->  $UPDATE_ENV"
+say "  analysis env   : $SOURCE_ANALYSIS_ENV  ->  $UPDATE_ANALYSIS_ENV"
+say "  scratch envs   : removed once both exports succeed"
 say "  logs           : $LOGDIR"
 say ""
 
+# Clone one environment into a scratch copy, update everything in it, and print what moved.
+# $3 is the suffix that keeps the two environments' log files apart; the pipeline's is empty,
+# so its file names are unchanged.
+prepare_env() {
+    local source="$1" scratch="$2" tag="$3" changed
+    conda create --name "$scratch" --clone "$source" --yes > "$LOGDIR/clone$tag.log" 2>&1 \
+        || { say "      FAILED to clone '$source' - see $LOGDIR/clone$tag.log"; exit 1; }
+    conda update --all --name "$scratch" --yes > "$LOGDIR/update$tag.log" 2>&1 \
+        || { say "      FAILED to update '$scratch' - see $LOGDIR/update$tag.log"; exit 1; }
+    conda list --name "$scratch" --export > "$LOGDIR/packages-after$tag.txt"
+
+    # What actually moved: the release-note material, and the first thing to read on a failure.
+    awk -F'=' '
+        FNR == NR { if ($0 !~ /^#/ && NF >= 2) before[$1] = $2; next }
+        /^#/ || NF < 2 { next }
+        {
+            if (!($1 in before))          { printf "%s\t(new)\t%s\n", $1, $2 }
+            else if (before[$1] != $2)    { printf "%s\t%s\t%s\n", $1, before[$1], $2 }
+            seen[$1] = 1
+        }
+        END {
+            for (p in before) if (!(p in seen)) printf "%s\t%s\t(removed)\n", p, before[p]
+        }
+    ' "$LOGDIR/packages-before$tag.txt" "$LOGDIR/packages-after$tag.txt" \
+        | sort > "$LOGDIR/packages-changed$tag.tsv"
+
+    changed=$(wc -l < "$LOGDIR/packages-changed$tag.tsv")
+    say "      $scratch: $changed package(s) changed - see $LOGDIR/packages-changed$tag.tsv"
+    if [ "$changed" -gt 0 ]; then
+        say ""
+        { printf 'PACKAGE\tBEFORE\tAFTER\n'; cat "$LOGDIR/packages-changed$tag.tsv"; } \
+            | column -t -s $'\t' | sed 's/^/      /' | tee -a "$LOGDIR/summary.txt"
+        say ""
+    fi
+}
+
 # ---------------------------------------------------------------- snapshot and clone ----
-say "[1/5] Recording the current tool set..."
+say "[1/5] Recording the current tool sets..."
 conda list --name "$SOURCE_ENV" --export > "$LOGDIR/packages-before.txt"
-say "      $(grep -c '^[^#]' "$LOGDIR/packages-before.txt") packages"
+conda list --name "$SOURCE_ANALYSIS_ENV" --export > "$LOGDIR/packages-before-analysis.txt"
+say "      $SOURCE_ENV: $(grep -c '^[^#]' "$LOGDIR/packages-before.txt") packages"
+say "      $SOURCE_ANALYSIS_ENV: $(grep -c '^[^#]' "$LOGDIR/packages-before-analysis.txt") packages"
 
-say "[2/5] Cloning to '$UPDATE_ENV' and updating everything..."
-conda create --name "$UPDATE_ENV" --clone "$SOURCE_ENV" --yes > "$LOGDIR/clone.log" 2>&1 \
-    || { say "      FAILED - see $LOGDIR/clone.log"; exit 1; }
-conda update --all --name "$UPDATE_ENV" --yes > "$LOGDIR/update.log" 2>&1 \
-    || { say "      FAILED - see $LOGDIR/update.log"; exit 1; }
-conda list --name "$UPDATE_ENV" --export > "$LOGDIR/packages-after.txt"
+say "[2/5] Cloning both and updating everything..."
+prepare_env "$SOURCE_ENV" "$UPDATE_ENV" ""
+prepare_env "$SOURCE_ANALYSIS_ENV" "$UPDATE_ANALYSIS_ENV" "-analysis"
 
-# What actually moved: the release-note material, and the first thing to read on a failure.
-awk -F'=' '
-    FNR == NR { if ($0 !~ /^#/ && NF >= 2) before[$1] = $2; next }
-    /^#/ || NF < 2 { next }
-    {
-        if (!($1 in before))          { printf "%s\t(new)\t%s\n", $1, $2 }
-        else if (before[$1] != $2)    { printf "%s\t%s\t%s\n", $1, before[$1], $2 }
-        seen[$1] = 1
-    }
-    END {
-        for (p in before) if (!(p in seen)) printf "%s\t%s\t(removed)\n", p, before[p]
-    }
-' "$LOGDIR/packages-before.txt" "$LOGDIR/packages-after.txt" | sort > "$LOGDIR/packages-changed.tsv"
-
-CHANGED=$(wc -l < "$LOGDIR/packages-changed.tsv")
-say "      $CHANGED package(s) changed - see $LOGDIR/packages-changed.tsv"
-if [ "$CHANGED" -gt 0 ]; then
-    say ""
-    { printf 'PACKAGE\tBEFORE\tAFTER\n'; cat "$LOGDIR/packages-changed.tsv"; } \
-        | column -t -s $'\t' | sed 's/^/      /' | tee -a "$LOGDIR/summary.txt"
+# Both environments carry Nextflow: the analysis layer is a pipeline of its own, and
+# install/environment-analysis.yml says it carries the pipeline environment's version. Two
+# independent solves can land either side of a release, so the claim is checked rather than
+# assumed. A warning, because it is the suite that says whether the pair works.
+NF_PIPELINE=$(sed -n 's/^nextflow=\([^=]*\)=.*/\1/p' "$LOGDIR/packages-after.txt" | head -1)
+NF_ANALYSIS=$(sed -n 's/^nextflow=\([^=]*\)=.*/\1/p' "$LOGDIR/packages-after-analysis.txt" | head -1)
+if [ "$NF_PIPELINE" != "$NF_ANALYSIS" ]; then
+    say "      WARNING: nextflow is $NF_PIPELINE in '$UPDATE_ENV' and $NF_ANALYSIS in"
+    say "               '$UPDATE_ANALYSIS_ENV'. Settle which version ships before freezing,"
+    say "               or a user's analyses run on a different engine from their runs."
     say ""
 fi
 
 # ------------------------------------------------------------------------- test ---------
-say "[3/5] Running the full test suite against '$UPDATE_ENV'..."
+say "[3/5] Running the full test suite against both scratch environments..."
 ENV_PREFIX="$(conda env list | awk -v n="$UPDATE_ENV" '$1 == n {print $NF}')"
 if [ -z "$ENV_PREFIX" ] || [ ! -x "$ENV_PREFIX/bin/nextflow" ]; then
     say "      ERROR: '$UPDATE_ENV' has no usable nextflow at $ENV_PREFIX/bin/nextflow"
     exit 1
 fi
+ANALYSIS_PREFIX="$(conda env list | awk -v n="$UPDATE_ANALYSIS_ENV" '$1 == n {print $NF}')"
+if [ -z "$ANALYSIS_PREFIX" ] || [ ! -x "$ANALYSIS_PREFIX/bin/Rscript" ]; then
+    say "      ERROR: '$UPDATE_ANALYSIS_ENV' has no usable Rscript at $ANALYSIS_PREFIX/bin/Rscript"
+    exit 1
+fi
 
+# Both named explicitly. The suite finds an analysis environment by globbing
+# PoolSeqFlow-*-analysis and taking the first that has an Rscript, which is whichever name
+# sorts first rather than the one being prepared.
 set +e
-TEST_CONDA_ENV="$ENV_PREFIX" ./test/run_tests.sh > "$LOGDIR/tests.log" 2>&1
+TEST_CONDA_ENV="$ENV_PREFIX" TEST_ANALYSIS_ENV="$ANALYSIS_PREFIX" \
+    ./test/run_tests.sh > "$LOGDIR/tests.log" 2>&1
 TEST_STATUS=$?
 set -e
 
@@ -148,35 +226,46 @@ say ""
 if [ "$TEST_STATUS" -ne 0 ]; then
     say "STOPPED: the test suite failed (status $TEST_STATUS). Nothing was exported."
     say ""
-    say "      install/environment.yml is unchanged, so the current release still"
-    say "      describes a tool set that works."
+    say "      Both install/environment.yml and install/environment-analysis.yml are"
+    say "      unchanged, so the current release still describes a tool set that works."
     say ""
-    say "      '$UPDATE_ENV' has been kept so the failure can be reproduced:"
-    say "          TEST_CONDA_ENV=$ENV_PREFIX ./test/run_tests.sh --suite <name>"
+    say "      Both scratch environments have been kept so the failure can be reproduced:"
+    say "          TEST_CONDA_ENV=$ENV_PREFIX \\"
+    say "          TEST_ANALYSIS_ENV=$ANALYSIS_PREFIX \\"
+    say "              ./test/run_tests.sh --suite <name>"
     say ""
-    say "      Start with $LOGDIR/packages-changed.tsv - the failure is almost"
-    say "      certainly one of the packages listed there."
+    say "      Start with $LOGDIR/packages-changed.tsv and"
+    say "      $LOGDIR/packages-changed-analysis.tsv - the failure is"
+    say "      almost certainly one of the packages listed there."
     say ""
-    say "      Discard the attempt with:  conda env remove -n $UPDATE_ENV"
+    say "      Discard the attempt with:"
+    say "          conda env remove -n $UPDATE_ENV"
+    say "          conda env remove -n $UPDATE_ANALYSIS_ENV"
     exit 1
 fi
 
 # ----------------------------------------------------------------------- export ---------
-say "[4/5] Tests passed. Exporting '$UPDATE_ENV' to install/environment.yml..."
-bash dev/scripts/export-environment.sh "$UPDATE_ENV" >> "$LOGDIR/summary.txt" 2>&1
+say "[4/5] Tests passed. Exporting both to install/environment*.yml..."
+for e in "$UPDATE_ENV" "$UPDATE_ANALYSIS_ENV"; do
+    bash dev/scripts/export-environment.sh "$e" >> "$LOGDIR/summary.txt" 2>&1 \
+        || { say "      FAILED to export '$e' - see $LOGDIR/summary.txt"; exit 1; }
+done
 
-# Removed only after the export has succeeded, so a failure there does not lose the solve.
-say "[5/5] Removing the scratch environment..."
-conda env remove --name "$UPDATE_ENV" --yes > "$LOGDIR/cleanup.log" 2>&1 \
-    || say "      WARNING: could not remove '$UPDATE_ENV' - see $LOGDIR/cleanup.log"
+# Removed only after both exports have succeeded, so a failure there does not lose the solve.
+say "[5/5] Removing the scratch environments..."
+for e in "$UPDATE_ENV" "$UPDATE_ANALYSIS_ENV"; do
+    conda env remove --name "$e" --yes >> "$LOGDIR/cleanup.log" 2>&1 \
+        || say "      WARNING: could not remove '$e' - see $LOGDIR/cleanup.log"
+done
 
 say ""
 say "Done. Next:"
-say "    git diff install/environment.yml"
+say "    git diff install/environment.yml install/environment-analysis.yml"
 say "    dev/scripts/bump-version.sh $NEW"
-say "    ./PoolSeqFlow install          # builds PoolSeqFlow-$NEW from the exported file"
+say "    ./PoolSeqFlow install                   # builds PoolSeqFlow-$NEW"
+say "    ./PoolSeqFlow analysis install          # builds PoolSeqFlow-$NEW-analysis"
 say "    ./PoolSeqFlow check"
 say ""
-say "The release environment is built by that install, from install/environment.yml, so"
-say "what ships and what was tested are the same set - and the file, not a long-lived"
-say "environment, is what carries it forward."
+say "Both release environments are built by those installs, from the two exported files, so"
+say "what ships and what was tested are the same set - and the files, not long-lived"
+say "environments, are what carry them forward."

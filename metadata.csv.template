@@ -56,6 +56,12 @@
 # give the SAME value, and a blank cell counts as a different answer rather than as agreement.
 # Leave the column out and every pool uses the global poolSize.
 #
+# param_capMaxDepth IS A PROPERTY OF THE ROW, not of the pool: it caps one BAM, and each row
+# is one BAM. So rows of one pool may carry different values and nothing objects. It takes -1
+# to measure this sample's ceiling from its own depth histogram, 0 to leave it uncapped, or a
+# depth to cap it at; anything else is refused by name. Leave it blank to use the global
+# capBAM.maxDepth, which ships as -1.
+#
 # param_adapter1 and param_adapter2 override trim_galore.adapter1 / adapter2 for that row
 # only. Give both or neither. A value containing a comma must be quoted: "Pop1, coastal".
 #
