@@ -295,11 +295,9 @@ Pipeline helpers
 Configuration
 
   parameters.config            PARSES
-
-All 21 checks passed.
 ```
 
-It covers three things:
+It ends by reporting how many checks passed, and **fails loudly if any did not** rather than summarizing. It covers three things:
 
 **Every command the pipeline invokes**, with the version each reports. Once you have a `parameters.config`, the list is read from `params.software` through `nextflow config` rather than assumed — so a command [repointed at a system binary](#using-system-tools) is checked as *you* configured it. That override is the setting most likely to be wrong and least likely to announce itself.
 
@@ -576,7 +574,7 @@ Run it in your project directory. It backs your file up, rebuilds it from the cu
 | `Still yours to set` | The pipeline works the value out itself now, and your new config carries the parameter **commented out** — uncomment it to take it back |
 | `No longer used` | Your file had a parameter this release does not use |
 
-`Still yours to set` is the one people mistake for a loss. Coming from 2.2.0 it covers thirteen parameters — the whole `cores` block and every `options` string — none of which is gone. They are computed by default and sit commented out in your new config, so setting one is a matter of removing a `//`. It is distinct from `Now computed by the pipeline`, where the value is derived from other parameters and there is no line to uncomment.
+`Still yours to set` is the one people mistake for a loss. Coming from 2.2.0 it covers thirteen parameters — the eight `cores` values and the five `options` strings your file already had — none of which is gone. They are computed by default and sit commented out in your new config, so setting one is a matter of removing a `//`. It is distinct from `Now computed by the pipeline`, where the value is derived from other parameters and there is no line to uncomment.
 
 It also ends with a list of **files to move yourself**, and moves none of them. If you are upgrading from 2.2.0 or older, there will be several, because the layout changed: your reads, reference and sample table used to live under the storage directory and now belong on `mainDir`. It prints the exact `mv` commands, having checked which files are actually there — read them before running them.
 
@@ -612,7 +610,7 @@ Carrying `2000` across would leave you capped at a number this release never cho
 
 **The installation is separate from your project now.** Earlier releases were run from the folder you unpacked, with `parameters.config` beside the pipeline. From 3.0 you install once, releases sit side by side, and you run the installed command from your own project directory. If your project *is* the old unpacked folder, move it out — the pipeline refuses to run inside its own installation.
 
-**Some parameters are gone**: `params.gff`, `params.dir.scripts`, and the temporary-directory subpaths. `migrate_config` reports each as no longer used. The `cores` block and the `options` strings look gone too and are not — they are computed now and ship commented out, which the report says under `Computed for you now`.
+**Some parameters are gone**: `params.gff`, `params.dir.scripts` and `params.dir.output.temp`, along with `rgTagsFile` and `rgTagsPath` from the section above. `migrate_config` reports each under `No longer used`. The `cores` block and the `options` strings look gone too and are not — they are computed now and ship commented out, which the report says under `Still yours to set`.
 
 **Multi-run is new**, and off by default — `multiRun = false` changes nothing about how an existing project behaves.
 
@@ -914,7 +912,7 @@ Note that this applies to the permanent copies too, not just the scratch ones: t
 ## The Filter Chain
 <!--@ page: filter-chain -->
 
-A read that makes it into a frequency table has passed nine separate filters spread across four steps. This page walks the whole chain in order: what each filter removes, which parameter controls it, and what you are trading when you move that parameter.
+A variant that reaches a frequency table has come through nine stages spread across four steps — six that remove something and three that only rewrite or split. A **read** is subject to the first three; after that the chain works on sites and alleles. This page walks the whole chain in order: what each stage removes, which parameter controls it, and what you are trading when you move that parameter.
 
 If you are trying to work out why a variant you expected is missing, read this page top to bottom — the answer is usually earlier in the chain than people look.
 
