@@ -389,20 +389,34 @@ Details and the full ladder: [Resources](#resources).
 One row per FASTQ pair. `SampleID` must match the sample name `readPattern` takes from your filenames — with `*_R{1,2}.fq.gz`, the file `Sample1T1Rep1_R1.fq.gz` gives `Sample1T1Rep1`.
 
 ```csv
-SampleID,RG_Sample,RG_Library,RG_Platform,param_poolSize,population,timepoint
-Sample1T1Rep1,Sample1T1,Lib1,ILLUMINA,50,Pop1,T1
-Sample1T1Rep2,Sample1T1,Lib1,ILLUMINA,50,Pop1,T1
-Sample2T1Rep1,Sample2T1,Lib1,ILLUMINA,40,Pop2,T1
-Sample2T1Rep2,Sample2T1,Lib1,ILLUMINA,40,Pop2,T1
+SampleID,RG_Sample,RG_Library,RG_Platform,param_poolSize,exp_population,exp_time,pt_resistance,cov_temperature
+Sample1T1Rep1,Sample1T1,Lib1,ILLUMINA,50,Pop1,T1,susceptible,21.5
+Sample1T1Rep2,Sample1T1,Lib1,ILLUMINA,50,Pop1,T1,susceptible,21.5
+Sample1T2Rep1,Sample1T2,Lib1,ILLUMINA,50,Pop1,T2,resistant,22.1
+Sample1T2Rep2,Sample1T2,Lib1,ILLUMINA,50,Pop1,T2,resistant,22.1
+Sample2T1Rep1,Sample2T1,Lib1,ILLUMINA,40,Pop2,T1,susceptible,18.0
+Sample2T1Rep2,Sample2T1,Lib1,ILLUMINA,40,Pop2,T1,susceptible,18.0
+Sample2T2Rep1,Sample2T2,Lib1,ILLUMINA,40,Pop2,T2,resistant,19.4
+Sample2T2Rep2,Sample2T2,Lib1,ILLUMINA,40,Pop2,T2,resistant,19.4
 ```
 
 Three things this file decides:
 
-- **`RG_Sample` decides what counts as a sample.** Rows sharing one are merged into a single VCF column and their read depths add together. The four rows above produce **two** columns, not four.
+- **`RG_Sample` decides what counts as a sample.** Rows sharing one are merged into a single VCF column and their read depths add together. The eight rows above produce **four** columns, not eight — two populations at two timepoints, each sequenced twice.
 - **`param_poolSize` sets that pool's detection limit.** It describes the pool rather than the row, so rows sharing an `RG_Sample` have to agree on it. Leave the column out and every pool uses the global `poolSize`.
 - **Row order decides column order** in the VCF and the frequency tables.
 
-`population` and `timepoint` are columns of your own — add as many as your experiment needs. The pipeline records them and never interprets them, and editing them never invalidates results you already have.
+**The prefix is what a column means.** No pipeline step reads any of the three below — [analysis modules](#the-experimental-design) do, and they build their whole design from them:
+
+| Prefix | What it holds | Example above |
+|---|---|---|
+| `exp_` | something you **set** — the experiment's own structure | `exp_population`, `exp_time` |
+| `pt_` | a phenotype you **measured** on the pool, and are testing against | `pt_resistance` |
+| `cov_` | measured too, but neither set nor the thing being tested | `cov_temperature` |
+
+Add as many of each as your experiment needs; the names after the prefix are yours. A column with **no** prefix is recorded just as faithfully and read by nothing, so a variable you might analyze later is worth prefixing now. Editing any of them never invalidates results you already have. All three describe the **pool** — what differs between two rows of one pool takes no prefix, because once their reads are merged nothing can tell them apart again. [Metadata](#kinds-of-metadata-column) has the full account.
+
+**`exp_time` is the one name treated specially.** A project that has it must set `analysis.timeVar.kind` before any analysis will run — the pipeline itself does not care. Leave the column out if this is not a time course. See [The time axis](#the-time-axis).
 
 All of it is covered in [Metadata](#metadata). Getting `RG_Sample` wrong is the most common way to end up with results that are valid but not what you meant.
 
