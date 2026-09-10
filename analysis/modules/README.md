@@ -158,15 +158,31 @@ A published module is a **gzipped tarball unpacking to `<name>/`**, with `manife
 | `name` | the module's name, and the directory it installs into |
 | `version` | its own version, moving on its own timetable, never the pipeline's |
 | `contract` | the published-table contract it reads. A release installs only its own |
+| `frame` | the oldest `analysis/frame.version` it runs on, copied from its manifest |
+| `environment` | the oldest release whose analysis environment holds what it needs, likewise |
 | `url` | where the tarball is |
 | `sha256` | the tarball's checksum |
 | `summary` | one line, shown by `available` |
 
+`frame` and `environment` are what let one catalogue serve several releases at once: `install <name>` takes the newest version **your** release can actually run rather than the newest that exists. They repeat what the manifest already says because the choice is made before the tarball is downloaded.
+
 Several rows may name one module. `install <name>` takes the newest version whose `contract` this release speaks; naming a version installs exactly that one, which is what a paper's methods section should say.
 
-The catalogue carries two headers of its own, and they are not interchangeable. **`#!index-format`** is the column layout, checked before a single row is read — the columns are parsed by position, so a release that met a layout it did not know would take the wrong field from each row, and it refuses instead. Bump it only when the columns change, which stops every already-published release from reading the file. **`#!index-version`** is what is in the catalogue, in the same `YYYYMMDD.NNN` form, bumped on every publish; nothing is ever refused on it, because a release has to be able to read a catalogue newer than itself. `modules available` prints it, and `install` records it in the `.source` file beside the module — which is the only record afterwards of which catalogue a module came from.
+The catalogue carries two headers of its own, and they are not interchangeable. **`#!index-format`** is the column layout, checked before a single row is read. The columns are matched **by name** out of the header row, so their order does not matter and a column your release has never heard of is ignored rather than misread — which means adding one is additive and needs no bump. Bump it only for a change that cannot be read at all: a required column renamed or removed, or one whose meaning changed under the same name. That stops every already-published release from reading the file, so it is close to a last resort. **`#!index-version`** is what is in the catalogue, in the same `YYYYMMDD.NNN` form, bumped on every publish; nothing is ever refused on it, because a release has to be able to read a catalogue newer than itself. `modules available` prints it, and `install` records it in the `.source` file beside the module — which is the only record afterwards of which catalogue a module came from.
 
 `dev/scripts/bump-analysis-version.sh index` moves it, and `dev/scripts/check-analysis-versions.sh` refuses a change to the rows that left it behind.
+
+For a module in this repository, one command does all of it:
+
+```
+dev/scripts/publish-module.sh <name> [ref]
+```
+
+It builds the tarball into `modules-repo/`, reads `contract`, `frame`, `environment` and `summary` out of the module's own manifest at that ref, appends the row, and bumps `#!index-version`. It refuses to overwrite a version that is already published — somebody may have installed it, and its checksum is in the catalogue — so a change means bumping the module's version and publishing that.
+
+**The tarball is built from the extracted tree rather than piped straight out of `git archive`, and that is not fussiness.** `git archive <ref>:analysis/modules/<name>` reads a subtree, and `.gitattributes` patterns are anchored at the repository root — so `analysis/modules/*/test/ export-ignore` does not match `test/` inside that subtree, and the module's own cases would ship where a release tarball excludes them. Archiving a tree also stamps `mtime` as *now*, so two builds of one ref would not match. The script drops `test/` and repacks with the commit's timestamp, which makes republishing the same ref produce the same bytes.
+
+The tarballs are committed and served from the site alongside the catalogue, so **a published row and the file it names go out in one commit** — otherwise the row advertises a download that 404s until the next deploy.
 
 Two rules the installer enforces, so build for them:
 

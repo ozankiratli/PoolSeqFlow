@@ -147,8 +147,39 @@ test_the_module_catalogue_never_reaches_a_release() {
     assert_not_contains "$listing" "index.tsv" "nor any copy of it under another name"
 }
 
-# Its columns are what the wrapper reads by position, so a reordered header would install the
-# wrong thing from the right row.
+# EVERY PUBLISHED ROW MUST HAVE ITS TARBALL, AND THE CHECKSUM MUST BE THAT TARBALL'S.
+#
+# The catalogue and the files it advertises are deployed together, from one directory, so a row
+# whose tarball never landed is a 404 for everyone who runs `modules install` between the two
+# deploys. install verifies the checksum before unpacking anything, so a stale one is not a
+# security hole - it is an install that refuses with nothing the user can do about it.
+#
+# Only rows pointing into this repository are checked. A third-party row would name a host
+# nothing here can see, and asserting on that would fail for a reason that is not ours.
+test_every_catalogue_row_has_the_tarball_it_advertises() {
+    local index="$REPO_ROOT/modules-repo/index.tsv"
+    [ -f "$index" ] || { fail_case "modules-repo/index.tsv is missing"; return; }
+    command -v sha256sum > /dev/null 2>&1 || { skip_case "no sha256sum"; return; }
+
+    local rows=0 name version url sha file
+    while IFS=$'\t' read -r name version _contract _frame _env url sha _summary; do
+        case "$name" in ''|'#'*|name) continue ;; esac
+        case "$url" in *"/modules-repo/"*) ;; *) continue ;; esac
+        rows=$((rows + 1))
+        file="$REPO_ROOT/modules-repo/${url##*/}"
+        [ -f "$file" ] || { fail_case "$name $version: the catalogue names ${url##*/}, which is not in modules-repo/"
+                            continue; }
+        local actual; actual=$(sha256sum "$file" | awk '{print $1}')
+        assert_eq "$sha" "$actual" "$name $version: the row's sha256 is not ${url##*/}'s"
+    done < "$index"
+
+    # A catalogue with no rows of ours passes this vacuously, which is true of an unpublished
+    # one and must not be mistaken for a check that ran.
+    [ "$rows" -gt 0 ] || skip_case "no rows pointing into this repository yet"
+}
+
+# The wrapper matches columns by name out of this header row, so a name that is absent from it
+# reads as an empty field in every row rather than as an error.
 test_the_module_catalogue_header_is_the_one_the_wrapper_reads() {
     local header wanted column
     header=$(grep -v '^[[:space:]]*#' "$REPO_ROOT/modules-repo/index.tsv" \

@@ -45,9 +45,13 @@ done
 # from .gitattributes: an export-ignore added by accident would take the file out of this check
 # as well as out of the archive, and the check would pass. So an export-ignore fails here until
 # it is named in this list too.
+#
+# modules-repo/ is the whole directory and not just the catalogue in it. It holds the published
+# module tarballs as well, and those are served from the site: a copy inside a release would be
+# a second answer to what can be installed, frozen on the day the release was built.
 excluded='docs/ .github/ mkdocs.yml .gitignore .gitattributes dev/ Project/ test/
           .claude/ CLAUDE.md
-          analysis/modules/*/test/ modules-repo/index.tsv'
+          analysis/modules/*/test/ modules-repo/'
 
 # Whether one tracked path is meant to reach the archive at all.
 ships() {
