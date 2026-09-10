@@ -2,7 +2,7 @@
 #
 # Verify a PoolSeqFlow installation before a run depends on it.
 #
-# Usage:  ./PoolSeqFlow check          (the wrapper activates the environment first)
+# Usage:  ./PoolSeqFlow check install   (the wrapper activates the environment first)
 #
 # Checks two things:
 #   1. Every command the pipeline invokes resolves and runs, with its version.
@@ -48,6 +48,17 @@ CANONICAL="java cutadapt fastqc trim_galore samtools bamtools bwa bcftools vcfto
 }
 . "$INSTALL_DIR/lib/tool_version.sh"
 
+# THE ENVIRONMENT'S OWN COPY, NOT WHATEVER PATH FINDS. Every tool in CANONICAL is pinned in
+# install/environment.yml, so one resolving from outside means the environment is missing a
+# package and the system's copy is standing in - at some other version, and only on this
+# machine. Reporting that as OK is the failure this check exists to prevent, and it is silent:
+# the run works here and does not reproduce anywhere else.
+#
+# Empty when the script is run without the environment active. Then there is nothing to compare
+# against and the section below says so rather than checking PATH and calling it an answer.
+ENV_PREFIX="${CONDA_PREFIX:-}"
+[ "$(basename "${ENV_PREFIX:-.}")" = "$ENV_NAME" ] || ENV_PREFIX=""
+
 check_tool() {
     local name="$1" cmd="$2" resolved version
     checked=$((checked + 1))
@@ -56,6 +67,18 @@ check_tool() {
         printf '  %-14s %-12s %sMISSING%s  %s\n' "$name" "$cmd" "$RED" "$RESET" "not on PATH"
         missing=$((missing + 1))
         return
+    fi
+
+    if [ -n "$ENV_PREFIX" ]; then
+        case $resolved in
+            "$ENV_PREFIX"/*) ;;
+            *)
+                printf '  %-14s %-12s %sOUTSIDE THE ENVIRONMENT%s  %s\n' \
+                    "$name" "$cmd" "$RED" "$RESET" "$resolved"
+                missing=$((missing + 1))
+                return
+                ;;
+        esac
     fi
 
     version=$(tool_version "$name" "$cmd")
@@ -75,6 +98,12 @@ echo
 # ----------------------------------------------------------------- 1. tools --
 
 echo "Tools"
+if [ -n "$ENV_PREFIX" ]; then
+    printf '  %sfrom %s%s\n' "$DIM" "$ENV_PREFIX" "$RESET"
+else
+    printf '  %sfrom PATH: %s is not active, so nothing here says WHERE a tool came from%s\n' \
+        "$YELLOW" "$ENV_NAME" "$RESET"
+fi
 echo
 
 declare -a NAMES=() CMDS=()
@@ -96,9 +125,14 @@ echo
 
 # Enumerated, not hand-listed. Everything in bin/ is run and needs its executable bit;
 # anything sourced lives in lib/ instead.
+#
+# The check scripts are in bin/ and are skipped here: they are run by the wrapper, not by a
+# process script, so they are not on the list of helpers a run depends on - and this one
+# reporting on itself says nothing, since it is already running.
 for path in bin/*; do
     f=$(basename "$path")
     [ -d "$path" ] && continue
+    case $f in check_install.sh|check_project.sh|check_analysis_install.sh) continue ;; esac
 
     checked=$((checked + 1))
     if [ ! -f "bin/$f" ]; then

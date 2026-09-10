@@ -5,7 +5,7 @@
 # email  : ozankiratli@protonmail.com
 #
 # Wrapper script for PoolSeqFlow
-# Usage: ./PoolSeqFlow {install|init|init_multi|check|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}
+# Usage: ./PoolSeqFlow {install|init|init_multi|check <target>|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}
 #  install        - creates this release's conda environment and installs the pipeline
 #  init           - populates the current directory as a project
 #  init_multi     - the same, plus multiRun on
@@ -46,7 +46,7 @@ eval "$(conda shell.bash hook)"
 VERSION="3.0.0"
 
 usage() {
-    echo "Usage: $0 {install|init|init_multi|check|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}"
+    echo "Usage: $0 {install|init|init_multi|check <target>|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}"
     exit 1
 }
 
@@ -133,18 +133,13 @@ require_project_config() {
 # else: migrate_config is the fix and must never be refused by this, and clean and dryclean read
 # no parameter it covers.
 require_migrated_config() {
-    grep -qE '^[[:space:]]*storageDir[[:space:]]*=' parameters.config && return 0
+    config_is_current parameters.config && return 0
 
     echo "ERROR: parameters.config was written for an older release of PoolSeqFlow." >&2
     echo "" >&2
     echo "It does not set storageDir, which every config for this release sets." >&2
 
-    # Named to show this is a recognized older file rather than a damaged one. Advisory only:
-    # the refusal above turns on storageDir alone, and migrate_config reports the full set.
-    local old found=""
-    for old in projectDir diploidy rgTagsFile rgTagsPath; do
-        grep -qE "^[[:space:]]*${old}[[:space:]]*=" parameters.config && found="$found $old"
-    done
+    local found; found=$(config_stale_parameters parameters.config)
     [ -n "$found" ] && { echo "Parameters in it that this release renamed or removed:" >&2
                          echo "   $found" >&2; }
 
@@ -159,7 +154,7 @@ require_migrated_config() {
 
 # What an installation consists of. Must match what `git archive` puts in a release tarball.
 PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf dryrun.nf analysis.nf \
-nextflow.config scripts bin lib analysis install parameters.config.template \
+nextflow.config scripts bin lib analysis install citations parameters.config.template \
 metadata.csv.template multi-run.csv.example manual README.md CHANGELOG.md LICENSE"
 
 # Payload files installed read-only. These are wiring rather than settings: a run reads them,
@@ -1057,28 +1052,70 @@ EOF
     return 1
 }
 
+# Two different questions, and neither answers the other: `install` asks whether the tools a
+# release is built to run are present in its own environment, `project` asks whether the files
+# and the commands THIS project names are good. A bare `check` is refused rather than assumed,
+# because whichever it picked would leave the other unchecked while reporting success.
+#
+# A function and not a nested `case`, so the arms below stay one level deep: two suite cases
+# read the wrapper's own arms to check them against its usage line, and a nested `install)`
+# would be read as a top-level subcommand.
+run_check() {
+    case "${1:-}" in
+        install)
+            require_install
+            require_env
+            bash "$INSTALL/bin/check_install.sh"
+            ;;
+        project)
+            require_install
+            require_project_config
+            require_migrated_config
+            # Last: nextflow config and the version probes both need the environment, and the
+            # refusals above must be reachable without one.
+            require_env
+            bash "$INSTALL/bin/check_project.sh"
+            ;;
+        *)
+            echo "Usage: $(basename "$0") check {install|project}" >&2
+            echo "" >&2
+            echo "  install   the tools and helpers this release is built to run," >&2
+            echo "            and that each comes from this release's own environment" >&2
+            echo "  project   the configuration and the commands this project names," >&2
+            echo "            read from the directory you are standing in" >&2
+            exit 1
+            ;;
+    esac
+}
+
 if [ "$#" -lt 1 ]; then
     usage
 fi
 
 COMMAND=$1
 
-# `analysis` is the one subcommand that carries words of its own - an analysis command, or the
-# module to run. How many follow that first word is each arm's own business, enforced there.
-# Every other subcommand takes none.
+# Two subcommands carry a word of their own. `analysis` takes an analysis command or the module
+# to run, and how many words follow that is each arm's own business, enforced there. `check`
+# takes exactly one, saying which check; an absent or unknown one is reported by its own arm,
+# which can name the two by name, so anything at all is passed through from here. Every other
+# subcommand takes none.
 ANALYSIS_COMMAND=""
 ANALYSIS_ARGS=()
+CHECK_TARGET=""
 if [ "$COMMAND" = "analysis" ]; then
     [ "$#" -ge 2 ] || usage_analysis
     ANALYSIS_COMMAND=$2
     shift 2
     ANALYSIS_ARGS=("$@")
+elif [ "$COMMAND" = "check" ]; then
+    [ "$#" -le 2 ] || usage
+    CHECK_TARGET="${2:-}"
 elif [ "$#" -ne 1 ]; then
     usage
 fi
 
 # What the user typed, for the messages that tell them to type it again somewhere else.
-INVOCATION="$COMMAND${ANALYSIS_COMMAND:+ $ANALYSIS_COMMAND}"
+INVOCATION="$COMMAND${ANALYSIS_COMMAND:+ $ANALYSIS_COMMAND}${CHECK_TARGET:+ $CHECK_TARGET}"
 
 # One environment per release, named from VERSION above so a bump carries it.
 ENV_NAME="PoolSeqFlow-${VERSION}"
@@ -1196,7 +1233,7 @@ case $COMMAND in
         report_other_envs
         # Against the DEPLOYED copy, which is the one that will run.
         conda activate "$ENV_NAME"
-        bash "$(install_prefix)/opt/PoolSeqFlow-${VERSION}/install/check_install.sh"
+        bash "$(install_prefix)/opt/PoolSeqFlow-${VERSION}/bin/check_install.sh"
         echo "Installation complete."
         echo ""
         echo "The analysis layer was copied with everything else, so 'PoolSeqFlow analysis'"
@@ -1221,9 +1258,7 @@ case $COMMAND in
         ;;
 
     check)
-        require_install
-        require_env
-        bash "$INSTALL/install/check_install.sh"
+        run_check "$CHECK_TARGET"
         ;;
     run|resume)
         # Resuming is what `run` already does: every step skips itself when its outputs are
@@ -1540,14 +1575,14 @@ EOF
                 echo ""
                 # Just created, so it is activated without the existence check the other arms make.
                 conda activate "$ANALYSIS_ENV"
-                bash "$INSTALL/install/check_analysis_install.sh"
+                bash "$INSTALL/bin/check_analysis_install.sh"
                 ;;
 
             check)
                 analysis_takes_no_more
                 require_analysis_install
                 require_analysis_env
-                bash "$INSTALL/install/check_analysis_install.sh"
+                bash "$INSTALL/bin/check_analysis_install.sh"
                 ;;
 
             complete)
