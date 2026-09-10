@@ -1,19 +1,30 @@
 #!/bin/bash
+#
+# The depth table: one row per site, one column per sample, each cell the site's read counts
+# comma separated, REF first and then each ALT.
+#
+#   createDepthFile.sh -v joint.vcf > <vcf>_snp_depth.tsv
+#
+# The header is written here and the column names are the VCF's own sample names, in the VCF's
+# order. TOTAL_AD is INFO/AD, the cohort's counts, and holds integers - depth2freq.awk converts
+# it along with the sample columns, which is what leaves a frequency there in the FREQUENCY
+# table under the same name.
 
-# Initialize variables
+# pipefail is load-bearing: the SAMPLENAMES pipeline below ends in `cut`, which succeeds
+# whatever bcftools did.
+set -euo pipefail
+
 VCF=""
 BCFTOOLS="bcftools"
 
-# Usage help function
 usage() {
-  echo "Usage: $0 -v <vcf-file> -t <threshold> -s <sensitivity> [-b <bcftools-path>]"
+  echo "Usage: $0 -v <vcf-file> [-b <bcftools-path>]"
   echo "Options:"
   echo "  -v <vcf-file>       Input VCF File (required)"
   echo "  -b <bcftools-path>  The path for bcftools. Default: 'bcftools'"
   exit 1
 }
 
-# Parse flags with getopts
 while getopts "v:b:" opt; do
   case $opt in
     v) VCF="$OPTARG" ;;
@@ -23,12 +34,15 @@ while getopts "v:b:" opt; do
   esac
 done
 
-# Validate required flags
 if [ -z "$VCF" ]; then
   echo "Error: -v <vcf-file>, is required" >&2
   usage
 fi
 
-SAMPLENAMES=`${BCFTOOLS} view -h ${VCF} | grep '^#CHROM' | cut -f10-`
+SAMPLENAMES=$(${BCFTOOLS} view -h ${VCF} | grep '^#CHROM' | cut -f10-)
+if [ -z "$SAMPLENAMES" ]; then
+  echo "Error: no sample columns found in the #CHROM header of ${VCF}" >&2
+  exit 1
+fi
 echo -e "CHROM\tPOS\tREF\tALT\tTOTAL_AD\t$SAMPLENAMES"
 ${BCFTOOLS} query -f '%CHROM\t%POS\t%REF\t%ALT\t%INFO/AD[\t%AD]\n' ${VCF}

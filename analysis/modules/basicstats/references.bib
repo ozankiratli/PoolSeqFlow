@@ -1,0 +1,63 @@
+% What a basicstats analysis should be cited with: the statistics it computes and the R
+% packages it computes them in. Merged with PoolSeqFlow, Nextflow and R by the frame, and
+% written into every published folder as CITATIONS.md and references.bib.
+%
+% This file is the one to edit; it compiles to citations.json beside it with
+% dev/scripts/bib2citations.py, and 00_static fails when the two disagree.
+%
+% A 'note' says what the entry is cited FOR. A method is not a tool, so an entry for one
+% names no r_package and no version is asked of anything: what is credited is the estimator.
+% The three that do name an r_package have their versions asked of R at run time.
+%
+% Each note states exactly what this module takes from the paper, and says so where the form
+% used is implied by a paper rather than written in it. The reading behind these choices,
+% including the other effective sample size in circulation, is the manual's Bibliography -
+% which a static test keeps a superset of every DOI below.
+
+@article{nei1973diversity,
+  group   = {The statistics PoolSeqFlow computes},
+  id      = {nei1973},
+  name    = {Nei's gene diversity},
+  authors = {Nei, Masatoshi},
+  title   = {Analysis of Gene Diversity in Subdivided Populations},
+  journal = {Proceedings of the National Academy of Sciences},
+  volume  = {70},
+  number  = {12},
+  pages   = {3321--3323},
+  year    = {1973},
+  doi     = {10.1073/pnas.70.12.3321},
+  note    = {The diversity statistic this module reports, H = 1 - sum(p_i^2), summed over every allele at a site rather than over two. It is defined for any number of alleles, which is why a triallelic site needs no collapsing here.},
+}
+
+@article{ferretti2013pool,
+  group   = {The statistics PoolSeqFlow computes},
+  id      = {ferretti2013},
+  name    = {Population genomics from pool sequencing},
+  authors = {Ferretti, Luca and Ramos-Onsins, Sebastian E. and P{\'e}rez-Enciso, Miguel},
+  title   = {Population genomics from pool sequencing},
+  journal = {Molecular Ecology},
+  volume  = {22},
+  number  = {22},
+  pages   = {5561--5576},
+  year    = {2013},
+  doi     = {10.1111/mec.12522},
+  note    = {Why a pooled estimate needs correcting at all: individuals are sampled into the pool and reads are sampled from the pool, so an allele frequency carries both, and the estimator has to account for the smaller of the two.},
+}
+
+% The effective sample size this module weights by is credited in analysis/references.bib, not
+% here. n_eff is library code that every module calls, so its citation belongs to the layer
+% rather than to one module - and a BibTeX key may be defined once across the whole manual.
+
+@misc{rdatatable,
+  id        = {datatable},
+  name      = {data.table},
+  r_package = {data.table},
+  authors   = {Barrett, Tyson and Dowle, Matt and Srinivasan, Arun and Gorecki, Jan and Chirico, Michael and Hocking, Toby and Schwendinger, Benjamin and Krylov, Ivan},
+  title     = {data.table: Extension of `data.frame`},
+  url       = {https://CRAN.R-project.org/package=data.table},
+  note      = {Reads the published frequency and depth tables, which run to millions of rows.},
+}
+
+% ggplot2 and jsonlite are credited in analysis/references.bib. Every module reads the design as
+% JSON and most of them draw something, so both belong to the layer rather than to one module -
+% and a BibTeX key may be defined once across the whole manual.

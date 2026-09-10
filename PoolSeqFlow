@@ -5,152 +5,1340 @@
 # email  : ozankiratli@protonmail.com
 #
 # Wrapper script for PoolSeqFlow
-# Usage: ./PoolSeqFlow {install|check|run|migrate_config|clean|reset|version|cite|uninstall}
-#  install        - creates the conda environment using environment.yml, then verifies it
-#  check          - verifies the installation: every tool resolves, helpers are
-#                   executable, and parameters.config parses
-#  run            - runs the pipeline; completed steps are detected and skipped
-#                   automatically, so this both starts and resumes a run
+# Usage: ./PoolSeqFlow {install|init|init_multi|check|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}
+#  install        - creates this release's conda environment and installs the pipeline
+#  init           - populates the current directory as a project
+#  init_multi     - the same, plus multiRun on
+#  check          - verifies the installation
+#  run            - runs the pipeline; also resumes one
+#  dryrun         - creates the directory tree a run would write, empty
+#  dryclean       - removes that preview
 #  migrate_config - carries an older parameters.config onto the current template
 #  clean          - cleans the Nextflow work directory
-#  reset          - cleans the Nextflow work directory and deletes all output files. (Use with caution!)
-#  cite           - prints how to cite this copy, and which DOI to use
-#  uninstall      - removes the conda environment
+#  reset          - deletes all output files as well. (Use with caution!)
+#  analysis       - the analysis layer, which takes one word of its own:
+#                     install    - creates this release's analysis conda environment
+#                     check      - verifies the analysis installation
+#                     modules    - lists, installs and removes analysis modules
+#                     <module>   - runs one analysis module and writes its results
+#                     complete   - moves finished analyses to permanent storage
+#                     version    - prints the version of this copy
+#                     cite       - prints how to cite it, and R and the packages it runs on
+#                     uninstall  - removes this release's analysis conda environment
+#  version        - prints the version of this copy
+#  cite           - prints how to cite this copy
+#  list           - lists what is installed on this machine
+#  uninstall      - removes one installed version, asking which when several exist, and
+#                   always confirming before anything goes
+#  uninstall_all  - removes every PoolSeqFlow environment and installation
+#
+# Each top-level subcommand takes no arguments. `analysis` takes one word of its own; a module
+# name takes an optional `nocpp` after it, and `analysis modules` takes a verb plus whatever
+# that verb acts on.
+# POOLSEQFLOW_PREFIX and POOLSEQFLOW_HOME adjust it.
+#
+# The analysis layer ships with the pipeline and is enabled separately: `analysis install`
+# creates the conda environment that carries R, which nothing else here creates.
 
 set -e
 eval "$(conda shell.bash hook)"
 
 VERSION="2.2.0"
 
-# Zenodo concept DOI - the software as a whole. It always resolves to the newest
-# release and never changes, which is why it is the one on the badge and in the
-# docs. Every release ALSO gets its own version DOI, and that is the one a paper
-# should carry, because results depend on the version. `cite` says so.
-CONCEPT_DOI="10.5281/zenodo.19245611"
-
 usage() {
-    echo "Usage: $0 {install|check|run|migrate_config|clean|reset|version|cite|uninstall}"
+    echo "Usage: $0 {install|init|init_multi|check|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}"
     exit 1
 }
 
-# Resolve a setting through Nextflow rather than parsing parameters.config by hand -
-# values are interpolated (workDir is built from mainDir), so text matching gets them
-# wrong. Requires the conda environment to be active.
-nf_config_value() {
-    nextflow config -flat 2>/dev/null | sed -n "s|^$1 = ||p" | head -1 | tr -d "'\""
+# The analysis layer's own words, shown when `analysis` arrives without one.
+usage_analysis() {
+    echo "Usage: $0 analysis {install|check|modules <command>|<module> [nocpp]|complete|version|cite|uninstall}"
+    echo "  nocpp    run the module's plain-R path, where it has both. Slower, and needs no compiler."
+    exit 1
 }
 
-if [ "$#" -ne 1 ]; then
+# The module store's own words.
+usage_modules() {
+    echo "Usage: $0 analysis modules {list|available|install <module> [version]|uninstall <module>}"
+    exit 1
+}
+
+# Refuses when an analysis arm was handed a word it has no use for. Called per arm: `modules`
+# and the verbs under it take words the others do not.
+analysis_takes_no_more() {
+    if [ "${#ANALYSIS_ARGS[@]}" -ne 0 ]; then
+        echo "ERROR: 'analysis $ANALYSIS_COMMAND' takes no further argument." >&2
+        usage_analysis
+    fi
+}
+
+# Stamped by `install` into the copy it deploys; empty everywhere else. A default, not an
+# override: POOLSEQFLOW_HOME still wins.
+POOLSEQFLOW_INSTALLED_HOME=""
+
+# Where this copy of PoolSeqFlow lives - the pipeline, scripts/ and bin/ - not the project,
+# which is the directory you are standing in.
+if [ -n "${POOLSEQFLOW_HOME:-}" ]; then
+    INSTALL="$POOLSEQFLOW_HOME"
+elif [ -n "$POOLSEQFLOW_INSTALLED_HOME" ]; then
+    INSTALL="$POOLSEQFLOW_INSTALLED_HOME"
+else
+    INSTALL=$(cd "$(dirname "$(readlink -f "$0")")" && pwd -P)
+fi
+export POOLSEQFLOW_HOME="$INSTALL"
+
+# Sourced after INSTALL resolves: nf_config_value reads it.
+if [ ! -f "$INSTALL/lib/wrapper_lib.sh" ]; then
+    echo "ERROR: $INSTALL/lib/wrapper_lib.sh is missing." >&2
+    echo "  This copy of PoolSeqFlow is incomplete." >&2
+    exit 1
+fi
+. "$INSTALL/lib/wrapper_lib.sh"
+
+# Confirms the payload is there, for the subcommands that need it.
+require_install() {
+    [ -f "$INSTALL/poolseqflow.nf" ] && return 0
+    echo "ERROR: cannot find the PoolSeqFlow installation." >&2
+    echo "  Looked in: $INSTALL" >&2
+    echo "  Expected to find poolseqflow.nf there, alongside scripts/ and bin/." >&2
+    echo "  Set POOLSEQFLOW_HOME to the directory holding it." >&2
+    exit 1
+}
+
+# Refuses early when the current directory is not a project.
+require_project_config() {
+    [ -f parameters.config ] && return 0
+    echo "ERROR: no parameters.config in $(pwd)" >&2
+    echo "" >&2
+    echo "PoolSeqFlow runs in your project's directory, not in its own installation." >&2
+    echo "Make the project, populate it, and run from there:" >&2
+    echo "    mkdir -p /path/to/project" >&2
+    echo "    cd /path/to/project" >&2
+    echo "    $(basename "$0") init" >&2
+    echo "    $(basename "$0") $INVOCATION" >&2
+    exit 1
+}
+
+# Refuses a parameters.config written for a release before this one.
+#
+# storageDir is the marker: the template assigns it and migrate_config writes it, so every
+# config for this release has one. A file without it still calls that root projectDir and has
+# not been carried across.
+#
+# Nothing fails at config time when it is absent - Nextflow reads the file as given, the
+# parameters this release wants are simply not there, and a step interpolates one into a path
+# much later. A run then starts and writes into a directory named "null".
+#
+# Called by what runs the pipeline, runs a module, or acts on either's outputs, and by nothing
+# else: migrate_config is the fix and must never be refused by this, and clean and dryclean read
+# no parameter it covers.
+require_migrated_config() {
+    grep -qE '^[[:space:]]*storageDir[[:space:]]*=' parameters.config && return 0
+
+    echo "ERROR: parameters.config was written for an older release of PoolSeqFlow." >&2
+    echo "" >&2
+    echo "It does not set storageDir, which every config for this release sets." >&2
+
+    # Named to show this is a recognized older file rather than a damaged one. Advisory only:
+    # the refusal above turns on storageDir alone, and migrate_config reports the full set.
+    local old found=""
+    for old in projectDir diploidy rgTagsFile rgTagsPath; do
+        grep -qE "^[[:space:]]*${old}[[:space:]]*=" parameters.config && found="$found $old"
+    done
+    [ -n "$found" ] && { echo "Parameters in it that this release renamed or removed:" >&2
+                         echo "   $found" >&2; }
+
+    echo "" >&2
+    echo "Carry it onto this release's template first:" >&2
+    echo "    $(basename "$0") migrate_config" >&2
+    echo "" >&2
+    echo "That keeps your values, reports every parameter that changed, and saves your" >&2
+    echo "original as parameters.config.bak." >&2
+    exit 1
+}
+
+# What an installation consists of. Must match what `git archive` puts in a release tarball.
+PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf dryrun.nf analysis.nf \
+nextflow.config scripts bin lib analysis install parameters.config.template \
+metadata.csv.template multi-run.csv.example manual README.md CHANGELOG.md LICENSE"
+
+# Payload files installed read-only. These are wiring rather than settings: a run reads them,
+# nobody is meant to edit them, and an edit would apply to every project on the machine without
+# appearing in any project's record of itself.
+SEALED_ITEMS="analysis/frame.config analysis/frame.version"
+
+# The payload's executables, stamped with their installed location and symlinked into
+# $PREFIX/bin twice, once under the plain name and once carrying the version.
+WRAPPERS="PoolSeqFlow"
+
+# Everything `uninstall` can act on, by the name it is known as: every version present as a
+# payload or an environment, plus the legacy unversioned environment when it is there. An
+# analysis environment is not one of these - `PoolSeqFlow-2.2.0-analysis` belongs to 2.2.0 and
+# is removed with it, so listing it separately would offer it for removal on its own and make
+# one installed version look like two.
+installed_installations() {
+    {
+        installed_payload_versions "$1" | sed 's/^/PoolSeqFlow-/'
+        poolseqflow_envs | grep -v -- '-analysis$'
+    } | sort -V -u
+}
+
+# What to say about one installation beyond its name: whether it is the legacy environment,
+# whether this wrapper belongs to it, and whether its analysis layer is installed too.
+installation_note() {
+    local name="$1" notes=""
+    if [ "$name" = "$LEGACY_ENV" ]; then
+        notes="unversioned - predates per-version environments"
+    elif [ "$name" = "PoolSeqFlow-$VERSION" ]; then
+        notes="this wrapper"
+    fi
+    if env_exists "${name}-analysis"; then
+        notes="${notes:+$notes, }analysis installed"
+    fi
+    printf '%s' "$notes"
+}
+
+# The installed list, as both the prompt and the refusal print it. Numbered when asked, so the
+# two cannot drift into describing the same installations differently.
+list_installations() {
+    local names="$1" indent="$2" numbered="$3" v note line i=0
+    while IFS= read -r v; do
+        [ -n "$v" ] || continue
+        i=$((i + 1))
+        note=$(installation_note "$v")
+        if [ "$numbered" = "numbered" ]; then
+            line=$(printf '%s%d) %s' "$indent" "$i" "$v")
+        else
+            line=$(printf '%s%s' "$indent" "$v")
+        fi
+        if [ -n "$note" ]; then
+            printf '%-34s (%s)\n' "$line" "$note" >&2
+        else
+            printf '%s\n' "$line" >&2
+        fi
+    done <<EOF
+$names
+EOF
+    return 0
+}
+
+# Which installation `uninstall` acts on: the only one present, the one a versioned wrapper
+# names, or the one chosen at the prompt. Returns the name it is known as - `PoolSeqFlow-2.2.0`,
+# or `PoolSeqFlow` for the legacy environment. Refuses with nothing attached to ask.
+choose_installation_to_uninstall() {
+    local prefix="$1" names count choice
+
+    # A versioned wrapper - `PoolSeqFlow-2.1.0 uninstall` - names the version already.
+    case "$(basename "$0")" in
+        PoolSeqFlow-*) printf 'PoolSeqFlow-%s' "$VERSION"; return 0 ;;
+    esac
+
+    names=$(installed_installations "$prefix")
+    count=$(printf '%s\n' "$names" | grep -c . || true)
+
+    # Empty: the caller reports it, having more context about this prefix.
+    [ "$count" -eq 0 ] && { printf ''; return 0; }
+
+    if [ "$count" -eq 1 ] && [ "$names" = "PoolSeqFlow-$VERSION" ]; then
+        printf 'PoolSeqFlow-%s' "$VERSION"
+        return 0
+    fi
+
+    if [ ! -t 0 ]; then
+        if ! printf '%s\n' "$names" | grep -qxF "PoolSeqFlow-$VERSION"; then
+            echo "ERROR: environment 'PoolSeqFlow-$VERSION' is not installed, and neither is" >&2
+            echo "v$VERSION of the pipeline under $prefix/opt." >&2
+        else
+            echo "ERROR: $count PoolSeqFlow installations are present under $prefix." >&2
+        fi
+        echo "" >&2
+        echo "Installed:" >&2
+        list_installations "$names" "    " plain
+        echo "" >&2
+        echo "Nothing is attached to ask which one to remove, and removing the wrong" >&2
+        echo "installation is not a thing to guess at. Name the one you mean:" >&2
+        echo "" >&2
+        echo "    PoolSeqFlow-<version> uninstall" >&2
+        return 1
+    fi
+
+    echo "Installed under $prefix:" >&2
+    list_installations "$names" "  " numbered
+    echo "" >&2
+    echo "An installation is removed whole: its environment, its pipeline, and its analysis" >&2
+    echo "environment where one is installed." >&2
+    echo "" >&2
+    printf 'Which one should be removed? [1-%d, or q to cancel] ' "$count" >&2
+    read -r choice
+    case "$choice" in
+        q|Q|"") echo "Canceled. Nothing was removed." >&2; return 1 ;;
+        *[!0-9]*) echo "Not a number: $choice. Nothing was removed." >&2; return 1 ;;
+    esac
+    if [ "$choice" -lt 1 ] || [ "$choice" -gt "$count" ]; then
+        echo "There is no $choice on that list. Nothing was removed." >&2
+        return 1
+    fi
+    printf '%s\n' "$names" | sed -n "${choice}p"
+}
+
+# Removes one version's payload and the symlinks to it, then re-points the plain name at the
+# newest version that still provides it, or removes it once none does.
+remove_payload() {
+    local version="$1" prefix dest bindir item newest
+    prefix=$(install_prefix)
+    dest="$prefix/opt/PoolSeqFlow-${version}"
+    bindir="$prefix/bin"
+    [ -d "$dest" ] || return 1
+
+    rm -rf "$dest"
+    echo "Removed $dest"
+    newest=$(newest_installed_version "$prefix")
+    for item in $WRAPPERS; do
+        rm -f "$bindir/${item}-${version}"
+        # A version installed from an older release may not provide this executable.
+        if [ -n "$newest" ] && [ -e "$prefix/opt/PoolSeqFlow-${newest}/$item" ]; then
+            ln -sfn "$prefix/opt/PoolSeqFlow-${newest}/$item" "$bindir/$item"
+            echo "  $bindir/$item now points at v$newest"
+        elif [ -L "$bindir/$item" ]; then
+            rm -f "$bindir/$item"
+            echo "  $bindir/$item removed - no installed version provides it"
+        fi
+    done
+    return 0
+}
+
+# Copies the runtime to $PREFIX/opt/PoolSeqFlow-<version> and puts two symlinks in
+# $PREFIX/bin: one carrying the version, plus a plain one pointing at the newest installed.
+deploy_payload() {
+    local prefix dest bindir here item newest gone
+    prefix=$(install_prefix)
+    dest="$prefix/opt/PoolSeqFlow-${VERSION}"
+    bindir="$prefix/bin"
+    here=$(cd "$INSTALL" && pwd -P)
+
+    if [ "$here" = "$dest" ]; then
+        echo "The pipeline is already installed at $dest."
+    else
+        for item in $PAYLOAD_ITEMS $SEALED_ITEMS; do
+            [ -e "$INSTALL/$item" ] || {
+                echo "ERROR: $INSTALL/$item is missing." >&2
+                echo "  This copy is incomplete, so installing from it would deploy a broken tree." >&2
+                exit 1
+            }
+        done
+        echo "Installing the pipeline into $dest..."
+        # The store lives inside what is about to be wiped, so whatever its modules put in the
+        # analysis environment comes out first, while the manifests declaring it still exist.
+        # After this the store and the environment are both back to what the release ships.
+        gone=$(store_packages "$dest/analysis/modules" | cut -d= -f1 | sort -u)
+        if [ -n "$gone" ] && env_exists "$ANALYSIS_ENV"; then
+            echo "Removing what the installed modules added to '$ANALYSIS_ENV':"
+            printf '    %s\n' $gone
+            # shellcheck disable=SC2086
+            conda_remove_packages "$ANALYSIS_ENV" $gone || {
+                echo "ERROR: those packages could not be removed, so the pipeline was not" >&2
+                echo "  installed over the copy that declares them. Nothing was changed." >&2
+                exit 1
+            }
+        fi
+        rm -rf "$dest"
+        mkdir -p "$dest"
+        for item in $PAYLOAD_ITEMS; do
+            cp -r "$INSTALL/$item" "$dest"/
+        done
+        # Stamps each copy with its own location.
+        for item in $WRAPPERS; do
+            sed -i "s|^POOLSEQFLOW_INSTALLED_HOME=\"\"$|POOLSEQFLOW_INSTALLED_HOME=\"$dest\"|" \
+                "$dest/$item"
+            grep -q "^POOLSEQFLOW_INSTALLED_HOME=\"$dest\"$" "$dest/$item" || {
+                echo "ERROR: could not stamp $item with its location." >&2
+                echo "  The placeholder line in $item has probably changed." >&2
+                exit 1
+            }
+            chmod +x "$dest/$item"
+        done
+        # Read-only, after the copy that carried them in. A slip-guard and not a lock: a user
+        # who owns the installation can still chmod one back.
+        for item in $SEALED_ITEMS; do
+            chmod 0444 "$dest/$item"
+        done
+    fi
+
+    mkdir -p "$bindir"
+    newest=$(newest_installed_version "$prefix")
+    echo ""
+    echo "Installed:"
+    echo "    $dest"
+    for item in $WRAPPERS; do
+        ln -sfn "$dest/$item" "$bindir/${item}-${VERSION}"
+        echo "    $bindir/${item}-${VERSION}"
+        # A version installed from an older release may not provide this executable.
+        if [ -e "$prefix/opt/PoolSeqFlow-${newest}/$item" ]; then
+            ln -sfn "$prefix/opt/PoolSeqFlow-${newest}/$item" "$bindir/$item"
+            printf '    %-40s -> v%s, the newest installed\n' "$bindir/$item" "$newest"
+        fi
+    done
+    echo ""
+    case ":$PATH:" in
+        *":$bindir:"*)
+            echo "$bindir is on your PATH, so those commands work from anywhere."
+            ;;
+        *)
+            echo "$bindir is NOT on your PATH, so none of them will be found by name yet."
+            echo "Add it - in ~/.bashrc, ~/.zshrc or wherever your shell reads:"
+            echo ""
+            echo "    export PATH=\"$bindir:\$PATH\""
+            echo ""
+            echo "Until then, call the wrapper by its full path."
+            ;;
+    esac
+    echo ""
+}
+
+# Every PoolSeqFlow environment except this version's own and the legacy unversioned one.
+other_version_envs() {
+    poolseqflow_envs | grep -vxF "$ENV_NAME" | grep -vxF "$LEGACY_ENV" || true
+}
+
+# Activates this version's environment, or explains its absence. Never falls back to
+# another version's.
+require_env() {
+    if env_exists "$ENV_NAME"; then
+        conda activate "$ENV_NAME"
+        return 0
+    fi
+
+    echo "ERROR: conda environment '$ENV_NAME' not found." >&2
+    echo "" >&2
+    if env_exists "$LEGACY_ENV"; then
+        echo "An environment called '$LEGACY_ENV' does exist. That is an install from a" >&2
+        echo "release that kept every version in one environment. Environments are named" >&2
+        echo "after the version now, so this copy does not use it." >&2
+        echo "" >&2
+    fi
+    OTHERS=$(other_version_envs)
+    if [ -n "$OTHERS" ]; then
+        echo "Environments for other versions are installed:" >&2
+        echo "$OTHERS" | sed 's/^/    /' >&2
+        echo "" >&2
+    fi
+    echo "Install this version's environment with:" >&2
+    echo "    ./$(basename "$0") install" >&2
+    exit 1
+}
+
+# Confirms the analysis entry point is there, for the analysis commands that need it.
+require_analysis_install() {
+    [ -f "$INSTALL/analysis.nf" ] && return 0
+    echo "ERROR: cannot find the PoolSeqFlow analysis layer." >&2
+    echo "  Looked in: $INSTALL" >&2
+    echo "  Expected to find analysis.nf there, alongside poolseqflow.nf." >&2
+    echo "  Set POOLSEQFLOW_HOME to the directory holding it." >&2
+    exit 1
+}
+
+# Every analysis environment on this machine, of any version.
+analysis_envs() {
+    poolseqflow_envs | grep -E '^PoolSeqFlow-.+-analysis$' || true
+}
+
+# Activates this version's analysis environment, or explains its absence. Never falls back
+# to the pipeline's environment or to another version's.
+require_analysis_env() {
+    if env_exists "$ANALYSIS_ENV"; then
+        conda activate "$ANALYSIS_ENV"
+        return 0
+    fi
+
+    echo "ERROR: conda environment '$ANALYSIS_ENV' not found." >&2
+    echo "" >&2
+    echo "The analysis layer is opt-in: it carries R and is installed separately from the" >&2
+    echo "pipeline, so a working pipeline install does not bring it." >&2
+    OTHERS=$(analysis_envs | grep -vxF "$ANALYSIS_ENV" || true)
+    if [ -n "$OTHERS" ]; then
+        echo "" >&2
+        echo "Analysis environments for other versions are installed:" >&2
+        echo "$OTHERS" | sed 's/^/    /' >&2
+    fi
+    echo "" >&2
+    echo "Install this version's with:" >&2
+    echo "    $(basename "$0") analysis install" >&2
+    exit 1
+}
+
+# Every directory in the store, and whether it holds a usable module. Names and files only:
+# what a module IS - its version, the tables it speaks, what it reads - comes from its manifest,
+# which the analysis layer reads and `analysis <module>` prints.
+list_modules() {
+    local dir name found=0 broken=0
+    echo "Modules installed for v$VERSION, in"
+    echo "    $MODULE_STORE"
+    echo ""
+    if [ -d "$MODULE_STORE" ]; then
+        for dir in "$MODULE_STORE"/*/; do
+            [ -d "$dir" ] || continue
+            name=$(basename "$dir")
+            found=$((found + 1))
+            if [ ! -f "$dir/manifest.json" ]; then
+                printf '    %-20s not a module - no manifest.json, so it is passed over\n' "$name"
+            elif [ ! -f "$dir/main.nf" ]; then
+                printf '    %-20s INCOMPLETE - no main.nf\n' "$name"
+                broken=$((broken + 1))
+            else
+                printf '    %-20s installed\n' "$name"
+            fi
+        done
+    fi
+    if [ "$found" -eq 0 ]; then
+        echo "    none"
+        echo ""
+        echo "A release ships modules of its own into this directory, so an empty store means"
+        echo "they were removed. Reinstall this release to put them back; anything else is"
+        echo "installed separately, one directory each."
+        return 0
+    fi
+    echo ""
+    if [ "$broken" -gt 0 ]; then
+        echo "An incomplete module stops EVERY analysis run, not only its own. Install it again"
+        echo "or remove it:"
+        echo "    $(basename "$0") analysis modules uninstall <module>"
+        echo ""
+    fi
+    echo "Each module's version and what it reads are in its own report:"
+    echo "    $(basename "$0") analysis <module>"
+}
+
+# Downloads the catalogue to a temp file the caller names, or explains why it could not.
+get_module_index() {
+    local dest="$1" src
+    src=$(module_index_source)
+    if fetch_url "$src" "$dest"; then
+        return 0
+    fi
+    local status=$?
+    echo "ERROR: could not read the module catalogue." >&2
+    echo "  Tried: $src" >&2
+    if [ "$status" -eq 127 ]; then
+        echo "  Neither curl nor wget is on PATH, so nothing can be downloaded." >&2
+    else
+        echo "  Check the connection, or point POOLSEQFLOW_MODULE_INDEX at a copy:" >&2
+        echo "      POOLSEQFLOW_MODULE_INDEX=/path/to/index.tsv $(basename "$0") analysis modules available" >&2
+    fi
+    exit 1
+}
+
+# THE COLUMN LAYOUT, checked before a single row is read. The rows are parsed by position, so a
+# layout this release does not know would install the wrong thing from the right row, or verify
+# a tarball against whatever had shifted into the sha256 column.
+#
+# A catalogue with no format line is layout 1: it predates the header and its columns are the
+# ones this release reads.
+require_module_index_format() {
+    local found; found=$(module_index_header "$1" index-format)
+    [ -n "$found" ] || found=1
+    [ "$found" = "$MODULE_INDEX_FORMAT" ] && return 0
+    echo "ERROR: the module catalogue is in layout $found; this release reads layout $MODULE_INDEX_FORMAT." >&2
+    echo "  Its columns are not the ones this release would read, so nothing is listed or" >&2
+    echo "  installed from it - reading it by position would take the wrong field for each." >&2
+    echo "" >&2
+    echo "  Upgrade PoolSeqFlow, or point POOLSEQFLOW_MODULE_INDEX at a catalogue in layout" >&2
+    echo "  $MODULE_INDEX_FORMAT. A module already installed here is unaffected and still runs." >&2
+    exit 1
+}
+
+# What can be installed, and whether this release can read it. Contract and version come from
+# the catalogue; whether a module is already here comes from the store.
+available_modules() {
+    local index contract name version row_contract row_frame row_env url sha summary rows=0 state
+    index=$(mktemp)
+    trap 'rm -f "$index"' RETURN
+    get_module_index "$index"
+    require_module_index_format "$index"
+    contract=$(module_contract)
+    # Without it every row would pass the compatibility check, and a module that reads the
+    # tables differently would install silently.
+    if [ -z "$contract" ]; then
+        echo "ERROR: cannot tell which table contract this release speaks." >&2
+        echo "  Expected to read it from $INSTALL/analysis/lib/nf/modules.nf." >&2
+        echo "  This installation is incomplete; install it again." >&2
+        exit 1
+    fi
+
+    local catalogue; catalogue=$(module_index_header "$index" index-version)
+    echo "Modules published for the table contract this release speaks (${contract:-unknown}):"
+    echo "Catalogue ${catalogue:-unversioned}, read from $(module_index_source)"
+    echo ""
+    printf '    %-16s %-10s %-12s %s\n' NAME VERSION CONTRACT ''
+    local frame_here; frame_here=$(installed_frame_version)
+    while IFS="$MODULE_INDEX_SEP" read -r name version row_contract row_frame row_env url sha summary; do
+        [ -n "$name" ] || continue
+        rows=$((rows + 1))
+        if [ -n "$contract" ] && [ "$row_contract" != "$contract" ]; then
+            state="reads $row_contract - not this release"
+        elif ! version_at_most "$row_frame" "$frame_here"; then
+            state="needs analysis frame $row_frame"
+        elif ! version_at_most "$row_env" "$VERSION"; then
+            state="needs PoolSeqFlow $row_env"
+        elif [ -d "$MODULE_STORE/$name" ]; then
+            state="installed"
+        else
+            state=""
+        fi
+        printf '    %-16s %-10s %-12s %s\n' "$name" "$version" "$row_contract" "$state"
+        [ -z "$summary" ] || printf '    %-16s %s\n' "" "$summary"
+    done < <(module_index_rows "$index")
+
+    echo ""
+    if [ "$rows" -eq 0 ]; then
+        echo "The catalogue is empty. No module has been published yet."
+        return 0
+    fi
+    echo "Install one with:"
+    echo "    $(basename "$0") analysis modules install <name>"
+    echo "which takes the newest version this release can read, or name a version to pin it."
+}
+
+# Installs one module into this installation's store. Takes the name, and optionally the exact
+# version; without one, the newest the catalogue offers for this release's contract.
+install_module() {
+    local name="$1" want="${2:-}" index contract line version row_contract url sha summary
+    local tmp tarball unpacked dest specs spec
+    local candidates row newest="" line="" frame_here row_frame row_env
+    local _n _v _c _rest newest_v newest_frame newest_env
+    case $name in
+        ''|*[!A-Za-z0-9_-]*)
+            echo "ERROR: '$name' is not a module name." >&2
+            usage_modules
+            ;;
+    esac
+    if [ -d "$MODULE_STORE/$name" ]; then
+        echo "'$name' is already installed for v$VERSION, in"
+        echo "    $MODULE_STORE/$name"
+        echo ""
+        echo "Remove it first if you mean to replace it:"
+        echo "    $(basename "$0") analysis modules uninstall $name"
+        exit 0
+    fi
+
+    index=$(mktemp)
+    trap 'rm -f "$index"' RETURN
+    get_module_index "$index"
+    require_module_index_format "$index"
+    contract=$(module_contract)
+    # Without it every row would pass the compatibility check, and a module that reads the
+    # tables differently would install silently.
+    if [ -z "$contract" ]; then
+        echo "ERROR: cannot tell which table contract this release speaks." >&2
+        echo "  Expected to read it from $INSTALL/analysis/lib/nf/modules.nf." >&2
+        echo "  This installation is incomplete; install it again." >&2
+        exit 1
+    fi
+
+    # Every row for this name whose contract this release speaks, or the exact version asked
+    # for, newest first.
+    candidates=$(module_index_rows "$index" | awk -F"$MODULE_INDEX_SEP" -v n="$name" -v c="$contract" -v w="$want" '
+        $1 != n { next }
+        w != "" && $2 != w { next }
+        c != "" && $3 != c { next }
+        { print }' | sort -t"$MODULE_INDEX_SEP" -k2,2Vr)
+
+    if [ -z "$candidates" ]; then
+        echo "ERROR: no module '$name'${want:+ at version $want} is published for this release." >&2
+        echo "" >&2
+        echo "What is available:" >&2
+        available_modules >&2
+        exit 1
+    fi
+
+    # THE NEWEST ONE THIS RELEASE CAN RUN, WHICH IS NOT ALWAYS THE NEWEST ONE THERE IS. A row
+    # says the oldest frame and release it needs, so an installation that is behind takes an
+    # earlier version instead of taking the newest and failing the first time it is used.
+    frame_here=$(installed_frame_version)
+    while IFS= read -r row; do
+        [ -n "$row" ] || continue
+        [ -n "$newest" ] || newest="$row"
+        IFS="$MODULE_INDEX_SEP" read -r _n _v _c row_frame row_env _rest <<ROW
+$row
+ROW
+        if version_at_most "$row_frame" "$frame_here" && version_at_most "$row_env" "$VERSION"; then
+            line="$row"
+            break
+        fi
+    done <<EOF
+$candidates
+EOF
+
+    if [ -z "${line:-}" ]; then
+        IFS="$MODULE_INDEX_SEP" read -r _n newest_v _c newest_frame newest_env _rest <<ROW
+$newest
+ROW
+        echo "ERROR: every published '$name'${want:+ at version $want} needs more than this" >&2
+        echo "  installation has. The newest is v$newest_v, and it needs:" >&2
+        [ -z "$newest_frame" ] || echo "      analysis frame $newest_frame, and this is ${frame_here:-unreadable}" >&2
+        [ -z "$newest_env" ] || echo "      PoolSeqFlow $newest_env, and this is $VERSION" >&2
+        echo "" >&2
+        echo "  Upgrade PoolSeqFlow, or name a version published for this one:" >&2
+        echo "      $(basename "$0") analysis modules available" >&2
+        exit 1
+    fi
+
+    IFS="$MODULE_INDEX_SEP" read -r name version row_contract row_frame row_env url sha summary <<EOF
+$line
+EOF
+    # Said out loud: taking an older version than exists is a decision, not a detail.
+    if [ "$line" != "$newest" ]; then
+        IFS="$MODULE_INDEX_SEP" read -r _n newest_v _rest <<ROW
+$newest
+ROW
+        echo "NOTE: '$name' is published up to v$newest_v, which needs a newer PoolSeqFlow than"
+        echo "      this one. Installing v$version, the newest this release can run."
+        echo ""
+    fi
+
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"; rm -f "$index"' RETURN
+    tarball="$tmp/$name-$version.tar.gz"
+    echo "Installing $name v$version"
+    echo "    from $url"
+    if ! fetch_url "$url" "$tarball"; then
+        echo "ERROR: could not download $name v$version." >&2
+        echo "  Tried: $url" >&2
+        exit 1
+    fi
+
+    # Verified before anything is unpacked: the archive becomes code that runs on this machine.
+    if [ -n "$sha" ]; then
+        local got; got=$(file_sha256 "$tarball")
+        if [ -z "$got" ]; then
+            echo "ERROR: no sha256sum or shasum on this machine, so the download cannot be" >&2
+            echo "  verified. Nothing was installed." >&2
+            exit 1
+        fi
+        if [ "$got" != "$sha" ]; then
+            echo "ERROR: $name v$version does not match the checksum the catalogue gives." >&2
+            echo "  expected $sha" >&2
+            echo "  got      $got" >&2
+            echo "  Nothing was installed." >&2
+            exit 1
+        fi
+    fi
+
+    unpacked="$tmp/unpacked"
+    mkdir -p "$unpacked"
+    if ! tar -xzf "$tarball" -C "$unpacked"; then
+        echo "ERROR: $name v$version could not be unpacked. Nothing was installed." >&2
+        exit 1
+    fi
+    for f in manifest.json main.nf citations.json; do
+        if [ ! -f "$unpacked/$name/$f" ]; then
+            echo "ERROR: the $name archive has no $name/$f, so it is not a module." >&2
+            echo "  Nothing was installed." >&2
+            exit 1
+        fi
+    done
+
+    # Read before the module is moved into the store, so an unusable spec stops the install
+    # with the store untouched.
+    specs=$(module_packages "$unpacked/$name/manifest.json")
+    for spec in $specs; do
+        if ! printf '%s' "$spec" | grep -qE "$MODULE_SPEC_RE"; then
+            echo "ERROR: $name v$version asks for the package '$spec'." >&2
+            echo "  A module pins what it needs as <name>=<version> and nothing else: one '='," >&2
+            echo "  an exact version, no build string, no range, no channel prefix." >&2
+            echo "  Nothing was installed." >&2
+            exit 1
+        fi
+    done
+
+    mkdir -p "$MODULE_STORE"
+    dest="$MODULE_STORE/$name"
+    mv "$unpacked/$name" "$dest"
+    # Beside the module, so an installation can say where each of its modules came from, and
+    # which catalogue it was read out of.
+    printf 'name\t%s\nversion\t%s\ncontract\t%s\nurl\t%s\nsha256\t%s\ncatalogue\t%s\n' \
+        "$name" "$version" "$row_contract" "$url" "$sha" \
+        "$(module_index_header "$index" index-version)" > "$dest/.source"
+
+    # The store and the environment are installed together. conda's own transaction is atomic,
+    # so a failed solve leaves the environment as it was and the rollback is this directory.
+    if [ -n "$specs" ]; then
+        echo ""
+        echo "Installing what $name runs on, into '$ANALYSIS_ENV':"
+        printf '    %s\n' $specs
+        echo ""
+        # shellcheck disable=SC2086
+        if ! conda_install_packages "$ANALYSIS_ENV" $specs; then
+            rm -rf "$dest"
+            echo "" >&2
+            echo "ERROR: $name v$version needs packages this release's analysis environment" >&2
+            echo "  cannot take without moving something already in it. The module was not" >&2
+            echo "  installed and the environment was not changed." >&2
+            echo "" >&2
+            echo "  That is a compatibility question between this release and this module," >&2
+            echo "  not something to solve here: install a build of $name published for" >&2
+            echo "  PoolSeqFlow $VERSION." >&2
+            exit 1
+        fi
+        echo ""
+    fi
+
+    echo "Installed $name v$version into"
+    echo "    $dest"
+    echo ""
+    echo "Run it from a project directory:"
+    echo "    $(basename "$0") analysis $name"
+}
+
+# Removes one module's directory from this installation's store, after confirming.
+uninstall_module() {
+    local name="$1" dir mine others going
+    case $name in
+        ''|*[!A-Za-z0-9_-]*)
+            echo "ERROR: '$name' is not a module name." >&2
+            usage_modules
+            ;;
+    esac
+    dir="$MODULE_STORE/$name"
+    if [ ! -d "$dir" ]; then
+        echo "No module '$name' is installed for v$VERSION. What is installed:"
+        echo ""
+        list_modules
+        exit 0
+    fi
+    # A package another installed module also declares stays: the environment is shared, and
+    # what leaves with this module is what nothing left behind asks for. With no analysis
+    # environment there is nothing to take them out of, so nothing does.
+    mine=$(module_packages "$dir/manifest.json" | cut -d= -f1 | sort -u)
+    others=$(store_packages "$MODULE_STORE" "$name" | cut -d= -f1 | sort -u)
+    going=$(printf '%s\n' "$mine" | grep -vxF "$others" || true)
+    if ! env_exists "$ANALYSIS_ENV"; then going=""; fi
+    echo ""
+    echo "This removes:"
+    echo "    $dir"
+    if [ -n "$going" ]; then
+        echo ""
+        echo "and these packages from '$ANALYSIS_ENV', which nothing else installed here asks for:"
+        printf '    %s\n' $going
+    elif [ -n "$mine" ] && ! env_exists "$ANALYSIS_ENV"; then
+        echo ""
+        echo "The packages it declares stay where they are: '$ANALYSIS_ENV' is not installed,"
+        echo "so there is nothing to take them out of."
+    fi
+    echo ""
+    echo "Only the module goes. The pipeline, both environments and everything under Analysis/"
+    echo "stay where they are, including results this module has already produced."
+    echo ""
+    printf 'Remove it? [y/N]: '
+    if ! read -r CONFIRM; then
+        echo ""
+        echo "Aborted - no confirmation received. Nothing was removed." >&2
+        exit 1
+    fi
+    case "$CONFIRM" in
+        y|Y|yes|YES|Yes) ;;
+        *) echo "Aborted - nothing was removed."; exit 1 ;;
+    esac
+    # Before the directory: a removal the environment refuses has to leave the module installed
+    # and able to run.
+    if [ -n "$going" ]; then
+        # shellcheck disable=SC2086
+        if ! conda_remove_packages "$ANALYSIS_ENV" $going; then
+            echo "" >&2
+            echo "  '$name' is still installed." >&2
+            exit 1
+        fi
+    fi
+    rm -rf "$dir"
+    echo "Removed '$name'. Install it again with the same command that installed it."
+}
+
+# Reports the other PoolSeqFlow environments present, if any.
+report_other_envs() {
+    OTHERS=$(poolseqflow_envs | grep -vxF "$ENV_NAME" || true)
+    [ -n "$OTHERS" ] || return 0
+    echo "Other PoolSeqFlow environments on this machine:"
+    for env in $OTHERS; do
+        if [ "$env" = "$LEGACY_ENV" ]; then
+            printf '    %-24s unversioned - predates per-version environments\n' "$env"
+        else
+            printf '    %s\n' "$env"
+        fi
+    done
+    echo ""
+    echo "None of them is used by this copy. Keep the ones whose results you still need to"
+    echo "reproduce; remove the rest:"
+    printf '    %-32s %s\n' "conda env remove -n <name>" "one environment"
+    printf '    %-32s %s\n' "./$(basename "$0") uninstall_all" "every PoolSeqFlow environment"
+    echo ""
+}
+
+# Lists each run's and each shared group's directory in the results tree, read from the disk.
+# The trailing `return 0` is load-bearing under `set -e`.
+run_storage_roots() {
+    local storage="$1" d id
+    [ -n "$storage" ] && [ -d "$storage/Output" ] || return 0
+    if [ -f "$storage/Output/.multirun.csv" ]; then
+        # First column, skipping the header and any comment or blank line.
+        while IFS= read -r id; do
+            [ -n "$id" ] && [ -d "$storage/Output/$id" ] && printf '%s\n' "$storage/Output/$id"
+        done <<EOF
+$(awk -F, 'NR > 1 && $0 !~ /^[[:space:]]*(#|$)/ { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1 }' \
+     "$storage/Output/.multirun.csv")
+EOF
+    fi
+    for d in "$storage"/Output/*/; do
+        if [ -f "${d}members.txt" ]; then printf '%s\n' "${d%/}"; fi
+    done
+    return 0
+}
+
+# The per-run working directories, likewise. The Utilized_ prefix is ours, so the glob
+# cannot pick up anything of the user's.
+run_utilized_dirs() {
+    local main="$1" d
+    [ -n "$main" ] && [ -d "$main" ] || return 0
+    for d in "$main"/Utilized_*/; do
+        if [ -d "$d" ]; then printf '%s\n' "${d%/}"; fi
+    done
+    return 0
+}
+
+# Staging directories left behind by a transfer that was killed rather than allowed to fail.
+#
+# Every staged transfer creates one beside its destination and removes it on every path it can
+# reach, so one that is still here means the process was killed outright. The three prefixes are
+# the ones bin/atomic_mv.sh, analysis/lib/nf/results.nf and analysis/lib/nf/store.nf create.
+#
+# Printed one per line, and pruned so a stage inside a stage is named once.
+staging_dirs() {
+    local root
+    for root in "$@"; do
+        [ -n "$root" ] && [ -d "$root" ] || continue
+        find "$root" -type d \( -name '.atomic_mv.*' \
+                             -o -name '.analysis_results.*' \
+                             -o -name '.restore.*' \) -prune -print 2>/dev/null
+    done
+    return 0
+}
+
+# Whether a preview directory is ours to `rm -rf` - empty directories, a README.txt and a
+# members.txt per shared directory, nothing else. Returns 0 when it is not there at all.
+dryrun_is_ours() {
+    local dir="$1" foreign f
+    [ -d "$dir" ] || return 0
+    foreign=$(find "$dir" -mindepth 1 ! -type d ! -name README.txt ! -name members.txt -print)
+    [ -n "$foreign" ] || return 0
+    echo "ERROR: $dir is not a dry run preview." >&2
+    echo "  A preview holds empty directories, a README.txt, and a members.txt in each shared" >&2
+    echo "  directory. This one also holds:" >&2
+    while IFS= read -r f; do
+        if [ -n "$f" ]; then echo "      $f" >&2; fi
+    done <<EOF
+$foreign
+EOF
+    echo "" >&2
+    echo "  Nothing was removed. Move those somewhere else, or point params.dryRunDir at a" >&2
+    echo "  directory the preview can have to itself." >&2
+    return 1
+}
+
+if [ "$#" -lt 1 ]; then
     usage
 fi
 
 COMMAND=$1
-ENV_NAME="PoolSeqFlow"   # Change this to match your conda environment name
-ENV_FILE="install/environment.yml"  # Make sure this file exists in the project root
+
+# `analysis` is the one subcommand that carries words of its own - an analysis command, or the
+# module to run. How many follow that first word is each arm's own business, enforced there.
+# Every other subcommand takes none.
+ANALYSIS_COMMAND=""
+ANALYSIS_ARGS=()
+if [ "$COMMAND" = "analysis" ]; then
+    [ "$#" -ge 2 ] || usage_analysis
+    ANALYSIS_COMMAND=$2
+    shift 2
+    ANALYSIS_ARGS=("$@")
+elif [ "$#" -ne 1 ]; then
+    usage
+fi
+
+# What the user typed, for the messages that tell them to type it again somewhere else.
+INVOCATION="$COMMAND${ANALYSIS_COMMAND:+ $ANALYSIS_COMMAND}"
+
+# One environment per release, named from VERSION above so a bump carries it.
+ENV_NAME="PoolSeqFlow-${VERSION}"
+
+# One analysis environment per release, beside the pipeline's own.
+ANALYSIS_ENV="PoolSeqFlow-${VERSION}-analysis"
+
+ANALYSIS_ENV_FILE="$INSTALL/install/environment-analysis.yml"
+
+# What releases before per-version environments called theirs. Detected so the error
+# messages can say so; never activated.
+LEGACY_ENV="PoolSeqFlow"
+
+# check_install.sh names the environment in its epilogue, and check_analysis_install.sh names
+# the analysis one. Two variables: a single ENV_NAME would give the analysis check the
+# pipeline's environment.
+export ENV_NAME
+export ANALYSIS_ENV_NAME="$ANALYSIS_ENV"
+
+ENV_FILE="$INSTALL/install/environment.yml"
+
+# Where installed modules live: inside this release's own installation, so a module installed
+# for one release is never picked up by another. analysis/modules.nf resolves the same path.
+MODULE_STORE="$INSTALL/analysis/modules"
+
+# Puts a project's starting files in the directory you are standing in. Never overwrites, and
+# never writes metadata.csv or the run table - only their .example copies.
+populate_project() {
+    local multi="$1" here made=0 kept=0
+
+    here=$(pwd -P)
+    if [ "$here" = "$INSTALL" ]; then
+        echo "ERROR: this is the PoolSeqFlow installation, not a project." >&2
+        echo "  The installation is a tool: one copy serves any number of projects and is" >&2
+        echo "  replaced wholesale when you upgrade, so a project kept inside it does not" >&2
+        echo "  survive. Make a directory of your own, change into it, and run init there." >&2
+        exit 1
+    fi
+
+    place() {
+        local src="$1" dest="$2"
+        if [ -e "$dest" ]; then
+            printf '  kept     %-22s (already here)\n' "$dest"
+            kept=$((kept + 1))
+        else
+            cp "$src" "$dest"
+            printf '  created  %s\n' "$dest"
+            made=$((made + 1))
+        fi
+    }
+
+    make_dir() {
+        if [ -d "$1" ]; then
+            printf '  kept     %-22s (already here)\n' "$1/"
+            kept=$((kept + 1))
+        else
+            mkdir -p "$1"
+            printf '  created  %s\n' "$1/"
+            made=$((made + 1))
+        fi
+    }
+
+    echo "Populating a PoolSeqFlow project in $here"
+    echo ""
+    place "$INSTALL/parameters.config.template" parameters.config
+    place "$INSTALL/metadata.csv.template" metadata.csv.example
+    [ "$multi" = "multi" ] && place "$INSTALL/multi-run.csv.example" multi-run.csv.example
+    make_dir Data
+    make_dir Reference
+    echo ""
+
+    if [ "$multi" = "multi" ]; then
+        # Only ever flipped in a config this run created, never in one the user has written.
+        if [ "$made" -gt 0 ] && grep -qE '^[[:space:]]*multiRun[[:space:]]*=[[:space:]]*false' parameters.config; then
+            sed 's/^\([[:space:]]*multiRun[[:space:]]*=[[:space:]]*\)false/\1true/' \
+                parameters.config > .parameters.config.init.tmp \
+                && mv .parameters.config.init.tmp parameters.config
+            echo "  multiRun = true is set in parameters.config"
+        else
+            echo "  Set  multiRun = true  in parameters.config yourself - it was already there"
+            echo "  and this does not edit a config you had written."
+        fi
+        echo ""
+        echo "Write your run table next. One column must be RunID; every other column is a"
+        echo "parameter name spelt as parameters.config spells it, and a blank cell means"
+        echo "\"take it from parameters.config\". The rules and four worked examples are in"
+        echo "multi-run.csv.example, now beside you. Name your table in parameters.config"
+        echo "as  multiRunFile."
+        echo ""
+    fi
+
+    echo "$made created, $kept already present."
+    echo ""
+    echo "Next:"
+    echo "  1. put your reads in Data/ and your reference in Reference/"
+    echo "  2. edit parameters.config - mainDir, storageDir, readPattern, referenceFile,"
+    echo "     poolSize and ploidy at minimum"
+    echo "  3. write metadata.csv, which says what your samples are. Start from"
+    echo "     metadata.csv.example: it explains every column and what merges two rows"
+    echo "     into one pool."
+}
 
 case $COMMAND in
     install)
-        echo "Installing conda environment..."
-        if conda env list | grep -q "$ENV_NAME"; then
+        require_install
+        echo "Installing conda environment '$ENV_NAME'..."
+        if env_exists "$ENV_NAME"; then
             echo "Environment '$ENV_NAME' already exists."
         else
-            conda env create -f "$ENV_FILE"
+            # -n overrides the `name:` key inside environment.yml.
+            conda env create -n "$ENV_NAME" -f "$ENV_FILE"
         fi
-        echo "Installation complete."
         echo
-        # An environment that was created but is missing a tool is not an install.
-        # Verify before reporting success: a tool that is absent here would
-        # otherwise surface partway through a run, hours in. `set -e` means a
-        # failed check fails the install.
+        deploy_payload
+        report_other_envs
+        # Against the DEPLOYED copy, which is the one that will run.
         conda activate "$ENV_NAME"
-        bash install/check_install.sh
+        bash "$(install_prefix)/opt/PoolSeqFlow-${VERSION}/install/check_install.sh"
+        echo "Installation complete."
+        echo ""
+        echo "The analysis layer was copied with everything else, so 'PoolSeqFlow analysis'"
+        echo "answers now. THAT DOES NOT MEAN THE ANALYSIS LAYER IS INSTALLED. The scripts"
+        echo "weigh nothing and travel with the release so that they can never be a version out"
+        echo "of step with the pipeline; the weight is the environment, which carries R and"
+        echo "which nothing here creates. Until you create it, every module refuses and says so."
+        echo ""
+        echo "The pipeline is complete without it. Add the analysis layer whenever you want it,"
+        echo "or never:"
+        echo "    $(basename "$0") analysis install"
+        ;;
+
+    init)
+        require_install
+        populate_project single
+        ;;
+
+    init_multi)
+        require_install
+        populate_project multi
         ;;
 
     check)
-        if ! conda env list | grep -q "$ENV_NAME"; then
-            echo "Environment '$ENV_NAME' does not exist. Run './$(basename "$0") install' first." >&2
-            exit 1
-        fi
-        conda activate "$ENV_NAME"
-        bash install/check_install.sh
+        require_install
+        require_env
+        bash "$INSTALL/install/check_install.sh"
         ;;
     run|resume)
-        # PoolSeqFlow resumes through its own filesystem checks: every step looks for
-        # its outputs in projectDir and skips itself if they are already there. Nextflow's
-        # -resume is not used - it depends on the work/ task directories, which
-        # `cleanup = true` deletes on completion. Use `reset` to force a full re-run.
+        # Resuming is what `run` already does: every step skips itself when its outputs are
+        # already in storage. Nextflow's own -resume is not used.
         if [ "$COMMAND" = "resume" ]; then
             echo "Note: 'resume' is deprecated - 'run' already resumes automatically."
         fi
-        echo "Running pipeline..."
-        conda activate "$ENV_NAME"
-        nextflow run poolseqflow.nf
+        require_install
+        require_project_config
+        require_migrated_config
+        echo "Running pipeline in $(pwd)..."
+        require_env
+        # Absolute: the pipeline lives with the installation, the project is where we stand.
+        nextflow run "$INSTALL/poolseqflow.nf"
         wait
         conda deactivate
         ;;
+    dryrun)
+        # Its own entry point plus --dryRun: dryrun.nf stops the compute, the flag stops
+        # step 0 recording.
+        require_install
+        require_project_config
+        require_migrated_config
+        require_env
+        DRYDIR=$(nf_config_value params.dryRunDir)
+        if [ -z "$DRYDIR" ]; then
+            echo "ERROR: could not resolve params.dryRunDir - is parameters.config present?" >&2
+            exit 1
+        fi
+        dryrun_is_ours "$DRYDIR" || exit 1
+        if [ -d "$DRYDIR" ]; then
+            echo "Replacing the previous preview in $DRYDIR"
+            rm -rf "$DRYDIR"
+        fi
+        echo "Dry run in $(pwd)..."
+        echo ""
+        echo "Nothing is computed and nothing is recorded. The environment is verified, the"
+        echo "layout every run's results would take is worked out, and that tree is created"
+        echo "empty in"
+        echo "    $DRYDIR"
+        echo "for you to look at. Your results, your configuration and your own files are left"
+        echo "exactly as they are."
+        echo ""
+        nextflow run "$INSTALL/dryrun.nf" --dryRun true
+        wait
+        conda deactivate
+        if [ -f "$DRYDIR/README.txt" ]; then
+            echo ""
+            cat "$DRYDIR/README.txt"
+        fi
+        ;;
+    dryclean)
+        require_install
+        require_project_config
+        require_env
+        DRYDIR=$(nf_config_value params.dryRunDir)
+        conda deactivate
+        if [ -z "$DRYDIR" ]; then
+            echo "ERROR: could not resolve params.dryRunDir - is parameters.config present?" >&2
+            exit 1
+        fi
+        if [ ! -d "$DRYDIR" ]; then
+            echo "No dry run preview in $DRYDIR - nothing to remove."
+            exit 0
+        fi
+        dryrun_is_ours "$DRYDIR" || exit 1
+        # No confirmation prompt, unlike reset: a preview is empty by construction.
+        echo "Removing the dry run preview:"
+        echo "    $DRYDIR"
+        rm -rf "$DRYDIR"
+        echo "Removed. Your results and your configuration are untouched."
+        ;;
     migrate_config)
-        MIGRATE="bin/config_migrate.sh"
+        require_install
+        require_project_config
+        MIGRATE="$INSTALL/bin/config_migrate.sh"
+        TEMPLATE="$INSTALL/parameters.config.template"
         [ -f "$MIGRATE" ] || { echo "ERROR: $MIGRATE not found." >&2; exit 1; }
+        [ -f "$TEMPLATE" ] || { echo "ERROR: $TEMPLATE not found." >&2; exit 1; }
         echo "-------------------------------------------------------------------------"
-        echo " WARNING: this rewrites parameters.config."
+        echo " WARNING: this rewrites parameters.config in $(pwd)."
         echo ""
         echo " Migration is a convenience, not a guarantee. It carries across settings"
         echo " whose parameter still exists and has the same meaning. It cannot know"
-        echo " about a parameter whose behaviour changed in a way that still looks"
+        echo " about a parameter whose behavior changed in a way that still looks"
         echo " like a plain value, so a migrated file can be silently wrong."
         echo ""
         echo " Read the report below, then diff your file against the template:"
-        echo "     diff parameters.config parameters.config.template"
+        echo "     diff parameters.config $TEMPLATE"
         echo ""
         echo " Every release adds parameters, so starting from the template and"
         echo " re-entering your settings by hand is often the safer choice:"
-        echo "     cp parameters.config.template parameters.config"
+        echo "     cp $TEMPLATE parameters.config"
         echo "-------------------------------------------------------------------------"
         echo ""
-        bash "$MIGRATE"
+        # All three passed explicitly: config_migrate.sh otherwise defaults them to the
+        # current directory, where the template does not live.
+        bash "$MIGRATE" parameters.config "$TEMPLATE" parameters.config
         echo ""
         echo "Now compare the result against the template before running:"
-        echo "    diff parameters.config parameters.config.template"
+        echo "    diff parameters.config $TEMPLATE"
         ;;
     clean)
+        require_install
+        require_project_config
         echo "Cleaning Nextflow work directory..."
-        conda activate "$ENV_NAME"
+        require_env
         WORKDIR=$(nf_config_value workDir)
+        UTILDIR=$(nf_config_value params.dir.utilized)
+        MAINDIR=$(nf_config_value params.mainDir)
+        STORAGE=$(nf_config_value params.storageDir)
+
+        # Both roots: a staged transfer creates its directory beside the DESTINATION, and
+        # destinations are in both.
+        STAGES=$(staging_dirs "$MAINDIR" "$STORAGE")
+
+        # Everything that will be removed is listed before anything is, including when
+        # workDir cannot be resolved.
+        echo ""
+        echo "Removing:"
+        if [ -n "$WORKDIR" ]; then
+            echo "    $WORKDIR - Nextflow's task directories"
+        fi
+        echo "    $(pwd)/.nextflow*    - Nextflow's own history and cache"
+        while IFS= read -r d; do
+            if [ -n "$d" ]; then echo "    $d - a transfer killed part way through"; fi
+        done <<EOF
+$STAGES
+EOF
+        echo ""
+        echo "Not removed:"
+        [ -n "$UTILDIR" ] && [ -d "$UTILDIR" ] && \
+            echo "    $UTILDIR - outputs not yet moved to permanent storage"
+        # Under multiRun each run has its own. Named individually rather than as a glob.
+        while IFS= read -r d; do
+            if [ -n "$d" ]; then echo "    $d - outputs not yet moved to permanent storage"; fi
+        done <<EOF
+$(run_utilized_dirs "$MAINDIR")
+EOF
+        echo "    your results and logs, and the reads, reference and configuration you placed"
+        echo ""
+
         nextflow clean -f || true
         wait
         conda deactivate
         wait
         if [ -n "$WORKDIR" ]; then
-            echo "Removing $WORKDIR and log files"
             rm -rf "$WORKDIR"
         else
             echo "WARNING: could not resolve workDir; leaving it in place." >&2
         fi
         rm -rf .nextflow*
+        # Re-read rather than reusing the list above: `nextflow clean -f` ran in between.
+        while IFS= read -r d; do
+            if [ -n "$d" ]; then rm -rf "$d"; fi
+        done <<EOF
+$(staging_dirs "$MAINDIR" "$STORAGE")
+EOF
         echo "Cleaned."
         ;;
     reset)
-        conda activate "$ENV_NAME"
+        require_install
+        require_project_config
+        require_migrated_config
+        require_env
         WORKDIR=$(nf_config_value workDir)
-        STORAGE=$(nf_config_value params.projectDir)
+        STORAGE=$(nf_config_value params.storageDir)
         DATADIR=$(nf_config_value params.dir.data)
+        REFDIR=$(nf_config_value params.dir.references)
+        DICTDIR=$(nf_config_value params.dir.dictionaries)
+        UTILDIR=$(nf_config_value params.dir.utilized)
+        MAINDIR=$(nf_config_value params.mainDir)
+        METADATA=$(nf_config_value params.metadataPath)
         conda deactivate
         if [ -z "$STORAGE" ]; then
-            echo "ERROR: could not resolve params.projectDir - is parameters.config present?" >&2
+            echo "ERROR: could not resolve params.storageDir - is parameters.config present?" >&2
             exit 1
         fi
+        # Every run's and every group's directory, named individually in the disclosure below.
+        RUN_ROOTS=$(run_storage_roots "$STORAGE")
+        RUN_UTILS=$(run_utilized_dirs "$MAINDIR")
         echo ""
         echo "This permanently deletes:"
         echo "    $STORAGE/Output      - every result produced so far"
-        echo "    $STORAGE/Reports"
+        echo "    $STORAGE/Reports     - only if a pre-2.1 version put reports here"
         echo "    $STORAGE/Logs"
-        echo "    $STORAGE/Reference   - indices and the SnpEff database"
-        echo "    $STORAGE/.poolseqflow_params"
-        echo "    $STORAGE/.poolseqflow_rgtags"
-        echo "    $STORAGE/.poolseqflow_versions"
+        echo "    $STORAGE/Reference   - only if a pre-3.0 version built indices there"
+        [ -n "$DICTDIR" ] && echo "    $DICTDIR - the indices and SnpEff database built from your reference"
+        [ -n "$UTILDIR" ] && echo "    $UTILDIR - outputs not yet moved to permanent storage"
+        while IFS= read -r d; do
+            if [ -n "$d" ]; then echo "    $d - and what is in there"; fi
+        done <<EOF
+$RUN_ROOTS
+EOF
+        while IFS= read -r d; do
+            if [ -n "$d" ]; then echo "    $d - that run's outputs not yet moved to permanent storage"; fi
+        done <<EOF
+$RUN_UTILS
+EOF
+        echo "    the .parameters.config, .multirun.csv and .poolseqflow_* files describing all of it"
+        echo "    $(pwd)/.nextflow*    - Nextflow's own history and cache"
         [ -n "$WORKDIR" ] && echo "    $WORKDIR"
         echo ""
-        echo "Your raw sequencing data in $DATADIR is not touched."
+        echo "Your reads in $DATADIR are not touched, and neither are the reference and"
+        echo "annotation files you placed in $REFDIR - only what was built from them."
+        if [ -n "$METADATA" ]; then
+            echo "Nothing you wrote in $(pwd) is removed either - not parameters.config,"
+            echo "and not $METADATA."
+        else
+            echo "Nothing you wrote in $(pwd) is removed either, parameters.config included."
+        fi
+        # Both roots: `analysis complete` moves finished analyses to permanent storage, so a
+        # completed project keeps them there rather than under mainDir.
+        ANALYSIS_ROOTS=""
+        for d in "$MAINDIR/Analysis" "$STORAGE/Analysis"; do
+            if [ -n "${d%/Analysis}" ] && [ -d "$d" ]; then
+                ANALYSIS_ROOTS="${ANALYSIS_ROOTS}${ANALYSIS_ROOTS:+ }$d"
+            fi
+        done
+        if [ -n "$ANALYSIS_ROOTS" ]; then
+            echo ""
+            for d in $ANALYSIS_ROOTS; do
+                echo "$d is left alone."
+            done
+            echo "It is worth knowing what that means: everything in there was computed from the"
+            echo "results this command deletes, so it survives as an analysis of numbers that will"
+            echo "no longer exist. The analysis layer refuses to write into a folder that already"
+            echo "holds an analysis, so move or remove the ones you are finished with before"
+            echo "running a module again."
+        fi
         echo ""
         printf 'Type DELETE_MY_ANALYSIS to confirm: '
         if ! read -r CONFIRM; then
@@ -165,67 +1353,523 @@ case $COMMAND in
         echo "Resetting pipeline..."
         rm -rf .nextflow*
         if [ -n "$WORKDIR" ]; then rm -rf "$WORKDIR"; fi
+        # Reports and Reference at the storage root only exist for projects created before
+        # 2.1.0 and 3.0.0 respectively. Harmless when absent, so they stay on the list.
         rm -rf "$STORAGE"/Reports "$STORAGE"/Logs "$STORAGE"/Output \
-               "$STORAGE"/Reference "$STORAGE"/PoolSeqFlow_*
-        # These record the parameters, RG tags and pipeline versions behind outputs that
-        # no longer exist; leaving them would make the next run fail its checks for no
-        # reason, and would attribute fresh results to an earlier release.
+               "$STORAGE"/Reference
+        # What step 1 derived from your reference, and what has not yet been promoted. The
+        # reference itself sits one level up and is not touched.
+        if [ -n "$DICTDIR" ]; then rm -rf "$DICTDIR"; fi
+        if [ -n "$UTILDIR" ]; then rm -rf "$UTILDIR"; fi
+        # Each run's own working root, from the list computed before the prompt. `if`, not
+        # `[ -n "$d" ] && ...`: an empty list would leave the loop returning 1 under `set -e`.
+        while IFS= read -r d; do
+            if [ -n "$d" ]; then rm -rf "$d"; fi
+        done <<EOF
+$RUN_UTILS
+EOF
+        # From 3.0 the guard files sit beside the results Output/ has just taken. At the
+        # storage root they only exist for a project created before 3.0.
         rm -f "$STORAGE"/.poolseqflow_params "$STORAGE"/.poolseqflow_rgtags \
-              "$STORAGE"/.poolseqflow_versions
+              "$STORAGE"/.poolseqflow_metadata \
+              "$STORAGE"/.poolseqflow_versions "$STORAGE"/.poolseqflow_version
         echo "Reset complete."
         ;;
+
+    # The analysis layer. What it installs and removes here is its own conda environment,
+    # never the pipeline's.
+    analysis)
+        case $ANALYSIS_COMMAND in
+            install)
+                analysis_takes_no_more
+                require_analysis_install
+                [ -f "$ANALYSIS_ENV_FILE" ] || {
+                    echo "ERROR: $ANALYSIS_ENV_FILE is missing." >&2
+                    echo "  This copy of PoolSeqFlow is incomplete." >&2
+                    exit 1
+                }
+                echo "Installing conda environment '$ANALYSIS_ENV'..."
+                if env_exists "$ANALYSIS_ENV"; then
+                    echo "Environment '$ANALYSIS_ENV' already exists."
+                else
+                    # -n overrides the `name:` key inside environment-analysis.yml.
+                    conda env create -n "$ANALYSIS_ENV" -f "$ANALYSIS_ENV_FILE"
+                fi
+                # The store outlives the environment: `analysis uninstall` takes the environment
+                # and leaves the modules, so this is where they get what they run on back.
+                STORE_SPECS=$(store_packages "$MODULE_STORE")
+                if [ -n "$STORE_SPECS" ]; then
+                    echo ""
+                    echo "Installing what the modules in this installation run on:"
+                    printf '    %s\n' $STORE_SPECS
+                    echo ""
+                    # shellcheck disable=SC2086
+                    conda_install_packages "$ANALYSIS_ENV" $STORE_SPECS || {
+                        echo "" >&2
+                        echo "ERROR: the environment was created, but the packages the installed" >&2
+                        echo "  modules declare could not be added to it. Those modules will not" >&2
+                        echo "  run. Remove the one at fault and install this environment again:" >&2
+                        echo "    $(basename "$0") analysis modules list" >&2
+                        exit 1
+                    }
+                fi
+                echo ""
+                echo "The analysis layer is installed. Run a module from your project directory:"
+                echo "    $(basename "$0") analysis <module>"
+                if ! env_exists "$ENV_NAME"; then
+                    echo ""
+                    echo "Note: the pipeline environment '$ENV_NAME' is not installed. The analysis"
+                    echo "layer reads results a pipeline run produced, so this machine can analyze"
+                    echo "results copied from elsewhere but cannot produce them."
+                fi
+                echo ""
+                # Just created, so it is activated without the existence check the other arms make.
+                conda activate "$ANALYSIS_ENV"
+                bash "$INSTALL/install/check_analysis_install.sh"
+                ;;
+
+            check)
+                analysis_takes_no_more
+                require_analysis_install
+                require_analysis_env
+                bash "$INSTALL/install/check_analysis_install.sh"
+                ;;
+
+            complete)
+                analysis_takes_no_more
+                require_analysis_install
+                require_project_config
+                require_migrated_config
+                # Activates the environment, so it is last: the refusals above must be
+                # reachable without one.
+                require_analysis_env
+                echo ""
+                echo "This moves, from your working directory into permanent storage:"
+                echo "    Analysis/Main      the intermediates every module shares"
+                echo "    Analysis/Results   every analysis you have published"
+                echo ""
+                echo "Analysis/Logs, Analysis/Session and Analysis/work stay where they are."
+                echo "Nothing is deleted, and a name already taken in permanent storage stops the"
+                echo "command with nothing moved. There is no command that brings a results folder"
+                echo "back; a module reaches an archived intermediate on its own."
+                echo ""
+                printf 'Move them? [y/N]: '
+                if ! read -r CONFIRM; then
+                    echo ""
+                    echo "Aborted - no confirmation received. Nothing was moved." >&2
+                    conda deactivate
+                    exit 1
+                fi
+                case $CONFIRM in
+                    y|Y|yes|YES|Yes) ;;
+                    *) echo "Aborted - nothing was moved."; conda deactivate; exit 1 ;;
+                esac
+                CONFIGS=(-c "$INSTALL/analysis/frame.config")
+                if [ -f analysis.config ]; then
+                    CONFIGS+=(-c analysis.config)
+                fi
+                echo ""
+                nextflow run "$INSTALL/analysis/complete.nf" "${CONFIGS[@]}"
+                wait
+                conda deactivate
+                ;;
+
+            modules)
+                # The store, inside the installation, and never a project. `list` and `available`
+                # read directories and a catalogue; `install` and `uninstall` also move packages
+                # in and out of the analysis environment, so those two need it to exist.
+                require_analysis_install
+                case "${ANALYSIS_ARGS[0]:-}" in
+                    list)
+                        [ "${#ANALYSIS_ARGS[@]}" -eq 1 ] || usage_modules
+                        list_modules
+                        ;;
+                    available)
+                        [ "${#ANALYSIS_ARGS[@]}" -eq 1 ] || usage_modules
+                        available_modules
+                        ;;
+                    install)
+                        # The version is optional: without one, the newest this release reads.
+                        case "${#ANALYSIS_ARGS[@]}" in
+                            2|3) ;;
+                            *) usage_modules ;;
+                        esac
+                        require_analysis_env
+                        install_module "${ANALYSIS_ARGS[1]}" "${ANALYSIS_ARGS[2]:-}"
+                        conda deactivate
+                        ;;
+                    uninstall)
+                        [ "${#ANALYSIS_ARGS[@]}" -eq 2 ] || usage_modules
+                        uninstall_module "${ANALYSIS_ARGS[1]}"
+                        ;;
+                    *)
+                        usage_modules
+                        ;;
+                esac
+                ;;
+
+            uninstall)
+                analysis_takes_no_more
+                if ! env_exists "$ANALYSIS_ENV"; then
+                    echo "Conda environment '$ANALYSIS_ENV' is already absent."
+                    echo "The pipeline and its own environment are untouched by this command."
+                    exit 0
+                fi
+                echo ""
+                echo "This removes:"
+                echo "    the analysis environment $ANALYSIS_ENV"
+                echo ""
+                echo "The pipeline, its own environment, and everything under Analysis/ stay where"
+                echo "they are. Rebuilding this environment takes as long as it did the first time."
+                echo ""
+                printf 'Remove it? [y/N]: '
+                if ! read -r CONFIRM; then
+                    echo ""
+                    echo "Aborted - no confirmation received. Nothing was removed." >&2
+                    exit 1
+                fi
+                case "$CONFIRM" in
+                    y|Y|yes|YES|Yes) ;;
+                    *) echo "Aborted - nothing was removed."; exit 1 ;;
+                esac
+                echo "Uninstalling conda environment '$ANALYSIS_ENV'..."
+                conda deactivate
+                conda env remove -n "$ANALYSIS_ENV" -y
+                echo ""
+                echo "Only the analysis environment goes. The pipeline, its environment, and"
+                echo "everything under Analysis/ are untouched."
+                echo "Reinstall it with:"
+                echo "    $(basename "$0") analysis install"
+                ;;
+
+            version)
+                analysis_takes_no_more
+                echo "PoolSeqFlow analysis layer"
+                echo "v$VERSION"
+                ;;
+
+            cite)
+                analysis_takes_no_more
+                # The software citation is the pipeline's: the analysis layer is part of the
+                # same release and carries the same DOI.
+                poolseqflow_citation "$VERSION"
+                echo ""
+                echo "The analysis layer also runs on R"
+                echo "--------------------------------------------------------------------"
+                if env_exists "$ANALYSIS_ENV"; then
+                    echo "Results produced by an analysis module depend on R and on the packages"
+                    echo "below, at the versions this release pins. Cite them alongside PoolSeqFlow."
+                    echo ""
+                    conda activate "$ANALYSIS_ENV"
+                    if command -v Rscript >/dev/null 2>&1; then
+                        # Each package's own citation, asked of R, so the version reported is
+                        # the one installed. Failure is not fatal.
+                        # shellcheck disable=SC2046
+                        Rscript --vanilla -e '
+                            want <- commandArgs(trailingOnly = TRUE)
+                            have <- rownames(installed.packages())
+                            cat(format(citation(), style = "text"), sep = "\n\n")
+                            for (w in want) {
+                                m <- have[tolower(have) == tolower(w)]
+                                if (length(m)) cat("\n", format(citation(m[1]), style = "text"), "\n", sep = "")
+                            }
+                        ' $(analysis_r_packages) 2>/dev/null || {
+                            echo "R could not be asked for its citations. Check the environment with:"
+                            echo "    $(basename "$0") analysis check"
+                        }
+                    else
+                        echo "Rscript is not on PATH in '$ANALYSIS_ENV', so the R citations cannot be"
+                        echo "read from it. Check the environment with:"
+                        echo "    $(basename "$0") analysis check"
+                    fi
+                    conda deactivate
+                else
+                    echo "Environment '$ANALYSIS_ENV' is not installed, so the R and package citations"
+                    echo "cannot be read from it. Install it and run this again:"
+                    echo "    $(basename "$0") analysis install"
+                fi
+                ;;
+
+            -*)
+                usage_analysis
+                ;;
+
+            *)
+                # analysis.nf holds the list of modules and refuses anything that is not on
+                # it, so this wrapper keeps no second copy. Only the SHAPE of the word is
+                # checked here, because it names a file below.
+                case $ANALYSIS_COMMAND in
+                    *[!A-Za-z0-9_-]*)
+                        echo "ERROR: '$ANALYSIS_COMMAND' is not a module name." >&2
+                        usage_analysis
+                        ;;
+                esac
+                # The one word a module run takes. It selects an implementation and never
+                # changes a number, so it is a flag here rather than a setting in a file.
+                MODULE_FLAGS=()
+                case "${#ANALYSIS_ARGS[@]}" in
+                    0) ;;
+                    1)
+                        if [ "${ANALYSIS_ARGS[0]}" != "nocpp" ]; then
+                            echo "ERROR: 'analysis $ANALYSIS_COMMAND' does not take '${ANALYSIS_ARGS[0]}'." >&2
+                            usage_analysis
+                        fi
+                        MODULE_FLAGS=(--nocpp)
+                        ;;
+                    *)
+                        echo "ERROR: 'analysis $ANALYSIS_COMMAND' takes at most one further word." >&2
+                        usage_analysis
+                        ;;
+                esac
+                require_analysis_install
+                require_project_config
+                require_migrated_config
+                require_analysis_env
+                # Three layers, each winning over the one before it: the installation's frame,
+                # the project's own analysis.config, and this module's <module>.config. The
+                # last two are the user's, are optional, and are read from the directory you
+                # are standing in.
+                CONFIGS=(-c "$INSTALL/analysis/frame.config")
+                if [ -f analysis.config ]; then
+                    CONFIGS+=(-c analysis.config)
+                fi
+                if [ -f "${ANALYSIS_COMMAND}.config" ]; then
+                    CONFIGS+=(-c "${ANALYSIS_COMMAND}.config")
+                fi
+                # Two Nextflow runs, in order. analysis.nf checks the project and clears the
+                # results folder; the module's own main.nf then produces the results, reading
+                # the same three config layers. Absolute paths: the pipeline lives with the
+                # installation, the project is where we stand.
+                echo "Checking $ANALYSIS_COMMAND in $(pwd)..."
+                echo ""
+                nextflow run "$INSTALL/analysis.nf" "${CONFIGS[@]}" --module "$ANALYSIS_COMMAND"
+                wait
+                # A module in the store has a directory and runs; a module the frame provides
+                # has neither, and the check above was all of it. --module is not passed on:
+                # a module's main.nf names itself.
+                MODULE_DIR="$MODULE_STORE/$ANALYSIS_COMMAND"
+                if [ -d "$MODULE_DIR" ]; then
+                    if [ ! -f "$MODULE_DIR/main.nf" ]; then
+                        echo "" >&2
+                        echo "ERROR: '$ANALYSIS_COMMAND' has no main.nf." >&2
+                        echo "  A module is a pipeline of its own, and main.nf is that pipeline." >&2
+                        echo "  Looked in: $MODULE_DIR" >&2
+                        echo "  The module is installed but incomplete; install it again." >&2
+                        conda deactivate
+                        exit 1
+                    fi
+                    echo ""
+                    echo "Running $ANALYSIS_COMMAND in $(pwd)..."
+                    echo ""
+                    # The flag reaches the module and not analysis.nf: recordedManifest() keeps
+                    # every top-level parameter, so a run of it carrying one would read as a
+                    # setting added since the results were produced and refuse the project.
+                    nextflow run "$MODULE_DIR/main.nf" "${CONFIGS[@]}" "${MODULE_FLAGS[@]+"${MODULE_FLAGS[@]}"}"
+                    wait
+                fi
+                conda deactivate
+                ;;
+        esac
+        ;;
+
+    list)
+        # Payloads and environments together: they are installed as a pair.
+        PREFIX=$(install_prefix)
+        PAYLOADS=$(installed_payload_versions "$PREFIX")
+        echo "Installed pipelines under $PREFIX/opt:"
+        if [ -z "$PAYLOADS" ]; then
+            echo "    none"
+        else
+            for v in $PAYLOADS; do
+                if [ "$v" = "$VERSION" ]; then
+                    printf '  * %-12s %s\n' "v$v" "this copy"
+                else
+                    printf '    %-12s\n' "v$v"
+                fi
+            done
+        fi
+        echo ""
+
+        INSTALLED=$(poolseqflow_envs)
+        if [ -z "$INSTALLED" ]; then
+            echo "No PoolSeqFlow conda environments are installed."
+            echo "Install this version's with:  $(basename "$0") install"
+            exit 0
+        fi
+        echo "PoolSeqFlow conda environments:"
+        for env in $INSTALLED; do
+            if [ "$env" = "$ENV_NAME" ]; then
+                printf '  * %-24s this copy (v%s)\n' "$env" "$VERSION"
+            elif [ "$env" = "$LEGACY_ENV" ]; then
+                printf '    %-24s unversioned - predates per-version environments\n' "$env"
+            else
+                printf '    %s\n' "$env"
+            fi
+        done
+        echo ""
+        if ! env_exists "$ENV_NAME"; then
+            echo "This copy is v$VERSION and runs only against '$ENV_NAME',"
+            echo "which is not installed. Install it with:"
+            echo "    ./$(basename "$0") install"
+            echo ""
+        fi
+        echo "Remove one environment:   conda env remove -n <name>"
+        echo "Remove all of them:       ./$(basename "$0") uninstall_all"
+        ;;
+
     version)
         echo "PoolSeqFlow"
         echo "v$VERSION"
         ;;
 
     cite)
-        cat <<EOF
-PoolSeqFlow v$VERSION
-Ozan L. Z. Kiratli
-
-Cite the version you actually ran, not the newest one.
---------------------------------------------------------------------
-Zenodo mints a separate DOI for every release, and results depend on
-which release produced them - filters, defaults and parameter names
-have all changed between versions. A paper that cites the current
-release for numbers produced by an older one is describing a method
-it did not use.
-
-This copy is v$VERSION. To get its DOI, open the all-versions record
-below and pick v$VERSION from the "Versions" list:
-
-    https://doi.org/$CONCEPT_DOI
-
-Then replace the DOI in the entries below with that one.
-
-Reference
---------------------------------------------------------------------
-Kiratli, O. L. Z. (2026). PoolSeqFlow: A Nextflow pipeline for allele
-frequency analysis from pooled Illumina sequencing data (Version
-v$VERSION) [Computer software]. https://doi.org/$CONCEPT_DOI
-
-BibTeX
---------------------------------------------------------------------
-@software{kiratli_poolseqflow,
-  author  = {Kiratli, Ozan L. Z.},
-  title   = {PoolSeqFlow: A Nextflow pipeline for allele frequency
-             analysis from pooled Illumina sequencing data},
-  version = {v$VERSION},
-  year    = {2026},
-  doi     = {$CONCEPT_DOI},
-  url     = {https://github.com/ozankiratli/PoolSeqFlow}
-}
-
-$CONCEPT_DOI is the all-versions DOI: it always resolves to the
-newest release. Use it when referring to the software in general, and
-a version DOI when reporting results.
-EOF
+        poolseqflow_citation "$VERSION"
         ;;
     uninstall)
-        echo "Uninstalling conda environment..."
-        conda deactivate
-        conda env remove -n "$ENV_NAME"
+        PREFIX=$(install_prefix)
+        # Decided first, and may be an installation other than this wrapper's. Canceling,
+        # or having no way to ask, stops here.
+        TARGET=$(choose_installation_to_uninstall "$PREFIX") || exit 1
+
+        if [ -z "$TARGET" ]; then
+            echo "Environment '$ENV_NAME' is not installed, and neither is v$VERSION of the" >&2
+            echo "pipeline under $PREFIX/opt." >&2
+            echo "" >&2
+            echo "Nothing is installed under this prefix. If you installed somewhere else," >&2
+            echo "set POOLSEQFLOW_PREFIX to it and try again." >&2
+            exit 1
+        fi
+
+        # TARGET is the installation's name. The legacy environment carries no version and
+        # has no payload; every other name yields the version its payload sits under.
+        TARGET_ENV="$TARGET"
+        TARGET_VERSION=""
+        case "$TARGET" in
+            "$LEGACY_ENV") ;;
+            *) TARGET_VERSION="${TARGET#PoolSeqFlow-}" ;;
+        esac
+        # The analysis layer's environment belongs to the same version and goes with it.
+        # Leaving it behind would strand an environment whose pipeline no longer exists.
+        TARGET_ANALYSIS_ENV="${TARGET}-analysis"
+        HAVE_ENV=0
+        if env_exists "$TARGET_ENV"; then HAVE_ENV=1; fi
+        HAVE_ANALYSIS_ENV=0
+        if env_exists "$TARGET_ANALYSIS_ENV"; then HAVE_ANALYSIS_ENV=1; fi
+        HAVE_PAYLOAD=0
+        if [ -n "$TARGET_VERSION" ] && [ -d "$PREFIX/opt/PoolSeqFlow-${TARGET_VERSION}" ]; then
+            HAVE_PAYLOAD=1
+        fi
+
+        if [ "$HAVE_ENV" -eq 0 ] && [ "$HAVE_ANALYSIS_ENV" -eq 0 ] && [ "$HAVE_PAYLOAD" -eq 0 ]; then
+            echo "Nothing of $TARGET is installed under $PREFIX - nothing to remove."
+            exit 0
+        fi
+
+        # Confirmed however the installation was arrived at: chosen from a list, named by a
+        # versioned wrapper, or the only one present.
+        echo ""
+        echo "This removes:"
+        if [ "$HAVE_ENV" -eq 1 ]; then
+            echo "    the conda environment $TARGET_ENV"
+        fi
+        if [ "$HAVE_ANALYSIS_ENV" -eq 1 ]; then
+            echo "    the analysis environment $TARGET_ANALYSIS_ENV"
+        fi
+        if [ "$HAVE_PAYLOAD" -eq 1 ]; then
+            echo "    the pipeline at $PREFIX/opt/PoolSeqFlow-${TARGET_VERSION}"
+        fi
+        echo ""
+        echo "Your project directories - parameters.config, Data/, Reference/ - and everything"
+        echo "in storageDir are untouched: none of them live inside an installation."
+        echo ""
+        echo "Removing an environment means results produced with that version can no"
+        echo "longer be reproduced without reinstalling it."
+        echo ""
+        printf 'Remove them? [y/N]: '
+        if ! read -r CONFIRM; then
+            echo ""
+            echo "Aborted - no confirmation received. Nothing was removed." >&2
+            exit 1
+        fi
+        case "$CONFIRM" in
+            y|Y|yes|YES|Yes) ;;
+            *) echo "Aborted - nothing was removed."; exit 1 ;;
+        esac
+
+        # Installed together, but any part can be missing on its own, so each is checked
+        # before it is removed.
+        if [ "$HAVE_ENV" -eq 1 ]; then
+            echo "Uninstalling conda environment '$TARGET_ENV'..."
+            conda deactivate
+            conda env remove -n "$TARGET_ENV" -y
+        else
+            echo "Conda environment '$TARGET_ENV' is already absent."
+        fi
+        if [ "$HAVE_ANALYSIS_ENV" -eq 1 ]; then
+            echo "Uninstalling conda environment '$TARGET_ANALYSIS_ENV'..."
+            conda deactivate
+            conda env remove -n "$TARGET_ANALYSIS_ENV" -y
+        fi
+        if [ "$HAVE_PAYLOAD" -eq 1 ]; then
+            remove_payload "$TARGET_VERSION"
+        elif [ -n "$TARGET_VERSION" ]; then
+            echo "No pipeline installed at $PREFIX/opt/PoolSeqFlow-${TARGET_VERSION}."
+        fi
+        ;;
+
+    uninstall_all)
+        INSTALLED=$(poolseqflow_envs)
+        if [ -z "$INSTALLED" ]; then
+            echo "No PoolSeqFlow conda environments are installed. Nothing to do."
+            exit 0
+        fi
+        PREFIX=$(install_prefix)
+        PAYLOADS=$(installed_payload_versions "$PREFIX")
+        echo ""
+        echo "This removes every PoolSeqFlow conda environment on this machine:"
+        echo "$INSTALLED" | sed 's/^/    /'
+        if [ -n "$PAYLOADS" ]; then
+            echo ""
+            echo "and every installed pipeline under $PREFIX/opt:"
+            for v in $PAYLOADS; do echo "    v$v"; done
+            echo ""
+            echo "including the symlinks in $PREFIX/bin."
+        fi
+        echo ""
+        echo "Only the software goes. Your project directories - parameters.config, Data/,"
+        echo "Reference/ - and everything in storageDir are untouched: none of them live"
+        echo "inside an installation."
+        echo "Reinstall this version afterwards with:"
+        echo "    ./$(basename "$0") install"
+        echo ""
+        echo "Removing an environment means results produced with that version can no"
+        echo "longer be reproduced without reinstalling it."
+        echo ""
+        printf 'Remove them? [y/N]: '
+        if ! read -r CONFIRM; then
+            echo ""
+            echo "Aborted - no confirmation received. Nothing was removed."
+            exit 1
+        fi
+        case "$CONFIRM" in
+            y|Y|yes|YES|Yes) ;;
+            *) echo "Aborted - nothing was removed."; exit 1 ;;
+        esac
+        # An active environment has to be stepped out of first; there may be none.
+        conda deactivate 2>/dev/null || true
+        # A plain `for`, not `... | while read`: a piped loop is a subshell, where `set -e`
+        # would not stop the script. Environment names cannot contain whitespace.
+        for env in $INSTALLED; do
+            echo "Removing $env..."
+            conda env remove -n "$env" -y
+        done
+        # remove_payload re-points the plain wrapper each time and removes it with the last
+        # version, so nothing is left on PATH pointing at a directory that has gone.
+        for v in $PAYLOADS; do
+            remove_payload "$v" || true
+        done
+        echo ""
+        echo "All PoolSeqFlow environments and installations removed."
         ;;
     *)
         usage

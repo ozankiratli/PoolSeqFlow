@@ -1,0 +1,82 @@
+% Citations for what an ANALYSIS run invokes, beside install/references.bib which covers the
+% pipeline's own tools. Same shape, same compiler: this file is the one to edit, it compiles
+% to citations.json beside it with dev/scripts/bib2citations.py, and bin/write_citations.py
+% turns the merged set into CITATIONS.md and references.bib inside every published folder.
+%
+% Three sources are merged for one analysis. PoolSeqFlow and Nextflow come from
+% install/, so there is one copy of each in the release. This file adds what the analysis
+% layer itself runs on. A module adds its own methods citations in its own references.bib,
+% because a module is published separately and the frame cannot hold a list of citations for
+% modules that do not exist yet.
+%
+% There is no 'when' gate here: what a run invoked is decided before the writer is called,
+% by merging only the module that actually ran. An entry that is in the merged set is one
+% the run used.
+%
+% 'r_package' names the R package an entry is about, and the version reported is the one
+% R answers with rather than the one the environment pins.
+
+@article{hivert2018poolseq,
+  group   = {The statistics PoolSeqFlow computes},
+  id      = {hivert2018},
+  name    = {Effective sample size for Pool-seq},
+  authors = {Hivert, Valentin and Leblois, Rapha{\"e}l and Petit, Eric J. and Gautier, Mathieu and Vitalis, Renaud},
+  title   = {Measuring Genetic Differentiation from Pool-seq Data},
+  journal = {Genetics},
+  volume  = {210},
+  number  = {1},
+  pages   = {315--330},
+  year    = {2018},
+  doi     = {10.1534/genetics.118.300900},
+  note    = {The effective sample size the analysis layer weights by, n_eff = n*d / (n + d - 1) for a pool of n chromosomes read to depth d. The paper does not write it in that form - it defines D2 as the sum of (d + n - 1)/n, which is the sum of d / n_eff under this form and under no other. Its pools are parameterized by HAPLOID size, which is what leaves n_eff, and everything weighted by it, general over ploidy. It is HERE rather than in a module because analysis/lib/R/n_eff.R is library code and every module that weights anything calls it.},
+}
+
+@article{nei1972distance,
+  group   = {The statistics PoolSeqFlow computes},
+  id      = {nei1972},
+  name    = {Nei's minimum genetic distance},
+  authors = {Nei, Masatoshi},
+  title   = {Genetic Distance between Populations},
+  journal = {The American Naturalist},
+  volume  = {106},
+  number  = {949},
+  pages   = {283--292},
+  year    = {1972},
+  doi     = {10.1086/282771},
+  note    = {The distance the analysis layer places pools by, D_m = (J_X + J_Y)/2 - J_XY, where J is the probability that two chromosomes carry the same allele. It is the MINIMUM distance of this paper and not the standard distance D, which is defined in the same one and is a log of a ratio; the minimum distance is linear in the J terms, so averaging over loci and averaging over sites are the same operation and no ratio-of-averages question arises. What is applied here beyond the paper is the sampling correction: each J is replaced by its unbiased estimator from a sample of n_eff chromosomes, and J_XY takes none because the two pools are sequenced independently. It is HERE rather than in a module because analysis/lib/R/nei_distance.R is library code.},
+}
+
+@misc{wickham2016ggplot2,
+  id        = {ggplot2},
+  name      = {ggplot2},
+  r_package = {ggplot2},
+  authors   = {Wickham, Hadley},
+  title     = {ggplot2: Elegant Graphics for Data Analysis},
+  publisher = {Springer-Verlag New York},
+  year      = {2016},
+  url       = {https://ggplot2.tidyverse.org},
+  note      = {Every figure the analysis layer draws.},
+}
+
+@article{ooms2014jsonlite,
+  id        = {jsonlite},
+  name      = {jsonlite},
+  r_package = {jsonlite},
+  authors   = {Ooms, Jeroen},
+  title     = {The jsonlite Package: A Practical and Consistent Mapping Between JSON Data and R Objects},
+  journal   = {arXiv:1403.2805 [stat.CO]},
+  year      = {2014},
+  url       = {https://arxiv.org/abs/1403.2805},
+  note      = {Reads the experimental design the frame resolved, which reaches every module as JSON.},
+}
+
+@misc{rcoreteam,
+  id        = {r},
+  name      = {R},
+  authors   = {{R Core Team}},
+  title     = {R: A Language and Environment for Statistical Computing},
+  publisher = {R Foundation for Statistical Computing},
+  address   = {Vienna, Austria},
+  url       = {https://www.R-project.org/},
+  note      = {Every analysis module runs on R. `PoolSeqFlow analysis cite` asks your installed R for the exact citation of the version you ran, including its year.},
+}

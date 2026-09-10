@@ -1,29 +1,51 @@
+// The roots a skip check searches, from the divergence analysis.
+include { searchRoots } from './variants.nf'
+// Trim Galore's options for one sample: the run's, or the row's when it overrides the adapters.
+include { sampleTrimOptions } from './metadata.nf'
+
+// The (variant, sample) read channel, and what derives every sample id. Takes the variant LIST,
+// not a channel: channel.fromFilePairs globs while the DAG is built and fixes N there. One glob
+// per step-2 variant, not per run.
+def readPairChannel(List variants) {
+    def per = variants.collect { variant ->
+        channel.fromFilePairs("${variant.reads}", checkIfExists: true)
+            .map { id, files -> tuple(variant, id, files[0], files[1]) }
+    }
+    return per.size() == 1 ? per[0] : per.inject { a, b -> a.mix(b) }
+}
+
 process TrimReads {
-    tag { pair_id }
-    cpus { params.cores.trimTotal }
+    tag { run.runId ? "${run.runId}:${pair_id}" : pair_id }
+    cpus { run.cores.trimTotal }
 
     input:
-    tuple val(pair_id), path(read1), path(read2)
-    file verify
+    // `verify` is step 0's completion for this run; the script never names it.
+    tuple val(run), val(pair_id), path(read1), path(read2), val(verify)
 
     output:
-    tuple val(pair_id),
+    tuple val(run), val(pair_id),
         path("*_val_1.fq.gz"),
         path("*_val_2.fq.gz"), emit: trimmed_fastqs
-    tuple val(pair_id),
+    tuple val(run), val(pair_id),
         path("*_val_1_fastqc.zip"),
         path("*_val_2_fastqc.zip"), emit: fastqc_files
 
     script:
-    target_folder_trimmed = "${params.dir.output.trimmed}/${pair_id}"
-    target_folder_unpaired = "${params.dir.output.unpaired}/${pair_id}"
-    target_folder_fastqc = "${params.dir.output.report.fastqc}/${pair_id}"
-    target_folder_report_trim = "${params.dir.output.report.trim}/${pair_id}"
+    // Read again by ClipReads and then by step 3, so these stay on the working volume. Utilized/
+    // and Output/ take the same relative path, which is what the skip checks search.
+    search_roots = searchRoots(run)
+    rel_trimmed = "${run.dir.subpath.trimmed}/${pair_id}"
+    target_folder_trimmed = "${run.dir.utilized}/${rel_trimmed}"
+    // The zips are read again by ClipReads, on a different gate from the reads above.
+    rel_fastqc = "${run.dir.subpath.report.fastqc}/${pair_id}"
+    target_folder_fastqc_work = "${run.dir.utilized}/${rel_fastqc}"
+    // The rest is never read again, so it goes straight to permanent storage.
+    target_folder_unpaired = "${run.dir.output.unpaired}/${pair_id}"
+    target_folder_fastqc = "${run.dir.output.report.fastqc}/${pair_id}"
+    target_folder_report_trim = "${run.dir.output.report.trim}/${pair_id}"
 
     clipped1 = "${pair_id}_R1_clipped.fq.gz"
     clipped2 = "${pair_id}_R2_clipped.fq.gz"
-    target_file_clipped1 = "${target_folder_trimmed}/${clipped1}"
-    target_file_clipped2 = "${target_folder_trimmed}/${clipped2}"
 
     val1 = "${pair_id}_val_1.fq.gz"
     val2 = "${pair_id}_val_2.fq.gz"
@@ -32,61 +54,82 @@ process TrimReads {
 
     fastqc1 = "${pair_id}_val_1_fastqc.zip"
     fastqc2 = "${pair_id}_val_2_fastqc.zip"
-    target_file_fastqc1 = "${target_folder_fastqc}/${fastqc1}"
-    target_file_fastqc2 = "${target_folder_fastqc}/${fastqc2}"
+    target_file_fastqc1 = "${target_folder_fastqc_work}/${fastqc1}"
+    target_file_fastqc2 = "${target_folder_fastqc_work}/${fastqc2}"
 
-    dir_log = "${params.dir.logs}/2_trim_reads/s1_TrimReads/${pair_id}"
+    dir_log = "${run.dir.logs}/2_trim_reads"
 
-    // `cpus` reserves Trim Galore's full footprint, because --cores N actually runs N+4
-    // threads (N workers + 2 decompressors + 1 batcher + 1 writer). Map back to the
-    // worker count here. --cores 1 is the exception: it bypasses the pool entirely and
-    // is genuinely single-threaded, so a 1-core reservation stays 1 worker.
+    // The run's, unless this sample's metadata row overrides both adapters.
+    trim_options = sampleTrimOptions(run, "${pair_id}".toString())
+
+    // `cpus` reserves the full footprint - --cores N runs N+4 threads - so map back to workers.
     trim_cores = task.cpus > 4 ? task.cpus - 4 : 1
+
+    // FastQC's -t is how many FILES it works on at once, not threads per file, so it is
+    // cores.fastqc and not task.cpus: a pair cannot use more than two whatever the run reserves.
 
     """
     set -eo pipefail
 
+    # Either volume, permanent-first. An absent artifact is find_artifact.sh's ordinary answer,
+    # so emptiness is what the branch tests.
+    clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" ${search_roots} || true)
+    clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" ${search_roots} || true)
+    fastqc1_at=\$(find_artifact.sh "${rel_fastqc}/${fastqc1}" ${search_roots} || true)
+    fastqc2_at=\$(find_artifact.sh "${rel_fastqc}/${fastqc2}" ${search_roots} || true)
+
     echo "TRIMMING READS ${pair_id}: Trimming the reads..."
-    if [ -f ${target_file_clipped1} ] && [ -f ${target_file_clipped2} ]; then
+    if [ -n "\$clipped1_at" ] && [ -n "\$clipped2_at" ]; then
         echo "TRIMMING READS ${pair_id}: Found existing clipped files"
-        echo "TRIMMING READS ${pair_id}: Found: ${target_file_clipped1} ${target_file_clipped2}"
+        echo "TRIMMING READS ${pair_id}: Found: \$clipped1_at \$clipped2_at"
         echo "TRIMMING READS ${pair_id}: Creating dummy files..."
         touch ${val1}
         touch ${val2}
         touch ${fastqc1}
         touch ${fastqc2}
         echo "TRIMMING READS ${pair_id}: COMPLETED"
-    elif [ -f ${target_file_fastqc1} ] && [ -f ${target_file_fastqc2} ] && [ -f ${target_file_val1} ] && [ -f ${target_file_val2} ]; then
+    elif [ -n "\$fastqc1_at" ] && [ -n "\$fastqc2_at" ] && [ -f ${target_file_val1} ] && [ -f ${target_file_val2} ]; then
+        # The *_val_* reads take ONE root: ClipReads deletes them rather than promoting them.
+        # The zips it consumes take both.
         echo "TRIMMING READS ${pair_id}: Found existing trimmed files and FASTQC zip files"
-        echo "TRIMMING READS ${pair_id}: Found: ${target_file_clipped1} ${target_file_clipped2}"
+        echo "TRIMMING READS ${pair_id}: Found: ${target_file_val1} ${target_file_val2}"
+        echo "TRIMMING READS ${pair_id}: Found: \$fastqc1_at \$fastqc2_at"
         echo "TRIMMING READS ${pair_id}: Creating symbolic links..."
         ln -s ${target_file_val1} .
         ln -s ${target_file_val2} .
-        ln -s ${target_file_fastqc1} .
-        ln -s ${target_file_fastqc2} .
+        ln -s "\$fastqc1_at" .
+        ln -s "\$fastqc2_at" .
         echo "TRIMMING READS ${pair_id}: COMPLETED"
     else
         echo "TRIMMING READS ${pair_id}: Trimming paired reads..."
-        ${params.software.trim_galore} ${params.trim_galore.options} \\
-            --cores ${trim_cores} --fastqc_args "-t ${task.cpus}" \\
+        ${run.software.trim_galore} ${trim_options} \\
+            --cores ${trim_cores} --fastqc_args "-t ${run.cores.fastqc}" \\
             --basename ${pair_id} ${read1} ${read2}
 
-        echo "TRIMMING READS ${pair_id}: Moving FASTQC reports and zips to ${target_folder_fastqc}"
+        # Split by whether anything reads it again: the zips are ClipReads' input and go to the
+        # working volume, the htmls straight to permanent storage.
+        echo "TRIMMING READS ${pair_id}: Moving FASTQC zips to ${target_folder_fastqc_work}"
+        mkdir -p ${target_folder_fastqc_work}
+        for f in *.zip; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_fastqc_work}/; fi; done
+
+        echo "TRIMMING READS ${pair_id}: Moving FASTQC reports to ${target_folder_fastqc}"
         mkdir -p ${target_folder_fastqc}
-        for f in *.zip *.html; do atomic_mv.sh "\$f" ${target_folder_fastqc}; done
+        for f in *.html; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_fastqc}/; fi; done
 
         echo "TRIMMING READS ${pair_id}: Moving trim reports to ${target_folder_report_trim}"
         mkdir -p ${target_folder_report_trim}
         # Trim Galore 2.x writes both .txt and .json reports; keep whichever are present.
-        for f in *_trimming_report.*; do atomic_mv.sh "\$f" ${target_folder_report_trim}; done
+        for f in *_trimming_report.*; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_report_trim}/; fi; done
 
         echo "TRIMMING READS ${pair_id}: Moving trimmed reads to ${target_folder_trimmed}"
         mkdir -p ${target_folder_trimmed}
-        for f in *_val_*; do atomic_mv.sh "\$f" ${target_folder_trimmed}; done
+        for f in *_val_*; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_trimmed}/; fi; done
 
         echo "TRIMMING READS ${pair_id}: Moving unpaired reads to ${target_folder_unpaired}"
         mkdir -p ${target_folder_unpaired}
-        for f in *_unpaired_*; do atomic_mv.sh "\$f" ${target_folder_unpaired}; done
+        # Trim Galore writes these only when it discards a mate, so a clean pair matches nothing
+        # and the loop is handed the pattern itself.
+        for f in *_unpaired_*; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_unpaired}/; fi; done
 
         echo "TRIMMING READS ${pair_id}: Creating symbolic links..."
         ln -s ${target_file_val1} .
@@ -97,57 +140,69 @@ process TrimReads {
     fi
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/2_TrimQcClip_s1_TrimReads_${pair_id}.log
-    cp .command.err ${dir_log}/2_TrimQcClip_s1_TrimReads_${pair_id}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/2_TrimQcClip_s1_TrimReads_${pair_id}_nextflow.log
     """
 }
 
 process ClipReads {
-    tag { pair_id }
-    cpus { params.cores.cutadapt }
+    tag { run.runId ? "${run.runId}:${pair_id}" : pair_id }
+    cpus { run.cores.cutadapt }
     errorStrategy 'retry'
     maxRetries 3
 
     input:
-    tuple val(pair_id), path(trimmed_read1), path(trimmed_read2), path(zip1), path(zip2)
+    tuple val(run), val(pair_id), path(trimmed_read1), path(trimmed_read2), path(zip1), path(zip2)
 
     output:
-    tuple val(pair_id),
+    tuple val(run), val(pair_id),
         path("*_R1_clipped.fq.gz"),
         path("*_R2_clipped.fq.gz"), emit: clipped_fastqs
 
     script:
-    target_folder_trimmed = "${params.dir.output.trimmed}/${pair_id}"
-    target_folder_fastqc = "${params.dir.output.report.fastqc}/${pair_id}"
+    // Step 3 reads these, so they stay on the working volume until alignment has succeeded.
+    search_roots = searchRoots(run)
+    rel_trimmed = "${run.dir.subpath.trimmed}/${pair_id}"
+    target_folder_trimmed = "${run.dir.utilized}/${rel_trimmed}"
+    // The clipped zips and htmls produced here have no consumer, so they go straight to permanent
+    // storage. The *_val_* zips consumed here are promoted into this directory instead.
+    target_folder_fastqc = "${run.dir.output.report.fastqc}/${pair_id}"
 
     clipped1 = "${pair_id}_R1_clipped.fq.gz"
     clipped2 = "${pair_id}_R2_clipped.fq.gz"
     target_file_clipped1 = "${target_folder_trimmed}/${clipped1}"
     target_file_clipped2 = "${target_folder_trimmed}/${clipped2}"
 
-    at_gc_upper_limit = 1 + params.cutadapt.at_gc_error
-    at_gc_lower_limit = 1 - params.cutadapt.at_gc_error
+    at_gc_upper_limit = 1 + run.cutadapt.at_gc_error
+    at_gc_lower_limit = 1 - run.cutadapt.at_gc_error
 
-    dir_log = "${params.dir.logs}/2_trim_reads/${pair_id}"
+    dir_log = "${run.dir.logs}/2_trim_reads"
 
     """
     set -eo pipefail
 
     # FastQC is a JVM program; give it the cores this task reserved.
-    export _JAVA_OPTIONS="${params.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
+    export _JAVA_OPTIONS="${run.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
+
+    # Either volume: promotion may already have moved these, and the link follows.
+    clipped1_at=\$(find_artifact.sh "${rel_trimmed}/${clipped1}" ${search_roots} || true)
+    clipped2_at=\$(find_artifact.sh "${rel_trimmed}/${clipped2}" ${search_roots} || true)
 
     echo "CLIPPING READS ${pair_id}: Clipping the reads..."
-    if [ -f ${target_file_clipped1} ] && [ -f ${target_file_clipped2} ]; then
+    if [ -n "\$clipped1_at" ] && [ -n "\$clipped2_at" ]; then
         echo "CLIPPING READS ${pair_id}: Found existing clipped files"
-        echo "CLIPPING READS ${pair_id}: Found ${target_file_clipped1} ${target_file_clipped2}"
+        echo "CLIPPING READS ${pair_id}: Found \$clipped1_at \$clipped2_at"
         echo "CLIPPING READS ${pair_id}: Creating symbolic links..."
-        ln -s ${target_file_clipped1} .
-        ln -s ${target_file_clipped2} .
+        ln -s "\$clipped1_at" .
+        ln -s "\$clipped2_at" .
         echo "CLIPPING READS ${pair_id}: COMPLETED"
     else
         echo "CLIPPING READS ${pair_id}: Extracting FastQC data" 
-        ${params.software.unzip} -o ${zip1}
-        ${params.software.unzip} -o ${zip2}
+        ${run.software.unzip} -o ${zip1}
+        ${run.software.unzip} -o ${zip2}
 
         fqcDir1=\$(echo ${zip1} | sed 's/.zip//')
         fqcDir2=\$(echo ${zip2} | sed 's/.zip//')
@@ -157,10 +212,8 @@ process ClipReads {
 
         echo "CLIPPING READS ${pair_id}: Calculating clipping parameters..."
 
-        # Print the first and last cycle whose A/T and G/C ratios are both within
-        # tolerance. Cycles where T or C is zero are skipped: dividing by them aborts
-        # awk mid-pipeline, which plain `set -e` does not catch, leaving the bounds
-        # silently derived from a truncated table.
+        # The first and last cycle whose A/T and G/C ratios are both within tolerance. Cycles
+        # where T or C is zero are skipped: dividing by them aborts awk mid-pipeline.
         clip_range() {
             sed -n '/>>Per base sequence content/,/>>END_MODULE/p' "\$1" |
             head -n -1 | tail -n +2 |
@@ -186,8 +239,7 @@ process ClipReads {
                     }
                 }
                 END {
-                    # `exit 3` above still runs END, so re-assert it here or the
-                    # status below would overwrite the header diagnostic.
+                    # `exit 3` above still runs END, so re-assert it here.
                     if (bad_header) exit 3
                     if (first == "") exit 4
                     print first, last
@@ -197,7 +249,7 @@ process ClipReads {
 
         clip_range_failed() {
             echo "CLIPPING READS ${pair_id}: ERROR: no usable clip range in \$1" >&2
-            echo "CLIPPING READS ${pair_id}: exit 3 = unexpected FastQC header; 4 = no cycle within at_gc_error (${params.cutadapt.at_gc_error})" >&2
+            echo "CLIPPING READS ${pair_id}: exit 3 = unexpected FastQC header; 4 = no cycle within at_gc_error (${run.cutadapt.at_gc_error})" >&2
             exit 1
         }
 
@@ -215,8 +267,8 @@ process ClipReads {
             esac
         done
 
-        # Clip the 5' end by the larger of the two lower bounds, then truncate to the
-        # larger of the two usable spans. Unchanged from the original calculation.
+        # Clip the 5' end by the larger of the two lower bounds, then truncate to the larger of
+        # the two usable spans.
         Clip5=\$Min1
         if [ "\$Min2" -gt "\$Clip5" ]; then Clip5=\$Min2; fi
         rL1=\$(( Max1 - Clip5 ))
@@ -232,23 +284,68 @@ process ClipReads {
         echo "CLIPPING READS ${pair_id}: usable cycles R1 \$Min1-\$Max1, R2 \$Min2-\$Max2"
         echo "CLIPPING READS ${pair_id}: 5' clip=\$Clip5, read length limit=\$readLengthLimit"
 
-        echo "CLIPPING READS ${pair_id}: Clipping reads..." 
-        ${params.software.cutadapt} ${params.cutadapt.options} --cores ${task.cpus} -u \$Clip5 -U \$Clip5 -l \$readLengthLimit \
+        # cutadapt applies -m (minimum length) AFTER -l (truncate to length), so a minimum above
+        # the limit computed just above discards every pair while still exiting 0. The minimum is
+        # read out of the option string; no -m at all means nothing to check.
+        clip_min_length() {
+            set -- ${run.cutadapt.options}
+            while [ \$# -gt 0 ]; do
+                case "\$1" in
+                    -m|--minimum-length) printf '%s' "\${2-}"; return 0 ;;
+                    --minimum-length=*)  printf '%s' "\${1#--minimum-length=}"; return 0 ;;
+                    -m?*)                printf '%s' "\${1#-m}"; return 0 ;;
+                esac
+                shift
+            done
+        }
+
+        minLength=\$(clip_min_length)
+        if [ -n "\$minLength" ]; then
+            # The paired form is "R1:R2", and --pair-filter=any drops the pair when either mate
+            # is too short, so the larger of the two binds.
+            minR1=\${minLength%%:*}
+            minR2=\${minLength#*:}
+            if [ "\$minR2" = "\$minLength" ]; then minR2=\$minR1; fi
+
+            minValid=yes
+            for bound in "\$minR1" "\$minR2"; do
+                case "\$bound" in
+                    ''|*[!0-9]*) minValid=no ;;
+                esac
+            done
+
+            if [ "\$minValid" = no ]; then
+                echo "CLIPPING READS ${pair_id}: WARNING: could not read a numeric minimum length from cutadapt.options; skipping the read length limit check" >&2
+            else
+                minBinding=\$minR1
+                if [ "\$minR2" -gt "\$minBinding" ]; then minBinding=\$minR2; fi
+                if [ "\$minBinding" -gt "\$readLengthLimit" ]; then
+                    echo "CLIPPING READS ${pair_id}: ERROR: these settings would discard every read." >&2
+                    echo "CLIPPING READS ${pair_id}: cutadapt.options sets a minimum length of \$minBinding, but the read length limit computed from this sample's FastQC report is \$readLengthLimit." >&2
+                    echo "CLIPPING READS ${pair_id}: cutadapt truncates to \$readLengthLimit first and only then drops reads shorter than \$minBinding, so nothing would survive." >&2
+                    echo "CLIPPING READS ${pair_id}: lower cutadapt.min_length to \$readLengthLimit or less, or comment the -m line in cutadapt.options back out." >&2
+                    exit 1
+                fi
+            fi
+        fi
+
+        echo "CLIPPING READS ${pair_id}: Clipping reads..."
+        ${run.software.cutadapt} ${run.cutadapt.options} --cores ${task.cpus} -u \$Clip5 -U \$Clip5 -l \$readLengthLimit \
             -o ${pair_id}_R1_clipped.fq.gz -p ${pair_id}_R2_clipped.fq.gz ${trimmed_read1} ${trimmed_read2}
 
-        echo "CLIPPING READS ${pair_id}: QC on clipped reads..." 
-        ${params.software.fastqc} ${params.fastqc.options} -t ${task.cpus} ${pair_id}_R1_clipped.fq.gz ${pair_id}_R2_clipped.fq.gz
+        echo "CLIPPING READS ${pair_id}: QC on clipped reads..."
+        ${run.software.fastqc} ${run.fastqc.options} -t ${run.cores.fastqc} ${pair_id}_R1_clipped.fq.gz ${pair_id}_R2_clipped.fq.gz
 
         echo "CLIPPING READS ${pair_id}: Cleaning up..." 
         rm -r \$fqcDir1 \$fqcDir2
 
         echo "CLIPPING READS ${pair_id}: Moving clipped reads to ${target_folder_trimmed}" 
         mkdir -p ${target_folder_trimmed}
-        for f in *_clipped.fq.gz; do atomic_mv.sh "\$f" ${target_folder_trimmed}; done
+        for f in *_clipped.fq.gz; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_trimmed}/; fi; done
 
         echo "CLIPPING READS ${pair_id}: Moving FASTQC reports and zip files to ${target_folder_fastqc}" 
         mkdir -p ${target_folder_fastqc}
-        for f in *_clipped_fastqc.zip *_clipped_fastqc.html; do atomic_mv.sh "\$f" ${target_folder_fastqc}; done
+        for f in *_clipped_fastqc.zip *_clipped_fastqc.html; do if [ -e "\$f" ]; then atomic_mv.sh "\$f" ${target_folder_fastqc}/; fi; done
 
         echo "CLIPPING READS ${pair_id}: Creating symbolic links..."
         ln -s ${target_file_clipped1} .
@@ -262,23 +359,28 @@ process ClipReads {
     echo "Clipping completed for ${pair_id}!"
 
     mkdir -p ${dir_log}
-    cp .command.log ${dir_log}/2_TrimQcClip_s2_ClipReads_${pair_id}.log
-    cp .command.err ${dir_log}/2_TrimQcClip_s2_ClipReads_${pair_id}.err
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+        cat .command.log
+    } >> ${dir_log}/2_TrimQcClip_s2_ClipReads_${pair_id}_nextflow.log
     """
 }
 
 workflow TrimQcClip{
     take:
-    verify
+    reads     // [run, pair_id, read1, read2], from readPairChannel()
+    verify    // [run, step 0 completion for that run]
 
     main:
-    rawFiles = Channel.fromFilePairs("${params.reads}", checkIfExists: true)
-        .map { id, files -> tuple(id, files[0], files[1]) }
+    // combine, not join, and by the run: step 0 emits one report per run against N samples.
+    TrimReads(reads.combine(verify, by: 0))
 
-    TrimReads(rawFiles,verify)
-    trimmed_and_qc = TrimReads.out.trimmed_fastqs.join(TrimReads.out.fastqc_files)
+    // by: [0,1] - the run AND the sample; on the sample alone one run's reads would pair with
+    // another run's zips.
+    trimmed_and_qc = TrimReads.out.trimmed_fastqs.join(TrimReads.out.fastqc_files, by: [0, 1])
     ClipReads(trimmed_and_qc)
 
     emit:
-    clipped_fastqs = ClipReads.out.clipped_fastqs
+    ClipReads.out.clipped_fastqs
 }

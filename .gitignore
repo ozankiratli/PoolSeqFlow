@@ -30,7 +30,6 @@ nextflow.eml
 nextflow.iml
 Vagrantfile
 resources/*
-test/*
 tools/*
 tests_other
 other
@@ -56,5 +55,24 @@ plugins-prod
 .tmp/
 *.bak
 *.bak.*
-# MkDocs build output
+
+docs/
 site/
+
+__pycache__/
+*.pyc
+
+dev/logs/
+
+# The test suite is tracked, but not compiled Python underneath it. 
+!test/
+!test/**
+test/**/__pycache__/
+test/**/*.pyc
+
+# This machine's own permission grants for the coding agent. The rest of .claude/ is
+# tracked: the development notes are part of what the project publishes.
+.claude/settings.local.json
+
+# Build output from dev/scripts/verify-archive.sh.
+dist/

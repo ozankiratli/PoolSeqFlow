@@ -1,0 +1,103 @@
+# Sample metadata — one row per pair of FASTQ files. This is the file that says what your
+# samples ARE. Blank lines and lines starting with # are ignored, so these notes can stay.
+#
+# The manual explains all of this at length, under "Metadata":
+#     https://ozankiratli.github.io/PoolSeqFlow/
+#
+# ---------------------------------------------------------------------------------------
+# SEVEN KINDS OF COLUMN, and the name is what tells them apart.
+#
+#   SampleID     Required, and unique. Matched against the sample name your FASTQ file names
+#                give — with readPattern '*_R{1,2}.fq.gz', Sample1T1Rep1_R1.fq.gz gives the
+#                sample Sample1T1Rep1 — and it becomes the read group's ID in the BAM.
+#
+#   RG_*         A read group tag: RG_Sample, RG_Library, RG_Platform, RG_PlatformUnit,
+#                RG_Description, RG_Center, RG_Date, RG_FlowOrder. A blank cell omits that
+#                tag. Nothing else may start with RG_; an unrecognized one is refused.
+#
+#   param_*      A parameter from parameters.config, overridden for these samples only:
+#                param_poolSize, param_capMaxDepth, param_adapter1, param_adapter2. A blank
+#                cell means "use the global setting". A closed list, like RG_.
+#
+#   exp_*        An experimental variable — something you SET. exp_population, exp_treatment,
+#                exp_replicate; exp_time is time. Any name you like after the prefix: unlike
+#                RG_ and param_ there is no list to check it against, so a misspelled exp_
+#                column is a new variable and not an error. Read by analyses, never by 0-8.
+#
+#   pt_*         A phenotype — something you MEASURED on the pool, and the thing an analysis
+#                tests against. pt_wingspan, pt_resistance. Open, and never read by 0-8.
+#
+#   cov_*        A covariate — measured on the pool, but neither set nor the response.
+#                cov_temperature, cov_altitude, cov_site. Open, and never read by 0-8.
+#
+#   anything     Your own — a note, a lab code, the lane, the kit lot. Recorded and never
+#   else         interpreted. Add, remove and edit them freely: step 0's change guard does
+#                not look at them, so results already produced stay valid. The same is true
+#                of exp_, pt_ and cov_ columns.
+#
+# WHY exp_, pt_ AND cov_ ARE THREE PREFIXES AND NOT ONE: only exp_ says what an experiment set
+# up. The analysis layer works out which pools are independent of each other — and, where there
+# is a time course, which are one thing measured repeatedly — from your exp_ columns, and a
+# trait value or a cage temperature differs from pool to pool. So either one written as exp_
+# would make every pool its own unit and leave every series a single timepoint long, quietly,
+# because a design with no repeated measurement is a legal design.
+#
+# ---------------------------------------------------------------------------------------
+# RG_Sample IS THE ONE THAT CHANGES THE RESULT. It is the pool a row belongs to, and becomes
+# one column in the VCF and one in every frequency table. Rows sharing an RG_Sample are
+# MERGED: their reads are pooled and their depths added — which is how you say that two
+# sequencing runs, two lanes or two libraries are the same pool of individuals. Leave the
+# column out, or a cell blank, and RG_Sample takes the SampleID, so every row is its own pool.
+# Step 0 prints the pooling it worked out before any compute is spent.
+#
+# param_poolSize IS A PROPERTY OF THE POOL: how many individuals went into it. It sets that
+# pool's detection limit, sensitivity = 1 / (2 * ploidy * poolSize), so one number for the
+# whole run judges a pool of 10 at a pool of 500's resolution. Rows sharing an RG_Sample must
+# give the SAME value, and a blank cell counts as a different answer rather than as agreement.
+# Leave the column out and every pool uses the global poolSize.
+#
+# param_capMaxDepth IS A PROPERTY OF THE ROW, not of the pool: it caps one BAM, and each row
+# is one BAM. So rows of one pool may carry different values and nothing objects. It takes -1
+# to measure this sample's ceiling from its own depth histogram, 0 to leave it uncapped, or a
+# depth to cap it at; anything else is refused by name. Leave it blank to use the global
+# capBAM.maxDepth, which ships as -1.
+#
+# param_adapter1 and param_adapter2 override trim_galore.adapter1 / adapter2 for that row
+# only. Give both or neither. A value containing a comma must be quoted: "Pop1, coastal".
+#
+# ---------------------------------------------------------------------------------------
+# exp_, pt_ AND cov_ COLUMNS BELONG TO THE POOL, not to the row — but they differ in what
+# happens when the rows of one pool disagree, and the difference is not arbitrary:
+#
+#   exp_    REFUSED by an analysis. You cannot have SET two treatments for one pool.
+#   pt_     REFUSED by an analysis. One pool has one measured trait value.
+#   cov_    RECORDED. Two libraries of a pool really can have been reared at two temperatures
+#           or handled by two people — that is a circumstance, not a contradiction. The pool
+#           is then reported as having NO single value for it, and nothing is averaged or
+#           picked for you.
+#
+# THE PIPELINE ITSELF NEVER REFUSES ANY OF THEM. No step reads these columns, so a run is
+# unaffected whatever they say; step 0 reports a disagreement as a note and carries on.
+#
+# What differs between two rows of one pool and is a property of the ROW — the lane, the run,
+# the kit lot — takes no prefix. Not because it does not matter: once two libraries' reads are
+# merged into one column, nothing downstream can attribute a read to the row it came from, so
+# a row-level fact is unrecoverable rather than unsupported. If every row of a pool DOES share
+# one — one technician per pool — then it is a property of the pool after all, and it is cov_.
+#
+# ---------------------------------------------------------------------------------------
+# The table below is an example: eight FASTQ pairs, four pools, each pool sequenced twice, so
+# its two rows share an RG_Sample and repeat everything that belongs to the pool. Reading the
+# columns left to right: what the sample IS, what the pipeline should do with it, what was SET
+# (exp_), what was MEASURED as the response (pt_), what was MEASURED alongside (cov_), and last
+# `sequencing_run`, which differs between the two rows of a pool and so carries no prefix.
+# Replace all of it with yours.
+SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,param_poolSize,exp_population,exp_time,pt_resistance,cov_temperature,sequencing_run
+Sample1T1Rep1,Sample1T1,Lib1,ILLUMINA,Unit1,50,Pop1,T1,susceptible,21.5,Run1
+Sample1T1Rep2,Sample1T1,Lib1,ILLUMINA,Unit2,50,Pop1,T1,susceptible,21.5,Run2
+Sample1T2Rep1,Sample1T2,Lib1,ILLUMINA,Unit1,50,Pop1,T2,resistant,22.1,Run1
+Sample1T2Rep2,Sample1T2,Lib1,ILLUMINA,Unit2,50,Pop1,T2,resistant,22.1,Run2
+Sample2T1Rep1,Sample2T1,Lib1,ILLUMINA,Unit1,40,Pop2,T1,susceptible,18.0,Run1
+Sample2T1Rep2,Sample2T1,Lib1,ILLUMINA,Unit2,40,Pop2,T1,susceptible,18.0,Run2
+Sample2T2Rep1,Sample2T2,Lib1,ILLUMINA,Unit1,40,Pop2,T2,resistant,19.4,Run1
+Sample2T2Rep2,Sample2T2,Lib1,ILLUMINA,Unit2,40,Pop2,T2,resistant,19.4,Run2

@@ -2,14 +2,11 @@ name: Checks
 
 # The gate on merging into main, and an early warning on dev.
 #
-# Everything here is static: nothing runs the pipeline or needs sequencing data.
-# It catches the class of breakage that would otherwise only surface at tag time
-# (release.yml) or on someone else's machine - a syntax error in a helper, a
-# version that drifted between the three places it lives, a template that no
-# longer parses, an archive missing a file a run needs.
+# Everything here is static: nothing runs the pipeline or needs sequencing data. It
+# catches a syntax error in a helper, a version that drifted between the three places
+# it lives, a template that no longer parses, an archive missing a file a run needs.
 #
-# It deliberately does NOT run on push to main: by then it is too late to gate
-# anything, and main is only written by merges that already passed here.
+# Not on push to main, which is only written by merges that already passed here.
 
 on:
   pull_request:
@@ -22,8 +19,7 @@ permissions:
   contents: read
 
 env:
-  # Pinned to the version install/environment.yml ships, so CI checks the same
-  # Nextflow a user will actually run.
+  # Pinned to the version install/environment.yml ships.
   NXF_VER: 26.04.6
 
 concurrency:
@@ -63,8 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m py_compile bin/MajorAlleleToRef.py && echo "  ok  bin/MajorAlleleToRef.py"
-          # Running it on empty input executes BEGIN and nothing else, which is
-          # enough to reject a syntax error without needing a VCF.
+          # Empty input executes BEGIN and nothing else, enough to reject a syntax error.
           awk -f bin/depth2freq.awk /dev/null && echo "  ok  bin/depth2freq.awk"
 
       - uses: actions/setup-java@v4
@@ -81,9 +76,8 @@ jobs:
       - name: Pipeline lints without errors
         run: nextflow lint poolseqflow.nf scripts/*.nf
 
-      # The failure this catches is the one users hit as `null: command not
-      # found` partway through a run - a parameter the template no longer
-      # resolves. Cheap to check, invisible otherwise until it bites.
+      # Catches a parameter the template no longer resolves, which surfaces at run time
+      # as `null: command not found`.
       - name: The config template parses
         run: |
           set -euo pipefail

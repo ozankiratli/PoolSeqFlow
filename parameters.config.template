@@ -1,62 +1,57 @@
-// PoolSeqFlow parameters.
+// PoolSeqFlow parameters. The manual explains every setting in this file:
+//     https://ozankiratli.github.io/PoolSeqFlow/
 //
-// This file is the only supported way to configure a run. Do not override parameters on
-// the command line (`nextflow run ... --poolSize 50`): Nextflow passes CLI parameters as
-// strings, so `--annotate false` sets the string "false", which evaluates as true and
-// silently leaves annotation enabled. Values set here keep their real types.
-// The ./PoolSeqFlow wrapper takes a single subcommand and rejects extra arguments.
+// Configure runs here and nowhere else. Nextflow passes command-line parameters as strings,
+// so `--annotate false` sets the string "false", which evaluates as true.
 
 params {
     //main parameters
     threads         =  8                 // cores per task
     memory          = '24 GB'            // memory ceiling per task
-    mainDir         = "/path/to/working/directory"   // where the pipeline runs (e.g. node scratch)
-    projectDir      = "/path/to/permanent/storage"   // where outputs are kept (may be another filesystem)
+    // Your project directory, and the one you launch from. The faster volume. It may be
+    // neither the installation nor storageDir.
+    mainDir         = "/path/to/project/directory"
+    // Permanent storage, and a slower volume will do. Called projectDir before 3.0;
+    // `./PoolSeqFlow migrate_config` carries the old value over.
+    storageDir      = "/path/to/permanent/storage"
+    // The files you place, all relative to mainDir:
+    //   mainDir/Data/            the reads              (dataSource names it)
+    //   mainDir/Reference/       reference + annotation (referenceFile, gffFile)
+    //   mainDir/metadata.csv     what your samples ARE  (metadataFile)
     dataSource      = 'Data'
     readPattern     = "*_R{1,2}.fq.gz"
     referenceFile   = 'reference.fasta.gz'
     poolSize        = 100
-    diploidy        = 2
-    rgTagsFile      = 'RGTags.csv'
+    ploidy          = 2
+    // One row per pair of FASTQ files. metadata.csv.template explains the columns; it
+    // replaces RGTags.csv.
+    metadataFile    = 'metadata.csv'
     annotate        = true
     gffFile         = 'reference.gff.gz'
 
+    // Several runs from one invocation - the same reads against two references, say. true
+    // reads multiRunFile below: a RunID column, plus one column per parameter that differs
+    // from the values above. See multi-run.csv.example in the installation.
+    multiRun        = false
+    multiRunFile    = 'runs.csv'
+
     referenceFa     = "${params.referenceFile.replace('.gz', '')}"
-    referencePath   = "${params.projectDir}/${params.referenceFile}"
-    gffPath         = "${params.projectDir}/${params.gffFile}"
-    rgTagsPath      = "${params.projectDir}/${params.rgTagsFile}"
 
-    // Core allocation - all derived from `threads` above. Do not set the per-tool
-    // thread counts by hand; change `threads` and everything follows.
-    //
-    // Each tool is quantised to the largest power of two at or below `threads`, capped
-    // at 8, which is where the published scaling for these tools flattens out. Setting
-    // threads = 1 forces every tool to a single core.
+    // Core allocation, computed from `threads` and left commented out so that changing
+    // `threads` moves all of it together. Uncomment any one to pin it; a pinned value still
+    // feeds the ones computed from it.
     cores {
-        ladder      = params.threads >= 8 ? 8 : (params.threads >= 4 ? 4 : (params.threads >= 2 ? 2 : 1))
-
-        // Trim Galore is costed on its full footprint, not its worker count: --cores N
-        // runs N+4 threads (N workers + 2 decompressors + 1 batcher + 1 writer) for any
-        // N >= 2, while --cores 1 bypasses the pool and is genuinely single-threaded.
-        // So pick the largest N whose N+4 still fits in `threads`:
-        //   12+ cores -> 8    8+ -> 4    6+ -> 2    otherwise -> 1
-        trim        = params.threads >= 12 ? 8 : (params.threads >= 8 ? 4 : (params.threads >= 6 ? 2 : 1))
-        trimTotal   = params.cores.trim > 1 ? params.cores.trim + 4 : 1   // threads actually spawned
-
-        bwa         = params.cores.ladder   // bwa mem -t N
-        cutadapt    = params.cores.ladder   // cutadapt --cores N
-        fastqc      = params.threads >= 2 ? 2 : 1   // one thread per file; step 2 only ever hands it a pair
-
-        // samtools -@ counts ADDITIONAL threads, so 0 means one core and 1 means two.
-        samtools    = params.threads >= 2 ? 1 : 0
-        // Same core count as samtools, kept as its own value so it can be tuned
-        // independently. -XX:ParallelGCThreads is a total, not an increment.
-        javaGc      = params.cores.samtools + 1
+        // ladder    = largest power of two <= threads, capped at 8
+        // trim      = largest N whose N+4 fits in threads: 12+ -> 8, 8+ -> 4, 6+ -> 2, else 1
+        // trimTotal = trim > 1 ? trim + 4 : 1        threads Trim Galore actually spawns
+        // bwa       = ladder                         bwa mem -t N
+        // cutadapt  = ladder                         cutadapt --cores N
+        // fastqc    = threads >= 2 ? 2 : 1           one thread per file
+        // samtools  = threads >= 2 ? 1 : 0           -@ counts ADDITIONAL threads
+        // javaGc    = samtools + 1                   -XX:ParallelGCThreads is a total
     }
 
-    // java parameters
-    // Only the heap size lives here. -XX:ParallelGCThreads is set per process from
-    // task.cpus, so the JVM always gets the cores that task actually reserved.
+    // java parameters. -XX:ParallelGCThreads is set per process from task.cpus.
     java {
         heapSize        = '-Xmx8g'
     }
@@ -64,11 +59,10 @@ params {
     // fastqc parameters
     fastqc {
         memory          = 2048  // megabytes, as a plain number - FastQC rejects "2G"
-        // For the standalone FastQC binary (used on the clipped reads in step 2).
-        // -t is supplied by each process from task.cpus
-        options         = "--memory ${params.fastqc.memory}"
+        // Uncomment to take full control; `memory` is then unused. -t comes from task.cpus.
+        // options      = "--memory ${params.fastqc.memory}"
     }
-    
+
     // trim_galore parameters
     trim_galore {
         quality         = 25
@@ -78,16 +72,20 @@ params {
         autodetect      = true
         adapter1        = ''
         adapter2        = ''
-        adapterOptions  = params.trim_galore.autodetect ? '' : "-a ${params.trim_galore.adapter1} -a2 ${params.trim_galore.adapter2}"
-        // --cores and --fastqc_args are supplied by TrimReads from task.cpus
-        options         = "--fastqc --paired --retain_unpaired -q ${params.trim_galore.quality} ${params.trim_galore.adapterOptions}"
+        // Built from the values above; uncomment either to take full control of it.
+        // --cores and --fastqc_args come from task.cpus.
+        // adapterOptions = autodetect ? '' : "-a ${params.trim_galore.adapter1} -a2 ${params.trim_galore.adapter2}"
+        // options        = "--fastqc --paired --retain_unpaired -q ${params.trim_galore.quality} ${params.trim_galore.adapterOptions}"
     }
     
     cutadapt {
-        at_gc_error    = 0.025 
-        min_length     = 50
+        at_gc_error    = 0.025
+        min_length     = 50      // inert on its own - see the options lines below
         // --cores is supplied by ClipReads from task.cpus
         options        = ""
+        // To apply min_length, comment the line above and uncomment the one below. ClipReads
+        // also passes -l, a limit it computes from the FastQC report, and cutadapt applies -m
+        // AFTER -l: a min_length above that limit discards every read and still exits 0.
         // options     = "-m ${params.cutadapt.min_length}"   // discard reads shorter than min_length after clipping
     }
 
@@ -95,27 +93,43 @@ params {
     bwa {
         minScoreOutput  = 30
         batchSize       = 10000000
-        // -t is supplied by Align from task.cpus
-        options         = "-K ${params.bwa.batchSize} -T ${params.bwa.minScoreOutput}"
+        // Built from the two values above; uncomment to take full control. -t comes from
+        // task.cpus.
+        // options      = "-K ${params.bwa.batchSize} -T ${params.bwa.minScoreOutput}"
     }
     
-    // Samtools parameters
-    samtools {
+    // Step 4: what samtools keeps when it cleans each BAM.
+    cleanBAM {
         filter          = "0xF0C"       // See `man samtools-flags` for more information
         required        = "0x2"         // See `man samtools-flags` for more information
         mapq            = 30
     }
 
+    // The depth ceiling decided at step 5 and applied to each BAM at step 6, before calling.
+    // -1 measures one per sample from its own depth histogram, a positive number caps every
+    // sample there, 0 caps nothing.
+    capBAM {
+        maxDepth        = -1
+        // How deep step 5's depth histogram looks. A sample with positions deeper than this
+        // stops the run naming this parameter: a ceiling read from a truncated histogram is
+        // read from a partial picture. Raising it cannot change a result and is not compared
+        // against previous runs, so it never costs a reset.
+        histogramMax    = 100000
+    }
 
-    // bcftools parameters
-    bcftools {
+    // Step 6: how bcftools calls variants.
+    variantCall {
         scaleMapQ       = 50
         baseQualMin     = 30
         varQualMin      = 30
-        maxDepth        = 2000
-        mpileupOptions  = "-B -C ${params.bcftools.scaleMapQ} -q ${params.bcftools.varQualMin} -Q ${params.bcftools.baseQualMin} -d ${params.bcftools.maxDepth} -a AD,DP,SP,INFO/AD -Ou"
+        // mpileup's own ceiling, on top of whatever capBAM applied. Here 0 is no limit, and
+        // only capBAM.maxDepth takes -1.
+        maxDepth        = 0
+        // Built from the four values above; uncomment to take full control of them, maxDepth
+        // included. -q is mapping quality, -Q is base quality.
+        // mpileupOptions = "-B -C ${params.variantCall.scaleMapQ} -q ${params.variantCall.varQualMin} -Q ${params.variantCall.baseQualMin} -d ${params.variantCall.maxDepth} -a AD,DP,SP,INFO/AD -Ou"
 
-        callOptions         = "-m -A -v -Ov"  
+        callOptions         = "-m -A -v -Ov"
     }
 
     // VCF parameters
@@ -131,7 +145,7 @@ params {
     
     // Filter False Positives parameters
     filterFalsePositives {
-        sensitivity     = 1.0 / (2 * params.diploidy * params.poolSize)
+        sensitivity     = 1.0 / (2 * params.ploidy * params.poolSize)
         sampleThreshold = 0.2
     }   
 
@@ -144,46 +158,92 @@ params {
         runOptions      = "-v"
     }
     
-    // directories
+    // Directories.
+    //
+    // Everything the run reads repeatedly is on mainDir; everything it has finished with is
+    // on storageDir.
     dir {
-        data            = "${params.projectDir}/${params.dataSource}"
-        outputs         = "${params.projectDir}/Output"
-        references      = "${params.projectDir}/Reference"
-        scripts         = "${params.mainDir}/scripts"
-        bin             = "${params.mainDir}/bin"
-        logs            = "${params.projectDir}/Logs"
-        snpEff          = "${params.dir.references}/snpEff"
+        // Placed by you, and never moved or deleted by the pipeline.
+        data            = "${params.mainDir}/${params.dataSource}"
+        references      = "${params.mainDir}/Reference"
+        // Built from your reference by step 1. Yours to keep, the pipeline's to rebuild.
+        dictionaries    = "${params.dir.references}/Dictionaries"
+        // Outputs land here first and move to Output/ once whatever reads them has succeeded.
+        utilized        = "${params.mainDir}/Utilized"
 
-        output {
-            aligned         = "${params.dir.outputs}/Aligned"
-            ready           = "${params.dir.outputs}/Ready"
-            trimmed         = "${params.dir.outputs}/Trimmed"
-            unpaired        = "${params.dir.outputs}/Unpaired"
-            vcf             = "${params.dir.outputs}/VCF"
-            freq            = "${params.dir.outputs}/Frequencies"
-            reports         = "${params.dir.outputs}/Reports"
-            temp            = "${params.dir.outputs}/Temp"
+        outputs         = "${params.storageDir}/Output"
+
+        // Under multiRun, Output/ and Logs/ are divided into All_Runs/, Shared_<N>/ and
+        // <RunID>/. A single run sits at Output/ directly.
+        allOutputs      = params.multiRun ? "${params.storageDir}/Output/All_Runs" : "${params.storageDir}/Output"
+        allLogs         = params.multiRun ? "${params.storageDir}/Logs/All_Runs"   : "${params.storageDir}/Logs"
+        // The installation's own, under neither storage root. `projectDir` is Nextflow's
+        // variable, not a parameter of ours.
+        bin             = "${projectDir}/bin"
+        // Sourced by another script, never run, so it is not on PATH.
+        lib             = "${projectDir}/lib"
+        logs            = "${params.storageDir}/Logs"
+        snpEff          = "${params.dir.dictionaries}/snpEff"
+
+        // Relative to EITHER root: Utilized/ mirrors Output/ exactly.
+        subpath {
+            aligned         = "Aligned"
+            ready           = "Ready"
+            trimmed         = "Trimmed"
+            unpaired        = "Unpaired"
+            vcf             = "VCF"
+            freq            = "Frequencies"
+            reports         = "Reports"
 
             report {
-                align           = "${params.dir.output.reports}/Alignment"
-                coverage        = "${params.dir.output.reports}/Coverage"
-                fastqc          = "${params.dir.output.reports}/Fastqc"
-                trim            = "${params.dir.output.reports}/Trimming"
+                align           = "${params.dir.subpath.reports}/Alignment"
+                coverage        = "${params.dir.subpath.reports}/Coverage"
+                depth           = "${params.dir.subpath.reports}/Depth"
+                fastqc          = "${params.dir.subpath.reports}/Fastqc"
+                trim            = "${params.dir.subpath.reports}/Trimming"
             }
         }
+
+        // Permanent storage: where an artifact ends up.
+        output {
+            aligned         = "${params.dir.outputs}/${params.dir.subpath.aligned}"
+            ready           = "${params.dir.outputs}/${params.dir.subpath.ready}"
+            trimmed         = "${params.dir.outputs}/${params.dir.subpath.trimmed}"
+            unpaired        = "${params.dir.outputs}/${params.dir.subpath.unpaired}"
+            vcf             = "${params.dir.outputs}/${params.dir.subpath.vcf}"
+            freq            = "${params.dir.outputs}/${params.dir.subpath.freq}"
+            reports         = "${params.dir.outputs}/${params.dir.subpath.reports}"
+
+            report {
+                align           = "${params.dir.outputs}/${params.dir.subpath.report.align}"
+                coverage        = "${params.dir.outputs}/${params.dir.subpath.report.coverage}"
+                depth           = "${params.dir.outputs}/${params.dir.subpath.report.depth}"
+                fastqc          = "${params.dir.outputs}/${params.dir.subpath.report.fastqc}"
+                trim            = "${params.dir.outputs}/${params.dir.subpath.report.trim}"
+            }
+        }
+
+        // Nextflow's own dag, trace, timeline and report. Last in this block, and it has to
+        // be: interpolation is eager and top to bottom, so a reference to `subpath` from above
+        // it reads null and the config fails to parse.
+        sessionReports  = "${params.dir.allOutputs}/${params.dir.subpath.reports}"
     }
 
-    // setting reference and data full paths
-    reference       = "${params.dir.references}/${params.referenceFile.replace('.gz', '')}"
-    gff             = "${params.dir.references}/${params.gffFile.replace('.gz', '')}" 
+    // Full paths to the files you place. Below the dir block, not beside the file names
+    // above: interpolation is a single forward pass, and a forward reference fails to parse.
+    referencePath   = "${params.dir.references}/${params.referenceFile}"
+    gffPath         = "${params.dir.references}/${params.gffFile}"
+    metadataPath    = "${params.mainDir}/${params.metadataFile}"
+    multiRunPath    = "${params.mainDir}/${params.multiRunFile}"
+
+    // The decompressed reference, written by step 1. There is no `gff` beside it: snpEff
+    // builds its database from the file you placed, gzipped or not.
+    reference       = "${params.dir.dictionaries}/${params.referenceFile.replace('.gz', '')}"
     reads           = "${params.dir.data}/${params.readPattern}"
 
 
-    // Add software commands. 
-    // WARNING: It is possible to use the software installed on the system instead of conda environment.
-    //          Replace the command with the full path of the software. 
-    //          Due to version conflicts the pipeline might misbehave. 
-    //          Use with caution!
+    // How each tool is invoked. Replace a command with a full path to use a system binary
+    // instead of the conda environment's - at your own risk, as versions may conflict.
     software {
         java            = 'java'
         cutadapt        = 'cutadapt'
@@ -196,5 +256,16 @@ params {
         vcftools        = 'vcftools'
         snpEff          = 'snpEff'
         unzip           = 'unzip'
-    }   
+
+        // Moving a finished artifact into permanent storage. bin/atomic_mv.sh copies it
+        // with rsync, compares the copy against its source with diff, and only then
+        // removes the source; find lists what a results folder holds.
+        //
+        // These three are verified at the start of a run like the rest, but they are the
+        // one group a full path above does not repoint: they are called by name from the
+        // helper scripts in bin/, which read no Nextflow settings.
+        rsync           = 'rsync'
+        diff            = 'diff'
+        find            = 'find'
+    }
 }

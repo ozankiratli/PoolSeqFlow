@@ -1,0 +1,307 @@
+// PoolSeqFlow analysis layer — project settings. The manual explains every setting in this file:
+//     https://ozankiratli.github.io/PoolSeqFlow/
+//
+// OPTIONAL. Without it every module uses the values below, which are what PoolSeqFlow falls
+// back to when you set nothing. Copy it into your project as  analysis.config , beside
+// parameters.config, and change only what you need. Until you do, every module's verification
+// report prints the path to copy.
+//
+// Three files are read, in this order, each winning over the one before it:
+//
+//     the installation's own wiring      analysis/frame.config
+//     your project                       analysis.config          <- this file
+//     one module                         <module>.config          e.g. mds.config
+//
+// The first is not a settings file and holds none of the values below - it is how a module
+// reaches conda, the helpers in bin/ and its resource ceiling. The settings below have no file
+// of their own until you write this one.
+//
+// So a value here applies to every module in this project, and the same key in mds.config
+// applies to `PoolSeqFlow analysis mds` alone. parameters.config is read as well and is not
+// repeated here: the analysis layer reads the pipeline's settings from it.
+
+params {
+    analysis {
+        // WHICH RUNS TO ANALYZE.
+        //
+        //     'all'                       every run in the project            (the default)
+        //     'reference_a'               one run, by the RunID you gave it
+        //     ['reference_a', 'pool_50']  several
+        //
+        // Ignored by a single-run project - there are no run names to select, and setting
+        // anything but 'all' is refused rather than ignored quietly.
+        //
+        // `all` is a keyword and a list is always run names, so a run you have actually named
+        // `all` is selected by writing ['all'].
+        //
+        // Runs that produced the SAME tables share one results directory, and it is analyzed
+        // once however many of them you name. The verification report at the start of every
+        // module says which directory each selected run landed in, and names any run whose
+        // results you are also reading without having asked for them.
+        runs = 'all'
+
+        // WHERE THIS ANALYSIS IS WRITTEN, under Analysis/Results.
+        //
+        //     ''                  the module's own name  -  mds writes to Results/mds
+        //     'sweep_strict'      a name of your own
+        //     'MDS/SummerPops'    a path, so related runs group together
+        //
+        // Naming the folder is how two settings of one module are told apart. Nothing is
+        // stamped with a date and nothing is overwritten: a folder that already holds an
+        // analysis is REFUSED, and the way to run the same module again with different
+        // settings is to give the new one a folder of its own.
+        //
+        // Set this in <module>.config rather than here if you want it to apply to one module.
+        //
+        // Under multiRun, each results directory gets its own folder inside this one, named
+        // as the pipeline named it - Results/<folderName>/Shared_1, and so on.
+        folderName = ''
+
+        // HOW YOUR METADATA FILE IS READ. Everything in here describes metadata.csv rather than
+        // this invocation, and none of it changes what the pipeline computed — exp_ and pt_
+        // columns are recorded and never acted on, so results you already have stay valid.
+        //
+        // A key this scope does not have is refused by name. That is the point of the scope: a
+        // reader asks for the setting it wants, so `timevar` with a small v would otherwise sit
+        // in your file unread while the project ran on defaults you did not choose.
+        metadata {
+            // WHAT A CELL MEANS WHEN IT IS NOT A VALUE. A blank cell always means "no value";
+            // this is for the other spellings of it.
+            //
+            //     []                          blank cells only                   (the default)
+            //     ['NA']                      R's, and most exports'
+            //     ['NA', 'N/A', 'na', '-']    several
+            //     ['na_*']                    a wildcard: * is any run, ? is one character
+            //
+            // Matched WHOLE and CASE SENSITIVELY, so 'NA' does not catch 'na' — list both if
+            // your file has both. That is deliberate: a level genuinely called `na` has to stay
+            // a level, and no setting can tell the two apart for you.
+            //
+            // Applies to exp_ and pt_ columns, which are the only ones the analysis layer reads.
+            // An entry that would match everything is refused rather than obeyed, and the
+            // verification report names every cell this turned into a blank — read that line,
+            // because a pattern wider than you meant removes values and leaves no error behind.
+            missingValueEncoding = []
+
+            // THE TIME AXIS. Set this whenever your metadata has an exp_time column — a project
+            // that has one and does not say how to read it is refused, because time is the one
+            // variable whose ORDER changes what a result means and it is never guessed.
+            //
+            // timeVar {
+            //     // Which column holds time. Must be an exp_ column: only those are checked for
+            //     // agreeing across the rows of one pool.
+            //     column = 'exp_time'
+            //
+            //     // How to read it. Required. One of:
+            //     //
+            //     //   'numerical'    the values are numbers. Spacing is real, so a rate per unit
+            //     //                  is meaningful. Needs `unit` below.
+            //     //   'datetime'     the values are dates. Needs `format`, and `locale` if the
+            //     //                  month names are not English. Measured in days.
+            //     //   'categorical'  the values are labels in an order you give. Rank only —
+            //     //                  no rate can be fitted, and no unit may be set.
+            //     kind = 'numerical'
+            //
+            //     // numerical only, and required for it. One of:
+            //     //   millisecond second minute hour        exact durations
+            //     //   day week month year                   calendar
+            //     //   generation passage cycle              counts
+            //     //   step                                  evenly spaced in something unnamed
+            //     unit = 'generation'
+            //
+            //     // datetime only. java.time patterns — yyyy or uuuu year, MM month digits,
+            //     // MMM short name, MMMM full name, dd day, HH 24-hour, hh with a for 12-hour.
+            //     // 07/03/2024 is a valid date under dd/MM/yyyy AND MM/dd/yyyy, four months
+            //     // apart, so this is asked for rather than guessed. The verification report
+            //     // prints the dates it read, as ISO, in the order it will use them — read it.
+            //     format = 'dd/MM/yyyy'
+            //
+            //     // datetime only. The language month and weekday names are written in.
+            //     // Only affects reading; what gets published is ISO either way.
+            //     locale = 'en'
+            //
+            //     // categorical only. The order of the levels, exactly as the metadata spells
+            //     // them. Without it they are sorted ALPHABETICALLY, which puts T10 between T1
+            //     // and T2, and 'post' before 'pre'.
+            //     order = ['pre', 'post']
+            // }
+
+            // PHENOTYPES — what was MEASURED on each pool, for a module to test against.
+            //
+            // One block per pt_ column, and declare as many as you record. Those are the columns
+            // checked for agreeing across the rows of one pool, which is what stops a pool
+            // carrying two values at once. An exp_ column is what you SET; a pt_ column is what
+            // came out.
+            //
+            // DECLARING ONE DOES NOT CHOOSE IT. Which phenotype an analysis tests against is the
+            // module's own setting, so a project with three of them runs three analyses from one
+            // declaration block — set folderName so each lands somewhere of its own.
+            //
+            // A pt_ column you do not declare is still recorded, checked and reported; it simply
+            // carries no scale, so no module can test against it. The verification report names
+            // the ones in that state, because "kept for the record" and "forgot to declare it"
+            // look identical in the file.
+            //
+            // phenotypes {
+            //     pt_wingspan {
+            //         // WHAT KIND OF SCALE IT IS. Never guessed — 0 and 1 read as numbers as
+            //         // readily as they encode two groups, and no file says which of 'case'
+            //         // and 'control' is the affected one.
+            //         //
+            //         //   'quantitative'  a measurement. Every value must parse as a number.
+            //         //                   Counts and percentages are this too.
+            //         //   'binary'        PRESENCE and ABSENCE — affected or not, resistant or
+            //         //                   not. Exactly two levels, as [absent, present].
+            //         //   'ordinal'       groups whose ORDER means something and whose spacing
+            //         //                   does not: low, medium, high.
+            //         //   'nominal'       groups with no order: spotted, striped, curly.
+            //         //
+            //         // Two groups that are not an absence and a presence — coastal and inland,
+            //         // two host plants — are 'nominal', not 'binary'.
+            //         kind = 'quantitative'
+            //     }
+            //
+            //     pt_resistance {
+            //         kind = 'binary'
+            //
+            //         // REQUIRED for binary, ordinal and nominal; refused for quantitative.
+            //         //
+            //         // For 'binary' the order is [absent, present] and it decides the SIGN of
+            //         // every effect reported against it — write it the wrong way round and
+            //         // every result reverses, with nothing in the data to tell you.
+            //         // For 'ordinal' the order IS the scale.
+            //         // For 'nominal' the order only sets which group others are reported
+            //         // against.
+            //         //
+            //         // A level no pool has is kept and reported, not an error: a group you
+            //         // have not sequenced yet is legitimate. A misspelling looks exactly the
+            //         // same, so read that line of the verification report.
+            //         levels = ['unaffected', 'affected']
+            //     }
+            // }
+
+            // COVARIATES — what was MEASURED alongside, and is neither set nor the response.
+            // A cage temperature, an altitude, a collection site, a technician when every
+            // library of a pool shares one.
+            //
+            // A cov_ column has its own prefix so that adding one CANNOT dissolve your time
+            // series: exp_ columns identify a series, and a temperature recorded at each
+            // timepoint would leave every series a single point long. cov_ columns are checked
+            // for agreeing across the rows of a pool and never identify a unit or a series.
+            //
+            // Declaring one is optional. Undeclared, it is recorded, checked and reported like
+            // any other pool-level column. Declared, it also gets a scale, so a module can
+            // compute with it — the kinds are the phenotype's and mean the same things.
+            //
+            // WHAT IT HOLDS IS SET HERE; WHAT IT DOES IS SET IN design.covariates above. A
+            // covariate left out of the design is still resolved, still reported and still
+            // published — it is simply not a term in anybody's model.
+            //
+            // EVEN ON THE RECORD ONLY IT EARNS ITS PLACE. With six or twenty pools there are
+            // few degrees of freedom to spend, and a value in the report lets a reader see that
+            // the high-phenotype pools were also the warm ones — which is the confounding
+            // nobody would otherwise suspect.
+            //
+            // covariates {
+            //     cov_temperature {
+            //         kind = 'quantitative'
+            //     }
+            //     cov_site {
+            //         kind   = 'nominal'
+            //         levels = ['coastal', 'inland', 'montane']
+            //     }
+            // }
+            //
+            // What differs BETWEEN two rows of one pool — the lane, the run, the technician who
+            // handled one library — is NOT a covariate and cannot be made one. The reads are
+            // merged, so no analysis can attribute one to the row it came from. Record it in an
+            // unprefixed column; it is kept and never interpreted.
+
+        }
+
+        // WHAT YOUR EXPERIMENT WAS — which pools are independent of each other.
+        //
+        // Its own scope beside `metadata`, not inside it: that one says how the file is READ,
+        // this one says what the file DESCRIBES. This is where degrees of freedom come from,
+        // and NOTHING here is guessed. Two pools are two independent units unless you say a
+        // column tells them apart as repeats of one material: RG_Sample already decided what
+        // was merged into one pool, so what is left is separate until you declare otherwise.
+        //
+        // It applies with or without a time course. A one-off comparison of three treated pools
+        // against three controls has conditions and units exactly as a time series has.
+        //
+        // design {
+        //     // The variables that identify one thing you set up. Left empty it is every exp_
+        //     // variable except time. SET IT if one of your exp_ columns is recorded ON each
+        //     // pool rather than saying what the pool is — a temperature, a census — because
+        //     // that differs pool to pool and would split every unit into singletons.
+        //     by = ['exp_population', 'exp_replicate']
+        //
+        //     // Which of those index REPEATS rather than naming a condition. Both take any
+        //     // number of columns — two lanes crossed with three sequencing runs is
+        //     // technicalRep = ['exp_lane', 'exp_seqrun'], six technical replicates each.
+        //     //
+        //     // The two are not interchangeable. Biological replicates are independent repeats
+        //     // of one condition and are where degrees of freedom come from; technical
+        //     // replicates are one biological unit measured more than once and carry none.
+        //     // Calling the second the first is pseudo-replication.
+        //     //
+        //     // technicalRep is the ONLY thing that makes two pools one unit. Leave your lane
+        //     // column out of it and each lane counts as an independent replicate, which
+        //     // roughly halves every standard error in the project.
+        //     //
+        //     // A key column named in neither is a CONDITION — what is being compared. The
+        //     // verification report prints every key column under its role, which is the only
+        //     // place a column in the wrong place can be seen.
+        //     biologicalRep = ['exp_replicate']
+        //     technicalRep  = ['exp_lane']
+        //
+        //     // Which of your cov_ columns are PART OF THE DESIGN — the ones a module may
+        //     // adjust for, rather than only report. Left empty it is every cov_ column that
+        //     // has a declared scale under metadata.covariates; naming any restricts it.
+        //     //
+        //     // Set it when you record covariates for the record that you do not want in any
+        //     // model. Each one that IS in the design costs a degree of freedom, and with six
+        //     // pools there are four to spend.
+        //     //
+        //     // A column named here must have a scale, because a column with no scale has no
+        //     // value a model could take.
+        //     covariates    = ['cov_temperature']
+        //
+        //     // WHAT A TIME AXIS MAKES OF ALL THAT. Only a time course can leave a trajectory
+        //     // with a gap in it, so this is the one thing the series scope holds — what a
+        //     // series IS comes from the keys above.
+        //     series {
+        //         // What to do when a series does not cover every timepoint.
+        //         //
+        //         //   'fail'       refuse, naming what is missing            (the default)
+        //         //   'drop'       leave the incomplete series out
+        //         //   'keepLeft'   cut the timeline back to the points every series shares,
+        //         //                from the START
+        //         //   'keepRight'  the same, from the END
+        //         //
+        //         // keepLeft and keepRight shorten the TIMELINE, not each series, so what
+        //         // comes out is comparable across series. Neither fills a gap in: no value
+        //         // is ever carried forward or invented.
+        //         incomplete = 'fail'
+        //     }
+        // }
+
+        // A MODULE'S OWN SETTINGS go in a scope named after the module, inside `modules`. What
+        // each module has is listed in its section of the manual, and a key it does not have is
+        // refused rather than ignored - so a misspelling stops the run instead of leaving the
+        // module running on a default you did not choose.
+        //
+        // modules {
+        //     basicstats {
+        //         chromosomes = ['chr2L', 'chr3R']
+        //     }
+        // }
+        //
+        // The extra level is what keeps module names and the settings above in separate
+        // namespaces: a module called `series` or `metadata` would otherwise read one of them.
+        //
+        // Inside `analysis`, always. A scope written at the top level of this file is read as
+        // a change to the settings that produced your results, and every analysis refuses.
+    }
+}

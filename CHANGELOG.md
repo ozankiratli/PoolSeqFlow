@@ -14,9 +14,9 @@ Alongside that: a documentation site, an installation check that fails an instal
 
 ### Changed
 
-- **`vcffilter.minDP` now filters, where before it did nothing.** The depth filter was `vcftools --minDP`, which expresses a failed genotype-level test by rewriting `FORMAT/GT` and nothing else — it never touches `AD` or `DP`, and it never removes a site. Because step 7's major-allele normalisation sets every `GT` to `./.` before that filter runs, and because frequency conversion reads `AD` rather than `GT`, the setting had no path to the output: running the old command with `--minDP 20` and with `--minDP 50` produced byte-identical frequency tables. It is now `bcftools view -e "FMT/DP<N"`, applied before the quality filter. **The test is per site, not per sample: a site is removed if *any* sample falls below the depth**, so the weakest library sets the threshold for the whole cohort. Check `Output/Reports/Coverage/` for your least-covered sample before trusting the default of `20` — on a run with one thin library it can remove most of the call set.
+- **`vcffilter.minDP` now filters, where before it did nothing.** The depth filter was `vcftools --minDP`, which expresses a failed genotype-level test by rewriting `FORMAT/GT` and nothing else — it never touches `AD` or `DP`, and it never removes a site. Because step 7's major-allele normalization sets every `GT` to `./.` before that filter runs, and because frequency conversion reads `AD` rather than `GT`, the setting had no path to the output: running the old command with `--minDP 20` and with `--minDP 50` produced byte-identical frequency tables. It is now `bcftools view -e "FMT/DP<N"`, applied before the quality filter. **The test is per site, not per sample: a site is removed if *any* sample falls below the depth**, so the weakest library sets the threshold for the whole cohort. Check `Output/Reports/Coverage/` for your least-covered sample before trusting the default of `20` — on a run with one thin library it can remove most of the call set.
 - **`params.vcftools` is now `params.vcffilter`.** The block never mapped to one tool and now genuinely does not: depth filtering is bcftools, quality filtering is vcftools. `./PoolSeqFlow migrate_config` carries your values across to the new names and reports them as `Renamed this release`.
-- **Two bcftools parameters were the wrong way round.** `baseQualMin` supplied `mpileup -q`, which is the *mapping* quality minimum, and `varQualMin` supplied `-Q`, the *base* quality minimum. Both default to `30`, so no run changes behaviour — but anyone who tuned one was tuning the other.
+- **Two bcftools parameters were the wrong way round.** `baseQualMin` supplied `mpileup -q`, which is the *mapping* quality minimum, and `varQualMin` supplied `-Q`, the *base* quality minimum. Both default to `30`, so no run changes behavior — but anyone who tuned one was tuning the other.
 - **Citations point at the Zenodo concept DOI** ([10.5281/zenodo.19245611](https://doi.org/10.5281/zenodo.19245611)) rather than a version DOI. The badge previously pointed at the v1.0.0 record, which is frozen and therefore permanently flagged "a newer version is available". The concept DOI always resolves to the newest release. Papers should still cite the *version* DOI of the release they ran — `./PoolSeqFlow cite` explains which and why.
 - **`install/install.sh` removed.** The wrapper's `install` subcommand creates the environment itself and never called it; the script also used a relative path to `environment.yml` and a `conda activate` with no shell hook, so running it directly would not have worked either.
 - `cutadapt.min_length` is still not applied, and the template now carries a commented-out `options` line to switch it on deliberately rather than leaving the parameter looking active.
@@ -35,16 +35,16 @@ Alongside that: a documentation site, an installation check that fails an instal
 
 ### Commits
 
-- Depth filtering fix, and minor config corrections. (2c29d35)
-- Typo fix, not a functional problem (78ac157)
-- site is added to gitignore (b087cd5)
-- Renaming check is added to the migration script (8595513)
-- dev files added (0e63c74)
-- Check install status added (9687114)
-- Release workflow added (6b5a549)
-- check install added to workflow (7aae36e)
-- Citation fixes (aaec06c)
-- Website is finished (d423c8e)
+- (2c29d35) Depth filtering fix, and minor config corrections.
+- (78ac157) Typo fix, not a functional problem
+- (b087cd5) site is added to gitignore
+- (8595513) Renaming check is added to the migration script
+- (0e63c74) dev files added
+- (9687114) Check install status added
+- (6b5a549) Release workflow added
+- (7aae36e) check install added to workflow
+- (aaec06c) Citation fixes
+- (d423c8e) Website is finished
 
 ---
 
@@ -76,13 +76,13 @@ A stability release. Nothing new to configure and no change to how a run is invo
 
 ### Commits
 
-- Minor fix in help for manual use (6e18762)
-- Parameter change detection added. (715f822)
-- workDir and reset fixes (f73b33d)
-- Output parameters to a file (0f5666f)
-- File move process improved (408efb4)
-- Sample ordering in vcf fixed. NF orders samples first come first serve (dc2ea72)
-- Sample ordering in vcf fixed. RGTags guardrails added. (4a9f89d)
+- (6e18762) Minor fix in help for manual use
+- (715f822) Parameter change detection added.
+- (f73b33d) workDir and reset fixes
+- (0f5666f) Output parameters to a file
+- (408efb4) File move process improved
+- (dc2ea72) Sample ordering in vcf fixed. NF orders samples first come first serve
+- (4a9f89d) Sample ordering in vcf fixed. RGTags guardrails added.
 
 ---
 
@@ -92,13 +92,13 @@ Resource allocation is now declared to Nextflow rather than only passed to the t
 
 ### Added
 
-- **`./PoolSeqFlow migrate_config`** — rebuilds `parameters.config` from the current template, backs the original up, carries across every setting whose parameter still exists, and reports what it kept, what is new, what the pipeline now computes for itself, and what it dropped. It refuses to carry a value the template derives, so it cannot reintroduce a stale `snpEff.db` or a hand-set thread count. The report is a starting point: a parameter whose behaviour changed while its value still looks ordinary will be carried across, so compare against the template afterwards.
+- **`./PoolSeqFlow migrate_config`** — rebuilds `parameters.config` from the current template, backs the original up, carries across every setting whose parameter still exists, and reports what it kept, what is new, what the pipeline now computes for itself, and what it dropped. It refuses to carry a value the template derives, so it cannot reintroduce a stale `snpEff.db` or a hand-set thread count. The report is a starting point: a parameter whose behavior changed while its value still looks ordinary will be carried across, so compare against the template afterwards.
 - **Every process declares `cpus`**, so Nextflow schedules against real requirements instead of assuming one core per task. Previously three `Align` tasks each using ~2.2 cores ran concurrently on an 8-core machine with `cpus=1` recorded for each.
 - `params.memory`, feeding `resourceLimits` alongside `params.threads`, so one place sizes a run.
 
 ### Changed
 
-- **Tools now read `task.cpus`** rather than thread counts baked into option strings, so the number Nextflow reserves and the number the tool receives cannot diverge. Overriding `cpus` in a profile now changes the tool's behaviour too.
+- **Tools now read `task.cpus`** rather than thread counts baked into option strings, so the number Nextflow reserves and the number the tool receives cannot diverge. Overriding `cpus` in a profile now changes the tool's behavior too.
 - **`TrimReads` reserves Trim Galore's full footprint.** `--cores N` runs N+4 threads (measured: `--cores 8` peaks at 12 OS threads), so the process reserves `cores.trimTotal` and maps back to the worker count. A request larger than the machine now fails with `Process requirement exceeds available CPUs` instead of silently oversubscribing.
 - **JVM garbage-collection threads come from `task.cpus`.** `-XX:ParallelGCThreads` was read from a config string, so `cpus` had no effect on SnpEff or FastQC.
 - `resourceLimits` moved to `params.threads` / `params.memory`; it was hardcoded and would not follow a change to `threads`.
@@ -203,7 +203,7 @@ Major upgrade to **Nextflow 26** and **Trim Galore 2.x**. This release is not ba
 - Outputs VCFs with per-sample `AD` and `DP` FORMAT fields
 
 **Step 7 — VCF to allele frequency tables**
-- Major-allele normalisation: VCF re-encoded so the major allele is always REF
+- Major-allele normalization: VCF re-encoded so the major allele is always REF
 - Multiallelic site support throughout variant calling and frequency conversion
 - Ploidy- and pool-size-aware minimum frequency filter: $f_{\min} = 1 / (2 \times ploidy \times poolSize)$
 - Depth and quality filtering
@@ -230,6 +230,8 @@ Major upgrade to **Nextflow 26** and **Trim Galore 2.x**. This release is not ba
 
 ---
 
+[2.2.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.2.0
+[2.1.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.1.1
 [2.1.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.1.0
 [2.0.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.0.1
 [2.0.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.0.0

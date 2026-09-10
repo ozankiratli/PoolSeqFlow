@@ -1,0 +1,32 @@
+% What an mds analysis should be cited with: the statistics it computes and the R packages it
+% computes them in. Merged with PoolSeqFlow, Nextflow and R by the frame, and written into every
+% published folder as CITATIONS.md and references.bib.
+%
+% This file is the one to edit; it compiles to citations.json beside it with
+% dev/scripts/bib2citations.py, and 00_static fails when the two disagree.
+%
+% A 'note' says what the entry is cited FOR. A method is not a tool, so an entry for one names
+% no r_package and no version is asked of anything: what is credited is the estimator.
+%
+% THE DISTANCE ITSELF IS CREDITED IN analysis/references.bib, NOT HERE. nei_distance() is
+% library code that any module placing or clustering pools calls, so its citation belongs to the
+% layer rather than to this module - the same rule that puts n_eff there. A BibTeX key may be
+% defined once across the whole manual, and this module's own citation is the ordination it
+% makes of that distance.
+%
+% ggplot2 and jsonlite are credited in analysis/references.bib for the same reason.
+
+@article{gower1966mds,
+  group   = {The statistics PoolSeqFlow computes},
+  id      = {gower1966},
+  name    = {Classical multidimensional scaling},
+  authors = {Gower, John C.},
+  title   = {Some Distance Properties of Latent Root and Vector Methods Used in Multivariate Analysis},
+  journal = {Biometrika},
+  volume  = {53},
+  number  = {3/4},
+  pages   = {325--338},
+  year    = {1966},
+  doi     = {10.2307/2333639},
+  note    = {The ordination this module draws: a matrix of squared distances double centered into a Gram matrix, whose leading eigenvectors are the coordinates. It is what R's own cmdscale cites and implements, and the source of the negative eigenvalues this module publishes rather than hides - they are what a distance matrix that no flat space holds exactly produces.},
+}

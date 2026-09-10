@@ -7,6 +7,10 @@
 # Anything a run needs must NOT be listed here. release.yml asserts both
 # directions: required files present, these absent.
 
+# docs/ is generated and untracked, so it cannot reach an archive in any case; the rule
+# stays as insurance. manual/ is what it is generated FROM, and is deliberately absent from
+# this list: a downloaded release carries the whole manual as one readable file, so the
+# documentation does not depend on the site being reachable.
 docs/               export-ignore
 .github/            export-ignore
 mkdocs.yml          export-ignore
@@ -18,3 +22,23 @@ mkdocs.yml          export-ignore
 # user nothing.
 dev/                export-ignore
 Project/            export-ignore
+
+# The test suite and its committed fixture data. Kept in the repository so every change can
+# be checked against a known dataset, kept out of releases because a user never runs it.
+test/               export-ignore
+
+# The same, for the cases a module ships with itself. They are the module's and travel with it
+# when it is published on its own; inside the pipeline tarball they are what test/ is - files a
+# user has no way to run and no reason to.
+analysis/modules/*/test/    export-ignore
+
+# The module catalogue, which `modules available` and `modules install` read over the network
+# from this branch. A copy inside a tarball would be a second answer to what can be installed,
+# frozen on the day the release was built, and modules are published after it.
+modules-repo/                export-ignore
+
+# How the project is built rather than what it does: the agent's instruction file and the
+# development notes. Tracked, and linked from the manual's Development section, but a release
+# download carries the pipeline and the manual - the same rule dev/ follows.
+.claude/            export-ignore
+CLAUDE.md           export-ignore
