@@ -66,9 +66,15 @@ One file per subject, not per source file — the reasoning crosses file boundar
 | `module-dependencies.md` | the four compatibility fields a manifest declares, why shape and compatibility are checked in different places, and what a package spec may not carry |
 | `experimental-design.md` | what makes two pools one independent unit, why it was gated on the time axis, and the two formulations that are not partitions |
 | `association-math.md` | F2 before it was written: the permutation scheme measured at twice its nominal rate, weighted FWL, and what a case may not assert |
+| `nei-distance.md` | why F3's distance is Nei's minimum distance: what was measured, and why the sampling correction is the whole benefit |
+| `module-optionality.md` | the audit behind the modules rework, SUPERSEDED by `modules-and-libraries.md` and kept for its blast-radius findings |
+| `modules-and-libraries.md` | modules and libraries are installed rather than shipped: the root cause Z named, and the rework it forced |
+| `check-split-and-layout.md` | splitting `check` into install and project, and the `bin/` `lib/` `install/` `citations/` move |
 | `calibration.md` | what `dev/validation/` measured against a known truth: `n_eff` exact, the closed form calibrated, unit means required rather than a df adjustment, and the depth-phenotype correlation that breaks permuting |
 | `shell-and-nextflow-gotchas.md` | the traps that produced a confidently wrong answer once: zsh vs bash, `set -e`, awk, the strict parser, channels, config |
+| `gates-that-stopped-checking.md` | the failure this project is prone to: a change moves what a checker points at, and the checker keeps exiting 0 over nothing |
 | `brainstorming.md` | ideas for later releases: what each would buy, what it would break, and where it sits |
+| `module-queue.md` | the plan from v3.1.1: thirteen modules at one a week, published without a release, and the two shape questions the roster raised |
 
 ## Reading these against the code
 
