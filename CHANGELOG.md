@@ -6,6 +6,51 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
+## [3.1.0] - 2026-09-10
+
+**This version makes the module system do what it was built for.** 3.0.0 introduced modules that are published, versioned and installed on their own timetable — and then shipped three of them inside the release, which is the one thing that design was meant to avoid. A module in the payload is a module that moves when the pipeline moves. Now nothing ships: `analysis/modules/` is a store that arrives empty and holds what you put in it.
+
+**Upgrading leaves you with an empty module store, and that is the whole of the upgrade.** Ask the release you are leaving what it has, then install each into the new one. Nothing else moves: your projects, your configuration and every analysis already published are untouched, and the old release keeps its own modules and still runs.
+
+```bash
+PoolSeqFlow-3.0.0 analysis modules list      # what the old release has
+PoolSeqFlow analysis modules install mds     # and again, into the new one
+```
+
+**`PoolSeqFlow check` now takes a word.** There are two questions — is this installation sound, and is this project sound — and one command answering both meant answering neither well. A bare `check` is refused rather than guessing which you meant, because whichever it picked would leave the other unchecked while reporting success.
+
+### Changed
+
+- **No module ships inside a release, and no library either.** `analysis/modules/` is the install store: gitignored, absent from the tarball, and empty until you install something. `PoolSeqFlow analysis modules install <name>` puts one there. This is what lets a module be fixed, improved or published without waiting for a pipeline release — and the cost is that a new installation starts with nothing in it and you choose what goes back.
+- **A module arrives with the libraries it declares.** The shared arithmetic more than one module wants — effective pool size, gene diversity, per-site allele frequencies, Nei's distance, the chunking — is now five libraries, each published and versioned like a module and installed into `analysis/modules/lib/`. You never ask for one by name: it arrives with whatever needs it, and leaves when nothing installed still declares it. A published result still carries the library code folded into the script that produced it, so a result explains itself whatever the store holds later.
+- **`check` is two commands.** `check install` verifies the installation — every tool the release is built to run, and every helper in `bin/`. `check project` verifies a project — that `parameters.config` is current and parses, that `metadata.csv` and the run table parse, and that every command resolves *as that project configures them*, so a tool repointed at a system binary is checked the way the run will call it. Run `check install` from anywhere, including before you have a project; run `check project` from your project directory.
+- **`check install` asks the release's own environment rather than your `PATH`.** Every tool it looks for is pinned in `install/environment.yml`, so one that resolves from anywhere else means the environment is missing a package and your system's copy is standing in — at some other version, on your machine only. That is now reported as `OUTSIDE THE ENVIRONMENT` and fails the check. It is worth catching because it is quiet: the pipeline runs, the results look fine, and nothing reproduces anywhere else.
+- **The installation directories say what they are for.** `bin/` holds everything that is run rather than sourced, the check scripts included; `lib/` holds what is sourced; `install/` holds the two pinned environment files and nothing else; and `citations/` is new, holding the pipeline's own `references.bib` and the `citations.json` generated from it. Nothing you set moves, and no project is affected.
+
+### Added
+
+- **`PoolSeqFlow check project`** — the configuration and the commands a project names, checked without spending a run. It reads `parameters.config` through Nextflow itself and the two tables through the same parsers step 0 uses, so what it tells you is what a run would tell you.
+
+### Fixed
+
+- **Uninstalling a module could take a package another module still needs.** The keep-list is built by reading one manifest per installed module, and the reader did not terminate its last line — so with several modules in the store the last package of one and the first of the next arrived joined, and a name at that boundary dropped out of the list of things to keep. The same defect applied to libraries. The shipped modules declared no packages, so this could only be reached by a module published against 3.0.0 that declared its own.
+- **Uninstalling a module could take a package the release itself is built on.** A module declares what it needs whether or not the baseline already carries it, so `r-ggplot2` appears in a manifest and in `install/environment-analysis.yml` both. The removal now subtracts the baseline, and nothing the release provides can leave with a module.
+
+### Commits
+
+- (91e027f) Publish the three shipped modules
+- (45770fd) Release notes now reads from changelog
+- (7428880) install no longer checks for paramters.config, which is not in the install folder anymore
+- (6d38c88) Full rework of modules
+- (598d955) wrapper check is aligned with the current file structure
+- (4f8a313) citations move to their own folder
+- (dbc522d) modules rework continued
+- (c9b26e2) check project fix
+- (bdd3c93) Major bug fixes related to the migration of files to different folders
+- (ae1af19) Release notes updated
+
+---
+
 ## [3.0.0] - 2026-09-10
 
 **This version is about accessibility.** I tried to do as much engineering as possible using the most common tools and knowledge to make sure that the pipeline can create reproducible results for the users. The outputs now contain, not only the parameter set used in each analysis, there is a list of citations for all the tools used for each portion of the analysis. The pipeline refuses to run when parameter combination is changed mid-run, this is because, one cannot say which one is used for certain analysis if they change it mid-run. This was a reproducibility choice. However, if the user wants to compare multiple parameter combinations, multi-run feature is added. The pipeline handles it in the most efficient way, by finding where the divergent parameter applies and creates separate workflows for each parameter combination. Analysis layer is built to accommodate different ploidies and multiallelic sites. I also improved the manual/website which now has all explanation and history about the tool.
@@ -394,6 +439,7 @@ Major upgrade to **Nextflow 26** and **Trim Galore 2.x**. This release is not ba
 
 ---
 
+[3.1.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.1.0
 [3.0.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.0.0
 [2.2.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.2.0
 [2.1.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.1.1
