@@ -79,9 +79,14 @@ test_the_analysis_layer_ships_with_the_release() {
     assert_dir "$source_dir" "the module sources must be here"
     for f in basicstats/main.nf association/main.nf mds/main.nf; do
         assert_file "$source_dir/$f" "modules/$f must be a source"
-        assert_no_file "$REPO_ROOT/analysis/modules/${f%%/*}" \
-            "and ${f%%/*} must not be sitting in the store of a checkout"
     done
+    # WHAT IS IN THE STORE OF A CHECKOUT IS NOBODY'S BUSINESS. Installing a module into the
+    # copy you are developing against is an ordinary thing to do, and this case asserted the
+    # opposite - so it passed until somebody did it. The property that actually holds is that
+    # the store is untracked, which is what keeps it out of a release however full it is.
+    local ignored; ignored=$(cd "$REPO_ROOT" && git check-ignore analysis/modules 2>/dev/null || true)
+    assert_eq "analysis/modules" "$ignored" \
+        "the store must be gitignored, whatever a developer has installed into it"
 
     # A published module carries only what is TRACKED: publish-module.sh builds its tarball from
     # a git ref, so a file left unadded is one that works here and is absent from every download

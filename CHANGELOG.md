@@ -10,6 +10,30 @@ In practice a version number says what upgrading will cost you: a third number i
 
 ---
 
+## [3.1.1] - 2026-09-10
+
+**Inconveniences fixed. No known incompatibilities.** Nothing you set changes, nothing you have installed needs touching, and no result computed under 3.1.0 is affected. This tidies two things that were merely noisy and one page that was actively misleading.
+
+### Fixed
+
+- **`analysis modules available` listed every published version of every module.** The catalogue holds one row per version — that is what `install` resolves against — so a listing of rows was each module's history rather than something to act on, and it grew with every publish. It now shows one line per module: the newest version *your* release can run, which is exactly what `install <name>` would take. Both commands ask the same question through the same code, so they cannot tell you different things. Older versions stay published and stay installable by naming one.
+- **Installing a module asked conda to install packages that were already there.** A module declares everything it needs whether or not the release's own environment already carries it, and most of what a manifest names normally is already there — so installing one meant a network round trip and a solve to be told nothing had to happen. Only what is actually missing is installed now, and a module needing nothing new says so instead of listing seven packages it is not going to touch. What a manifest declares is unchanged, and uninstalling still reasons over the whole list.
+- **The published modules page offered libraries as though you could install them.** [Published modules](https://ozankiratli.github.io/PoolSeqFlow/modules-repo/) rendered every catalogue row, so the five libraries appeared beside the modules — and a library is never installed by name. It now lists modules only, newest version each, matching what `available` shows, and names the libraries as reference. The page corrects itself on the next site deploy rather than on upgrade.
+
+### Changed
+
+- **The CHANGELOG says what the public API is.** Semantic Versioning requires a project to declare one and this had not, which left every release number a judgment call. It is what a result depends on — the published table formats, `parameters.config`, `metadata.csv`, and what an analysis folder contains. The command line is documented, not frozen.
+
+### Commits
+
+- (a7d68a5) Published basicstats, association, and mds modules
+- (8270a4e) module list was showing every version, fixed to latest version
+- (028b391) for analysis install redundant conda install is removed
+- (61c34f8) Documentation update
+- (b31e291) Clarification on versioning on CHANGELOG
+
+---
+
 ## [3.1.0] - 2026-09-10
 
 **This version makes the module system do what it was built for.** 3.0.0 introduced modules that are published, versioned and installed on their own timetable — and then shipped three of them inside the release, which is the one thing that design was meant to avoid. A module in the payload is a module that moves when the pipeline moves. Now nothing ships: `analysis/modules/` is a store that arrives empty and holds what you put in it.
@@ -443,6 +467,7 @@ Major upgrade to **Nextflow 26** and **Trim Galore 2.x**. This release is not ba
 
 ---
 
+[3.1.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.1.1
 [3.1.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.1.0
 [3.0.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.0.0
 [2.2.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.2.0

@@ -61,6 +61,15 @@ make_pipeline_sandbox() {
     # holds to a section of it, and the frame checks those anchors against the installed copy.
     cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$REPO_ROOT"/lib "$REPO_ROOT"/analysis \
           "$REPO_ROOT"/install "$REPO_ROOT"/citations "$REPO_ROOT"/manual "$sb/install"/
+    # A FRESH INSTALLATION HAS NO MODULE STORE, and `analysis/` is copied whole - so whatever the
+    # developer has installed into their own checkout arrives here and the sandbox stops being a
+    # fresh installation. Removed rather than emptied, because the release tarball carries no
+    # analysis/modules at all and the store is created by the first `modules install`.
+    #
+    # It leaked: a checkout with `mds` installed put mds in every sandbox, and the roster case
+    # that asserts a fresh release offers `verify` alone failed on a machine and passed on
+    # another. A case must not depend on what the person running it happens to have installed.
+    rm -rf "$sb/install/analysis/modules"
     cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/dryrun.nf "$REPO_ROOT"/analysis.nf \
        "$REPO_ROOT"/nextflow.config "$sb/install"/
     # The wrapper, so cases can exercise clean/reset against a real project instead of
