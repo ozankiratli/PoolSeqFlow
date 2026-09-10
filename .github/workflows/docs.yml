@@ -18,7 +18,7 @@ on:
       - "manual/**"
       # The module repository is deployed with the site, so publishing a module is a change
       # here. Without this line the catalogue would advertise a tarball no deploy had carried.
-      - "modules-repo/**"
+      - "modules/repo/**"
       - "mkdocs.yml"
       - "CHANGELOG.md"
       - "dev/scripts/build_docs.py"
@@ -26,7 +26,7 @@ on:
   pull_request:
     paths:
       - "manual/**"
-      - "modules-repo/**"
+      - "modules/repo/**"
       - "mkdocs.yml"
       - "CHANGELOG.md"
       - "dev/scripts/build_docs.py"
