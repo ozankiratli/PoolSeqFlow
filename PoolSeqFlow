@@ -119,6 +119,44 @@ require_project_config() {
     exit 1
 }
 
+# Refuses a parameters.config written for a release before this one.
+#
+# storageDir is the marker: the template assigns it and migrate_config writes it, so every
+# config for this release has one. A file without it still calls that root projectDir and has
+# not been carried across.
+#
+# Nothing fails at config time when it is absent - Nextflow reads the file as given, the
+# parameters this release wants are simply not there, and a step interpolates one into a path
+# much later. A run then starts and writes into a directory named "null".
+#
+# Called by what runs the pipeline, runs a module, or acts on either's outputs, and by nothing
+# else: migrate_config is the fix and must never be refused by this, and clean and dryclean read
+# no parameter it covers.
+require_migrated_config() {
+    grep -qE '^[[:space:]]*storageDir[[:space:]]*=' parameters.config && return 0
+
+    echo "ERROR: parameters.config was written for an older release of PoolSeqFlow." >&2
+    echo "" >&2
+    echo "It does not set storageDir, which every config for this release sets." >&2
+
+    # Named to show this is a recognized older file rather than a damaged one. Advisory only:
+    # the refusal above turns on storageDir alone, and migrate_config reports the full set.
+    local old found=""
+    for old in projectDir diploidy rgTagsFile rgTagsPath; do
+        grep -qE "^[[:space:]]*${old}[[:space:]]*=" parameters.config && found="$found $old"
+    done
+    [ -n "$found" ] && { echo "Parameters in it that this release renamed or removed:" >&2
+                         echo "   $found" >&2; }
+
+    echo "" >&2
+    echo "Carry it onto this release's template first:" >&2
+    echo "    $(basename "$0") migrate_config" >&2
+    echo "" >&2
+    echo "That keeps your values, reports every parameter that changed, and saves your" >&2
+    echo "original as parameters.config.bak." >&2
+    exit 1
+}
+
 # What an installation consists of. Must match what `git archive` puts in a release tarball.
 PAYLOAD_ITEMS="PoolSeqFlow poolseqflow.nf dryrun.nf analysis.nf \
 nextflow.config scripts bin lib analysis install parameters.config.template \
@@ -1080,6 +1118,7 @@ case $COMMAND in
         fi
         require_install
         require_project_config
+        require_migrated_config
         echo "Running pipeline in $(pwd)..."
         require_env
         # Absolute: the pipeline lives with the installation, the project is where we stand.
@@ -1092,6 +1131,7 @@ case $COMMAND in
         # step 0 recording.
         require_install
         require_project_config
+        require_migrated_config
         require_env
         DRYDIR=$(nf_config_value params.dryRunDir)
         if [ -z "$DRYDIR" ]; then
@@ -1232,6 +1272,7 @@ EOF
     reset)
         require_install
         require_project_config
+        require_migrated_config
         require_env
         WORKDIR=$(nf_config_value workDir)
         STORAGE=$(nf_config_value params.storageDir)
@@ -1398,6 +1439,7 @@ EOF
                 analysis_takes_no_more
                 require_analysis_install
                 require_project_config
+                require_migrated_config
                 # Activates the environment, so it is last: the refusals above must be
                 # reachable without one.
                 require_analysis_env
@@ -1581,6 +1623,7 @@ EOF
                 esac
                 require_analysis_install
                 require_project_config
+                require_migrated_config
                 require_analysis_env
                 # Three layers, each winning over the one before it: the installation's frame,
                 # the project's own analysis.config, and this module's <module>.config. The

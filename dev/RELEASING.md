@@ -89,7 +89,7 @@ dev/scripts/export-environment.sh --check PoolSeqFlow-<version>-analysis
 `bin/config_migrate.sh` carries a user's `parameters.config` onto the new template. Two halves:
 
 - **The migration itself.** Every dropped parameter is handled here; there are no legacy fallbacks in `.nf` files. Check the migration report's categories are right — a knob that is merely commented out in the new template is *not* a parameter that is gone, and the report must not say it is.
-- **The user who never runs it.** Someone upgrading without migrating has to end somewhere better than a confusing failure. This is a separate piece of work from the migration and it is easy to forget because the migration itself passes its tests.
+- **The user who never runs it.** `require_migrated_config` in the wrapper refuses a config from an older release and names `migrate_config`, so this path ends somewhere useful rather than in a step interpolating an absent parameter into a path. **It turns on one marker — `storageDir` being assigned — so a release that renames that root has to move the marker with it**, and `02_launcher`'s `a config from an older release is refused with the fix` is what says so. It guards what runs the pipeline, runs a module, or acts on either's outputs; never `migrate_config`, `clean` or `dryclean`.
 
 Also run the language sweep before the merge, because a large prose pass is where drift enters:
 

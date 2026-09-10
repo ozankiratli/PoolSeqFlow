@@ -554,7 +554,7 @@ There is deliberately no third option. A project that changed version midway has
 
 `parameters.config` belongs to you and is never touched by an update — an update must not silently change your analysis settings. The consequence is that after installing a new release your file can be **missing parameters the newer code expects**, and `migrate_config` is the tool for exactly that. Run it before anything else.
 
-Skip it and the failure is not a clean one. An absent parameter interpolates as the literal string `null`, so a later step dies with `.command.sh: line 17: null: command not found` — naming no parameter, and pointing at a generated script. If you ever see that, your config predates the code.
+Skip it and the run stops before anything is computed. A configuration from an older release does not set `storageDir`, the pipeline recognizes that, and it refuses — naming the parameters it found that this release renamed or removed, and telling you to run `migrate_config`. The refusal covers `run`, `resume`, `dryrun`, `reset`, running an analysis module, and `analysis complete`. It never applies to `migrate_config` itself, which is the fix, nor to `clean` and `dryclean`, which read nothing it covers.
 
 ### The assisted route
 

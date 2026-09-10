@@ -818,7 +818,11 @@ run_analysis_launcher_with_envs() {
     cp "$REPO_ROOT/PoolSeqFlow" "$sb/"
     cp "$REPO_ROOT/lib/wrapper_lib.sh" "$sb/lib/"
     : > "$sb/analysis.nf"
-    printf '// stub project marker\n' > "$sb/parameters.config"
+    # storageDir because require_migrated_config reads it to tell a config for this release
+    # from one written before the rename. These cases are about which environment is chosen,
+    # so the marker has to look like a current project rather than an unmigrated one.
+    printf '// stub project marker\nparams {\n    storageDir = "%s/store"\n}\n' "$sb" \
+        > "$sb/parameters.config"
     printf '// stub analysis config\n' > "$sb/analysis.config"
     printf '// stub defaults\n' > "$sb/analysis/frame.config"
     # The real one: `modules available|install` read the table contract this release speaks

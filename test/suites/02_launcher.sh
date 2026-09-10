@@ -1045,6 +1045,43 @@ test_a_module_refuses_outside_a_project() {
         "and should refuse before activating anything"
 }
 
+# A CONFIG FROM AN OLDER RELEASE IS REFUSED, AND THE COMMAND THAT FIXES IT IS NOT.
+#
+# Nothing failed on this path before 3.0. Nextflow reads whatever parameters.config gives it,
+# the parameters this release wants are simply absent, and step 0 interpolates one into a path:
+# `dir_log = "${params.dir.allLogs}/0_verify_environment"` became `null/0_verify_environment`,
+# so the run started and wrote into a directory named "null". Measured against a real v2.2.0
+# config, not imagined - `nextflow config` resolved it without an error of any kind.
+#
+# The real v2.2.0 template is the fixture, so this cannot pass against a hand-written file that
+# happens to omit storageDir while being nothing a user ever had.
+test_a_config_from_an_older_release_is_refused_with_the_fix() {
+    local dir out status
+    dir=$(guard_path "$TEST_TMPDIR/unmigrated-config")
+    rm -rf "$dir"; mkdir -p "$dir"
+    (cd "$REPO_ROOT" && git show v2.2.0:parameters.config.template) > "$dir/parameters.config" \
+        2>/dev/null || { skip_case "no v2.2.0 template to migrate from"; return; }
+
+    # The checkout's own wrapper, run FROM the project directory, which is how a user meets
+    # this. A copy into the sandbox is an incomplete installation and would be refused by
+    # require_install several checks earlier, testing nothing this case is about.
+    out=$(cd "$dir" && bash "$REPO_ROOT/PoolSeqFlow" run 2>&1) && status=0 || status=$?
+    assert_status 1 "$status" "an unmigrated config should be refused"
+    assert_contains "$out" "older release" "should say why it refused"
+    assert_contains "$out" "migrate_config" "should name the command that fixes it"
+    assert_contains "$out" "projectDir" "should name the old parameters it recognized"
+
+    # The refusal has to come before anything is run, or it is just a different late failure.
+    assert_not_contains "$out" "Running pipeline" "should refuse before launching anything"
+
+    # migrate_config is the fix and must never be refused by the guard against it.
+    out=$(cd "$dir" && bash "$REPO_ROOT/PoolSeqFlow" migrate_config 2>&1) \
+        && status=0 || status=$?
+    assert_status 0 "$status" "migrate_config must not be refused by the guard it fixes:"$'\n'"$out"
+    assert_contains "$(cat "$dir/parameters.config")" "storageDir" \
+        "and must write a config this release recognizes"
+}
+
 # `analysis` is the one subcommand carrying a word of its own - exactly one, no more and
 # not none.
 test_the_analysis_subcommand_takes_exactly_one_word() {
