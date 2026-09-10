@@ -4,6 +4,10 @@ All notable changes to PoolSeqFlow will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+**The public API is what a result depends on**: the published table formats, `parameters.config`, `metadata.csv`, and what an analysis folder contains. The command line is documented, not frozen — a verb may gain a word or a listing may get shorter without that being a breaking change, because nothing already computed becomes unreproducible. A version moves when something changes, never on a schedule.
+
+In practice a version number says what upgrading will cost you: a third number is an inconvenience fixed, a second means the tool works mostly fine but there is a caveat worth reading and an incompatibility with its immediate fix, and a first is a different experience.
+
 ---
 
 ## [3.1.0] - 2026-09-10

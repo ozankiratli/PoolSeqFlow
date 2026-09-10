@@ -102,14 +102,32 @@ printf '   %s packages\n' "$(printf '%s\n' "$BASELINE_PACKAGES" | wc -l | tr -d 
 SHIPPED=$( { store_packages "$REPO_ROOT/modules"
              store_packages "$REPO_ROOT/modules/lib"; } | sort -u )
 if [ -n "$SHIPPED" ]; then
-    say "Installing what the shipped modules declare"
+    say "What the modules published from here declare"
     printf '   %s\n' $SHIPPED
+
+    # A PIN ALREADY SATISFIED IS THE ANSWER, NOT A SKIPPED CHECK - but it has to be SAID, or
+    # this reads as a solve that happened. conda_install_packages installs only what is missing,
+    # so with every pin already in the baseline it returns 0 having asked conda nothing, and an
+    # `ok` on that alone would be this gate reporting success over work it did not do.
     # shellcheck disable=SC2086
-    if OUT=$(conda_install_packages "$ENV_NAME" $SHIPPED 2>&1); then
-        ok "the release's own modules install into the release's own environment"
+    PENDING=$(conda_missing_packages "$ENV_NAME" $SHIPPED)
+    # shellcheck disable=SC2086
+    CLASH=$(conda_conflicting_packages "$ENV_NAME" $SHIPPED)
+    if [ -n "$CLASH" ]; then
+        bad "a pin disagrees with the version the baseline holds:"
+        printf '%s\n' "$CLASH" | sed 's/^/         /'
+    elif [ -z "$PENDING" ]; then
+        ok "every pin is already in the baseline at the version declared - nothing to solve"
     else
-        bad "a module shipped in this release cannot install into its environment:"
-        printf '%s\n' "$OUT" | tail -6 | sed 's/^/         /'
+        say "   of those, not yet in the baseline:"
+        printf '      %s\n' $PENDING
+        # shellcheck disable=SC2086
+        if OUT=$(conda_install_packages "$ENV_NAME" $SHIPPED 2>&1); then
+            ok "the release's own modules install into the release's own environment"
+        else
+            bad "a module published from this release cannot install into its environment:"
+            printf '%s\n' "$OUT" | tail -6 | sed 's/^/         /'
+        fi
     fi
     MOVED=$(comm -23 <(printf '%s\n' "$BASELINE_PACKAGES") <(env_versions) || true)
     if [ -z "$MOVED" ]; then

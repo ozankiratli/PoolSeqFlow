@@ -286,7 +286,7 @@ Both end by reporting how many checks passed, and **fail loudly if any did not**
 
 ```text
 Tools
-  from ~/.local/opt/miniconda3/envs/PoolSeqFlow-3.0.0
+  from ~/.local/opt/miniconda3/envs/PoolSeqFlow-<version>
 
   nextflow       nextflow     OK       26.04.6 build 12646
   cutadapt       cutadapt     OK       5.2
@@ -537,10 +537,10 @@ Before anything is installed there is no `PoolSeqFlow` on your `PATH`, so the fi
 Installed under /home/you/.local:
   1) PoolSeqFlow                   (unversioned - predates per-version environments)
   2) PoolSeqFlow-2.1.0
-  3) PoolSeqFlow-3.0.0             (this wrapper, analysis installed)
+  3) PoolSeqFlow-<version>             (this wrapper, analysis installed)
 ```
 
-Choosing 3 removes `PoolSeqFlow-3.0.0` and `PoolSeqFlow-3.0.0-analysis`. To remove only an analysis layer and keep the pipeline that produced your results, use `PoolSeqFlow analysis uninstall`, which never touches anything else.
+Choosing 3 removes `PoolSeqFlow-<version>` and `PoolSeqFlow-<version>-analysis`. To remove only an analysis layer and keep the pipeline that produced your results, use `PoolSeqFlow analysis uninstall`, which never touches anything else.
 
 **Both then list exactly what will go and ask before removing any of it**, every time — including when there is only one installation and nothing to choose between. Choosing *which* is not the same as agreeing to the removal. Answering anything but `y` removes nothing, and with no terminal attached to ask — a script, a CI job — the command refuses rather than proceeding unasked. That is the same rule `uninstall_all` has always followed.
 
@@ -3180,7 +3180,9 @@ All of them read the installation rather than your project, so they work from an
 
 **The same list is on the website**, at [Published modules](https://ozankiratli.github.io/PoolSeqFlow/modules-repo/) — the page and the catalogue are generated from the same rows and published in the same deploy, so what it shows is what `available` will tell you.
 
-**`available` reads a catalogue over the network** and a release carries no copy of it, so a module published long after a release is still installable into it. What it lists is filtered to the table contract this release speaks; a module written against a later contract is shown and marked rather than hidden, so being told to install something that cannot work here gives you a reason instead of a blank. If your machine has no route to the internet, or your institution keeps a mirror, `POOLSEQFLOW_MODULE_INDEX` points at a URL or a file instead.
+**`available` reads a catalogue over the network** and a release carries no copy of it, so a module published long after a release is still installable into it. What it lists is filtered to the table contract this release speaks; a module written against a later contract is shown and marked rather than hidden, so being told to install something that cannot work here gives you a reason instead of a blank.
+
+**One line per module, and it is the version `install` would take.** The catalogue holds a row for every published version, so several rows name one module — a listing of them would be that module's history rather than something to act on. What you see is the newest version *your* release can run, which is what `install <name>` picks, so the two commands cannot tell you different things. Older versions stay published and stay installable by naming one. If your machine has no route to the internet, or your institution keeps a mirror, `POOLSEQFLOW_MODULE_INDEX` points at a URL or a file instead.
 
 **A download is verified before it is unpacked.** A module is code that runs on your machine, so the checksum in the catalogue is checked first, and a mismatch stops the install having written nothing.
 
@@ -3195,13 +3197,21 @@ All of them read the installation rather than your project, so they work from an
 **There is one analysis environment per release and every module shares it.** A module names every R package it needs in its manifest, pinned to an exact version, and `modules install` puts them in that shared environment. It names them whether or not the release's own environment already carries them: the manifest is a statement of what the module needs, not of what one release happens to provide, and removing a module never takes a package the release itself is built on. This is what you see when you install one:
 
 ```
-Installing what fst runs on, into 'PoolSeqFlow-3.0.0-analysis':
+Installing what fst runs on, into 'PoolSeqFlow-<version>-analysis':
     r-poolfstat=3.0.0
 ```
 
+**Only what is missing is installed, so that list is usually shorter than the manifest.** A package already there at the version asked for is not work, and conda is not asked about it. Most of what a manifest names is normally already in the environment — the release's own analysis layer carries `ggplot2`, `data.table`, `Rcpp` and the rest — so installing a module that needs nothing new says so and stops:
+
+```
+Everything basicstats runs on is already in 'PoolSeqFlow-<version>-analysis'.
+```
+
+That is the common case and not a sign that something was skipped: the manifest still states everything the module needs, and uninstalling it still reasons over that whole list.
+
 **Nothing already in the environment is allowed to move.** A pin naming a package the environment already holds at a different version is refused before conda is asked at all, so a module can never quietly downgrade something another module — or the release itself — is running on:
 
-> ERROR: these pins disagree with what 'PoolSeqFlow-3.0.0-analysis' already holds:
+> ERROR: these pins disagree with what 'PoolSeqFlow-<version>-analysis' already holds:
 >     r-poolfstat=2.9.0 (installed 3.0.0)
 
 Beyond that the install is made with conda's `--freeze-installed`, which lets the solver add whatever the new package needs while refusing to change anything else. So the worst a module can do is fail to install, and it fails having changed nothing:

@@ -735,10 +735,35 @@ test_modules_available_reads_the_catalogue() {
     assert_status 0 "$LAUNCHER_STATUS" "listing what is published should work"
     assert_contains "$LAUNCHER_OUTPUT" "probe" "a published module should be listed"
     assert_contains "$LAUNCHER_OUTPUT" "0.2.0" "with its version"
+    # ONE LINE PER MODULE, NOT PER PUBLISHED VERSION. The fixture publishes probe twice, and a
+    # listing that walks rows prints a module's whole history - which grows with every publish
+    # and tells a reader nothing they can act on. What is listed is the version `install` would
+    # take, so the two commands cannot say different things.
+    assert_not_contains "$LAUNCHER_OUTPUT" "0.1.0" "and not the version install would pass over"
+    assert_eq "1" "$(printf '%s\n' "$LAUNCHER_OUTPUT" | grep -c '^    probe ')" \
+              "probe must appear on exactly one line"
     # A module reading a contract this release does not speak is shown and marked, not hidden:
     # a user who was told to install it needs to know why they cannot.
     assert_contains "$LAUNCHER_OUTPUT" "future" "a module for another contract should still appear"
     assert_contains "$LAUNCHER_OUTPUT" "not this release" "marked as unreadable here"
+}
+
+# THE OLDER VERSION IS WHAT AN OLDER RELEASE MUST SEE, not a blank and not the newest one it
+# cannot run. `available` and `install` answer the same question through one helper, so this is
+# the listing half of `modules install takes the newest version this release can run`.
+test_modules_available_lists_the_version_this_release_can_run() {
+    local dir; dir=$(guard_path "$TEST_TMPDIR/module-catalogue-listcompat")
+    rm -rf "$dir"; mkdir -p "$dir"
+    MODULE_RELEASE_ENV="1.0.0"  make_module_release "$dir" probe 1.0.0 > /dev/null
+    MODULE_RELEASE_ENV="99.0.0" make_module_release "$dir" probe 2.0.0 > /dev/null
+    LAUNCHER_MODULE_INDEX="$dir/index.tsv"
+    run_analysis_launcher_with_envs "base" modules available
+    unset LAUNCHER_MODULE_INDEX MODULE_RELEASE_ENV
+    assert_status 0 "$LAUNCHER_STATUS" "listing should work: $LAUNCHER_OUTPUT"
+    assert_contains "$LAUNCHER_OUTPUT" "1.0.0" \
+        "the newest version this release can run is what is listed"
+    assert_not_contains "$LAUNCHER_OUTPUT" "2.0.0" \
+        "and the one needing a newer release is not offered"
 }
 
 # Puts the two `#!` headers on a fixture catalogue. A catalogue without them is layout 1 by
@@ -1026,6 +1051,34 @@ test_modules_install_accepts_a_pin_the_environment_already_matches() {
     unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE STUB_CONDA_INSTALLED
     assert_status 0 "$LAUNCHER_STATUS" "the same version already there should install: $LAUNCHER_OUTPUT"
     assert_file "$LAUNCHER_STORE/probe/main.nf" "and the module should be in the store"
+    # AND CONDA IS NOT ASKED. A module declares what it needs whether or not the release already
+    # carries it, so this is the ordinary case rather than the rare one: three modules sharing a
+    # baseline package used to mean three solves to be told nothing has to happen.
+    assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "--freeze-installed" \
+        "a spec already satisfied needs no solve"
+    assert_contains "$LAUNCHER_OUTPUT" "already in" "and the message says so rather than listing work"
+}
+
+# ONLY THE DIFFERENCE IS INSTALLED. A manifest names everything the module needs, and what the
+# environment already holds at the version asked for is not work - it is a round trip and a solve
+# to be told nothing has to happen.
+test_modules_install_asks_conda_only_for_what_is_missing() {
+    local dir; dir=$(guard_path "$TEST_TMPDIR/module-catalogue-diff")
+    rm -rf "$dir"; mkdir -p "$dir"
+    LAUNCHER_MODULE_INDEX=$(make_module_release "$dir" probe 0.1.0 freq-1 \
+        "r-have=1.0.0 r-want=2.0.0")
+    LAUNCHER_STORE_MODULE=""
+    STUB_CONDA_INSTALLED='r-have=1.0.0=r44h1'
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE STUB_CONDA_INSTALLED
+    assert_status 0 "$LAUNCHER_STATUS" "the install should succeed: $LAUNCHER_OUTPUT"
+    local log; log=$(cat "$LAUNCHER_CONDA_LOG")
+    assert_contains "$log" "r-want=2.0.0" "the missing package is asked for"
+    assert_not_contains "$log" "r-have=1.0.0" "the one already there is not"
+    # The message and the command line have to agree: a line naming a package that is not then
+    # installed is the same defect wearing different clothes.
+    assert_not_contains "$LAUNCHER_OUTPUT" "    r-have=1.0.0" \
+        "and it is not listed as something being installed"
 }
 
 # The environment is shared, so what leaves with a module is its own list minus whatever the
