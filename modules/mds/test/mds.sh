@@ -1,9 +1,9 @@
 #!/bin/bash
 # mds, against the analytic corpus its own tools build.
 # cost: jvm
-# covers: analysis/modules/mds/ analysis/lib/R/ analysis/lib/cpp/
+# covers: modules/mds/ modules/lib/
 # covers: test/tools/freq_corpus.py
-# covers: analysis.nf analysis/modules/mds/main.nf
+# covers: analysis.nf modules/mds/main.nf
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #

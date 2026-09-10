@@ -53,7 +53,7 @@
 #!index-format: 1
 #!index-version: 20260910.003
 
-name	version	contract	frame	environment	url	sha256	summary
-basicstats	20260910.001	freq-1	20260908.003	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/basicstats-20260910.001.tar.gz	f154f07cbcc66abab0b330fb1a4d0ce55dfd7db0625d37f9840e6d083039883b	site counts, depth, effective pool size and gene diversity, per pool
-association	20260910.001	freq-1	20260908.003	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/association-20260910.001.tar.gz	19b68feb0ca7879143e88b2a6e206b663e7d1bb9935d1e98fa42dcbdc7704913	each allele's frequency regressed on a phenotype measured per pool, with a permutation p
-mds	20260910.001	freq-1	20260908.003	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/mds-20260910.001.tar.gz	96797656267316ff5971981c8d940ab6ddc1fa34800eed6312a1c7ded1d5facf	the pools placed by Nei's minimum distance, on a classical MDS (principal coordinates analysis)
+name	kind	version	contract	frame	environment	url	sha256	summary
+basicstats	module	20260910.001	freq-1	20260908.003	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/basicstats-20260910.001.tar.gz	f154f07cbcc66abab0b330fb1a4d0ce55dfd7db0625d37f9840e6d083039883b	site counts, depth, effective pool size and gene diversity, per pool
+association	module	20260910.001	freq-1	20260908.003	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/association-20260910.001.tar.gz	19b68feb0ca7879143e88b2a6e206b663e7d1bb9935d1e98fa42dcbdc7704913	each allele's frequency regressed on a phenotype measured per pool, with a permutation p
+mds	module	20260910.001	freq-1	20260908.003	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/mds-20260910.001.tar.gz	96797656267316ff5971981c8d940ab6ddc1fa34800eed6312a1c7ded1d5facf	the pools placed by Nei's minimum distance, on a classical MDS (principal coordinates analysis)

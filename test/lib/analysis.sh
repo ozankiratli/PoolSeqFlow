@@ -239,7 +239,7 @@ R_LIB_OUTPUT=""
 r_lib_section() {
     local out status=0
     out=$(Rscript --vanilla "$REPO_ROOT/test/tools/r_lib_tests.R" \
-            "$REPO_ROOT/analysis/lib/R" "$1" 2>&1) || status=$?
+            "$REPO_ROOT/modules/lib" "$1" 2>&1) || status=$?
     R_LIB_OUTPUT="$out"
     printf '%s' "$status"
 }

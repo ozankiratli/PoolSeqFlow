@@ -1,23 +1,41 @@
 #!/usr/bin/env Rscript
 #
-# Unit tests for analysis/lib/R/, run by a bare Rscript against whatever R is on the machine.
+# Unit tests for the module libraries, run by a bare Rscript against whatever R is on the machine.
 #
-#     r_lib_tests.R <library directory> [section]
+#     r_lib_tests.R <library root> [section]
+#
+# The root holds one directory per library - modules/lib - and every .R under it is sourced, so a
+# library added there is covered without being named here. Sections are named for the function
+# they cover; without one, all of them run.
 #
 # Every expected value below is hand-computed and written out in the comment beside it, so a
 # case that starts failing says which arithmetic changed rather than which number moved.
-# Sections are named for the function they cover; without one, all of them run.
 #
-# Base R only, like the library itself. Exits 1 on the first failure of the section.
+# Base R only, like the libraries themselves. Exits 1 on the first failure of the section.
 
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) < 1) stop("usage: r_lib_tests.R <library directory> [section]")
+if (length(args) < 1) stop("usage: r_lib_tests.R <library root> [section]")
 lib <- args[1]
 section <- if (length(args) > 1) args[2] else "all"
 
-sources <- list.files(lib, pattern = "[.]R$", full.names = TRUE)
-if (length(sources) == 0) stop("no R sources in ", lib)
+sources <- list.files(lib, pattern = "[.]R$", full.names = TRUE, recursive = TRUE)
+if (length(sources) == 0) stop("no R sources under ", lib)
 for (path in sources) source(path)
+
+# THE ORACLES, which are not subjects. Each is the plain form of something a library computes a
+# faster way, and the checks below compare the library's vectorized and compiled paths against
+# what the plain form says. They live here rather than in a library because nothing the pipeline
+# installs calls them: a reference implementation belongs beside the checks that use it.
+#
+# pool_sensitivity() is here for a second reason - the FRAME computes the same quantity, in
+# poolSensitivity() in analysis/lib/nf/pools.nf, and that is the one a module reads off
+# target.pools. Keeping an R copy in a library would be a second implementation nothing compares.
+here <- dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE)[1]))
+for (name in c("split_counts.R", "pool_sensitivity.R")) {
+    path <- file.path(here, name)
+    if (!file.exists(path)) stop("the ", name, " oracle is missing: ", path)
+    source(path)
+}
 
 RAN <- 0
 FAILED <- character(0)

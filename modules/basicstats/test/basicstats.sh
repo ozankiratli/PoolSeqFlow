@@ -1,9 +1,9 @@
 #!/bin/bash
 # basicstats, against the analytic corpus its own tools build.
 # cost: jvm
-# covers: analysis/modules/basicstats/ analysis/lib/R/ analysis/lib/cpp/
+# covers: modules/basicstats/ modules/lib/
 # covers: test/tools/freq_corpus.py
-# covers: analysis.nf analysis/modules/basicstats/main.nf
+# covers: analysis.nf modules/basicstats/main.nf
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #

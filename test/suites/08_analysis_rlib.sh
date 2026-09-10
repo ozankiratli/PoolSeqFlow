@@ -1,7 +1,7 @@
 #!/bin/bash
 # The shared R library, called directly. No Nextflow, no conda, no fixture.
 # cost: static
-# covers: analysis/lib/R/ test/tools/r_lib_tests.R
+# covers: modules/lib/ test/tools/r_lib_tests.R test/tools/split_counts.R test/tools/pool_sensitivity.R
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #

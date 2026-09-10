@@ -1,9 +1,9 @@
 #!/bin/bash
 # association, against the analytic corpus its own tools build.
 # cost: jvm
-# covers: analysis/modules/association/ analysis/lib/R/ analysis/lib/cpp/
+# covers: modules/association/ modules/lib/
 # covers: test/tools/freq_corpus.py
-# covers: analysis.nf analysis/modules/association/main.nf
+# covers: analysis.nf modules/association/main.nf
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #

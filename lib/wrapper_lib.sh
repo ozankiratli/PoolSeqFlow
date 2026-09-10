@@ -112,7 +112,7 @@ module_contract() {
 }
 
 # The order this release reads a catalogue row in, whatever order the file writes them in.
-MODULE_INDEX_COLUMNS="name version contract frame environment url sha256 summary"
+MODULE_INDEX_COLUMNS="name kind version contract frame environment url sha256 summary"
 
 # What separates the fields of a normalized row, and it is NOT the tab the file uses.
 #
@@ -235,6 +235,21 @@ analysis_r_packages() {
     sed -n 's/^ *- *r-\([^=]*\).*$/\1/p' "$ENV_FILE" | grep -vx base
 }
 
+# Every package the release's own analysis environment is built from, one name per line, with no
+# version. This is the baseline: what `analysis install` creates before any module is installed.
+#
+# NOTHING HERE MAY BE REMOVED BY A MODULE UNINSTALL. A module declares what it needs whether or
+# not the baseline already has it - that is what makes its manifest a true statement of its
+# dependencies rather than a statement about one release's environment - so the set a module
+# declares and the baseline overlap by design, and the overlap belongs to the release.
+#
+# Reads the shipped file rather than the live environment: the live one has whatever modules
+# added merged into it and cannot say which packages are the release's own.
+baseline_packages() {
+    sed -n 's/^ *- *\([A-Za-z0-9][A-Za-z0-9._-]*\).*$/\1/p' "$ANALYSIS_ENV_FILE" 2>/dev/null \
+        | grep -vx 'pip' | sort -u
+}
+
 # The shape a module's `packages` entry must have: a name, one `=`, an exact version. No build
 # string, no range, no channel prefix. The analysis frame applies the same rule when a module
 # runs; this is what refuses one before it is installed.
@@ -252,6 +267,39 @@ module_packages() {
         | sed -n 's/^[^"]*"\([^"]*\)".*/\1/p'
 }
 
+# The libraries one module declares, one per line, read out of its manifest the same way as its
+# packages. A module with no `libraries` field yields nothing.
+module_libraries() {
+    local manifest="$1"
+    [ -f "$manifest" ] || return 0
+    tr '\n' ' ' < "$manifest" \
+        | sed -n 's/.*"libraries"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' \
+        | tr ',' '\n' \
+        | sed -n 's/^[^"]*"\([^"]*\)".*/\1/p'
+}
+
+# Where installed libraries live: inside the module store, under a name no module may take.
+# analysis/lib/nf/modules.nf resolves the same path when a module runs.
+LIBRARY_DIR_NAME="lib"
+
+library_store() {
+    printf '%s' "$MODULE_STORE/$LIBRARY_DIR_NAME"
+}
+
+# Every library the modules in a store declare, sorted and deduplicated, optionally skipping one
+# module by name. This is what says whether a library is still wanted after a module leaves.
+store_libraries() {
+    local store="$1" skip="${2:-}" dir name
+    [ -d "$store" ] || return 0
+    for dir in "$store"/*/; do
+        [ -d "$dir" ] || continue
+        name=$(basename "$dir")
+        if [ "$name" = "$LIBRARY_DIR_NAME" ]; then continue; fi
+        if [ -n "$skip" ] && [ "$name" = "$skip" ]; then continue; fi
+        module_libraries "$dir/manifest.json"
+    done | sort -u
+}
+
 # Every spec the modules in a store declare, sorted and deduplicated, optionally skipping one
 # module by name. Two modules may pin the same package, and the same spec is one entry.
 store_packages() {
@@ -260,6 +308,7 @@ store_packages() {
     for dir in "$store"/*/; do
         [ -d "$dir" ] || continue
         name=$(basename "$dir")
+        if [ "$name" = "$LIBRARY_DIR_NAME" ]; then continue; fi
         if [ -n "$skip" ] && [ "$name" = "$skip" ]; then continue; fi
         module_packages "$dir/manifest.json"
     done | sort -u

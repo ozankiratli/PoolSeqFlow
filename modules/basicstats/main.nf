@@ -9,17 +9,11 @@
 nextflow.enable.dsl=2
 
 include { analysisPlan } from '../../lib/nf/plan.nf'
+include { moduleLibraryFiles; moduleCompiledFiles } from '../../lib/nf/modules.nf'
 include { installDir; frameVersion; moduleSettings } from '../../lib/nf/paths.nf'
 include { designJson } from '../../lib/nf/design.nf'
 include { PublishResults } from '../../lib/nf/results.nf'
 
-// The shared library files this module CALLS, in the order they are concatenated. Exactly this
-// list is folded into the script published beside the result, so a function the module does
-// not call does not travel with a result it did not compute.
-def libraryFiles() {
-    return ['harmonic_mean.R', 'n_eff.R', 'pool_n_eff.R',
-            'site_diversity.R', 'chunk_ranges.R']
-}
 
 // This module's settings, with the value each takes when the project does not set it.
 // moduleSettings() refuses a key that is not here and names the ones that are.
@@ -82,8 +76,8 @@ process Analyze {
     pools = groovy.json.JsonOutput.toJson(target.pools).replace("'", "'\\''")
     // Rendered here rather than read from the environment inside R: installDir() validates and
     // refuses with a message, where an unset variable at task time is a file-not-found.
-    library = libraryFiles().collect { name -> "${installDir()}/analysis/lib/R/${name}" }
-    compiled = "${installDir()}/analysis/lib/cpp/site_diversity.cpp"
+    library = moduleLibraryFiles('basicstats')
+    compiled = moduleCompiledFiles('basicstats')
     // 0 means the cores Nextflow gave this task. Anything else oversubscribes them.
     workers = settings.workers > 0 ? settings.workers : task.cpus
     options = groovy.json.JsonOutput.toJson([ minReads   : settings.minReads,

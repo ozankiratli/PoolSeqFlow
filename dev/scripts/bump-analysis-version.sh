@@ -9,7 +9,7 @@
 # Three things carry one of these and each moves on its own:
 #
 #   frame     analysis/frame.version      - frame.config and anything under analysis/lib/
-#   index     modules-repo/index.tsv  - the #!index-version header, on every publish
+#   index     modules/repo/index.tsv  - the #!index-version header, on every publish
 #   module    analysis/modules/<name>/manifest.json
 #
 # The new value is today's UTC date and a counter: .001 the first time on a given day, then
@@ -48,7 +48,7 @@ next_version() {
 # The current value, per target. Empty when there is none to read.
 read_frame()  { grep -vE '^[[:space:]]*(#|$)' "$REPO/analysis/frame.version" | head -1 | tr -d ' '; }
 read_index()  { sed -n 's|^#![[:space:]]*index-version:[[:space:]]*\(.*\)$|\1|p' \
-                    "$REPO/modules-repo/index.tsv" | head -1 | tr -d ' '; }
+                    "$REPO/modules/repo/index.tsv" | head -1 | tr -d ' '; }
 read_module() { sed -n 's|.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*|\1|p' \
                     "$REPO/analysis/modules/$1/manifest.json" | head -1; }
 
@@ -67,7 +67,7 @@ case "$TARGET" in
         [ "$(read_frame)" = "$NEW" ] || { echo "ERROR: could not write $FILE." >&2; exit 1; }
         ;;
     index)
-        FILE="$REPO/modules-repo/index.tsv"
+        FILE="$REPO/modules/repo/index.tsv"
         [ -f "$FILE" ] || { echo "ERROR: $FILE not found." >&2; exit 1; }
         CURRENT=$(read_index)
         [ -n "$CURRENT" ] || { echo "ERROR: $FILE has no '#!index-version:' header." >&2; exit 1; }

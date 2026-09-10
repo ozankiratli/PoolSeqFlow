@@ -27,15 +27,16 @@ Project/            export-ignore
 # be checked against a known dataset, kept out of releases because a user never runs it.
 test/               export-ignore
 
-# The same, for the cases a module ships with itself. They are the module's and travel with it
-# when it is published on its own; inside the pipeline tarball they are what test/ is - files a
-# user has no way to run and no reason to.
-analysis/modules/*/test/    export-ignore
-
-# The module catalogue, which `modules available` and `modules install` read over the network
-# from this branch. A copy inside a tarball would be a second answer to what can be installed,
-# frozen on the day the release was built, and modules are published after it.
-modules-repo/                export-ignore
+# NO MODULE SHIPS INSIDE A RELEASE. A module is published on its own timetable and installed
+# from the catalogue, and that is the whole point of the module system - a release that carried
+# three of them would make those three privileged, installed by nobody, and impossible to
+# replace with a newer version without first removing what the release provided.
+#
+# The whole directory: modules and the libraries they install alongside themselves. They are
+# sources here, and published artifacts in modules/repo/, which the site serves. A release
+# carries neither: a catalogue inside a tarball would be a second answer to what can be
+# installed, frozen on the day the release was built.
+modules/           export-ignore
 
 # How the project is built rather than what it does: the agent's instruction file and the
 # development notes. Tracked, and linked from the manual's Development section, but a release

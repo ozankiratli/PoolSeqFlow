@@ -1,7 +1,7 @@
 #!/bin/bash
 # Checks that need no data: syntax, release packaging, version consistency.
 # cost: static
-# covers: PoolSeqFlow install/ dev/scripts/ modules-repo/index.tsv .gitattributes
+# covers: PoolSeqFlow install/ dev/scripts/ modules/repo/index.tsv .gitattributes
 # covers: analysis/citations.json install/citations.json install/references.bib
 # covers: analysis/references.bib manual/references.bib
 
@@ -10,11 +10,47 @@
 test_nextflow_lint_is_clean() {
     have_tools || { skip_case "no conda environment"; return; }
     local out
+    # Everything but modules/, which is linted below in the layout it runs in.
     out=$(cd "$REPO_ROOT" && PATH="$TEST_CONDA_ENV/bin:$PATH" \
           JAVA_HOME="$TEST_CONDA_ENV" JAVA_CMD="$TEST_CONDA_ENV/bin/java" \
-          nextflow lint . 2>&1)
+          nextflow lint analysis scripts lib bin install \
+                        poolseqflow.nf analysis.nf dryrun.nf nextflow.config 2>&1)
     assert_contains "$out" "had no errors" "lint should report no errors"
     assert_not_contains "$out" "warning" "lint should report no warnings"
+}
+
+# A MODULE IS LINTED WHERE IT RUNS, NOT WHERE GIT KEEPS IT.
+#
+# A module's source lives in modules/<name>/ and is installed into analysis/modules/<name>/, and
+# its `include` of the frame is written '../../lib/nf/...' - correct from the STORE and
+# meaningless from the source directory. That is the cost of the store and the sources being
+# different places, which is deliberate: while they were one directory the modules shipped inside
+# every release because they were sources sitting in the install path.
+#
+# So the check is not "skip the modules" but "assemble the layout a module actually sees". Linting
+# them in modules/ would report errors that say nothing, and linting nothing at all would let a
+# real one through.
+test_every_module_lints_in_the_store_layout() {
+    have_tools || { skip_case "no conda environment"; return; }
+    local sb; sb=$(guard_path "$TEST_TMPDIR/module-lint")
+    rm -rf "$sb"; mkdir -p "$sb/analysis/modules"
+    cp -r "$REPO_ROOT/analysis/lib" "$sb/analysis/"
+    cp -r "$REPO_ROOT/scripts" "$sb/"
+    cp "$REPO_ROOT/nextflow.config" "$sb/"
+    local found=0 dir
+    for dir in "$REPO_ROOT"/modules/*/; do
+        [ -f "$dir/main.nf" ] || continue        # modules/lib holds libraries, not modules
+        cp -r "$dir" "$sb/analysis/modules/"
+        found=$((found + 1))
+    done
+    [ "$found" -gt 0 ] || { fail_case "no module sources found under modules/"; return; }
+
+    local out
+    out=$(cd "$sb" && PATH="$TEST_CONDA_ENV/bin:$PATH" \
+          JAVA_HOME="$TEST_CONDA_ENV" JAVA_CMD="$TEST_CONDA_ENV/bin/java" \
+          nextflow lint "$sb/analysis/modules" 2>&1)
+    assert_contains "$out" "had no errors" "modules should lint in the store layout:"$'\n'"$out"
+    assert_not_contains "$out" "had errors" "no module should report an error:"$'\n'"$out"
 }
 
 test_shell_scripts_parse() {
@@ -133,14 +169,14 @@ test_the_release_archive_gate_passes() {
 # published after a release is installable into it. A copy inside the tarball would be a second
 # answer to what can be installed, frozen on the day the release was built.
 test_the_module_catalogue_never_reaches_a_release() {
-    local index="modules-repo/index.tsv"
+    local index="modules/repo/index.tsv"
     [ -f "$REPO_ROOT/$index" ] || { fail_case "$index is missing"; return; }
     # The archive itself, not `git check-attr`: the catalogue is covered by a directory pattern
     # now, and check-attr reports `unspecified` for a file inside one even though git archive
     # excludes it - `test/run_tests.sh` answers the same way. What matters is the tarball.
     local listing; listing=$(working_tree_archive)
     [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
-    assert_not_contains "$listing" "modules-repo" \
+    assert_not_contains "$listing" "modules/repo" \
         "the catalogue and the tarballs beside it must not reach a release"
     # And the release must not be able to fall back to a copy of its own: a frozen catalogue
     # inside a tarball would be a second answer to what can be installed.
@@ -157,17 +193,17 @@ test_the_module_catalogue_never_reaches_a_release() {
 # Only rows pointing into this repository are checked. A third-party row would name a host
 # nothing here can see, and asserting on that would fail for a reason that is not ours.
 test_every_catalogue_row_has_the_tarball_it_advertises() {
-    local index="$REPO_ROOT/modules-repo/index.tsv"
-    [ -f "$index" ] || { fail_case "modules-repo/index.tsv is missing"; return; }
+    local index="$REPO_ROOT/modules/repo/index.tsv"
+    [ -f "$index" ] || { fail_case "modules/repo/index.tsv is missing"; return; }
     command -v sha256sum > /dev/null 2>&1 || { skip_case "no sha256sum"; return; }
 
     local rows=0 name version url sha file
-    while IFS=$'\t' read -r name version _contract _frame _env url sha _summary; do
+    while IFS=$'\t' read -r name _kind version _contract _frame _env url sha _summary; do
         case "$name" in ''|'#'*|name) continue ;; esac
         case "$url" in *"/modules-repo/"*) ;; *) continue ;; esac
         rows=$((rows + 1))
-        file="$REPO_ROOT/modules-repo/${url##*/}"
-        [ -f "$file" ] || { fail_case "$name $version: the catalogue names ${url##*/}, which is not in modules-repo/"
+        file="$REPO_ROOT/modules/repo/${url##*/}"
+        [ -f "$file" ] || { fail_case "$name $version: the catalogue names ${url##*/}, which is not in modules/repo/"
                             continue; }
         local actual; actual=$(sha256sum "$file" | awk '{print $1}')
         assert_eq "$sha" "$actual" "$name $version: the row's sha256 is not ${url##*/}'s"
@@ -182,7 +218,7 @@ test_every_catalogue_row_has_the_tarball_it_advertises() {
 # reads as an empty field in every row rather than as an error.
 test_the_module_catalogue_header_is_the_one_the_wrapper_reads() {
     local header wanted column
-    header=$(grep -v '^[[:space:]]*#' "$REPO_ROOT/modules-repo/index.tsv" \
+    header=$(grep -v '^[[:space:]]*#' "$REPO_ROOT/modules/repo/index.tsv" \
              | grep -v '^[[:space:]]*$' | head -1)
     # Taken from the wrapper rather than written out here: the columns are matched by name, so
     # the coupling to assert is that every name it looks for is in the header - not that the
@@ -202,7 +238,7 @@ test_the_module_catalogue_header_is_the_one_the_wrapper_reads() {
 # instead of reading the wrong field out of each row; the test above cannot protect a wrapper
 # that has already shipped.
 test_the_module_catalogue_declares_its_layout_and_its_version() {
-    local index="$REPO_ROOT/modules-repo/index.tsv"
+    local index="$REPO_ROOT/modules/repo/index.tsv"
     local format version supported
     format=$(sed -n 's|^#![[:space:]]*index-format:[[:space:]]*\(.*\)$|\1|p' "$index" | head -1 | tr -d ' ')
     version=$(sed -n 's|^#![[:space:]]*index-version:[[:space:]]*\(.*\)$|\1|p' "$index" | head -1 | tr -d ' ')
@@ -242,12 +278,12 @@ test_the_analysis_version_scripts_are_there_and_runnable() {
 test_the_frame_version_moves_with_a_change_and_not_with_the_calendar() {
     local sb; sb=$(guard_path "$TEST_TMPDIR/version-rule")
     rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/R" \
-                           "$sb/analysis/modules/demo/test" "$sb/modules-repo"
+                           "$sb/analysis/modules/demo/test" "$sb/modules/repo"
     cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$sb/dev/scripts/"
     printf 'frame {}\n' > "$sb/analysis/frame.config"
     printf '20260101.001\n' > "$sb/analysis/frame.version"
     printf 'f <- function() 1\n' > "$sb/analysis/lib/R/thing.R"
-    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules-repo/index.tsv"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules/repo/index.tsv"
     printf '{"name": "demo", "version": "20260101.001"}\n' > "$sb/analysis/modules/demo/manifest.json"
     printf 'workflow {}\n' > "$sb/analysis/modules/demo/main.nf"
     printf 'echo case\n' > "$sb/analysis/modules/demo/test/demo.sh"
@@ -303,12 +339,12 @@ test_the_release_gate_refuses_what_it_cannot_check() {
     local sb out
     sb=$(guard_path "$TEST_TMPDIR/release-gate")
     rm -rf "$sb"; mkdir -p "$sb/origin/dev/scripts" "$sb/origin/analysis/lib/R" \
-                           "$sb/origin/modules-repo"
+                           "$sb/origin/modules/repo"
     cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$sb/origin/dev/scripts/"
     printf 'frame {}\n' > "$sb/origin/analysis/frame.config"
     printf '20260101.001\n' > "$sb/origin/analysis/frame.version"
     printf 'f <- function() 1\n' > "$sb/origin/analysis/lib/R/thing.R"
-    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/origin/modules-repo/index.tsv"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/origin/modules/repo/index.tsv"
     # Two commits, because a shallow clone of a one-commit repository is not shallow.
     (cd "$sb/origin" && git init -q . && git add -A \
         && GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
@@ -352,12 +388,12 @@ test_a_committed_module_change_without_a_version_bump_is_caught() {
     local sb out
     sb=$(guard_path "$TEST_TMPDIR/module-version-committed")
     rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/R" \
-                           "$sb/analysis/modules/demo/test" "$sb/modules-repo"
+                           "$sb/analysis/modules/demo/test" "$sb/modules/repo"
     cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$sb/dev/scripts/"
     printf 'frame {}\n' > "$sb/analysis/frame.config"
     printf '20260101.001\n' > "$sb/analysis/frame.version"
     printf 'f <- function() 1\n' > "$sb/analysis/lib/R/thing.R"
-    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules-repo/index.tsv"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules/repo/index.tsv"
     printf '{"name": "demo", "version": "20260101.001"}\n' > "$sb/analysis/modules/demo/manifest.json"
     printf 'workflow {}\n' > "$sb/analysis/modules/demo/main.nf"
     printf 'echo case\n' > "$sb/analysis/modules/demo/test/demo.sh"
@@ -572,6 +608,39 @@ test_prep_version_rejects_a_malformed_version() {
 
 # Release-prep logs are one machine's package solve on one day. They must not become
 # history, and the broad `!test/**` style re-inclusions elsewhere make that worth asserting.
+# THE RELEASE BODY IS THIS VERSION'S CHANGELOG SECTION, and release.yml publishes whatever the
+# extractor prints. A tag build is the expensive place to discover the section is missing, so the
+# same extractor is the gate in release.yml's version step - this checks it answers here first.
+#
+# The executable bit is checked because release.yml calls the script bare. A file committed
+# 100644 passes every other check in this suite and dies with "Permission denied" in the first
+# step of a tag build.
+test_the_release_body_extracts_for_this_version() {
+    local script="$REPO_ROOT/dev/scripts/changelog-section.sh"
+    [ -x "$script" ] || { fail_case "dev/scripts/changelog-section.sh is not executable"; return; }
+
+    local version; version=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/PoolSeqFlow" | head -1)
+    local out status
+    out=$(cd "$REPO_ROOT" && "$script" "$version" 2>&1) && status=0 || status=$?
+    assert_status 0 "$status" "the changelog has no section for $version:"$'\n'"$out"
+    assert_contains "$out" "## [$version]" "the section should start with its own heading"
+
+    # A version the changelog does not describe must fail, not print an empty body.
+    out=$(cd "$REPO_ROOT" && "$script" 99.99.99 2>&1) && status=0 || status=$?
+    assert_status 1 "$status" "an absent section should be refused"
+    assert_contains "$out" "no '## [99.99.99]' section" "and should say what is missing"
+
+    # The standing tail release.yml appends, and its authoring comment, which must not reach a
+    # reader: the sed that strips it is anchored on a line that has to stay a line of its own.
+    local tail_file="$REPO_ROOT/dev/release-notes-tail.md"
+    [ -f "$tail_file" ] || { fail_case "dev/release-notes-tail.md is missing"; return; }
+    assert_contains "$(sed -n '/^-->$/p' "$tail_file")" "-->" \
+        "the tail's comment must close on a line of its own, or the sed strips the whole file"
+    local rendered; rendered=$(sed "1,/^-->$/d" "$tail_file")
+    assert_not_contains "$rendered" "<!--" "the authoring comment must not reach the release body"
+    assert_contains "$rendered" "@VERSION@" "the tail should carry the placeholders release.yml fills"
+}
+
 test_release_prep_logs_are_not_tracked() {
     local ignored
     ignored=$(cd "$REPO_ROOT" && git check-ignore dev/logs/example/summary.txt 2>/dev/null)
@@ -1193,17 +1262,17 @@ conda-forge::r-poolfstat=3.0.0 no
 SPECS
 }
 
-# The compatibility fields every module declares, checked for the modules that ship inside a
-# release. `frame` and `environment` are minima and a third-party module sets its own; a shipped
-# one is installed with the frame and the environment it names, so its `environment` is this
-# release exactly and its `frame` is no newer than this frame.
+# The compatibility fields every module and library declares, checked for the SOURCES this
+# repository publishes from. Nothing here ships inside a release any more, so `environment` is a
+# minimum its author sets when the module's needs change - not this release, and not something a
+# version bump rewrites. What is still checkable is that the fields are present and well formed,
+# and that nothing declares a `frame` newer than the frame in this checkout, which would be a
+# module this repository could not itself run.
 test_every_shipped_manifest_declares_its_compatibility() {
     local out
     out=$(cd "$REPO_ROOT" && python3 - <<'PY'
 import json, pathlib, re
 
-release = re.search(r"version\s*=\s*'([^']+)'",
-                    pathlib.Path("nextflow.config").read_text(encoding="utf-8")).group(1)
 frame = [line.strip() for line in
          pathlib.Path("analysis/frame.version").read_text(encoding="utf-8").splitlines()
          if line.strip() and not line.startswith("#")][0]
@@ -1211,9 +1280,10 @@ frame = [line.strip() for line in
 def parts(version):
     return [int(n) for n in version.split(".")]
 
-paths = sorted(pathlib.Path("analysis/modules").glob("*/manifest.json"))
+paths = (sorted(pathlib.Path("modules").glob("*/manifest.json"))
+         + sorted(pathlib.Path("modules/lib").glob("*/manifest.json")))
 if not paths:
-    print("no module ships in this checkout, so this case checked nothing")
+    print("no module or library source found, so this case checked nothing")
 for path in paths:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     for field in ("license", "frame", "environment"):
@@ -1225,15 +1295,15 @@ for path in paths:
                   % (path, manifest["frame"], frame))
     elif "frame" in manifest:
         print("%s: gives frame as '%s', which is not YYYYMMDD.NNN" % (path, manifest["frame"]))
-    if "environment" in manifest and str(manifest["environment"]) != release:
-        print("%s: names environment %s, and this release is %s"
-              % (path, manifest["environment"], release))
+    if "environment" in manifest and not re.fullmatch(r"\d+(\.\d+)*", str(manifest["environment"])):
+        print("%s: gives environment as '%s', which is not a release version"
+              % (path, manifest["environment"]))
     for spec in manifest.get("packages", []):
         if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*=[A-Za-z0-9][A-Za-z0-9._+]*", str(spec)):
             print("%s: '%s' is not a pinned conda spec" % (path, spec))
 PY
 )
-    assert_eq "" "$out" "every shipped manifest declares what it runs on:"$'\n'"$out"
+    assert_eq "" "$out" "every module and library manifest declares what it runs on:"$'\n'"$out"
 }
 
 test_every_declared_manual_anchor_exists() {

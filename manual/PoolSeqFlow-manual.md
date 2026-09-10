@@ -771,7 +771,7 @@ Standard, optional, and unchanged in approach. It runs only when you ask for it,
 
 ### The analysis layer
 
-The modules that read these tables — what each one estimates, what it assumes and what it cannot tell you — are documented with the modules themselves in [Shipped Modules](#shipped-modules). This section will grow as they do.
+The modules that read these tables — what each one estimates, what it assumes and what it cannot tell you — are documented with the modules themselves in [Modules](#modules). This section will grow as they do.
 
 ## Design Decisions
 <!--@ page: design-decisions -->
@@ -3086,7 +3086,9 @@ cd /path/to/project
 PoolSeqFlow analysis verify
 ```
 
-Four ship with the release — `verify`, `basicstats`, `association` and `mds` — and each has a page of its own under [Shipped Modules](#shipped-modules), which is where what they compute and what they assume is written down. Every other module is installed separately and published on its own timetable.
+**Only `verify` comes with the pipeline.** It is part of the analysis frame itself, reports what the layer can see and produces nothing. Every other module — `basicstats`, `association` and `mds` among them — is published on its own timetable and installed from the catalogue, so a fresh installation has an empty store and you choose what goes into it. Each has a page of its own under [Modules](#modules), which is where what it computes and what it assumes is written down.
+
+A module is installed with the **libraries** it declares: the shared arithmetic more than one module wants, each one published and versioned like a module and installed into `analysis/modules/lib/`. You never ask for a library by name; it arrives with whatever needs it, and leaves when nothing installed still declares it.
 
 ### The modules installed here { #analysis-modules }
 
@@ -3116,7 +3118,7 @@ All of them read the installation rather than your project, so they work from an
 
 #### What installing a module does to your environment { #module-packages }
 
-**There is one analysis environment per release and every module shares it.** A module that needs an R package the release does not ship names it in its manifest, pinned to an exact version, and `modules install` puts it in that shared environment. No module shipped with this release names one — they run on base R plus what the environment already carries — so this is what you will see when you install one of the modules published separately:
+**There is one analysis environment per release and every module shares it.** A module names every R package it needs in its manifest, pinned to an exact version, and `modules install` puts them in that shared environment. It names them whether or not the release's own environment already carries them: the manifest is a statement of what the module needs, not of what one release happens to provide, and removing a module never takes a package the release itself is built on. This is what you see when you install one:
 
 ```
 Installing what fst runs on, into 'PoolSeqFlow-3.0.0-analysis':
@@ -3136,7 +3138,7 @@ Either way it is a compatibility question between a release and a module, settle
 
 **Uninstalling takes back only what nothing else asks for.** If two modules both name `r-poolfstat=3.0.0`, removing one leaves it installed for the other. And because `conda remove` takes everything that depends on what it is given, the removal is planned before it is run: if taking a package out would take something else with it, nothing is removed and the module stays installed.
 
-**Two things follow from the store living inside the installation.** Reinstalling the pipeline over itself wipes the store, so the packages its modules added are taken out of the environment first, while the manifests declaring them still exist — afterwards both are back to what the release ships. And `analysis uninstall` removes the environment while leaving the store, so `analysis install` puts back what the modules still there need. Neither is something to manage by hand.
+**Two things follow from the store living inside the installation.** Reinstalling the pipeline over itself wipes the store, so the packages its modules added are taken out of the environment first, while the manifests declaring them still exist — afterwards both are back to what a fresh installation is, which is empty, and the modules you want are installed again. And `analysis uninstall` removes the environment while leaving the store, so `analysis install` puts back what the modules still there need. Neither is something to manage by hand.
 
 `list` is worth knowing about before you need it. Modules live inside the release's own installation, so each release has its own set and a module installed for one is never picked up by another — reinstalling the same version wipes them, and one command puts each back. More usefully: **a module directory that has lost its pipeline stops every analysis run, not only its own**, and `list` is what names the one at fault. It also tells you where the store is, which is the directory a module is installed into.
 
@@ -3793,10 +3795,10 @@ The cost of a working cycle is therefore one transfer, not two — which matters
 
 **Do not run it while a module is running.** The two would be moving the same folders in opposite directions, and neither checks for the other.
 
-# Shipped Modules
+# Modules
 <!--@ section: modules | nav: Modules -->
 
-Most modules are installed separately. These are the ones a release carries, so they are available the moment the analysis environment exists, and their versions move on the pipeline's timetable rather than a catalogue's.
+**Every module is installed separately** — none comes with the pipeline, and a fresh installation has an empty store. These are the ones published alongside this release, each on its own timetable and at its own version, installed with `PoolSeqFlow analysis modules install <name>` and documented here so you can read what one computes before deciding to install it.
 
 | Module | What it computes | Needs |
 |---|---|---|

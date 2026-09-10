@@ -17,6 +17,48 @@ def moduleStore() {
     return "${installDir()}/analysis/modules".toString()
 }
 
+// Where installed libraries live, inside the module store under a name no module may take.
+// A library is a module's dependency rather than something a project runs, so it is not in the
+// roster and `analysis <name>` never resolves to one.
+// A function and not a top-level constant: the strict parser allows only declarations at the
+// top level of a script.
+def libraryDirName() {
+    return 'lib'
+}
+
+def libraryStore() {
+    return "${moduleStore()}/${libraryDirName()}".toString()
+}
+
+// The R files a module's script must source, in the order its libraries are declared. Read from
+// the module's own manifest so the list exists once: main.nf repeating it was a second list to
+// keep equal, and a disagreement between them was silent.
+def moduleLibraryFiles(Object name) {
+    def manifest = readManifest(file("${moduleStore()}/${name}"))
+    if (manifest == null) return []
+    return manifest.libraries.collect { lib ->
+        def dir = file("${libraryStore()}/${lib}")
+        if (!dir.exists()) {
+            throw new IllegalStateException(
+                "module '${name}' declares the library '${lib}', which is not installed in\n" +
+                "    ${libraryStore()}\n" +
+                "Reinstall the module so its libraries come with it.")
+        }
+        dir.listFiles().findAll { f -> f.name.endsWith('.R') }.sort { a, b -> a.name <=> b.name }
+    }.flatten().collect { f -> "${f}".toString() }
+}
+
+// The .cpp a module's libraries offer, resolved the same way as their R. A module that offers a
+// compiled path publishes these beside its result whether or not the run used them.
+def moduleCompiledFiles(Object name) {
+    def manifest = readManifest(file("${moduleStore()}/${name}"))
+    if (manifest == null) return []
+    return manifest.libraries.collect { lib ->
+        file("${libraryStore()}/${lib}").listFiles()
+            .findAll { f -> f.name.endsWith('.cpp') }.sort { a, b -> a.name <=> b.name }
+    }.flatten().collect { f -> "${f}".toString() }
+}
+
 // The published-table contract a module declares it speaks. Bumped when a column's name or
 // meaning changes.
 def contractVersion() {
@@ -33,6 +75,7 @@ def builtinModules() {
             contract: contractVersion(),
             license : 'Apache-2.0',
             needs   : [],
+            libraries: [],
             gates   : [],
             outputs : [],
             packages: [],
@@ -140,6 +183,7 @@ def readManifest(Object dir) {
              frame      : "${parsed.frame}".toString(),
              environment: "${parsed.environment}".toString(),
              needs      : parsed.needs ?: [],
+             libraries  : (parsed.libraries ?: []).collect { lib -> "${lib}".toString() },
              gates      : parsed.gates ?: [],
              outputs    : parsed.outputs ?: [],
              packages   : (parsed.packages ?: []).collect { spec -> "${spec}".toString() },
@@ -178,7 +222,7 @@ def moduleRoster() {
     def roster = builtinModules()
     def store = file(moduleStore())
     if (store.exists()) {
-        store.listFiles().findAll { entry -> entry.isDirectory() }
+        store.listFiles().findAll { entry -> entry.isDirectory() && entry.name != libraryDirName() }
             .sort { a, b -> "${a}" <=> "${b}" }
             .each { dir ->
                 def found = readManifest(dir)

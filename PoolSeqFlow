@@ -570,8 +570,12 @@ available_modules() {
     echo ""
     printf '    %-16s %-10s %-12s %s\n' NAME VERSION CONTRACT ''
     local frame_here; frame_here=$(installed_frame_version)
-    while IFS="$MODULE_INDEX_SEP" read -r name version row_contract row_frame row_env url sha summary; do
+    while IFS="$MODULE_INDEX_SEP" read -r name row_kind version row_contract row_frame row_env url sha summary; do
         [ -n "$name" ] || continue
+        # A library is a module's dependency, installed with whatever declares it and never
+        # asked for by name. An empty kind is a module, which is what a catalogue written before
+        # the column existed says.
+        [ -z "$row_kind" ] || [ "$row_kind" = "module" ] || continue
         rows=$((rows + 1))
         if [ -n "$contract" ] && [ "$row_contract" != "$contract" ]; then
             state="reads $row_contract - not this release"
@@ -600,6 +604,71 @@ available_modules() {
 
 # Installs one module into this installation's store. Takes the name, and optionally the exact
 # version; without one, the newest the catalogue offers for this release's contract.
+# One library into the library store, from a catalogue already fetched and format-checked.
+#
+# Takes the newest version THIS release can run, the same rule install_module applies to a
+# module: a library published for a newer frame is skipped rather than installed and then found
+# wanting at run time. Prints what it did; returns non-zero and says why on failure, and leaves
+# nothing behind when it does.
+install_library() {
+    local lib="$1" index="$2"
+    local row version frame_req env_req url sha kind
+    local best_v="" best_url="" best_sha=""
+    local frame_here; frame_here=$(installed_frame_version)
+
+    while IFS="$MODULE_INDEX_SEP" read -r row_name row_kind row_version row_contract \
+                                          row_frame row_env row_url row_sha row_summary; do
+        [ "$row_name" = "$lib" ] || continue
+        [ "${row_kind:-module}" = "library" ] || continue
+        version_at_most "$row_frame" "$frame_here" || continue
+        version_at_most "$row_env" "$VERSION" || continue
+        if [ -z "$best_v" ] || ! version_at_most "$row_version" "$best_v"; then
+            best_v="$row_version"; best_url="$row_url"; best_sha="$row_sha"
+        fi
+    done < <(module_index_rows "$index")
+
+    if [ -z "$best_v" ]; then
+        echo "ERROR: the catalogue has no library '$lib' this release can run." >&2
+        echo "  This release is v$VERSION with analysis frame $frame_here." >&2
+        return 1
+    fi
+
+    local tmp; tmp=$(mktemp -d)
+    local tarball="$tmp/$lib-$best_v.tar.gz"
+    echo "    library $lib v$best_v"
+    if ! fetch_url "$best_url" "$tarball"; then
+        echo "ERROR: could not download the library $lib v$best_v." >&2
+        echo "  Tried: $best_url" >&2
+        rm -rf "$tmp"; return 1
+    fi
+    # Verified before anything is unpacked, exactly as a module's archive is.
+    if [ -n "$best_sha" ]; then
+        local got; got=$(file_sha256 "$tarball")
+        if [ -z "$got" ] || [ "$got" != "$best_sha" ]; then
+            echo "ERROR: the library $lib v$best_v does not match the catalogue's checksum." >&2
+            echo "  expected $best_sha" >&2
+            echo "  got      ${got:-no checksum tool on this machine}" >&2
+            rm -rf "$tmp"; return 1
+        fi
+    fi
+    if ! tar -xzf "$tarball" -C "$tmp"; then
+        echo "ERROR: the library $lib v$best_v could not be unpacked." >&2
+        rm -rf "$tmp"; return 1
+    fi
+    if [ ! -f "$tmp/$lib/manifest.json" ]; then
+        echo "ERROR: the $lib archive has no $lib/manifest.json, so it is not a library." >&2
+        rm -rf "$tmp"; return 1
+    fi
+
+    mkdir -p "$(library_store)"
+    mv "$tmp/$lib" "$(library_store)/$lib"
+    printf 'name\t%s\nversion\t%s\nurl\t%s\nsha256\t%s\ncatalogue\t%s\n' \
+        "$lib" "$best_v" "$best_url" "$best_sha" \
+        "$(module_index_header "$index" index-version)" > "$(library_store)/$lib/.source"
+    rm -rf "$tmp"
+    return 0
+}
+
 install_module() {
     local name="$1" want="${2:-}" index contract line version row_contract url sha summary
     local tmp tarball unpacked dest specs spec
@@ -636,11 +705,15 @@ install_module() {
 
     # Every row for this name whose contract this release speaks, or the exact version asked
     # for, newest first.
+    # Fields are in MODULE_INDEX_COLUMNS order: name kind version contract frame environment...
+    # A row with an empty kind is a module, which is what a catalogue written before the column
+    # existed yields; a library is never installed by name and is skipped here.
     candidates=$(module_index_rows "$index" | awk -F"$MODULE_INDEX_SEP" -v n="$name" -v c="$contract" -v w="$want" '
         $1 != n { next }
-        w != "" && $2 != w { next }
-        c != "" && $3 != c { next }
-        { print }' | sort -t"$MODULE_INDEX_SEP" -k2,2Vr)
+        $2 != "" && $2 != "module" { next }
+        w != "" && $3 != w { next }
+        c != "" && $4 != c { next }
+        { print }' | sort -t"$MODULE_INDEX_SEP" -k3,3Vr)
 
     if [ -z "$candidates" ]; then
         echo "ERROR: no module '$name'${want:+ at version $want} is published for this release." >&2
@@ -657,7 +730,7 @@ install_module() {
     while IFS= read -r row; do
         [ -n "$row" ] || continue
         [ -n "$newest" ] || newest="$row"
-        IFS="$MODULE_INDEX_SEP" read -r _n _v _c row_frame row_env _rest <<ROW
+        IFS="$MODULE_INDEX_SEP" read -r _n _k _v _c row_frame row_env _rest <<ROW
 $row
 ROW
         if version_at_most "$row_frame" "$frame_here" && version_at_most "$row_env" "$VERSION"; then
@@ -669,7 +742,7 @@ $candidates
 EOF
 
     if [ -z "${line:-}" ]; then
-        IFS="$MODULE_INDEX_SEP" read -r _n newest_v _c newest_frame newest_env _rest <<ROW
+        IFS="$MODULE_INDEX_SEP" read -r _n _k newest_v _c newest_frame newest_env _rest <<ROW
 $newest
 ROW
         echo "ERROR: every published '$name'${want:+ at version $want} needs more than this" >&2
@@ -682,12 +755,12 @@ ROW
         exit 1
     fi
 
-    IFS="$MODULE_INDEX_SEP" read -r name version row_contract row_frame row_env url sha summary <<EOF
+    IFS="$MODULE_INDEX_SEP" read -r name row_kind version row_contract row_frame row_env url sha summary <<EOF
 $line
 EOF
     # Said out loud: taking an older version than exists is a decision, not a detail.
     if [ "$line" != "$newest" ]; then
-        IFS="$MODULE_INDEX_SEP" read -r _n newest_v _rest <<ROW
+        IFS="$MODULE_INDEX_SEP" read -r _n _k newest_v _rest <<ROW
 $newest
 ROW
         echo "NOTE: '$name' is published up to v$newest_v, which needs a newer PoolSeqFlow than"
@@ -750,6 +823,30 @@ ROW
         fi
     done
 
+    # THE LIBRARIES THIS MODULE DECLARES, installed before the module itself. A module cannot
+    # run without them, so a library that will not install must leave the store as it was rather
+    # than leaving a module behind that fails the first time somebody runs it.
+    #
+    # A library already in the store is left alone: it is shared, another module may be using it,
+    # and every version of it published for this frame computes the same thing.
+    local libs lib
+    libs=$(module_libraries "$unpacked/$name/manifest.json")
+    if [ -n "$libs" ]; then
+        mkdir -p "$(library_store)"
+        for lib in $libs; do
+            if [ -d "$(library_store)/$lib" ]; then
+                echo "    library $lib is already installed"
+                continue
+            fi
+            if ! install_library "$lib" "$index"; then
+                echo "" >&2
+                echo "ERROR: $name v$version needs the library '$lib', which could not be" >&2
+                echo "  installed. The module was not installed." >&2
+                exit 1
+            fi
+        done
+    fi
+
     mkdir -p "$MODULE_STORE"
     dest="$MODULE_STORE/$name"
     mv "$unpacked/$name" "$dest"
@@ -808,13 +905,30 @@ uninstall_module() {
     # A package another installed module also declares stays: the environment is shared, and
     # what leaves with this module is what nothing left behind asks for. With no analysis
     # environment there is nothing to take them out of, so nothing does.
+    # What leaves is what this module declared, less everything still asking for it: the other
+    # installed modules, AND the release's own baseline. Without the baseline in that subtraction
+    # a module declaring a package the release also ships - r-ggplot2, r-rcpp - would take it out
+    # of the shared environment on its way out and break the frame and every module beside it.
     mine=$(module_packages "$dir/manifest.json" | cut -d= -f1 | sort -u)
     others=$(store_packages "$MODULE_STORE" "$name" | cut -d= -f1 | sort -u)
-    going=$(printf '%s\n' "$mine" | grep -vxF "$others" || true)
+    keep=$(printf '%s\n%s\n' "$others" "$(baseline_packages)" | grep -v '^$' | sort -u)
+    going=$(printf '%s\n' "$mine" | grep -vxF "$keep" || true)
     if ! env_exists "$ANALYSIS_ENV"; then going=""; fi
     echo ""
+    # Libraries this module brought that nothing else still declares. Same arithmetic as the
+    # packages below, one level up: what is mine, less what everything remaining asks for.
+    local mylibs otherlibs libs_going
+    mylibs=$(module_libraries "$dir/manifest.json" | sort -u)
+    otherlibs=$(store_libraries "$MODULE_STORE" "$name")
+    libs_going=$(printf '%s\n' "$mylibs" | grep -v '^$' | grep -vxF "$otherlibs" || true)
+
     echo "This removes:"
     echo "    $dir"
+    if [ -n "$libs_going" ]; then
+        echo ""
+        echo "and these libraries, which no other installed module declares:"
+        for lib in $libs_going; do echo "    $(library_store)/$lib"; done
+    fi
     if [ -n "$going" ]; then
         echo ""
         echo "and these packages from '$ANALYSIS_ENV', which nothing else installed here asks for:"
@@ -849,6 +963,7 @@ uninstall_module() {
         fi
     fi
     rm -rf "$dir"
+    for lib in $libs_going; do rm -rf "$(library_store)/$lib"; done
     echo "Removed '$name'. Install it again with the same command that installed it."
 }
 

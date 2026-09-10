@@ -1,0 +1,14 @@
+{
+  "name": "nei_distance",
+  "version": "20260910.001",
+  "kind": "library",
+  "contract": "freq-1",
+  "license": "GPL-3.0-or-later",
+  "frame": "20260908.003",
+  "environment": "3.0.0",
+  "summary": "Nei's minimum distance accumulated over sites, combined and averaged, with a compiled path",
+  "libraries": [],
+  "packages": [
+    "r-rcpp=1.1.2"
+  ]
+}

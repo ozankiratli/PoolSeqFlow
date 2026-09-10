@@ -1,0 +1,14 @@
+{
+  "name": "allele_frequencies",
+  "version": "20260910.001",
+  "kind": "library",
+  "contract": "freq-1",
+  "license": "GPL-3.0-or-later",
+  "frame": "20260908.003",
+  "environment": "3.0.0",
+  "summary": "per-site allele frequencies parsed from the depth table, vectorized R with a compiled path",
+  "libraries": [],
+  "packages": [
+    "r-rcpp=1.1.2"
+  ]
+}

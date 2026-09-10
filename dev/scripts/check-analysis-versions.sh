@@ -15,7 +15,7 @@
 # bump - by hand while working, and as a release gate.
 #
 #   frame     analysis/frame.version       covers analysis/frame.config and analysis/lib/
-#   index     the #!index-version header    covers the rows in modules-repo/index.tsv
+#   index     the #!index-version header    covers the rows in modules/repo/index.tsv
 #   module    manifest.json's version       covers that module's own directory
 #
 # It reads the working tree first and git second, so a change that is still uncommitted is
@@ -161,7 +161,7 @@ fi
 # The catalogue. Its rows and its version live in ONE file, so the question is not which
 # changed last but whether the change that touched the rows also touched the header.
 
-INDEX=modules-repo/index.tsv
+INDEX=modules/repo/index.tsv
 
 index_rows() {
     grep -v '^[[:space:]]*#' "$1" | grep -v '^[[:space:]]*$' || true

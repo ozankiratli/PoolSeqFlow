@@ -105,9 +105,9 @@ bash test/run_tests.sh --suite 07_analysis --case citation
 | wiring, channels, promotion, a step's script | `03_pipeline` |
 | `dryrun.nf`, `dryrun`/`dryclean` | `06_dryrun` |
 | version strings, packaging, syntax | `00_static` |
-| the shared R library under `analysis/lib/R` | `analysis_rlib` — no JVM, 3 seconds |
+| a module library under `modules/lib/` | `analysis_rlib` — no JVM, 3 seconds |
 | `analysis/lib/nf/`, the frame | the analysis seam you touched: `analysis_frame`, `analysis_plan`, `analysis_verify`, `analysis_design`, `analysis_time`, `analysis_series`, `analysis_modules`, `analysis_results` |
-| a module | `--suite <module name>`; its cases ship with it under `analysis/modules/<name>/test/` |
+| a module | `--suite <module name>`; its cases travel with it under `modules/<name>/test/` |
 
 `--fast` runs everything that does not start a JVM; what it skips is `03_pipeline`, `04_guards`, and the pipeline halves of `06_dryrun` and the analysis suites.
 

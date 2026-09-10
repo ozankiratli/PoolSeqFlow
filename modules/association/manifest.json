@@ -1,6 +1,6 @@
 {
   "name": "association",
-  "version": "20260910.001",
+  "version": "20260910.002",
   "contract": "freq-1",
   "license": "GPL-3.0-or-later",
   "frame": "20260908.003",
@@ -8,6 +8,11 @@
   "summary": "each allele's frequency regressed on a phenotype measured per pool, with a permutation p",
   "needs": [
     "depths"
+  ],
+  "libraries": [
+    "n_eff",
+    "allele_frequencies",
+    "chunk_ranges"
   ],
   "gates": [
     "THIS IS A MODEL-BASED TEST AND NOT AN ASSUMPTION-LIGHT ONE. It asserts that the variance of a pool's frequency is p(1-p) times (dispersion + 1/n_eff), that units are independent, and that a site's alleles are several views of one comparison. Where those do not describe your experiment the numbers will still be produced and will still be wrong; the diagnostics in permutations.tsv are what say so.",
@@ -65,5 +70,13 @@
       "summary": "the compiled form of the per-site parse, shipped whether or not this run used it; the header of association.R says which path produced the numbers",
       "anchor": "association-compiled"
     }
+  ],
+  "packages": [
+    "r-dofuture=1.3.0",
+    "r-foreach=1.5.2",
+    "r-future=1.75.0",
+    "r-ggplot2=4.0.3",
+    "r-jsonlite=2.0.0",
+    "r-rcpp=1.1.2"
   ]
 }
