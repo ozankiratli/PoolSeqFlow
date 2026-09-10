@@ -65,12 +65,21 @@ REPO_DIR = REPO / "modules" / "repo"
 REPO_PATH = "modules-repo"
 
 
+def _version_key(version: str) -> tuple:
+    """A version as a sortable tuple. `YYYYMMDD.NNN` and `X.Y.Z` both compare componentwise."""
+    parts = []
+    for piece in str(version).split("."):
+        parts.append((0, int(piece)) if piece.isdigit() else (1, 0))
+    return tuple(parts)
+
+
 def module_repo_page():
     """The published-modules page, rendered from the catalogue the wrapper reads.
 
     One source: the table a person reads and the file the tool fetches are the same rows, so
-    they cannot disagree about what is published. Columns are found by name, exactly as the
-    wrapper finds them, so a column added later appears here without this being touched.
+    they cannot disagree about what is published. Fields are read by name out of the header,
+    so a column added to the catalogue does not shift what this reads - but the table's own
+    columns are chosen here, and a new one appears only when it is added below.
     """
     catalogue = REPO_DIR / "index.tsv"
     lines = [
@@ -95,6 +104,22 @@ def module_repo_page():
                 continue
             rows.append(dict(zip(header, fields)))
 
+    # ONE ROW PER MODULE, AND NO LIBRARIES. The catalogue holds a row per published version and
+    # a row per library, because that is what `install` resolves against. A reader wants neither:
+    # a library is never asked for by name, and a module's older versions are history. `available`
+    # shows one line per module for the same reason, and this page claims to agree with it.
+    libraries = sorted({row.get("name", "") for row in rows if row.get("kind") == "library"})
+    newest: dict[str, dict] = {}
+    for row in rows:
+        if row.get("kind") not in ("", "module", None):
+            continue
+        name = row.get("name", "")
+        current = newest.get(name)
+        if current is None or _version_key(row.get("version", "")) > _version_key(
+                current.get("version", "")):
+            newest[name] = row
+    rows = [newest[name] for name in sorted(newest)]
+
     if not rows:
         lines += [
             "No module is published yet. No module ships inside a release either, so an installation starts with an empty store and stays that way until one is published here.",
@@ -102,8 +127,8 @@ def module_repo_page():
         ]
     else:
         lines += [
-            "| Module | Version | Needs | License | What it does |",
-            "|---|---|---|---|---|",
+            "| Module | Version | Needs | What it does |",
+            "|---|---|---|---|",
         ]
         for row in rows:
             needs = " · ".join(
@@ -116,12 +141,22 @@ def module_repo_page():
             name = f"[{row.get('name', '')}]({url})" if url else row.get("name", "")
             lines.append(
                 f"| {name} | {row.get('version', '')} | {needs} | "
-                f"{row.get('license', '—')} | {row.get('summary', '')} |"
+                f"{row.get('summary', '')} |"
             )
         lines.append("")
 
     lines += [
-        "Each row names the oldest release and analysis frame it runs on. `install` takes the newest version **your** release can run rather than the newest that exists, so an installation that is behind gets a version that works instead of one that fails when it is first used.",
+        "Each row names the oldest release and analysis frame it runs on. `install` takes the newest version **your** release can run rather than the newest that exists, so an installation that is behind gets a version that works instead of one that fails when it is first used. Older versions of each module stay published and stay installable by name; this table shows the newest of each.",
+        "",
+    ]
+    if libraries:
+        lines += [
+            "**Libraries are published here too, and are not installed by name.** A module declares "
+            "the ones it needs and they arrive with it, so they are listed for reference rather "
+            "than to be asked for: " + ", ".join(f"`{name}`" for name in libraries) + ".",
+            "",
+        ]
+    lines += [
         "",
         "The catalogue itself is [index.tsv](index.tsv), and it is what the wrapper reads. `POOLSEQFLOW_MODULE_INDEX` points an installation at a different one — a mirror inside an institution, or a machine with no route to the internet.",
         "",
