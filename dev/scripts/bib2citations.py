@@ -12,9 +12,9 @@ methods section.
 
 Each `references.bib` compiles to the `citations.json` in the same directory:
 
-    install/references.bib                     ->  install/citations.json
+    citations/references.bib                   ->  citations/citations.json
     analysis/references.bib                    ->  analysis/citations.json
-    analysis/modules/<name>/references.bib     ->  analysis/modules/<name>/citations.json
+    modules/<name>/references.bib              ->  modules/<name>/citations.json
 
 ## The format
 
@@ -173,8 +173,11 @@ def compile_bib(path: Path) -> str:
 
 
 def sources() -> list[Path]:
-    found = [REPO / "install" / "references.bib", REPO / "analysis" / "references.bib"]
-    found += sorted((REPO / "analysis" / "modules").glob("*/references.bib"))
+    # `modules/` and not `analysis/modules/`: the latter is the install store, gitignored and
+    # empty in a checkout, so globbing it returns nothing and --check reports every module's
+    # citations fine without having read one. A library cites nothing and has no bib.
+    found = [REPO / "citations" / "references.bib", REPO / "analysis" / "references.bib"]
+    found += sorted((REPO / "modules").glob("*/references.bib"))
     return [path for path in found if path.exists()]
 
 

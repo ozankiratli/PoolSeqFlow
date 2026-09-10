@@ -14,7 +14,9 @@
 # environment already exists, which is the one place nobody develops.
 test_the_shared_r_library_needs_no_package() {
     local hits
-    hits=$(grep -rnE '^\s*(library|require|requireNamespace)\(' "$REPO_ROOT/analysis/lib/R" || true)
+    local dir="$REPO_ROOT/modules/lib"
+    [ -d "$dir" ] || { fail_case "no $dir to check - this case would pass over nothing"; return; }
+    hits=$(grep -rnE '^\s*(library|require|requireNamespace)\(' --include='*.R' "$dir" || true)
     assert_eq "" "$hits" "the shared R library must load no package, but does:"$'\n'"$hits"
 }
 

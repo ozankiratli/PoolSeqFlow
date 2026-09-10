@@ -1,4 +1,4 @@
-# The module's own analysis. The shared library is above this line in the published copy.
+# The module's own analysis. The libraries it declares are above this line in the published copy.
 #
 #     association.R --design design.json --pools pools.json --options options.json
 #                   --cpp allele_frequencies.cpp --depths a.tsv,b.tsv --out published

@@ -10,7 +10,7 @@
 #
 #   frame     analysis/frame.version      - frame.config and anything under analysis/lib/
 #   index     modules/repo/index.tsv  - the #!index-version header, on every publish
-#   module    analysis/modules/<name>/manifest.json
+#   module    modules/<name>/manifest.json, or modules/lib/<name>/manifest.json for a library
 #
 # The new value is today's UTC date and a counter: .001 the first time on a given day, then
 # .002 and so on. It writes one line and nothing else, and prints what it changed.
@@ -49,8 +49,17 @@ next_version() {
 read_frame()  { grep -vE '^[[:space:]]*(#|$)' "$REPO/analysis/frame.version" | head -1 | tr -d ' '; }
 read_index()  { sed -n 's|^#![[:space:]]*index-version:[[:space:]]*\(.*\)$|\1|p' \
                     "$REPO/modules/repo/index.tsv" | head -1 | tr -d ' '; }
-read_module() { sed -n 's|.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*|\1|p' \
-                    "$REPO/analysis/modules/$1/manifest.json" | head -1; }
+read_module() { sed -n 's|.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*|\1|p' "$1" | head -1; }
+
+# A module or a library, named the same way and versioned the same way. The caller gives a name
+# and the repository says which it is.
+module_manifest() {
+    local d
+    for d in "$REPO/modules/$1" "$REPO/modules/lib/$1"; do
+        [ -f "$d/manifest.json" ] && { printf '%s' "$d/manifest.json"; return 0; }
+    done
+    return 1
+}
 
 [ "$#" -ge 1 ] || usage
 TARGET="$1"
@@ -78,13 +87,15 @@ case "$TARGET" in
     module)
         [ "$#" -eq 2 ] || usage
         NAME="$2"
-        FILE="$REPO/analysis/modules/$NAME/manifest.json"
-        [ -f "$FILE" ] || { echo "ERROR: no module '$NAME' in $REPO/analysis/modules." >&2; exit 1; }
-        CURRENT=$(read_module "$NAME")
+        FILE=$(module_manifest "$NAME") || {
+            echo "ERROR: no module or library '$NAME'." >&2
+            echo "  Looked for modules/$NAME/manifest.json and modules/lib/$NAME/manifest.json" >&2
+            exit 1; }
+        CURRENT=$(read_module "$FILE")
         [ -n "$CURRENT" ] || { echo "ERROR: $FILE has no 'version'." >&2; exit 1; }
         NEW=$(next_version "$CURRENT")
         sed -i -E "s|(\"version\"[[:space:]]*:[[:space:]]*\")[^\"]*(\")|\1${NEW}\2|" "$FILE"
-        [ "$(read_module "$NAME")" = "$NEW" ] || { echo "ERROR: could not write $FILE." >&2; exit 1; }
+        [ "$(read_module "$FILE")" = "$NEW" ] || { echo "ERROR: could not write $FILE." >&2; exit 1; }
         ;;
     *)
         usage

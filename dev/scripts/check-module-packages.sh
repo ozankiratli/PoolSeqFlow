@@ -92,10 +92,15 @@ conda env create -n "$ENV_NAME" -f "$BASELINE_FILE" >/dev/null
 BASELINE_PACKAGES=$(env_versions)
 printf '   %s packages\n' "$(printf '%s\n' "$BASELINE_PACKAGES" | wc -l | tr -d ' ')"
 
-# Whatever the shipped modules declare. None does today, so this is a no-op that becomes the
-# most important check in the script the moment one gains a dependency: it is the release's own
-# environment being asked to take its own modules' pins.
-SHIPPED=$(store_packages "$REPO_ROOT/analysis/modules")
+# Whatever the modules and libraries this repository publishes declare - which is every one of
+# them now, since a manifest states its dependencies whether or not the baseline already holds
+# them. Read from the SOURCES: no module ships in a release any more, and analysis/modules/ is
+# the install store, gitignored and empty here, so reading it asked this question of nothing.
+#
+# This is the release's own environment being asked to take its own modules' pins, and it is
+# the only place the answer is a real conda solve rather than a stubbed command line.
+SHIPPED=$( { store_packages "$REPO_ROOT/modules"
+             store_packages "$REPO_ROOT/modules/lib"; } | sort -u )
 if [ -n "$SHIPPED" ]; then
     say "Installing what the shipped modules declare"
     printf '   %s\n' $SHIPPED

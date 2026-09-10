@@ -3,7 +3,7 @@
 
     dev/scripts/select-tests.py                 # against the working tree
     dev/scripts/select-tests.py --ref HEAD~3    # against a commit
-    dev/scripts/select-tests.py scripts/7_vcf2freq.nf analysis/lib/R/n_eff.R
+    dev/scripts/select-tests.py scripts/7_vcf2freq.nf modules/lib/n_eff/n_eff.R
     dev/scripts/select-tests.py --command       # print the run_tests.sh line and nothing else
 
 HOW IT DECIDES, in two halves.

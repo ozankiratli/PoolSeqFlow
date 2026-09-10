@@ -256,3 +256,33 @@ The catalogue's two headers already separate layout from content — `#!index-fo
 After 3.0.0, and nothing about it is urgent while Z is the only person developing modules.
 
 **One thing gets harder by waiting, and the cost of getting it wrong is bounded.** `MODULE_INDEX_FORMAT="1"` compiles into every released copy and `require_module_index_format` is an exact-match refusal, so catalogue columns added later — `frame` and `environment`, which is what would let the repository hand an older pipeline a version that still runs on it — are unreadable by 3.0.0. The consequence is not data loss or a broken install: a 3.0.0 user who wants a module published later is told to upgrade. That may simply be acceptable for the first release of the module system, and it is Z's call rather than a deadline anyone has to meet.
+
+---
+
+## The catalogue's columns are matched by name and read by position — Z, 2026-09-10
+
+Added when the `kind` column landed and cost thirteen failing cases. **Z deferred it explicitly: "We can look at the name-position thing later. Add it to the list of post v3.1.0 tasks."**
+
+`index.tsv` was designed so that adding a column is free. Its own header says so, at length: *"THE COLUMNS ARE READ BY NAME, out of the header row below, so their order here does not matter and a column a release has never heard of is ignored rather than misread. Adding one later is therefore safe and needs no layout bump."* That is true, and it is the reason `#!index-format` is not bumped for an addition.
+
+**It is true of every release except the one doing the adding.** `module_index_rows()` reorders each row into `MODULE_INDEX_COLUMNS` order and joins it with `$'\037'`; every consumer then reads it back with a positional `IFS="$MODULE_INDEX_SEP" read -r name version contract frame environment url sha summary`. So the by-name matching happens once, at the top, and everything downstream is positional. Inserting `kind` second shifted six `read` destructurings, an `awk` filter keyed on `$2`, and a `sort -t"$SEP" -k2,2Vr` that silently stopped sorting by version and started sorting by kind.
+
+### What it would buy
+
+A column addition that costs one line instead of thirteen cases. More to the point, **the failure mode is silent where it matters most**: the `sort` did not error, it just returned the wrong newest version. Two of the thirteen failures were assertions going vacuous rather than red, and one of those only announced itself because it carried a `rows > 0` guard. A wrong column is not a crash, it is a plausible answer.
+
+### The shape it probably wants
+
+An accessor rather than a destructuring — `row_field "$row" version` reading the same `MODULE_INDEX_COLUMNS` list that built the row. Then a column's position is knowledge held in exactly one place instead of at every call site, and `MODULE_INDEX_COLUMNS` becomes the single declaration it was always meant to be.
+
+The cost is a subshell per field per row where there is now one `read` per row. `available` renders every row in the catalogue, so this is measurable and worth measuring before committing to it; a catalogue is tens of rows today and the answer may simply be that it does not matter.
+
+### What it would break
+
+Nothing published. The wire format is unchanged — this is entirely how the wrapper reads a row it already has. It does not touch `#!index-format`, so no released copy notices.
+
+**It does touch every consumer at once**, which is exactly the change that wants a full suite behind it rather than a `--case` run. That is the argument for after a release rather than during one.
+
+### Where it sits
+
+**After v3.1.0.** Nothing is wrong today: the columns and the destructurings agree, and `00_static` checks every row against the file it advertises. This is paying down the next addition's cost, not fixing a defect — and the next addition is not scheduled.

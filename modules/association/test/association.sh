@@ -25,20 +25,21 @@ association_corpus() {
 
 # Run the module's R directly over the corpus, under one set of options, into $1.
 #
-# Every .R in the shared library rather than the list main.nf names: they are standalone function
+# Every library's .R rather than the list the manifest names: they are standalone function
 # definitions, so a superset is harmless, and the case then cannot go stale when that list
-# changes. The Nextflow case is what proves main.nf assembles the same thing.
+# changes. The Nextflow case is what proves main.nf assembles the same thing, and 00_static is
+# what proves the manifest declares exactly what the module calls.
 association_direct() {
     local dest="$1" options="$2" design="${3:-}"
     mkdir -p "$dest"
     [ -n "$design" ] || design="$CORPUS_DIR/design.json"
-    cat "$REPO_ROOT"/analysis/lib/R/*.R \
-        "$REPO_ROOT/analysis/modules/association/association.R" > "$dest/association.R"
+    cat "$REPO_ROOT"/modules/lib/*/*.R \
+        "$REPO_ROOT/modules/association/association.R" > "$dest/association.R"
     printf '%s' "$options" > "$dest/options.json"
     ( cd "$CORPUS_DIR/Frequencies" && Rscript --vanilla "$dest/association.R" \
         --design "$design" --pools "$CORPUS_DIR/pools.json" \
         --options "$dest/options.json" \
-        --cpp "$REPO_ROOT/analysis/lib/cpp/allele_frequencies.cpp" \
+        --cpp "$REPO_ROOT/modules/lib/allele_frequencies/allele_frequencies.cpp" \
         --depths 'Test_snp_depth.tsv' --out "$dest" ) > "$dest/out.txt" 2>&1
 }
 
@@ -228,7 +229,7 @@ test_both_paths_through_the_parse_agree() {
 # The module credits the statistics it computes and not the family they belong to. A reader who
 # follows an entry and finds nothing of it in the output is worse served than by no entry.
 test_association_cites_the_statistics_it_computes() {
-    local citations="$REPO_ROOT/analysis/modules/association/citations.json"
+    local citations="$REPO_ROOT/modules/association/citations.json"
     assert_file "$citations" "association ships a citations.json"
     local id
     for id in phipson2010 benjamini1995 long2026; do

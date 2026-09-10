@@ -86,7 +86,7 @@ process Analyze {
                                               usecpp     : useCompiled(settings),
                                               chromosomes: settings.chromosomes ])
                                    .replace("'", "'\\''")
-    // The published script's header: the frame version that defined the library, which
+    // The published script's header: the frame version this ran against, which
     // implementation of the per-site loop ran, and the settings that shaped the work.
     header = ["# basicstats, PoolSeqFlow analysis frame ${frameVersion()}",
               "# ${useCompiled(settings) ? 'site_diversity.cpp, compiled at run time' : 'site_diversity(), vectorized R'}" +
@@ -99,11 +99,11 @@ process Analyze {
     printf '%s' '${pools}' > pools.json
     printf '%s' '${options}' > options.json
 
-    # The script published beside the result, and the one that runs: the shared library first,
-    # then this module's own.
+    # The script published beside the result, and the one that runs: the declared libraries
+    # first, then this module's own.
     {
         printf '%s\\n' '${header}'
-        echo '# The shared library follows, then this module.'
+        echo '# The libraries this module declares follow, then the module itself.'
         cat ${library.join(' ')}
         cat ${moduleDir}/basicstats.R
     } > published/basicstats.R

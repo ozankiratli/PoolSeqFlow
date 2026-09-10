@@ -836,14 +836,14 @@ A1,12
 # ---------------------------------------------------------------- citations --
 
 # Writes both citation files into a scratch directory and echoes it. Runs against the real
-# install/citations.json, so a malformed entry fails here rather than at the end of a run.
+# citations/citations.json, so a malformed entry fails here rather than at the end of a run.
 write_citations() {
     local annotate="$1"; shift
     local out
     out=$(guard_path "$TEST_TMPDIR/citations-$annotate")
     rm -rf "$out"; mkdir -p "$out"
     python3 "$REPO_ROOT/bin/write_citations.py" \
-        --data "$REPO_ROOT/install/citations.json" \
+        --data "$REPO_ROOT/citations/citations.json" \
         --out-dir "$out" --pipeline-version 3.0.0 --annotate "$annotate" \
         "$@" >/dev/null 2>&1
     CITE_STATUS=$?

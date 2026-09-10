@@ -25,20 +25,21 @@ mds_corpus() {
 
 # Run the module's R directly over the corpus, under one set of options, into $1.
 #
-# Every .R in the shared library rather than the list main.nf names: they are standalone function
+# Every library's .R rather than the list the manifest names: they are standalone function
 # definitions, so a superset is harmless, and the case then cannot go stale when that list
-# changes. The Nextflow case is what proves main.nf assembles the same thing.
+# changes. The Nextflow case is what proves main.nf assembles the same thing, and 00_static is
+# what proves the manifest declares exactly what the module calls.
 mds_direct() {
     local dest="$1" options="$2" design="${3:-}"
     mkdir -p "$dest"
     [ -n "$design" ] || design="$CORPUS_DIR/design.json"
-    cat "$REPO_ROOT"/analysis/lib/R/*.R "$REPO_ROOT/analysis/modules/mds/mds.R" > "$dest/mds.R"
+    cat "$REPO_ROOT"/modules/lib/*/*.R "$REPO_ROOT/modules/mds/mds.R" > "$dest/mds.R"
     printf '%s' "$options" > "$dest/options.json"
     ( cd "$CORPUS_DIR/Frequencies" && Rscript --vanilla "$dest/mds.R" \
         --design "$design" --pools "$CORPUS_DIR/pools.json" \
         --options "$dest/options.json" \
-        --cpp-frequencies "$REPO_ROOT/analysis/lib/cpp/allele_frequencies.cpp" \
-        --cpp-distance "$REPO_ROOT/analysis/lib/cpp/nei_distance.cpp" \
+        --cpp-frequencies "$REPO_ROOT/modules/lib/allele_frequencies/allele_frequencies.cpp" \
+        --cpp-distance "$REPO_ROOT/modules/lib/nei_distance/nei_distance.cpp" \
         --depths 'Test_snp_depth.tsv' --out "$dest" ) > "$dest/out.txt" 2>&1
 }
 
@@ -126,12 +127,12 @@ PY
 # The module's R over a cohort built by mds_wide_cohort in $1, options $2, output into $3.
 mds_on_cohort() {
     mkdir -p "$3"
-    cat "$REPO_ROOT"/analysis/lib/R/*.R "$REPO_ROOT/analysis/modules/mds/mds.R" > "$3/mds.R"
+    cat "$REPO_ROOT"/modules/lib/*/*.R "$REPO_ROOT/modules/mds/mds.R" > "$3/mds.R"
     printf '%s' "$2" > "$3/options.json"
     ( cd "$1/Frequencies" && Rscript --vanilla "$3/mds.R" \
         --design "$1/design.json" --pools "$1/pools.json" --options "$3/options.json" \
-        --cpp-frequencies "$REPO_ROOT/analysis/lib/cpp/allele_frequencies.cpp" \
-        --cpp-distance "$REPO_ROOT/analysis/lib/cpp/nei_distance.cpp" \
+        --cpp-frequencies "$REPO_ROOT/modules/lib/allele_frequencies/allele_frequencies.cpp" \
+        --cpp-distance "$REPO_ROOT/modules/lib/nei_distance/nei_distance.cpp" \
         --depths 'Test_snp_depth.tsv' --out "$3" ) > "$3/out.txt" 2>&1
 }
 
@@ -321,13 +322,13 @@ test_a_single_haploid_genome_is_refused() {
     sed 's/"nChrom": *[0-9]*/"nChrom": 1/; s/"ploidy": *[0-9]*/"ploidy": 1/; s/"size": *[0-9]*/"size": 1/' \
         "$CORPUS_DIR/pools.json" > "$sb/one.json"
     mkdir -p "$sb/run"
-    cat "$REPO_ROOT"/analysis/lib/R/*.R "$REPO_ROOT/analysis/modules/mds/mds.R" > "$sb/run/mds.R"
+    cat "$REPO_ROOT"/modules/lib/*/*.R "$REPO_ROOT/modules/mds/mds.R" > "$sb/run/mds.R"
     printf '%s' "$MDS_OPTIONS" > "$sb/run/options.json"
     ( cd "$CORPUS_DIR/Frequencies" && Rscript --vanilla "$sb/run/mds.R" \
         --design "$CORPUS_DIR/design.json" --pools "$sb/one.json" \
         --options "$sb/run/options.json" \
-        --cpp-frequencies "$REPO_ROOT/analysis/lib/cpp/allele_frequencies.cpp" \
-        --cpp-distance "$REPO_ROOT/analysis/lib/cpp/nei_distance.cpp" \
+        --cpp-frequencies "$REPO_ROOT/modules/lib/allele_frequencies/allele_frequencies.cpp" \
+        --cpp-distance "$REPO_ROOT/modules/lib/nei_distance/nei_distance.cpp" \
         --depths 'Test_snp_depth.tsv' --out "$sb/run" ) > "$sb/run/out.txt" 2>&1
 
     assert_contains "$(cat "$sb/run/out.txt")" "one chromosome" "should say what is wrong"

@@ -1,4 +1,4 @@
-// The compiled form of analysis/lib/R/allele_frequencies.R, for projects large enough to want it.
+// The compiled form of allele_frequencies.R beside it, for projects large enough to want it.
 //
 // Same seam: a list of depth-table columns in, a list of site, alleles, depth and freq out. One
 // pass over the strings, parsing digits as it goes, so the split lists the vectorized R spends

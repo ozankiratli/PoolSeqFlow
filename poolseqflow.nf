@@ -217,6 +217,6 @@ workflow {
                       software     : params.software,
                       dir          : params.dir,
                       annotate     : run_defs.any { r -> r.annotate },
-                      citationsData: "${projectDir}/install/citations.json".toString() ]
+                      citationsData: "${projectDir}/citations/citations.json".toString() ]
     Citations(citations_run, VCF2Frequencies.out.collect())
 }

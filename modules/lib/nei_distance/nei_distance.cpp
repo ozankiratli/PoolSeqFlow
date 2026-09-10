@@ -1,4 +1,4 @@
-// The compiled form of analysis/lib/R/nei_distance.R, for projects large enough to want it.
+// The compiled form of nei_distance.R beside it, for projects large enough to want it.
 //
 // Same seam: frequencies by allele, the site index that groups them, and each site's effective
 // sample sizes in; the raw and corrected pool-by-pool sums and the site counts out. One pass

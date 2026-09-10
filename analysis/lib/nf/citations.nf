@@ -3,7 +3,7 @@
 // One published analysis carries the result, the script that produced it, the record that
 // cleared the folder, and this: CITATIONS.md and references.bib for the software behind it.
 //
-// Three sources are merged: PoolSeqFlow and Nextflow from install/citations.json, the analysis
+// Three sources are merged: PoolSeqFlow and Nextflow from citations/citations.json, the analysis
 // layer's own from analysis/citations.json, and the module's, from its own directory.
 
 nextflow.enable.dsl=2
@@ -11,7 +11,7 @@ nextflow.enable.dsl=2
 include { installDir } from './paths.nf'
 include { moduleStore } from './modules.nf'
 
-// The entries install/citations.json holds that an ANALYSIS run also invokes. It lists every
+// The entries citations/citations.json holds that an ANALYSIS run also invokes. It lists every
 // tool the pipeline can call, and an analysis calls almost none of them.
 def sharedCitationKeys() {
     return ['poolseqflow', 'nextflow']
@@ -34,7 +34,7 @@ def readCitations(String path) {
 // Everything one invocation of `module` should cite, keyed as write_citations.py expects.
 def mergedCitations(String module) {
     def merged = [:]
-    readCitations("${installDir()}/install/citations.json").each { key, entry ->
+    readCitations("${installDir()}/citations/citations.json").each { key, entry ->
         if (sharedCitationKeys().contains(key)) merged[key] = entry
     }
     merged.putAll(readCitations("${installDir()}/analysis/citations.json")

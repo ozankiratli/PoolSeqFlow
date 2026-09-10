@@ -91,7 +91,8 @@ Full walkthrough: [Install](https://ozankiratli.github.io/PoolSeqFlow/getting-st
 | `./PoolSeqFlow install` | Create the conda environment, install the pipeline, then verify both |
 | `./PoolSeqFlow init` | Populate the current directory as a project |
 | `./PoolSeqFlow init_multi` | The same, for a project running several parameter sets over one set of reads |
-| `./PoolSeqFlow check` | Verify an existing installation — tools, helpers, config |
+| `./PoolSeqFlow check install` | Verify an installation — the tools and helpers it is built to run |
+| `./PoolSeqFlow check project` | Verify a project — its configuration, and the commands it names |
 | `./PoolSeqFlow run` | Start — or resume — the pipeline |
 | `./PoolSeqFlow dryrun` | Create the directory tree a run would write, empty, before any compute is spent |
 | `./PoolSeqFlow dryclean` | Remove that preview |

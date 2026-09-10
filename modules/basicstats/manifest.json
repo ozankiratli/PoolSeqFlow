@@ -1,9 +1,9 @@
 {
   "name": "basicstats",
-  "version": "20260910.002",
+  "version": "20260910.003",
   "contract": "freq-1",
   "license": "GPL-3.0-or-later",
-  "frame": "20260908.003",
+  "frame": "20260910.001",
   "environment": "3.0.0",
   "summary": "site counts, depth, effective pool size and gene diversity, per pool",
   "needs": [

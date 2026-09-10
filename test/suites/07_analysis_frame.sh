@@ -15,11 +15,28 @@
 # directory is looked up through the pipeline's own partition rather than guessed at; nothing
 # in the pipeline may include, name or write anything of the analysis layer's. If it did, a
 # user who never installs the analysis environment would be running code that expects it.
+#
+# ONE FILE IS EXCLUDED AND IT IS NAMED, not matched by a pattern. bin/check_analysis_install.sh
+# is the analysis layer's own checker, run by `PoolSeqFlow analysis check` and by nothing in the
+# pipeline; it sits in bin/ because that is where every script that is run rather than sourced
+# lives. Excluding it by name keeps the rule's teeth: a second file that mentions the layer
+# fails here, which is the point.
 test_the_pipeline_does_not_read_the_analysis_layer() {
     local hits
-    hits=$(cd "$REPO_ROOT" && grep -rn --exclude-dir=__pycache__ -e "analysis/" -e "Analysis" \
+    hits=$(cd "$REPO_ROOT" && grep -rn --exclude-dir=__pycache__ \
+        --exclude=check_analysis_install.sh -e "analysis/" -e "Analysis" \
         poolseqflow.nf dryrun.nf nextflow.config scripts bin parameters.config.template 2>/dev/null)
     assert_eq "" "$hits" "the pipeline must not mention the analysis layer, but it does:"$'\n'"$hits"
+}
+
+# And the exclusion above must go on excluding exactly one file. A rename or a second analysis
+# script in bin/ would otherwise widen it silently, since --exclude takes a glob and a name that
+# matches nothing is not an error.
+test_only_the_analysis_checker_is_exempt_from_the_separation() {
+    local exempt; exempt="$REPO_ROOT/bin/check_analysis_install.sh"
+    assert_file "$exempt" "the exclusion in the case above names a file that must exist"
+    local others; others=$(cd "$REPO_ROOT" && ls bin/ | grep -c '^check_analysis' || true)
+    assert_eq "1" "$others" "exactly one analysis checker may live in bin/"
 }
 
 # The analysis layer reads the pipeline, which is the direction that is allowed.
@@ -50,35 +67,42 @@ test_the_analysis_layer_ships_with_the_release() {
              analysis/lib/nf/paths.nf analysis/lib/nf/plan.nf analysis/lib/nf/modules.nf \
              analysis/lib/nf/results.nf analysis/lib/nf/store.nf analysis/lib/nf/citations.nf \
              analysis/lib/nf/design.nf analysis/lib/nf/outputs.nf analysis/lib/nf/time.nf \
-             analysis/lib/nf/pools.nf \
-             analysis/modules/basicstats/manifest.json analysis/modules/basicstats/main.nf \
-             analysis/modules/basicstats/basicstats.R \
-             analysis/modules/basicstats/citations.json \
-             analysis/modules/association/manifest.json analysis/modules/association/main.nf \
-             analysis/modules/association/association.R \
-             analysis/modules/association/citations.json \
-             analysis/modules/mds/manifest.json analysis/modules/mds/main.nf \
-             analysis/modules/mds/mds.R \
-             analysis/modules/mds/citations.json; do
+             analysis/lib/nf/pools.nf; do
         assert_file "$REPO_ROOT/$f" "$f must ship"
     done
 
-    # A shipped module ships only what is TRACKED: `git archive` builds the tarball from the
-    # index, so a file left unadded is one that works here and is absent from every download -
-    # and a module missing one file stops every analysis run, not only its own.
+    # THE FRAME SHIPS AND NO MODULE DOES. The list above used to carry the three modules' files
+    # as well, because analysis/modules/ was both the source directory and the install store.
+    # It is the store alone now: gitignored, empty in a checkout, and empty in a fresh install
+    # until somebody installs something. verify-archive.sh asserts the same of the tarball.
+    local source_dir; source_dir="$REPO_ROOT/modules"
+    assert_dir "$source_dir" "the module sources must be here"
+    for f in basicstats/main.nf association/main.nf mds/main.nf; do
+        assert_file "$source_dir/$f" "modules/$f must be a source"
+        assert_no_file "$REPO_ROOT/analysis/modules/${f%%/*}" \
+            "and ${f%%/*} must not be sitting in the store of a checkout"
+    done
+
+    # A published module carries only what is TRACKED: publish-module.sh builds its tarball from
+    # a git ref, so a file left unadded is one that works here and is absent from every download
+    # - and a module missing one file stops every analysis run, not only its own.
     #
     # Only modules that are PARTLY tracked are checked. One with nothing tracked is a module
     # being written, which is the ordinary state of the working tree and not a mistake.
-    local dir name tracked untracked partial=""
-    for dir in "$REPO_ROOT"/analysis/modules/*/; do
+    local dir name tracked untracked partial="" seen=0
+    for dir in "$source_dir"/*/ "$source_dir"/lib/*/; do
         [ -f "$dir/manifest.json" ] || continue
-        name=$(basename "$dir")
-        tracked=$(cd "$REPO_ROOT" && git ls-files -- "analysis/modules/$name/")
+        name=${dir#"$REPO_ROOT"/}; name=${name%/}
+        tracked=$(cd "$REPO_ROOT" && git ls-files -- "$name/")
         [ -n "$tracked" ] || continue
-        untracked=$(cd "$REPO_ROOT" && git ls-files --others --exclude-standard -- "analysis/modules/$name/")
+        seen=$((seen + 1))
+        untracked=$(cd "$REPO_ROOT" && git ls-files --others --exclude-standard -- "$name/")
         [ -z "$untracked" ] || partial="$partial$untracked"$'\n'
     done
-    assert_eq "" "$partial" "these files of a shipped module would not be in the tarball:"$'\n'"$partial"
+    assert_eq "" "$partial" "these files of a published module would not be in the tarball:"$'\n'"$partial"
+    # Without this the loop above passes by finding nothing, which is exactly how it passed
+    # while it was still pointed at the store.
+    [ "$seen" -gt 0 ] || fail_case "no tracked module or library was examined at all"
     assert_contains "$(cat "$REPO_ROOT/PoolSeqFlow")" "lib analysis install" \
         "the payload must carry the analysis directory"
 }

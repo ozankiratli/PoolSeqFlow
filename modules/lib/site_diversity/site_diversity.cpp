@@ -1,4 +1,4 @@
-// The compiled form of analysis/lib/R/site_diversity.R, for projects large enough to want it.
+// The compiled form of site_diversity.R beside it, for projects large enough to want it.
 //
 // Same seam: a character vector of depth-table cells in, a list of two numeric vectors out. One
 // pass over the strings, parsing digits as it goes, so nothing between the input and the two

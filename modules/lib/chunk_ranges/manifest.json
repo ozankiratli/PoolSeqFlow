@@ -1,9 +1,9 @@
 {
   "name": "chunk_ranges",
-  "version": "20260910.001",
+  "version": "20260910.002",
   "kind": "library",
   "license": "GPL-3.0-or-later",
-  "frame": "20260908.003",
+  "frame": "20260910.001",
   "environment": "3.0.0",
   "summary": "a row count split into contiguous bins for chunked or parallel reading",
   "libraries": [],

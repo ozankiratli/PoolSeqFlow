@@ -12,13 +12,14 @@
 
 # Run the module's R directly over the corpus, under one set of options, into $1.
 #
-# Every .R in the shared library rather than the list main.nf names: they are standalone
-# function definitions, so a superset is harmless, and the case then cannot go stale when that
-# list changes. The Nextflow case above is what proves main.nf assembles the same thing.
+# Every library's .R rather than the list the manifest names: they are standalone function
+# definitions, so a superset is harmless, and the case then cannot go stale when that list
+# changes. The Nextflow case above is what proves main.nf assembles the same thing, and
+# 00_static is what proves the manifest declares exactly what the module calls.
 basicstats_direct() {
     local dest="$1" options="$2" corpus="$3" rscript="${4:-Rscript}" bin=""
     mkdir -p "$dest"
-    cat "$REPO_ROOT"/analysis/lib/R/*.R "$REPO_ROOT/analysis/modules/basicstats/basicstats.R" \
+    cat "$REPO_ROOT"/modules/lib/*/*.R "$REPO_ROOT/modules/basicstats/basicstats.R" \
         > "$dest/basicstats.R"
     printf '%s' "$options" > "$dest/options.json"
     # An environment's R drives an environment's compiler - conda's is
@@ -29,7 +30,7 @@ basicstats_direct() {
     ( cd "$corpus/Frequencies" && PATH="${bin}$PATH" "$rscript" --vanilla "$dest/basicstats.R" \
         --design "$corpus/design.json" --pools "$corpus/pools.json" \
         --options "$dest/options.json" \
-        --cpp "$REPO_ROOT/analysis/lib/cpp/site_diversity.cpp" \
+        --cpp "$REPO_ROOT/modules/lib/site_diversity/site_diversity.cpp" \
         --depths 'Test_indel_depth.tsv,Test_snp_depth.tsv' \
         --histograms "$(find "$corpus/Reports/Depth" -name '*_depth_histogram.tsv' | sort | paste -sd,)" \
         --out "$dest" ) > "$dest/out.txt" 2>&1

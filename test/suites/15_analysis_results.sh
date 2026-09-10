@@ -269,7 +269,7 @@ test_a_published_analysis_carries_its_citations() {
     assert_contains "$md" "PoolSeqFlow" "citing the pipeline itself"
     assert_contains "$md" "Nextflow" "and Nextflow"
     assert_contains "$md" "R" "and R, which every module runs on"
-    # The pipeline's own tools are in install/citations.json and an analysis invokes none of
+    # The pipeline's own tools are in citations/citations.json and an analysis invokes none of
     # them. Citing BWA for a run that never aligned anything would be a false claim.
     assert_not_contains "$md" "BWA" "but not a tool the analysis never ran"
     assert_not_contains "$md" "SnpEff" "nor another"

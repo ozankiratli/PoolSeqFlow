@@ -53,7 +53,7 @@ nf_config_value() {
 }
 
 # Zenodo all-versions DOI. A release's own DOI is reached through it. Also recorded in
-# install/citations.json, which the per-run CITATIONS.md is built from.
+# citations/citations.json, which the per-run CITATIONS.md is built from.
 CONCEPT_DOI="10.5281/zenodo.19245611"
 
 # The catalogue of modules that can be installed. It is export-ignored, so a release carries no
@@ -245,6 +245,12 @@ analysis_r_packages() {
 #
 # Reads the shipped file rather than the live environment: the live one has whatever modules
 # added merged into it and cannot say which packages are the release's own.
+#
+# Defined here and not only in the wrapper, because baseline_packages() reads it and every
+# dev/ script that sources this file needs the same answer. An unset path makes the sed below
+# silently produce nothing, which reads as "the baseline is empty" and subtracts nothing.
+ANALYSIS_ENV_FILE="${ANALYSIS_ENV_FILE:-${INSTALL:-}/install/environment-analysis.yml}"
+
 baseline_packages() {
     sed -n 's/^ *- *\([A-Za-z0-9][A-Za-z0-9._-]*\).*$/\1/p' "$ANALYSIS_ENV_FILE" 2>/dev/null \
         | grep -vx 'pip' | sort -u
@@ -261,10 +267,13 @@ MODULE_SPEC_RE='^[a-z0-9][a-z0-9._-]*=[A-Za-z0-9][A-Za-z0-9._+]*$'
 module_packages() {
     local manifest="$1"
     [ -f "$manifest" ] || return 0
+    # awk for the last step and not sed: it terminates its final record. store_packages runs
+    # this once per module and concatenates the results, so an unterminated last line arrives
+    # joined to the next module's first one as a single token.
     tr '\n' ' ' < "$manifest" \
         | sed -n 's/.*"packages"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' \
         | tr ',' '\n' \
-        | sed -n 's/^[^"]*"\([^"]*\)".*/\1/p'
+        | awk -F'"' 'NF > 1 { print $2 }'
 }
 
 # The libraries one module declares, one per line, read out of its manifest the same way as its
@@ -272,10 +281,12 @@ module_packages() {
 module_libraries() {
     local manifest="$1"
     [ -f "$manifest" ] || return 0
+    # awk for the last step and not sed, for the reason module_packages gives: store_libraries
+    # concatenates one of these per module and an unterminated last line glues two names.
     tr '\n' ' ' < "$manifest" \
         | sed -n 's/.*"libraries"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' \
         | tr ',' '\n' \
-        | sed -n 's/^[^"]*"\([^"]*\)".*/\1/p'
+        | awk -F'"' 'NF > 1 { print $2 }'
 }
 
 # Where installed libraries live: inside the module store, under a name no module may take.
@@ -386,4 +397,23 @@ conda_remove_packages() {
         return 1
     fi
     conda remove -n "$env" -y "$@"
+}
+
+# Is $1 a parameters.config written for THIS release? Every config for this release sets
+# storageDir and no earlier one did, so that single key answers it.
+#
+# Shared because two callers ask the same question and must not drift: the wrapper refuses a
+# stale config before any command that reads one, and `check project` reports it as a line.
+config_is_current() {
+    grep -qE '^[[:space:]]*storageDir[[:space:]]*=' "$1" 2>/dev/null
+}
+
+# The parameters this release renamed or removed that $1 still sets, space-separated. Advisory:
+# it names an old file as recognized rather than damaged, and migrate_config reports the full set.
+config_stale_parameters() {
+    local old found=""
+    for old in projectDir diploidy rgTagsFile rgTagsPath; do
+        grep -qE "^[[:space:]]*${old}[[:space:]]*=" "$1" 2>/dev/null && found="$found $old"
+    done
+    printf '%s' "$found"
 }

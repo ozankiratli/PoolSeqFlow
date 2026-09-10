@@ -87,7 +87,7 @@ process Analyze {
                                               workers      : workers,
                                               usecpp       : useCompiled(settings) ])
                                    .replace("'", "'\\''")
-    // The published script's header: the frame version that defined the library, which
+    // The published script's header: the frame version this ran against, which
     // implementation ran, and the settings that shaped the work.
     header = ["# mds, PoolSeqFlow analysis frame ${frameVersion()}",
               "# ${useCompiled(settings) ? 'allele_frequencies.cpp and nei_distance.cpp, compiled at run time' : 'allele_frequencies() and nei_distance(), vectorized R'}" +
@@ -103,11 +103,11 @@ process Analyze {
     printf '%s' '${pools}' > pools.json
     printf '%s' '${options}' > options.json
 
-    # The script published beside the result, and the one that runs: the shared library first,
-    # then this module's own.
+    # The script published beside the result, and the one that runs: the declared libraries
+    # first, then this module's own.
     {
         printf '%s\\n' '${header}'
-        echo '# The shared library follows, then this module.'
+        echo '# The libraries this module declares follow, then the module itself.'
         cat ${library.join(' ')}
         cat ${moduleDir}/mds.R
     } > published/mds.R
