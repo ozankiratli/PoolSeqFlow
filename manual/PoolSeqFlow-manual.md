@@ -312,7 +312,9 @@ Pipeline helpers
 
 It is the failure worth catching, because it is the quiet one: the pipeline runs, the results look fine, and nothing reproduces anywhere else. Reinstalling is the fix — `PoolSeqFlow install`.
 
-**Every helper in `bin/`**, present and executable. `nextflow.config` puts that directory on `PATH` and the process scripts call the helpers by bare name, so a lost executable bit fails mid-run rather than at startup. `bin/` is enumerated rather than listed, so a helper added to a release is checked without anyone remembering to say so. `lib/` is not: what is in there is sourced by another script rather than run, which is the whole reason the two directories are separate.
+**Every helper in `bin/`**, present and executable. `nextflow.config` puts that directory on `PATH` and the process scripts call the helpers by bare name, so a lost executable bit fails mid-run rather than at startup. `bin/` is enumerated rather than listed, so a helper added to a release is checked without anyone remembering to say so.
+
+The three `check_*.sh` scripts live there too — `bin/` is where everything that is *run* rather than sourced lives — and are the one thing skipped: they are run by the command line, never by a process script, so a run does not depend on them. `lib/` is not enumerated at all, because what is in there is sourced rather than run, which is the whole reason the two directories are separate.
 
 **It reads no `parameters.config` and needs no project.** Run it from anywhere, including straight after installing and before you have a project at all.
 

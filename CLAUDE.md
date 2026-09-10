@@ -82,7 +82,15 @@ Z, 2026-09-08: *"We keep everything but abandoned ideas. They carry a different 
 
 Not one line of code may change. Per file, diff the non-comment lines against `HEAD`. For Python, a docstring is not a `#` comment and the line count misleads — prove it with an AST comparison that strips docstrings.
 
-Then `nextflow lint .` (zero errors **and** zero warnings) and `bash test/run_tests.sh --fast`, which is under a minute. Check both counts — files linted, cases passed — against the run before it rather than only the exit status: a filter that matches nothing also reports success. Neither number is written down here, because both move with every file added.
+Then lint and `bash test/run_tests.sh --fast`, which is under a minute. Check both counts — files linted, cases passed — against the run before it rather than only the exit status: a filter that matches nothing also reports success. Neither number is written down here, because both move with every file added.
+
+**Lint the tree without `modules/`**, and expect zero errors and zero warnings:
+
+```
+nextflow lint analysis analysis.nf dryrun.nf poolseqflow.nf scripts
+```
+
+`nextflow lint .` **cannot pass and is not the command.** A module's `main.nf` imports the frame as `'../../lib/nf/plan.nf'` — correct from `analysis/modules/<name>/`, where it is installed, and unresolvable from `modules/<name>/`, where it is written. The path is right and the tree is wrong for it, so linting from the repository root reports one `Invalid include source` per import on every module. **`00_static` is what lints them**: it assembles a store layout in a sandbox and lints that, which is the only place those imports resolve.
 
 ## What to run while building
 
@@ -98,8 +106,8 @@ bash test/run_tests.sh --suite 07_analysis --case citation
 
 | you changed | run |
 |---|---|
-| `bin/` | `05_helpers` |
-| `PoolSeqFlow`, install/uninstall | `02_launcher` |
+| `bin/` | `05_helpers` — except the three `check_*.sh`, which are `02_launcher` |
+| `PoolSeqFlow`, install/uninstall, the check scripts | `02_launcher` |
 | `bin/config_migrate.sh`, the templates | `01_migrate` |
 | step 0, parameter resolution, the change guards | `04_guards` |
 | wiring, channels, promotion, a step's script | `03_pipeline` |

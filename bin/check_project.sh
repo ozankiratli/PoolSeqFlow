@@ -123,6 +123,18 @@ else
     else
         fail "parameters.config" "FAILED TO PARSE"
         printf '%s\n' "$err" | sed 's/^/    /'
+        # The installation's nextflow.config interpolates the project's settings, so a missing
+        # or malformed one surfaces as a failure to parse THAT file. Reported as it comes and
+        # then explained: without this the message reads as a broken installation, which is
+        # the one thing it is not - a run fails here in exactly the same way.
+        case $err in
+            *"$INSTALL_DIR/nextflow.config"*)
+                printf '    %sThat is the installation'"'"'s own config, and it is not damaged: it\n' \
+                    "$DIM"
+                printf '    interpolates your settings, so a parameter missing from\n'
+                printf '    parameters.config fails while it is being read.%s\n' "$RESET"
+                ;;
+        esac
     fi
 fi
 
