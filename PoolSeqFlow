@@ -543,6 +543,30 @@ require_module_index_format() {
 
 # What can be installed, and whether this release can read it. Contract and version come from
 # the catalogue; whether a module is already here comes from the store.
+# Every published row for one module name, newest version first. `want` pins an exact version
+# and `contract` drops the rows this release cannot read; either may be empty, and `available`
+# passes an empty contract on purpose - a module written for another contract is shown with the
+# reason rather than hidden.
+#
+# Fields are in MODULE_INDEX_COLUMNS order: name kind version contract frame environment...
+# A row with an empty kind is a module, which is what a catalogue written before the column
+# existed yields; a library is never asked for by name and is skipped.
+module_index_candidates() {
+    local index="$1" name="$2" want="${3:-}" contract="${4:-}"
+    module_index_rows "$index" | awk -F"$MODULE_INDEX_SEP" -v n="$name" -v c="$contract" -v w="$want" '
+        $1 != n { next }
+        $2 != "" && $2 != "module" { next }
+        w != "" && $3 != w { next }
+        c != "" && $4 != c { next }
+        { print }' | sort -t"$MODULE_INDEX_SEP" -k3,3Vr
+}
+
+# Each module the catalogue names, once, in name order. Libraries are not modules.
+module_index_names() {
+    module_index_rows "$1" | awk -F"$MODULE_INDEX_SEP" '
+        $2 == "" || $2 == "module" { print $1 }' | sort -u
+}
+
 available_modules() {
     local index contract name version row_contract row_frame row_env url sha summary rows=0 state
     index=$(mktemp)
@@ -565,13 +589,36 @@ available_modules() {
     echo ""
     printf '    %-16s %-10s %-12s %s\n' NAME VERSION CONTRACT ''
     local frame_here; frame_here=$(installed_frame_version)
-    while IFS="$MODULE_INDEX_SEP" read -r name row_kind version row_contract row_frame row_env url sha summary; do
+    # ONE LINE PER MODULE, NOT PER PUBLISHED VERSION. The catalogue holds a row per version and
+    # several rows may name one module, so listing rows lists a module's history - which grows
+    # with every publish and says nothing a reader can act on. What is shown is the version
+    # `install <name>` would take, asked with the same helper install_module asks with, so the
+    # two cannot come to different answers.
+    local row best newest_row _n _k _v
+    while IFS= read -r name; do
         [ -n "$name" ] || continue
-        # A library is a module's dependency, installed with whatever declares it and never
-        # asked for by name. An empty kind is a module, which is what a catalogue written before
-        # the column existed says.
-        [ -z "$row_kind" ] || [ "$row_kind" = "module" ] || continue
         rows=$((rows + 1))
+        best=""; newest_row=""
+        while IFS= read -r row; do
+            [ -n "$row" ] || continue
+            [ -n "$newest_row" ] || newest_row="$row"
+            IFS="$MODULE_INDEX_SEP" read -r _n _k _v row_contract row_frame row_env url sha summary <<ROW
+$row
+ROW
+            if [ "$row_contract" = "$contract" ] \
+               && version_at_most "$row_frame" "$frame_here" \
+               && version_at_most "$row_env" "$VERSION"; then
+                best="$row"
+                break
+            fi
+        done < <(module_index_candidates "$index" "$name")
+
+        # Nothing runnable falls back to the NEWEST row, so the line can say why rather than
+        # leaving the module out. A module published for a later release is the case this
+        # exists for: being told to upgrade is an answer, and a blank is not.
+        IFS="$MODULE_INDEX_SEP" read -r _n _k version row_contract row_frame row_env url sha summary <<ROW
+${best:-$newest_row}
+ROW
         if [ -n "$contract" ] && [ "$row_contract" != "$contract" ]; then
             state="reads $row_contract - not this release"
         elif ! version_at_most "$row_frame" "$frame_here"; then
@@ -585,7 +632,7 @@ available_modules() {
         fi
         printf '    %-16s %-10s %-12s %s\n' "$name" "$version" "$row_contract" "$state"
         [ -z "$summary" ] || printf '    %-16s %s\n' "" "$summary"
-    done < <(module_index_rows "$index")
+    done < <(module_index_names "$index")
 
     echo ""
     if [ "$rows" -eq 0 ]; then
@@ -699,16 +746,9 @@ install_module() {
     fi
 
     # Every row for this name whose contract this release speaks, or the exact version asked
-    # for, newest first.
-    # Fields are in MODULE_INDEX_COLUMNS order: name kind version contract frame environment...
-    # A row with an empty kind is a module, which is what a catalogue written before the column
-    # existed yields; a library is never installed by name and is skipped here.
-    candidates=$(module_index_rows "$index" | awk -F"$MODULE_INDEX_SEP" -v n="$name" -v c="$contract" -v w="$want" '
-        $1 != n { next }
-        $2 != "" && $2 != "module" { next }
-        w != "" && $3 != w { next }
-        c != "" && $4 != c { next }
-        { print }' | sort -t"$MODULE_INDEX_SEP" -k3,3Vr)
+    # for, newest first. `available` reads the catalogue through the same helper, so what it
+    # lists and what this installs are one answer rather than two that can drift.
+    candidates=$(module_index_candidates "$index" "$name" "$want" "$contract")
 
     if [ -z "$candidates" ]; then
         echo "ERROR: no module '$name'${want:+ at version $want} is published for this release." >&2
