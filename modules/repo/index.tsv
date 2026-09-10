@@ -51,9 +51,17 @@
 # separately - so it is reported and recorded, never compared.
 #
 #!index-format: 1
-#!index-version: 20260910.003
+#!index-version: 20260910.011
 
 name	kind	version	contract	frame	environment	url	sha256	summary
 basicstats	module	20260910.001	freq-1	20260908.003	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/basicstats-20260910.001.tar.gz	f154f07cbcc66abab0b330fb1a4d0ce55dfd7db0625d37f9840e6d083039883b	site counts, depth, effective pool size and gene diversity, per pool
 association	module	20260910.001	freq-1	20260908.003	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/association-20260910.001.tar.gz	19b68feb0ca7879143e88b2a6e206b663e7d1bb9935d1e98fa42dcbdc7704913	each allele's frequency regressed on a phenotype measured per pool, with a permutation p
 mds	module	20260910.001	freq-1	20260908.003	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/mds-20260910.001.tar.gz	96797656267316ff5971981c8d940ab6ddc1fa34800eed6312a1c7ded1d5facf	the pools placed by Nei's minimum distance, on a classical MDS (principal coordinates analysis)
+n_eff	library	20260910.002		20260910.001	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/n_eff-20260910.002.tar.gz	2e00ba744d822fa0757b0420633933c5363dc789522fe38e0dd55de14994c671	effective pool size at a site and over a pool, and the harmonic mean it needs
+chunk_ranges	library	20260910.002		20260910.001	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/chunk_ranges-20260910.002.tar.gz	f07ff963e7bc1bf18a00f11ac94c2b8d43e9d0bcc9b960bf2a0977e83257d707	a row count split into contiguous bins for chunked or parallel reading
+allele_frequencies	library	20260910.002	freq-1	20260910.001	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/allele_frequencies-20260910.002.tar.gz	5acc9666a1252dd30af0d679a259a380f21848bb618fb7e8bcc769a12a1e080e	per-site allele frequencies parsed from the depth table, vectorized R with a compiled path
+site_diversity	library	20260910.002	freq-1	20260910.001	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/site_diversity-20260910.002.tar.gz	2f29207471cb902d8e763b19279089d3ce6cbf50643e734af34734486bfe0e0b	gene diversity per site, 1 - sum(p^2), vectorized R with a compiled path
+nei_distance	library	20260910.002	freq-1	20260910.001	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/nei_distance-20260910.002.tar.gz	219267582b965264f72dc9cf34e6c8260c23db4c0063cc1c9dd8d7d3ce44bdfd	Nei's minimum distance accumulated over sites, combined and averaged, with a compiled path
+basicstats	module	20260910.004	freq-1	20260910.001	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/basicstats-20260910.004.tar.gz	629b80eb87cb6d5c02fe5f0b41f2a5e912aa982c18d86f624b196f29d0e857c1	site counts, depth, effective pool size and gene diversity, per pool
+association	module	20260910.004	freq-1	20260910.001	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/association-20260910.004.tar.gz	7e38083b9f43077e947cf34ab8b30f31050e8e5997b2b5cc06bdf8c3d04660c7	each allele's frequency regressed on a phenotype measured per pool, with a permutation p
+mds	module	20260910.003	freq-1	20260910.001	3.0.0	https://ozankiratli.github.io/PoolSeqFlow/modules-repo/mds-20260910.003.tar.gz	0a3754b917e560921de2c835d2469520664b93105a5a2af13ea44f51a095299a	the pools placed by Nei's minimum distance, on a classical MDS (principal coordinates analysis)
