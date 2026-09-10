@@ -208,3 +208,17 @@ Things this protocol worked around rather than fixed. Each has a note saying wha
 **`run_tests.sh` reports success over three cases it never ran.** The analysis environment is discovered through `conda info --base`, so a run in a shell with no working `conda` finds none and silently skips the PDF report, the compiled hot path, and the compiled-and-parallel agreement. Measured on 2026-09-10: a full run said `549 passed, 3 skipped` and exit 0, and the three that skipped are among the least trivial in the suite — F1's Rcpp worker bug was caught by the combination of compiled *and* parallel and by nothing else.
 
 The workaround is step 7's, and it is a person remembering: run with conda on `PATH`, and read the skip count. What it should do instead is **refuse**, the way `check-analysis-versions.sh --release` refuses rather than answering — a suite that cannot find the environment for cases that need it should say so and exit non-zero when it was asked for a full run. `--fast` and `--cost static` legitimately skip those, so the refusal belongs to the unfiltered run alone.
+
+**A release step that shells out to `conda` cannot assume `conda` works.** On a machine where the shell function is set up for an interactive shell of a different family, a non-interactive `bash -c 'conda env list'` fails with `__conda_exe: permission denied` — and `env_exists()` in `prep-version.sh` is `conda env list | grep -qxF`, so a broken function reads as *the environment is not there* and the script refuses a release that had nothing wrong with it. A misconfigured plugin is the milder version of the same thing: `anaconda-anon-usage` prints an error line on every invocation while conda still works, which is noise in a log that a person is being asked to read carefully.
+
+The workaround is to `source <base>/etc/profile.d/conda.sh` before running anything that needs conda. What the scripts should do instead is source it themselves, or resolve the real binary and stop depending on the shell at all — and `env_exists()` in particular should tell *conda said no* apart from *conda did not run*, because those are opposite problems wearing the same message.
+
+**Step 2 is skippable when nothing has drifted, and the protocol should say how to know.** Its expensive half updates and re-freezes both environments; when the last freeze already describes them, that work produces an identical file and an hour of nothing. The check is two exports to a scratch path and a diff:
+
+```
+dev/scripts/export-environment.sh PoolSeqFlow-<version> /tmp/a.yml
+dev/scripts/export-environment.sh PoolSeqFlow-<version>-analysis /tmp/b.yml
+diff /tmp/a.yml install/environment.yml && diff /tmp/b.yml install/environment-analysis.yml
+```
+
+Identical both ways means the freeze still holds and the update-and-export cycle is redundant. **`check-module-packages.sh` is not part of that skip** — it asks a different question, whether the modules' own pins still solve against the frozen baseline, and a module's manifest can change on a day the environments do not.
