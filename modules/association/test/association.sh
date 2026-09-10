@@ -242,3 +242,68 @@ test_association_cites_the_statistics_it_computes() {
     grep -q '"hivert2018"' "$citations" \
         && fail_case "association must not redefine hivert2018: a BibTeX key is defined once"
 }
+
+# ONE CASE THROUGH NEXTFLOW, and it is what every other case here cannot do. The rest call the
+# module's R directly, which proves the arithmetic and says nothing about main.nf - so a fault
+# in how the PROCESS assembles its command survives every one of them.
+#
+# It survived exactly that way. `cp ${compiled} published/allele_frequencies.cpp` interpolated
+# the Groovy LIST moduleCompiledFiles() returns, so the process ran `cp [/path/to/x.cpp]` and
+# died on the brackets. basicstats has this case and failed on it in a full run; association did
+# not have one and passed the same run with the identical line.
+#
+# The fixture needs a PHENOTYPE, which the shared baseline has no column for: every other
+# analysis suite runs on exp_ variables alone. pt_wingspan is added here over the six pools the
+# planted results were produced from.
+#
+# ONE VALUE PER UNIT, and the baseline's units are the three populations followed through two
+# timepoints - so both rows of a population carry the same wingspan. association fits on units
+# and a unit takes one value; two values on one unit is repeated measures, which it refuses by
+# design and says so. Giving each row its own value is the obvious thing to write here and the
+# module is right to reject it.
+test_association_runs_through_the_frame() {
+    analysis_ready single || return
+    if ! have_r; then skip_case "no Rscript"; return; fi
+    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,exp_population,exp_time,pt_wingspan
+TestSample1,TestSample1,Lib1,ILLUMINA,Unit1,Pop1,T1,10.5
+TestSample2,TestSample2,Lib1,ILLUMINA,Unit1,Pop1,T2,10.5
+TestSample3,TestSample3,Lib1,ILLUMINA,Unit1,Pop2,T1,13.8
+TestSample4,TestSample4,Lib1,ILLUMINA,Unit1,Pop2,T2,13.8
+TestSample5,TestSample5,Lib1,ILLUMINA,Unit1,Pop3,T1,16.4
+TestSample6,TestSample6,Lib1,ILLUMINA,Unit1,Pop3,T2,16.4'
+    # A pt_ column is RECORDED by default and becomes a phenotype only once declared with a
+    # measurement scale - which is the layer working as designed, and is what a module author
+    # writing this case for the first time will trip over.
+    # $ANALYSIS_TIME_BLOCK is carried along because this REPLACES main/analysis.config rather
+    # than adding to it, and the baseline put the timeVar declaration there - the fixture has an
+    # exp_time column, and the layer refuses one it has not been told how to read.
+    analysis_write_metadata_config "$ANALYSIS_SB" \
+        "$ANALYSIS_TIME_BLOCK
+        phenotypes { pt_wingspan { kind = 'quantitative' } }"
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    cat > "$ANALYSIS_SB/main/association.config" <<'CFG'
+params {
+    analysis {
+        modules {
+            association {
+                phenotypes = ['pt_wingspan']
+            }
+        }
+    }
+}
+CFG
+
+    local status; status=$(analysis_run_module association)
+    assert_status 0 "$status" "association should run; see $ANALYSIS_SB/run.out"
+
+    local dir="$ANALYSIS_SB/main/Analysis/Results/association"
+    assert_file "$dir/association.tsv" "the site table"
+    assert_file "$dir/permutations.tsv" "the diagnostics that say what it assumed"
+    assert_file "$dir/phenotype.tsv" "the phenotype as it was fitted"
+    assert_file "$dir/association.R" "the script that produced them"
+    # The one the bug above destroyed: a compiled source is published whether or not the run used
+    # it, so its absence is a broken process rather than a choice about the hot path.
+    assert_file "$dir/allele_frequencies.cpp" "the compiled parse, published either way"
+    assert_contains "$(cat "$dir/association.R")" "allele_frequencies <- function" \
+        "the libraries it declares must be folded into the published script"
+}

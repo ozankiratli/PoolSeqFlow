@@ -113,7 +113,7 @@ process Analyze {
         cat ${library.join(' ')}
         cat ${moduleDir}/association.R
     } > published/association.R
-    cp ${compiled} published/allele_frequencies.cpp
+    cp ${compiled.join(' ')} published/
 
     Rscript --vanilla published/association.R --design design.json --pools pools.json \\
         --options options.json --cpp published/allele_frequencies.cpp \\

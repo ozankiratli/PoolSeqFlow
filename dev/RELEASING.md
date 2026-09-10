@@ -137,7 +137,17 @@ bash test/run_tests.sh
 
 On `main`, at the new version, with the frozen environments. This is the run that matters — everything before it tested a version string that is no longer the one shipping.
 
-**Check the counts against the previous run, not only the exit status.** A filter that matches nothing also reports success. `nextflow lint .` must be at zero errors *and* zero warnings.
+**Run it with conda on `PATH`.** The suite finds the analysis environment through `conda info --base`, and a shell without a working `conda` finds nothing: three cases then skip — the PDF report, the compiled hot path, and the compiled-and-parallel agreement — and the run still reports success. Set `TEST_ANALYSIS_ENV=<prefix>/envs/PoolSeqFlow-<version>-analysis` if discovery cannot find it.
+
+**Check the counts against the previous run, not only the exit status** — cases passed *and* cases skipped. A filter that matches nothing also reports success, and a skip is how a case that should have run says so quietly.
+
+**Lint without `modules/`**, at zero errors and zero warnings:
+
+```
+nextflow lint analysis analysis.nf dryrun.nf poolseqflow.nf scripts
+```
+
+`nextflow lint .` cannot pass: a module's `main.nf` imports the frame as `'../../lib/nf/plan.nf'`, which resolves from the store it is installed into and not from `modules/<name>/`. `00_static` lints the modules, in an assembled store layout.
 
 ## 8. Write the CHANGELOG
 
@@ -188,3 +198,13 @@ They look alike, and each one is cheap to spot once you know the shape:
 - **A literal that happens to be right still says PASS.** A case asserted `${EXPECTED_VERSION:-2.2.0}` against a variable set nowhere. Correct until the bump, then a failure that says nothing about what it tests.
 
 **A version bump is when this class surfaces**, because everything before it ran against a tree carrying the old version. That is why step 7 is after step 6 and not before it.
+
+---
+
+## Post-release triage
+
+Things this protocol worked around rather than fixed. Each has a note saying what the workaround is, so a release is never blocked on one — and each is a gate that is weaker than it reads, so none of them should sit here long.
+
+**`run_tests.sh` reports success over three cases it never ran.** The analysis environment is discovered through `conda info --base`, so a run in a shell with no working `conda` finds none and silently skips the PDF report, the compiled hot path, and the compiled-and-parallel agreement. Measured on 2026-09-10: a full run said `549 passed, 3 skipped` and exit 0, and the three that skipped are among the least trivial in the suite — F1's Rcpp worker bug was caught by the combination of compiled *and* parallel and by nothing else.
+
+The workaround is step 7's, and it is a person remembering: run with conda on `PATH`, and read the skip count. What it should do instead is **refuse**, the way `check-analysis-versions.sh --release` refuses rather than answering — a suite that cannot find the environment for cases that need it should say so and exit non-zero when it was asked for a full run. `--fast` and `--cost static` legitimately skip those, so the refusal belongs to the unfiltered run alone.

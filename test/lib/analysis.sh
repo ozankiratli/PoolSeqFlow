@@ -493,8 +493,52 @@ analysis_archive_main() {
 }
 
 # One analysis, start to finish: verify, then the module itself.
+# The real module out of modules/<name>/ into the sandbox store, the way `modules install` does
+# it: the module's own directory without its cases, then every library its manifest declares,
+# under the store's library directory.
+#
+# NO MODULE SHIPS INSIDE A RELEASE. A sandbox built from the payload therefore has an EMPTY
+# store, and a module named without this is simply not installed - which is what the frame says,
+# correctly, before anything runs. Nothing to do for a fixture module planted by
+# analysis_install_module: it has no directory under modules/ and is left where it was put.
+#
+# The `libraries` list is read with python3 rather than through the wrapper's own
+# module_libraries(), so the harness and the shipped reader are two implementations of one
+# thing. A bug in the shipped one shows up here as a missing library instead of being copied.
+analysis_install_from_source() {
+    local name="$1" store="$ANALYSIS_SB/install/analysis/modules"
+    [ -d "$REPO_ROOT/modules/$name" ] || return 0
+    [ -d "$store/$name" ] && return 0
+    mkdir -p "$store"
+    cp -r "$REPO_ROOT/modules/$name" "$store/$name"
+    rm -rf "$store/$name/test"
+
+    # Transitively, because a library may declare libraries of its own. None does today and the
+    # design does not forbid it, so the worklist costs nothing and cannot be the thing that
+    # breaks when one does.
+    local pending; pending=$(_analysis_declared_libraries "$store/$name/manifest.json")
+    local lib next
+    while [ -n "$pending" ]; do
+        next=""
+        for lib in $pending; do
+            [ -d "$REPO_ROOT/modules/lib/$lib" ] || continue
+            [ -d "$store/lib/$lib" ] && continue
+            mkdir -p "$store/lib"
+            cp -r "$REPO_ROOT/modules/lib/$lib" "$store/lib/$lib"
+            next="$next $(_analysis_declared_libraries "$store/lib/$lib/manifest.json")"
+        done
+        pending="$next"
+    done
+}
+
+_analysis_declared_libraries() {
+    [ -f "$1" ] || return 0
+    python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1])).get("libraries", [])))' "$1"
+}
+
 analysis_run_module() {
     local module="$1" status
+    analysis_install_from_source "$module"
     status=$(run_analysis "$ANALYSIS_SB" "$module")
     [ "$status" = "0" ] || { printf 'verify:%s\n' "$status"; return 0; }
     run_module "$ANALYSIS_SB" "$module"

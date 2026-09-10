@@ -107,7 +107,7 @@ process Analyze {
         cat ${library.join(' ')}
         cat ${moduleDir}/basicstats.R
     } > published/basicstats.R
-    cp ${compiled} published/site_diversity.cpp
+    cp ${compiled.join(' ')} published/
 
     Rscript --vanilla published/basicstats.R --design design.json --pools pools.json \\
         --options options.json --cpp published/site_diversity.cpp \\
