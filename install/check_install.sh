@@ -4,20 +4,17 @@
 #
 # Usage:  ./PoolSeqFlow check          (the wrapper activates the environment first)
 #
-# Checks three things:
+# Checks two things:
 #   1. Every command the pipeline invokes resolves and runs, with its version.
 #   2. Every helper in bin/ is present and executable.
-#   3. If parameters.config exists, that Nextflow can parse it.
 #
-# With a parameters.config present the commands come from `params.software` through
-# `nextflow config`, so a command repointed at a system binary is checked as configured.
-# Without one, the canonical list below is used.
+# IT KNOWS NOTHING ABOUT parameters.config. That file belongs to a project and this verifies an
+# INSTALLATION, which a project need not exist for; the tool list is the canonical one below.
+# A project that repoints a tool at a system binary is a project's business, and `run` is where
+# that resolves.
 
 set -uo pipefail
 
-# Two directories: the installation holds the helpers and nextflow.config, the directory this
-# was invoked from is the project and holds parameters.config. Captured before the cd.
-PROJECT_DIR="$PWD"
 cd "$(dirname "$0")/.." || exit 1
 INSTALL_DIR="$PWD"
 
@@ -81,31 +78,7 @@ echo "Tools"
 echo
 
 declare -a NAMES=() CMDS=()
-source_note=""
-
-# Which list is in use, with the reason when it is the fallback.
-if [ ! -f "$PROJECT_DIR/parameters.config" ]; then
-    source_note="canonical list - no parameters.config in $PROJECT_DIR"
-elif ! command -v nextflow >/dev/null 2>&1; then
-    source_note="canonical list - nextflow not available to read parameters.config"
-else
-    # Interpolated by Nextflow, so this reads what the pipeline will actually invoke. From the
-    # project directory against the installation, exactly as a run would.
-    while read -r n c; do
-        [ -n "$n" ] || continue
-        NAMES+=("$n"); CMDS+=("$c")
-    done < <(cd "$PROJECT_DIR" && nextflow config -flat "$INSTALL_DIR" 2>/dev/null |
-             sed -n "s|^params\.software\.\([A-Za-z_][A-Za-z0-9_]*\) = '\(.*\)'$|\1 \2|p")
-    if [ ${#NAMES[@]} -gt 0 ]; then
-        source_note="params.software in parameters.config"
-    else
-        source_note="canonical list - could not read params.software from parameters.config"
-    fi
-fi
-
-if [ ${#NAMES[@]} -eq 0 ]; then
-    for n in $CANONICAL; do NAMES+=("$n"); CMDS+=("$n"); done
-fi
+for n in $CANONICAL; do NAMES+=("$n"); CMDS+=("$n"); done
 
 check_tool nextflow nextflow
 for i in "${!NAMES[@]}"; do
@@ -114,8 +87,6 @@ done
 check_tool python3 python3
 check_tool awk awk
 
-echo
-echo "  ${DIM}tool list from: ${source_note}${RESET}"
 echo
 
 # --------------------------------------------------------------- 2. helpers --
@@ -142,28 +113,6 @@ for path in bin/*; do
         printf '  %-28s %sOK%s\n' "$f" "$GREEN" "$RESET"
     fi
 done
-echo
-
-# ---------------------------------------------------------------- 3. config --
-
-echo "Configuration"
-echo
-
-if [ ! -f "$PROJECT_DIR/parameters.config" ]; then
-    printf '  %-28s %sNOT YET CREATED%s  in %s\n' "parameters.config" "$YELLOW" "$RESET" "$PROJECT_DIR"
-    echo "    cp $INSTALL_DIR/parameters.config.template $PROJECT_DIR/parameters.config"
-elif ! command -v nextflow >/dev/null 2>&1; then
-    printf '  %-28s %sSKIPPED%s  nextflow not available\n' "parameters.config" "$YELLOW" "$RESET"
-else
-    checked=$((checked + 1))
-    if err=$(cd "$PROJECT_DIR" && nextflow config "$INSTALL_DIR" 2>&1 >/dev/null); then
-        printf '  %-28s %sPARSES%s\n' "parameters.config" "$GREEN" "$RESET"
-    else
-        printf '  %-28s %sFAILED TO PARSE%s\n' "parameters.config" "$RED" "$RESET"
-        printf '%s\n' "$err" | sed 's/^/    /'
-        missing=$((missing + 1))
-    fi
-fi
 echo
 
 # ---------------------------------------------------------------- summary ----
