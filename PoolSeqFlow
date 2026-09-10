@@ -895,8 +895,19 @@ ROW
     # so a failed solve leaves the environment as it was and the rollback is this directory.
     if [ -n "$specs" ]; then
         echo ""
-        echo "Installing what $name runs on, into '$ANALYSIS_ENV':"
-        printf '    %s\n' $specs
+        # WHAT WILL ACTUALLY BE INSTALLED, not everything the manifest names. A module declares
+        # what it needs whether or not the release already carries it, so most of the list is
+        # normally already there and printing it all reads as work that is about to happen.
+        # The conflict check inside conda_install_packages still sees every spec.
+        local pending
+        # shellcheck disable=SC2086
+        pending=$(conda_missing_packages "$ANALYSIS_ENV" $specs)
+        if [ -z "$pending" ]; then
+            echo "Everything $name runs on is already in '$ANALYSIS_ENV'."
+        else
+            echo "Installing what $name runs on, into '$ANALYSIS_ENV':"
+            printf '    %s\n' $pending
+        fi
         echo ""
         # shellcheck disable=SC2086
         if ! conda_install_packages "$ANALYSIS_ENV" $specs; then

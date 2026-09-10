@@ -349,9 +349,36 @@ conda_conflicting_packages() {
     done
 }
 
+# The specs an environment does not already hold at exactly the version asked for, one per line.
+# The counterpart of conda_conflicting_packages and the same comparison: a name absent from the
+# environment is missing, one held at the version wanted is satisfied, and one held at another
+# version is neither - it is a disagreement, and it belongs to the conflict check.
+#
+# A module declares everything it needs whether or not the release already carries it, so most
+# of what a manifest names is normally already there. Asking conda to install what is installed
+# is a network round trip and a solve to be told nothing has to happen.
+conda_missing_packages() {
+    local env="$1"; shift
+    local held spec name want have
+    held=$(conda list -n "$env" --export 2>/dev/null | grep -v '^#' || true)
+    for spec in "$@"; do
+        name="${spec%%=*}"
+        want="${spec#*=}"
+        have=$(printf '%s\n' "$held" \
+               | sed -n "s/^$(printf '%s' "$name" | sed 's/[.]/\\./g')=\([^=]*\).*/\1/p" | head -1)
+        [ "$have" = "$want" ] && continue
+        printf '%s\n' "$spec"
+    done
+}
+
 # Installs the named specs into an environment, or fails having installed none of them.
 # `--freeze-installed` lets the solver add these and whatever they need while refusing to change
 # anything else that is already there.
+#
+# The conflict check runs first because it is a refusal: nothing else is worth doing once the
+# environment disagrees. It does not depend on running first - conda_missing_packages keeps
+# whatever is not already satisfied, and a spec held at ANOTHER version is not satisfied, so a
+# disagreement survives the filter either way.
 conda_install_packages() {
     local env="$1"; shift
     [ "$#" -gt 0 ] || return 0
@@ -366,7 +393,13 @@ conda_install_packages() {
         echo "  in it, computes. Nothing was installed." >&2
         return 1
     fi
-    conda install -n "$env" --freeze-installed -y "$@"
+    local missing
+    missing=$(conda_missing_packages "$env" "$@")
+    # Everything asked for is already there at the version asked for. Nothing to do, and conda
+    # is not asked to prove it.
+    [ -n "$missing" ] || return 0
+    # shellcheck disable=SC2086
+    conda install -n "$env" --freeze-installed -y $missing
 }
 
 # What removing the named packages would take out of an environment, one name per line.
