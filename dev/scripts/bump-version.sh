@@ -5,10 +5,11 @@
 # Usage: dev/scripts/bump-version.sh <new-version>          e.g. 1.0.2
 #
 # Rewrites the version in the PoolSeqFlow wrapper (both the header comment and
-# VERSION=) and prepends a CHANGELOG section listing every commit since the last
-# release tag under a "### Commits" heading, along with the matching reference-link
-# definition at the foot of the file. Does not commit, tag, or push - it prints those
-# commands for you.
+# VERSION=) and in nextflow.config's manifest, sets the "environment" field of every
+# shipped module's manifest and moves that module's own version with it, and prepends a
+# CHANGELOG section listing every commit since the last release tag under a "### Commits"
+# heading, along with the matching reference-link definition at the foot of the file.
+# Does not commit, tag, or push - it prints those commands for you.
 #
 # Add release notes above that heading, not over it: the commit list stays in the
 # changelog as the record of what landed.
@@ -105,13 +106,36 @@ sed -i -E "s|^(\s*version\s*=\s*)'.*'|\1'$NEW'|" "$NFCONFIG"
 grep -q "version *= *'$NEW'" "$NFCONFIG" || {
     echo "ERROR: could not update the manifest version in $NFCONFIG" >&2; exit 1; }
 
+# Every module shipped inside the release declares the release whose analysis environment it was
+# built against, and 00_static asserts that equals the manifest version in nextflow.config. A
+# shipped module travels in the same tarball as the environment it names, so at a release the two
+# are the same by construction and there is nothing to decide.
+#
+# Editing a manifest changes its module's directory, which its own YYYYMMDD.NNN version has to
+# follow. That rule belongs to bump-analysis-version.sh and is called rather than repeated.
+MODULES_BUMPED=""
+for manifest in analysis/modules/*/manifest.json; do
+    [ -f "$manifest" ] || continue
+    name=$(basename "$(dirname "$manifest")")
+    grep -q "\"environment\": \"$NEW\"" "$manifest" && continue
+    sed -i -E "s|(\"environment\"[[:space:]]*:[[:space:]]*)\"[^\"]*\"|\1\"$NEW\"|" "$manifest"
+    grep -q "\"environment\": \"$NEW\"" "$manifest" || {
+        echo "ERROR: could not update the environment field in $manifest" >&2; exit 1; }
+    bash "$ROOT/dev/scripts/bump-analysis-version.sh" module "$name" > /dev/null
+    MODULES_BUMPED="$MODULES_BUMPED $name"
+done
+
 echo "$CURRENT -> $NEW"
 for wrapper in $WRAPPERS; do
     echo "  $wrapper : $(grep -cF "$NEW" "$wrapper") references updated"
 done
 echo "  $NFCONFIG : manifest version updated"
 echo "  $LOG   : $(printf '%s\n' "$COMMITS" | wc -l) commits since ${LAST_TAG:-start}, link definition added"
+if [ -n "$MODULES_BUMPED" ]; then
+    echo "  shipped modules :$MODULES_BUMPED"
+    echo "                    environment -> $NEW, and each version moved with it"
+fi
 echo
 echo "Review, then:"
-echo "  git add $WRAPPERS $NFCONFIG $LOG && git commit -m 'Version bump $NEW'"
+echo "  git add -A && git commit -m 'Version bump $NEW'"
 echo "  git tag v$NEW"

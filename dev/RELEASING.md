@@ -125,16 +125,11 @@ Mid-development a version is legitimately behind, which is why the plain run onl
 dev/scripts/bump-version.sh <new-version>
 ```
 
-It rewrites the version in the wrapper (header comment and `VERSION=`) and in `nextflow.config`'s manifest, and prepends a CHANGELOG section listing every commit since the last release tag. It does not commit, tag or push — it prints those commands.
+It rewrites the version in the wrapper (header comment and `VERSION=`) and in `nextflow.config`'s manifest, sets `"environment"` in every shipped module's manifest and moves that module's own version with it, and prepends a CHANGELOG section listing every commit since the last release tag. It does not commit, tag or push — it prints those commands.
 
-**THEN UPDATE THE SHIPPED MANIFESTS, OR THE NEXT STEP FAILS BY DESIGN.** Every module shipped inside a release declares `"environment"` as the release whose analysis environment it was built against, and `00_static` asserts that equals `nextflow.config`'s version exactly:
+**The shipped manifests are part of the bump and no longer a separate step.** A module shipped inside a release travels in the same tarball as the analysis environment it names, so at a release the two agree by construction and there is nothing to decide. `00_static` still asserts `"environment"` equals `nextflow.config`'s version exactly, so a manifest that somehow disagrees still fails the next step — the check is unchanged, only the typing is gone.
 
-```
-analysis/modules/*/manifest.json    "environment": "<new-version>"
-dev/scripts/bump-analysis-version.sh module <name>     # each one, since its directory changed
-```
-
-The failure names the module and both versions. That is deliberate: a script that rewrote the manifests along with the version would remove the one moment where a person looks at what each module claims about its environment.
+A module published **outside** a release is different and is still yours: its `"environment"` is a claim about which release it was built against, and `dev/scripts/bump-analysis-version.sh module <name>` is what moves its version when you change it.
 
 ## 7. Run the full suite
 
@@ -169,4 +164,13 @@ Sync `dev` with `main` so the version bump and the CHANGELOG come back, then car
 
 **Do not work around it on the release branch.** Everything here is either a gate that found something or a gate that is wrong. If it found something, fix it on `dev` and start again from the step that would notice. If the gate is wrong, fix the gate — and add the case that would have caught what it missed, because a gate nobody trusts is worse than no gate.
 
-**A number in a message is worth reading twice.** Two of the defects this project has shipped were a gate reporting success over work it had not done.
+**A number in a message is worth reading twice.** The most common defect this project has shipped is not a broken feature — it is a gate reporting success over work it had not done.
+
+They look alike, and each one is cheap to spot once you know the shape:
+
+- **A filter that matched nothing still says PASS.** `--case "no package leaves"` selected zero cases and printed `PASS 0 passed`; the underscore form selected one. Read the count, not the word.
+- **A fixture that failed to set itself up still says PASS.** Three cases wrote `modules-repo/index.tsv` into a directory their `mkdir -p` never created, and the checker skips its catalogue check when the file is absent. The tell was two stderr lines in a run that reported success.
+- **A check that asks the developer's machine instead of the release still says PASS.** `have_report_tools` used `command -v typst`, and the maintainer had one; the shipped environment did not.
+- **A literal that happens to be right still says PASS.** A case asserted `${EXPECTED_VERSION:-2.2.0}` against a variable set nowhere. Correct until the bump, then a failure that says nothing about what it tests.
+
+**A version bump is when this class surfaces**, because everything before it ran against a tree carrying the old version. That is why step 7 is after step 6 and not before it.

@@ -52,7 +52,11 @@ test_a_module_version_is_not_the_release_version() {
     run_analysis "$ANALYSIS_SB" demo > /dev/null
     local report; report=$(analysis_report "$ANALYSIS_SB")
     assert_contains "$report" "demo v9.9.9" "the module reports its own version"
-    assert_contains "$report" "PoolSeqFlow ${EXPECTED_VERSION:-2.2.0}" \
+    # Read from the wrapper, never written here. EXPECTED_VERSION was set nowhere, so the
+    # fallback beside it was the release version hardcoded into a case - correct until the
+    # 3.0.0 bump moved it, and then a failure that says nothing about what it tests.
+    local release; release=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/PoolSeqFlow" | head -1)
+    assert_contains "$report" "PoolSeqFlow $release" \
         "while the results still carry the pipeline release"
 }
 

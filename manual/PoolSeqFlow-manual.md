@@ -4359,7 +4359,7 @@ PoolSeqFlow was written by one person over six years, and an AI coding agent has
 |---|---|---|
 | 2020–2022 | The original pipeline and the false-positive filtering approach, written in **bash** during my PhD studies. The pool-seq reasoning — what a pool's size does to its detection limit, why a fixed reference is not a privileged one, which filters a real dataset needs — was settled here. | Not in this repository |
 | 2025–2026 | The rewrite into **Nextflow**: the step model, the resume logic, the parameter system. Published as **v1.0.0** and **v1.0.1**. The rewrite was needed because I was asked to look at some analysis for some of my collaborators and I decided to redo their variant calling. Without an access to a personal cluster, I needed proper parallelization, for which Nextflow was the perfect vehicle. | This repository, from v1.0.0 |
-| From v2.0.0, August 2026 | The **v2.x** series and the unreleased **v3.0.0**, developed with Claude Code: multi-run sharing, storage tiering, the metadata file, the analysis layer and its modules. | This repository |
+| From v2.0.0, August 2026 | The **v2.x** series and **v3.0.0**, developed with Claude Code: multi-run sharing, storage tiering, the metadata file, the analysis layer and its modules. | This repository |
 
 ### The repository is younger than the tool
 
@@ -4395,8 +4395,8 @@ I kept a lot of it as it was.
 | v1.0.1 | 2026-06-02 | Fixes |
 | v2.0.0, v2.0.1 | 2026-08-12 | Nextflow 26 and Trim Galore 2.x; `parameters.config` becomes yours rather than tracked |
 | v2.1.0, v2.1.1 | 2026-08-15 | `migrate_config`; real CPU requests per process; the first change guards |
-| v2.2.0 | 2026-08-16 | The current release |
-| v3.0.0 | unreleased | The analysis layer, multi-run sharing, storage tiering |
+| v2.2.0 | 2026-08-16 | `vcffilter.minDP` begins filtering; the documentation site |
+| v3.0.0 | 2026-09-10 | The current release. The analysis layer, multi-run sharing, storage tiering |
 
 **v1.0.1 is the last release written without an agent; v2.0.0 is the first written with one.** That line is drawn at a tag rather than a date so it can be checked: `git diff v1.0.1..v2.0.0` is where the working method described in this section begins.
 

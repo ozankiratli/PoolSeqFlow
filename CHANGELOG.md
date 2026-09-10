@@ -6,6 +6,170 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
+## [3.0.0] - 2026-09-10
+
+**This version is about accessibility.** I tried to do as much engineering as possible using the most common tools and knowledge to make sure that the pipeline can create reproducible results for the users. The outputs now contain, not only the parameter set used in each analysis, there is a list of citations for all the tools used for each portion of the analysis. The pipeline refuses to run when parameter combination is changed mid-run, this is because, one cannot say which one is used for certain analysis if they change it mid-run. This was a reproducibility choice. However, if the user wants to compare multiple parameter combinations, multi-run feature is added. The pipeline handles it in the most efficient way, by finding where the divergent parameter applies and creates separate workflows for each parameter combination. Analysis layer is built to accommodate different ploidies and multiallelic sites. I also improved the manual/website which now has all explanation and history about the tool.
+
+**Upgrading is not automatic and it is not optional reading.** Your project now has two directories instead of one, `RGTags.csv` is replaced by a file that does not convert from it, and the depth ceiling is measured per sample rather than fixed. Run `./PoolSeqFlow migrate_config` before anything else — it carries your settings across, prints the `mv` commands for the files that have to move, and explains each change in place. A configuration from 2.2.0 is now **refused** rather than half-read, so there is no way to discover this partway through a run.
+
+**The pipeline also grew a second half.** `./PoolSeqFlow analysis` runs statistical modules over a finished run's frequency tables: three ship in this release, more install from a repository without waiting for a PoolSeqFlow release, and every published result carries the script that produced it, the assumptions it was computed under, and a PDF report. It runs in its own conda environment and does not touch the pipeline's.
+
+### Changed
+
+- **A project now has two roots and they must be different paths.** `mainDir` holds your reads, reference, `parameters.config` and `metadata.csv`, and is where you launch; `storageDir` holds finished results. Before 3.0 there was one directory doing both, called `projectDir`. `migrate_config` renames the parameter, reports it under `Renamed this release`, and prints the moves for the files that were on the old root — it never moves anything itself.
+- **`RGTags.csv` is replaced by `metadata.csv`, and it is not a rename.** The old file carried SAM read-group tags and nothing else. The new one describes the experiment: it names each sample, decides which rows merge into one pool through `RG_Sample`, and carries per-sample pool sizes and adapters. It also has somewhere to put the experiment itself — `exp_` for what you set, `pt_` for what you measured as a response, `cov_` for what you measured alongside — which is what the analysis layer reads. **Nothing converts the old file, and the run stops at step 0 until the new one exists.** Start from `metadata.csv.template`, which documents every column.
+- **The depth ceiling is measured per sample instead of fixed at 2000.** Step 5 reads each sample's own depth histogram and step 6 caps that sample's BAM before calling, so a shallow library is no longer judged at a deep one's ceiling. `capBAM.maxDepth = -1` is that measurement; `variantCall.maxDepth` becomes a second ceiling on top of it and ships as `0`, which mpileup reads as no limit. Your old `2000` is **not** carried across, and `migrate_config` reports it under `Format changed this release` with the reason. **To reproduce 2.2.0 results exactly: `variantCall.maxDepth = 2000` and `capBAM.maxDepth = 0`.**
+- **Pool size, ploidy and detection sensitivity can vary per sample**, set in `metadata.csv` through `param_poolSize`. One number for a whole run judged a pool of 10 at a pool of 500's resolution. Rows sharing an `RG_Sample` must agree, and a blank cell counts as a different answer rather than as agreement.
+- **Parameters renamed for what they do rather than which tool runs them.** `samtools.*` is `cleanBAM.*`, `bcftools.*` is `variantCall.*`, `diploidy` is `ploidy` — the pipeline was never limited to diploids and the name said otherwise. `migrate_config` carries every value across.
+- **A configuration from an older release is refused rather than partly read.** Nextflow reads `parameters.config` as given, so an absent parameter used to interpolate into a path as the literal string `null` and the run started anyway. `run`, `resume`, `dryrun`, `reset`, `analysis complete` and running a module now stop and name `migrate_config`. `clean`, `dryclean` and `migrate_config` itself are unaffected.
+- **The `cores` block and the tool `options` strings are computed for you and ship commented out.** They are not gone: `migrate_config` reports them under `Still yours to set`, and uncommenting a line takes one back. Coming from 2.2.0 that is thirteen parameters — the eight `cores` values and the five `options` strings your file already had.
+
+### Added
+
+- **The analysis layer.** `./PoolSeqFlow analysis <module>` runs a module over a finished run's frequency tables, in a conda environment of its own that `./PoolSeqFlow analysis install` creates. Three modules ship: **`basicstats`** (site counts, depth, effective pool size and gene diversity per pool), **`association`** (each allele's frequency regressed on a phenotype measured per pool, with a permutation *p*), and **`mds`** (the pools placed by Nei's minimum distance, corrected for sampling, on a classical MDS). Each publishes the script that produced its numbers, the shared library folded in, a `references.bib` for the methods it used, and a PDF report of the whole folder.
+- **Every module states what it cannot answer.** A module's manifest carries its assumptions and its limits as text, and the run prints them beside the result — the permutation floor a small design cannot go below, why an MDS distance can be negative and that this is correct, that a capped BAM is biased toward reads mapping earliest. A result that is model-based says so where it is read.
+- **A module store and a repository.** `./PoolSeqFlow analysis modules {list|available|install|uninstall}` installs a module published separately from the pipeline, with its conda packages, checked against a checksum and against what this release can run. Installing one that needs a GPL package tells you so: the pipeline stays Apache-2.0 and each module carries its own license.
+- **Every run writes its own citations.** A pipeline run leaves `citations.txt` in `Output/`, naming each tool it actually invoked with the version that tool reported — probed at run time, so a tool repointed at a system binary is recorded as what ran rather than as what shipped. A published analysis carries `CITATIONS.md` and `references.bib` beside its results, covering the methods each module used as well as the software. What to cite stops being something you reconstruct months later.
+- **Multi-run projects.** One data source, several parameter sets, described in `runs.csv` with `multiRun = true`. Runs sharing an input share the work rather than repeating it, and step 0 prints what is shared before any compute is spent.
+- **`./PoolSeqFlow dryrun` and `dryclean`** — check the configuration and preview what a run would do, writing nothing into either root, then remove the preview.
+- **`./PoolSeqFlow init`** — populate an empty directory with the template configuration and metadata, ready to edit.
+- **Several versions install side by side.** Each release has its own environment and payload, so an in-flight project can finish on the release it started on. `./PoolSeqFlow list` shows what is installed and `uninstall` asks which.
+- **A test suite**, nineteen suites split by what they cost, so a change runs only the cases it can reach: `test/run_tests.sh --changed` picks them from the file you edited. A module ships its own cases inside its own directory.
+- **Both conda environments are pinned to exact builds.** `install/environment-analysis.yml` was a hand-written specification and is now an export of an environment the full suite passed against, as `install/environment.yml` already was.
+
+### Fixed
+
+- **FastQC was given up to eight threads and needed two.** Its `-t` counts *files* processed simultaneously, not threads per file, and step 2 hands it one pair. Measured on a pair of 2M-read files, `-t 2` is 1.93× faster than `-t 1` while `-t 4`, `-t 6` and `-t 8` are no faster at all — and every thread past the second costs roughly 250 MB of resident memory, twice per sample. On a memory-constrained machine that is the difference between a run finishing and being killed. The documented ladder always said two; the code had drifted.
+- **`DepthProfile` declared one of the three files it publishes**, so the depth histogram and the depth report were outside Nextflow's tracking and outside the skip that avoids rebuilding them.
+- **Two data-loss defects in `atomic_mv.sh`**, both found by reading rather than by a failure: moving a directory onto an existing one could lose a file that only the destination had.
+- **`snpEff`'s configuration file is settable through `parameters.config`** rather than fixed, and multiple annotation databases are supported.
+- **The step 7 intermediates are no longer published.** `<name>_sort_fp_dq.vcf` and the split SNP and INDEL VCFs had been landing in `Output/VCF/` since 1.0; the called VCF and the annotated one are what a run keeps.
+
+### Removed
+
+- `params.gff`, `params.dir.scripts`, `params.dir.output.temp`, and `rgTagsFile` with `rgTagsPath`. `migrate_config` reports each under `No longer used`. There are no legacy fallbacks anywhere in the pipeline: a parameter that is gone is handled at migration and nowhere else.
+
+### Commits
+
+- (922c3b3) Manual is mostly moved to github pages
+- (f9b3437) Version check is added.
+- (85fbe74) Merge checks added
+- (b7f95eb) pipefails added
+- (a52da7f) pipefail added, atomic move implemented on reference file
+- (a57e01b) Copy check added to BuildSnpEff
+- (78f85c1) Raw filename check is enforced
+- (15832fe) RGTags column count check enforced
+- (513d417) VerifyAll now publishes the results in the output folder.
+- (163ec6e) Log management improved, older logs are now retained
+- (012f0d1) Hyphen is now accepted separator for reads
+- (dc1e5a1) Combined log of the last run is assembled as a single file
+- (afd78b6) Temporary file management improved
+- (57251ce) conda env check hardened, rm legacy files explained
+- (8902645) atomic move hardened
+- (e440fa5) better config migration rules implemented
+- (2d26123) bump version is improved
+- (7a782a0) pycache is untracked
+- (14e847d) version enforcement clarification, version bump fix
+- (269d64c) Minor fixes in dictionary counting
+- (2318a89) Medium importance fix on snpeff config file, now can be set properly through parameters
+- (5d516a8) Support for multicharacter mate tokens added
+- (c6d8dda) script hardening for midstream failures
+- (372ac66) NextFlow warning sweep
+- (5ed5002) Fix for a bug introduced in the previous stage.
+- (eb777cf) Test suite added
+- (af0d04e) Multiple versions become installable going forward
+- (c2e1bf7) Added features to list all installed versions and uninstall all
+- (69c8dac) cutadapt min length is clarified, and guards added
+- (1e1fdbf) Test suite is being implemented now testing 30 cases
+- (81edc1d) Environment creation with new version control is fixed
+- (bc3b212) A script for preparing a new version is added
+- (1e10c77) projectDir is renamed as storageDir for clarity
+- (9ffe284) snpEff improvement for multiple database support, verify env improvements
+- (9d8a17b) mainDir and storageDir cannot be same anymore, guards added.
+- (2ee0e27) classify_manifest moved to its own script, test suite efficiency improved
+- (79efcd2) parameter control automated, override is still allowed
+- (9b37dbc) Directory for install is now separate and checked
+- (6516431) storage management improvements are being implemented
+- (991addf) Install function now installs the wrapper and scripts and multiple versions can be installed
+- (2b75a6c) completion checks started to be built
+- (cb72804) Dictionary tests are added
+- (070fb81) trim paths are fixed for storage management
+- (12e12d8) fastqc files, aligned bam, and bai files storage improvements
+- (de7e288) rest of the storage management is done
+- (065fcc7) clean and reset reworked to address previous changes
+- (f38267a) The first half of multi-run work is completed
+- (8546b50) Multiple runs from a single data source is added
+- (1afb0d7) Process redundancy is resolved
+- (3a3a10a) Directory structure clarified
+- (6cc24e8) target.dir is removed
+- (5cde1a4) make dir is added as a bug fix
+- (9f4e647) sharing is implemented
+- (048bd33) Environment verification is now aligned with multi-run
+- (7f30177) verify environment is now checking parameter changes midway, version change mid-run is blocked
+- (360cfbd) dryrun and dryclean added
+- (1cd315c) Multiple bug fixes
+- (c28fbdc) metadata.csv replaced and expanded rgtags.csv
+- (4bdd3aa) per sample poolsize and sensitivity added, metadata addition is complete now
+- (f2ec822) docs management streamlined with a master manual.md
+- (00da07d) gitignore, gitattributes, and github workflow changes to reflect docs management
+- (982e0c4) init project added, uninstall improved
+- (7ad02c1) major documentation and comment overhaul
+- (cc00833) parameter renaming for clarity, samtools is now cleanBAM and bcftools is variantCall
+- (c3a3191) automatic maxDepth calculation added
+- (da95a4b) Major commit: Analysis layer arrived, install and uninstall repaired, docs fixed
+- (4303166) analysis.nf added to payload items
+- (7810c56) Analysis layer foundation is being worked: verify analysis, tests, and config templates are in
+- (f5c6135) Analysis output control mechanism
+- (c209cce) Minor fixes on analysis related changes
+- (abe00fb) the module store landed
+- (5fafa80) analysis libraries are being built to allow modular statistical tools design
+- (7d65893) analysis wrapper is folded inside the main wrapper
+- (b432794) Docs and comments pass
+- (4a5f635) Two invocation launch for analysis layer
+- (0c82ac9) main.nf verification for each module
+- (bf0dcfd) Module development rules added
+- (d9886c5) Modules manifest and management subcommands added
+- (f4f1104) fixed atomic.mv concurrency issue
+- (9567e2a) module analysisPlan fix
+- (ebf08a2) analysis writing results safely, intermediate checks, granular move back
+- (77fdbd7) atomic_mv fix for multiple failure scenarios, rsync dependency added
+- (f4508f5) analysis complete command moves files to storage, the resume copies them back to do the analysis
+- (1f1fbcf) clean now cleans staged files, default params are hardcoded for analysis
+- (c164ec5) defaults.config is now frame.config and users should not change it
+- (e2406fa) provenance, frame and modules versioning
+- (9cb22fe) R script is emitted along with results now
+- (4c3d394) citations for modules added, test suite fixes
+- (e76774a) Comment cleanup
+- (aa48373) snpEff reports are both copied now
+- (9f9b7da) histogram ceiling is a parameter, archive gate enumerates, glob loops guarded, execution defaults reachable
+- (a06c312) analysis lib nf files moved
+- (4cb4ae7) the experimental design, module settings, and how a result says to read itself
+- (2915346) time variable is now configurable, time series feature added
+- (fabdb5c) diploidy, poolsize are recovered from metadata
+- (c6544d7) Fixes on derived parameters
+- (381541e) F1 basicstats, and the PDF report every analysis carries
+- (d674e8f) Split the suite, and run only what a change touches
+- (306dd26) phenotype variables pt_ and covariate variables cov_ are added to the metadata
+- (f2a7774) Manual and development notes are added
+- (e3eb887) allele frequencies, benchmark comparisons added, analysis versioning fixes made
+- (15d4c34) experimental design and covariate readjustments
+- (12633a6) association analysis, validation of association, tests, reorganization of analysis.config
+- (4cb4cff) Comments housekeeping
+- (d024dd1) mds landed
+- (409aef7) Language corrections for drift
+- (d92411e) module store landed, the depth profile bug fixed
+- (77cb91e) docs and comments pass
+- (fc3d2a1) realease prep, minor fixes
+- (e384928) Repo structure is created
+- (268f508) Manual check, better metadata
+- (12a1eb6) manual updates
+- (2b5236f) fastqc now limits the cores to 2
+- (abaa496) prep version script now covers analysis
+- (ff08f61) Environment upgrade
+- (e539333) config migrate prepared, new guards enforce it
+
+---
+
 ## [2.2.0] - 2026-08-16
 
 **This release changes results.** `vcffilter.minDP` previously had no effect on the output at all; it now removes sites. Read the first entry under Changed before upgrading a project that has outputs you intend to keep — and expect step 0 to stop your next run, because the analysis parameters have changed. That is the guardrail working; the report names the folders to delete.
@@ -230,6 +394,7 @@ Major upgrade to **Nextflow 26** and **Trim Galore 2.x**. This release is not ba
 
 ---
 
+[3.0.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.0.0
 [2.2.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.2.0
 [2.1.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.1.1
 [2.1.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v2.1.0
