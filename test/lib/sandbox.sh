@@ -55,12 +55,12 @@ make_pipeline_sandbox() {
     sb=$(guard_path "$TEST_TMPDIR/$name")
     rm -rf "$sb"
     mkdir -p "$sb/install" "$sb/main" "$sb/store"
-    # install/ too: it carries citations.json, which a run reads at the end. Copied whole
-    # rather than by file, so the next thing added there is present without a change here.
-    # manual/ is in PAYLOAD_ITEMS as well: a published analysis links each file it holds to a
-    # section of it, and the frame checks those anchors against the installed copy.
+    # citations/ too: it carries citations.json, which a run reads at the end. Each directory
+    # is copied whole rather than by file, so the next thing added to one is present without a
+    # change here. manual/ is in PAYLOAD_ITEMS as well: a published analysis links each file it
+    # holds to a section of it, and the frame checks those anchors against the installed copy.
     cp -r "$REPO_ROOT"/scripts "$REPO_ROOT"/bin "$REPO_ROOT"/lib "$REPO_ROOT"/analysis \
-          "$REPO_ROOT"/install "$REPO_ROOT"/manual "$sb/install"/
+          "$REPO_ROOT"/install "$REPO_ROOT"/citations "$REPO_ROOT"/manual "$sb/install"/
     cp "$REPO_ROOT"/poolseqflow.nf "$REPO_ROOT"/dryrun.nf "$REPO_ROOT"/analysis.nf \
        "$REPO_ROOT"/nextflow.config "$sb/install"/
     # The wrapper, so cases can exercise clean/reset against a real project instead of
@@ -712,12 +712,14 @@ run_launcher_with_envs() {
     rm -rf "$sb"
     mkdir -p "$sb/install" "$sb/bin" "$sb/scripts"
     cp "$REPO_ROOT/PoolSeqFlow" "$sb/"
-    # check_install.sh does real work against a real environment; these tests are about
-    # environment selection, so it is stubbed to a success.
-    printf '#!/bin/bash\necho "STUB check_install ran"\n' > "$sb/install/check_install.sh"
+    # Both check scripts do real work against a real environment - check_project.sh runs
+    # Nextflow as well - and these tests are about which script the wrapper reaches and with
+    # what activated, so each is stubbed to a success that names itself.
+    printf '#!/bin/bash\necho "STUB check_install ran"\n' > "$sb/bin/check_install.sh"
+    printf '#!/bin/bash\necho "STUB check_project ran in $PWD"\n' > "$sb/bin/check_project.sh"
     printf 'name: stub\n' > "$sb/install/environment.yml"
     printf 'name: stub\n' > "$sb/install/environment-analysis.yml"
-    chmod +x "$sb/install/check_install.sh"
+    chmod +x "$sb/bin/check_install.sh" "$sb/bin/check_project.sh"
     # A complete payload, because `install` refuses to deploy an incomplete copy - it would
     # otherwise produce an installation missing a file, which is worse than failing. Empty
     # placeholders are enough: nothing here ever runs Nextflow.
@@ -744,6 +746,15 @@ run_launcher_with_envs() {
     # The one payload file that is not placeholder-able: the wrapper SOURCES it, so an empty
     # lib/ makes every launcher case fail before it reaches what it is testing.
     cp "$REPO_ROOT/lib/wrapper_lib.sh" "$sb/lib/"
+
+    # A project to stand in, for the arms that read one. Its content is whatever the case set:
+    # `storageDir` is the key require_migrated_config turns on, so a case chooses between a
+    # current config and an older one by writing that line or not.
+    if [ -n "${LAUNCHER_PROJECT_CONFIG:-}" ]; then
+        printf '%s\n' "$LAUNCHER_PROJECT_CONFIG" > "$sb/parameters.config"
+    else
+        rm -f "$sb/parameters.config"
+    fi
 
     # The stub conda goes in its own directory rather than $sb/bin, which belongs to the
     # pipeline and is part of what `install` deploys - a fake conda inside the payload would
@@ -814,7 +825,7 @@ run_analysis_launcher_with_envs() {
     local sb
     sb=$(guard_path "$TEST_TMPDIR/analysis-launcher")
     rm -rf "$sb"
-    mkdir -p "$sb/install" "$sb/lib" "$sb/analysis"
+    mkdir -p "$sb/install" "$sb/lib" "$sb/bin" "$sb/analysis"
     cp "$REPO_ROOT/PoolSeqFlow" "$sb/"
     cp "$REPO_ROOT/lib/wrapper_lib.sh" "$sb/lib/"
     : > "$sb/analysis.nf"
@@ -830,11 +841,11 @@ run_analysis_launcher_with_envs() {
     mkdir -p "$sb/analysis/lib/nf"
     cp "$REPO_ROOT/analysis/lib/nf/modules.nf" "$sb/analysis/lib/nf/"
     printf 'name: stub\n' > "$sb/install/environment-analysis.yml"
-    # Stubbed for the same reason install/check_install.sh is: it needs a real R environment,
+    # Stubbed for the same reason bin/check_install.sh is: it needs a real R environment,
     # and these tests are about which environment is chosen.
     printf '#!/bin/bash\necho "STUB check_analysis_install ran"\n' \
-        > "$sb/install/check_analysis_install.sh"
-    chmod +x "$sb/install/check_analysis_install.sh"
+        > "$sb/bin/check_analysis_install.sh"
+    chmod +x "$sb/bin/check_analysis_install.sh"
 
     if [ -n "${LAUNCHER_STORE_MODULE:-}" ]; then
         local store="$sb/analysis/modules/$LAUNCHER_STORE_MODULE"

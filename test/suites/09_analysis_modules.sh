@@ -18,10 +18,12 @@ test_an_unknown_module_refuses_before_any_task() {
     assert_status 1 "$status" "a module that does not exist must stop the run"
     assert_contains "$(analysis_output)" "'demo' is not installed" \
         "should name what was asked for"
-    # Both kinds of module, sorted: one the release ships into the store, and the frame's own
-    # built-in, which is in no directory at all.
-    assert_contains "$(analysis_output)" "Available here: association, basicstats, mds, verify" \
-        "and list what there is"
+    # A RELEASE SHIPS AN EMPTY STORE, so the only thing available in a fresh sandbox is the
+    # frame's own built-in, which is in no directory at all. The full string and not a substring:
+    # what is asserted is that nothing ELSE is listed, which a `contains` on one name would miss.
+    # The case below is the other half - the roster grows when something is installed.
+    assert_contains "$(analysis_output)" "Available here: verify"$'\n' \
+        "and list what there is, which is the built-in alone"
     assert_no_file "$ANALYSIS_SB/main/Analysis/Results/demo/0_verify_analysis.txt" \
         "nothing should have run"
 }

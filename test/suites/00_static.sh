@@ -1,8 +1,8 @@
 #!/bin/bash
 # Checks that need no data: syntax, release packaging, version consistency.
 # cost: static
-# covers: PoolSeqFlow install/ dev/scripts/ modules-repo/index.tsv .gitattributes
-# covers: analysis/citations.json install/citations.json install/references.bib
+# covers: PoolSeqFlow install/ dev/scripts/ modules/repo/index.tsv .gitattributes
+# covers: analysis/citations.json citations/citations.json citations/references.bib
 # covers: analysis/references.bib manual/references.bib
 
 # `nextflow lint` was brought to zero warnings during the post-2.2.0 audit. Held there
@@ -10,11 +10,47 @@
 test_nextflow_lint_is_clean() {
     have_tools || { skip_case "no conda environment"; return; }
     local out
+    # Everything but modules/, which is linted below in the layout it runs in.
     out=$(cd "$REPO_ROOT" && PATH="$TEST_CONDA_ENV/bin:$PATH" \
           JAVA_HOME="$TEST_CONDA_ENV" JAVA_CMD="$TEST_CONDA_ENV/bin/java" \
-          nextflow lint . 2>&1)
+          nextflow lint analysis scripts lib bin install \
+                        poolseqflow.nf analysis.nf dryrun.nf nextflow.config 2>&1)
     assert_contains "$out" "had no errors" "lint should report no errors"
     assert_not_contains "$out" "warning" "lint should report no warnings"
+}
+
+# A MODULE IS LINTED WHERE IT RUNS, NOT WHERE GIT KEEPS IT.
+#
+# A module's source lives in modules/<name>/ and is installed into analysis/modules/<name>/, and
+# its `include` of the frame is written '../../lib/nf/...' - correct from the STORE and
+# meaningless from the source directory. That is the cost of the store and the sources being
+# different places, which is deliberate: while they were one directory the modules shipped inside
+# every release because they were sources sitting in the install path.
+#
+# So the check is not "skip the modules" but "assemble the layout a module actually sees". Linting
+# them in modules/ would report errors that say nothing, and linting nothing at all would let a
+# real one through.
+test_every_module_lints_in_the_store_layout() {
+    have_tools || { skip_case "no conda environment"; return; }
+    local sb; sb=$(guard_path "$TEST_TMPDIR/module-lint")
+    rm -rf "$sb"; mkdir -p "$sb/analysis/modules"
+    cp -r "$REPO_ROOT/analysis/lib" "$sb/analysis/"
+    cp -r "$REPO_ROOT/scripts" "$sb/"
+    cp "$REPO_ROOT/nextflow.config" "$sb/"
+    local found=0 dir
+    for dir in "$REPO_ROOT"/modules/*/; do
+        [ -f "$dir/main.nf" ] || continue        # modules/lib holds libraries, not modules
+        cp -r "$dir" "$sb/analysis/modules/"
+        found=$((found + 1))
+    done
+    [ "$found" -gt 0 ] || { fail_case "no module sources found under modules/"; return; }
+
+    local out
+    out=$(cd "$sb" && PATH="$TEST_CONDA_ENV/bin:$PATH" \
+          JAVA_HOME="$TEST_CONDA_ENV" JAVA_CMD="$TEST_CONDA_ENV/bin/java" \
+          nextflow lint "$sb/analysis/modules" 2>&1)
+    assert_contains "$out" "had no errors" "modules should lint in the store layout:"$'\n'"$out"
+    assert_not_contains "$out" "had errors" "no module should report an error:"$'\n'"$out"
 }
 
 test_shell_scripts_parse() {
@@ -133,14 +169,14 @@ test_the_release_archive_gate_passes() {
 # published after a release is installable into it. A copy inside the tarball would be a second
 # answer to what can be installed, frozen on the day the release was built.
 test_the_module_catalogue_never_reaches_a_release() {
-    local index="modules-repo/index.tsv"
+    local index="modules/repo/index.tsv"
     [ -f "$REPO_ROOT/$index" ] || { fail_case "$index is missing"; return; }
     # The archive itself, not `git check-attr`: the catalogue is covered by a directory pattern
     # now, and check-attr reports `unspecified` for a file inside one even though git archive
     # excludes it - `test/run_tests.sh` answers the same way. What matters is the tarball.
     local listing; listing=$(working_tree_archive)
     [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
-    assert_not_contains "$listing" "modules-repo" \
+    assert_not_contains "$listing" "modules/repo" \
         "the catalogue and the tarballs beside it must not reach a release"
     # And the release must not be able to fall back to a copy of its own: a frozen catalogue
     # inside a tarball would be a second answer to what can be installed.
@@ -157,17 +193,17 @@ test_the_module_catalogue_never_reaches_a_release() {
 # Only rows pointing into this repository are checked. A third-party row would name a host
 # nothing here can see, and asserting on that would fail for a reason that is not ours.
 test_every_catalogue_row_has_the_tarball_it_advertises() {
-    local index="$REPO_ROOT/modules-repo/index.tsv"
-    [ -f "$index" ] || { fail_case "modules-repo/index.tsv is missing"; return; }
+    local index="$REPO_ROOT/modules/repo/index.tsv"
+    [ -f "$index" ] || { fail_case "modules/repo/index.tsv is missing"; return; }
     command -v sha256sum > /dev/null 2>&1 || { skip_case "no sha256sum"; return; }
 
     local rows=0 name version url sha file
-    while IFS=$'\t' read -r name version _contract _frame _env url sha _summary; do
+    while IFS=$'\t' read -r name _kind version _contract _frame _env url sha _summary; do
         case "$name" in ''|'#'*|name) continue ;; esac
         case "$url" in *"/modules-repo/"*) ;; *) continue ;; esac
         rows=$((rows + 1))
-        file="$REPO_ROOT/modules-repo/${url##*/}"
-        [ -f "$file" ] || { fail_case "$name $version: the catalogue names ${url##*/}, which is not in modules-repo/"
+        file="$REPO_ROOT/modules/repo/${url##*/}"
+        [ -f "$file" ] || { fail_case "$name $version: the catalogue names ${url##*/}, which is not in modules/repo/"
                             continue; }
         local actual; actual=$(sha256sum "$file" | awk '{print $1}')
         assert_eq "$sha" "$actual" "$name $version: the row's sha256 is not ${url##*/}'s"
@@ -182,7 +218,7 @@ test_every_catalogue_row_has_the_tarball_it_advertises() {
 # reads as an empty field in every row rather than as an error.
 test_the_module_catalogue_header_is_the_one_the_wrapper_reads() {
     local header wanted column
-    header=$(grep -v '^[[:space:]]*#' "$REPO_ROOT/modules-repo/index.tsv" \
+    header=$(grep -v '^[[:space:]]*#' "$REPO_ROOT/modules/repo/index.tsv" \
              | grep -v '^[[:space:]]*$' | head -1)
     # Taken from the wrapper rather than written out here: the columns are matched by name, so
     # the coupling to assert is that every name it looks for is in the header - not that the
@@ -202,7 +238,7 @@ test_the_module_catalogue_header_is_the_one_the_wrapper_reads() {
 # instead of reading the wrong field out of each row; the test above cannot protect a wrapper
 # that has already shipped.
 test_the_module_catalogue_declares_its_layout_and_its_version() {
-    local index="$REPO_ROOT/modules-repo/index.tsv"
+    local index="$REPO_ROOT/modules/repo/index.tsv"
     local format version supported
     format=$(sed -n 's|^#![[:space:]]*index-format:[[:space:]]*\(.*\)$|\1|p' "$index" | head -1 | tr -d ' ')
     version=$(sed -n 's|^#![[:space:]]*index-version:[[:space:]]*\(.*\)$|\1|p' "$index" | head -1 | tr -d ' ')
@@ -241,16 +277,23 @@ test_the_analysis_version_scripts_are_there_and_runnable() {
 # answer depends on whether the tree it reads is dirty - which this one's is not, most days.
 test_the_frame_version_moves_with_a_change_and_not_with_the_calendar() {
     local sb; sb=$(guard_path "$TEST_TMPDIR/version-rule")
-    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/R" \
-                           "$sb/analysis/modules/demo/test" "$sb/modules-repo"
+    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/nf" \
+                           "$sb/modules/demo/test" "$sb/modules/repo" \
+                           "$sb/analysis/modules/ghost"
     cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$sb/dev/scripts/"
     printf 'frame {}\n' > "$sb/analysis/frame.config"
     printf '20260101.001\n' > "$sb/analysis/frame.version"
-    printf 'f <- function() 1\n' > "$sb/analysis/lib/R/thing.R"
-    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules-repo/index.tsv"
-    printf '{"name": "demo", "version": "20260101.001"}\n' > "$sb/analysis/modules/demo/manifest.json"
-    printf 'workflow {}\n' > "$sb/analysis/modules/demo/main.nf"
-    printf 'echo case\n' > "$sb/analysis/modules/demo/test/demo.sh"
+    printf 'def one() { 1 }\n' > "$sb/analysis/lib/nf/thing.nf"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules/repo/index.tsv"
+    printf '{"name": "demo", "version": "20260101.001"}\n' > "$sb/modules/demo/manifest.json"
+    printf 'workflow {}\n' > "$sb/modules/demo/main.nf"
+    printf 'echo case\n' > "$sb/modules/demo/test/demo.sh"
+    # `ghost` is planted in the INSTALL STORE, which the gate must not read. The store is
+    # gitignored and empty in a checkout, so a loop pointed at it iterates nothing and reports
+    # every module fine - which is exactly what happened and went undetected, because this
+    # fixture used to plant `demo` there too and so agreed with the bug.
+    printf '{"name": "ghost", "version": "20260101.001"}\n' > "$sb/analysis/modules/ghost/manifest.json"
+    printf 'workflow {}\n' > "$sb/analysis/modules/ghost/main.nf"
     # Committed AS OF the day the version names, because a clean tree is compared against the
     # commit date and this fixture would otherwise say the frame changed today.
     (cd "$sb" && git init -q . && git add -A \
@@ -263,31 +306,39 @@ test_the_frame_version_moves_with_a_change_and_not_with_the_calendar() {
     out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1)
     assert_contains "$out" "up to date" "an untouched frame needs no new version:"$'\n'"$out"
 
-    printf 'g <- function() 2\n' >> "$sb/analysis/lib/R/thing.R"
+    printf 'def two() { 2 }\n' >> "$sb/analysis/lib/nf/thing.nf"
     out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
     assert_contains "$out" "BEHIND" "a changed frame with a stale version:"$'\n'"$out"
 
     # The version now names THE DAY THE CHANGE WAS MADE, which is January and not today. This
     # is the assertion that fails if the dirty answer goes back to being today's date.
-    touch -d '2026-01-02T00:00:00Z' "$sb/analysis/lib/R/thing.R"
+    touch -d '2026-01-02T00:00:00Z' "$sb/analysis/lib/nf/thing.nf"
     printf '20260102.001\n' > "$sb/analysis/frame.version"
     out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1)
     assert_contains "$out" "up to date" \
         "a bump dated to the change stays good however long it sits:"$'\n'"$out"
 
-    # A MODULE'S OWN CASES ARE NOT THE MODULE. analysis/modules/*/test/ carries export-ignore,
+    # A MODULE'S OWN CASES ARE NOT THE MODULE. publish-module.sh drops test/ from the tarball,
     # so nothing there reaches a published module - and the manifest version is what an
     # installation and every published result record the module by. Fixing a case must not move
     # it; touching what the module computes must.
-    printf 'echo another case\n' >> "$sb/analysis/modules/demo/test/demo.sh"
+    printf 'echo another case\n' >> "$sb/modules/demo/test/demo.sh"
     out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1)
     assert_not_contains "$out" "module 'demo'" \
         "a module's test changing is not the module changing:"$'\n'"$out"
 
-    printf 'process P {}\n' >> "$sb/analysis/modules/demo/main.nf"
+    printf 'process P {}\n' >> "$sb/modules/demo/main.nf"
     out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
     assert_contains "$out" "module 'demo'" \
         "but its main.nf changing is:"$'\n'"$out"
+
+    # And the store is still not a source, however stale what sits in it looks. `ghost` has
+    # been changed and never bumped for the whole of this case; a gate reading the store would
+    # have named it by now.
+    printf 'process Q {}\n' >> "$sb/analysis/modules/ghost/main.nf"
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
+    assert_not_contains "$out" "ghost" \
+        "the install store is not checked for version bumps:"$'\n'"$out"
 }
 
 # THE RELEASE GATE REFUSES TO ANSWER RATHER THAN ANSWERING WRONGLY.
@@ -302,18 +353,18 @@ test_the_frame_version_moves_with_a_change_and_not_with_the_calendar() {
 test_the_release_gate_refuses_what_it_cannot_check() {
     local sb out
     sb=$(guard_path "$TEST_TMPDIR/release-gate")
-    rm -rf "$sb"; mkdir -p "$sb/origin/dev/scripts" "$sb/origin/analysis/lib/R" \
-                           "$sb/origin/modules-repo"
+    rm -rf "$sb"; mkdir -p "$sb/origin/dev/scripts" "$sb/origin/analysis/lib/nf" \
+                           "$sb/origin/modules/repo"
     cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$sb/origin/dev/scripts/"
     printf 'frame {}\n' > "$sb/origin/analysis/frame.config"
     printf '20260101.001\n' > "$sb/origin/analysis/frame.version"
-    printf 'f <- function() 1\n' > "$sb/origin/analysis/lib/R/thing.R"
-    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/origin/modules-repo/index.tsv"
+    printf 'def one() { 1 }\n' > "$sb/origin/analysis/lib/nf/thing.nf"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/origin/modules/repo/index.tsv"
     # Two commits, because a shallow clone of a one-commit repository is not shallow.
     (cd "$sb/origin" && git init -q . && git add -A \
         && GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
            git -c user.email=t@t -c user.name=t commit -qm base --date='2026-01-01T00:00:00Z' \
-        && printf 'g <- function() 2\n' >> analysis/lib/R/thing.R \
+        && printf 'def two() { 2 }\n' >> analysis/lib/nf/thing.nf \
         && printf '20260102.001\n' > analysis/frame.version \
         && git add -A \
         && GIT_COMMITTER_DATE='2026-01-02T00:00:00Z' \
@@ -340,10 +391,10 @@ test_the_release_gate_refuses_what_it_cannot_check() {
 
     # An uncommitted change under analysis/ is dated by mtime, which on a fresh checkout is
     # checkout time and says nothing about when the work was done.
-    printf 'h <- function() 3\n' >> "$sb/origin/analysis/lib/R/thing.R"
+    printf 'def three() { 3 }\n' >> "$sb/origin/analysis/lib/nf/thing.nf"
     out=$(cd "$sb/origin" && bash dev/scripts/check-analysis-versions.sh --release 2>&1 || true)
     assert_contains "$out" "REFUSED" "a dirty analysis/ must be refused at a release:"$'\n'"$out"
-    assert_contains "$out" "thing.R" "naming what is uncommitted"
+    assert_contains "$out" "thing.nf" "naming what is uncommitted"
 }
 
 # THE MODULE CHECK MUST BITE ON A CLEAN TREE, WHICH IS THE ONLY STATE A RELEASE IS EVER IN.
@@ -351,16 +402,21 @@ test_the_release_gate_refuses_what_it_cannot_check() {
 test_a_committed_module_change_without_a_version_bump_is_caught() {
     local sb out
     sb=$(guard_path "$TEST_TMPDIR/module-version-committed")
-    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/R" \
-                           "$sb/analysis/modules/demo/test" "$sb/modules-repo"
+    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/nf" \
+                           "$sb/modules/demo/test" "$sb/modules/lib/helper" "$sb/modules/repo"
     cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$sb/dev/scripts/"
     printf 'frame {}\n' > "$sb/analysis/frame.config"
     printf '20260101.001\n' > "$sb/analysis/frame.version"
-    printf 'f <- function() 1\n' > "$sb/analysis/lib/R/thing.R"
-    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules-repo/index.tsv"
-    printf '{"name": "demo", "version": "20260101.001"}\n' > "$sb/analysis/modules/demo/manifest.json"
-    printf 'workflow {}\n' > "$sb/analysis/modules/demo/main.nf"
-    printf 'echo case\n' > "$sb/analysis/modules/demo/test/demo.sh"
+    printf 'def one() { 1 }\n' > "$sb/analysis/lib/nf/thing.nf"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules/repo/index.tsv"
+    printf '{"name": "demo", "version": "20260101.001"}\n' > "$sb/modules/demo/manifest.json"
+    printf 'workflow {}\n' > "$sb/modules/demo/main.nf"
+    printf 'echo case\n' > "$sb/modules/demo/test/demo.sh"
+    # A library carries a manifest and a version exactly like a module and is published the
+    # same way, so it is owed the same check under the other half of the glob.
+    printf '{"name": "helper", "kind": "library", "version": "20260101.001"}\n' \
+        > "$sb/modules/lib/helper/manifest.json"
+    printf 'h <- function() 1\n' > "$sb/modules/lib/helper/helper.R"
     (cd "$sb" && git init -q . && git add -A \
         && GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
            git -c user.email=t@t -c user.name=t commit -qm base --date='2026-01-01T00:00:00Z') \
@@ -368,7 +424,7 @@ test_a_committed_module_change_without_a_version_bump_is_caught() {
         || { skip_case "could not build a repository to check in"; return; }
 
     # Commit a change to what the module computes, and do not move its version.
-    (cd "$sb" && printf 'process P {}\n' >> analysis/modules/demo/main.nf && git add -A \
+    (cd "$sb" && printf 'process P {}\n' >> modules/demo/main.nf && git add -A \
         && GIT_COMMITTER_DATE='2026-01-02T00:00:00Z' \
            git -c user.email=t@t -c user.name=t commit -qm 'change demo' \
                --date='2026-01-02T00:00:00Z') > /dev/null 2>&1
@@ -377,8 +433,8 @@ test_a_committed_module_change_without_a_version_bump_is_caught() {
         "a committed module change with a stale version must be caught:"$'\n'"$out"
 
     # And a commit that moves the version along with the change is not reported.
-    (cd "$sb" && printf 'process Q {}\n' >> analysis/modules/demo/main.nf \
-        && printf '{"name": "demo", "version": "20260103.001"}\n' > analysis/modules/demo/manifest.json \
+    (cd "$sb" && printf 'process Q {}\n' >> modules/demo/main.nf \
+        && printf '{"name": "demo", "version": "20260103.001"}\n' > modules/demo/manifest.json \
         && git add -A \
         && GIT_COMMITTER_DATE='2026-01-03T00:00:00Z' \
            git -c user.email=t@t -c user.name=t commit -qm 'change demo and bump' \
@@ -387,15 +443,24 @@ test_a_committed_module_change_without_a_version_bump_is_caught() {
     assert_not_contains "$out" "module 'demo'" \
         "while a change committed with its bump is not:"$'\n'"$out"
 
-    # A module's own cases are not the module: analysis/modules/*/test/ is export-ignored, so
-    # nothing there reaches a published module.
-    (cd "$sb" && printf 'echo more\n' >> analysis/modules/demo/test/demo.sh && git add -A \
+    # A module's own cases are not the module: publish-module.sh drops test/ from the tarball,
+    # so nothing there reaches a published module.
+    (cd "$sb" && printf 'echo more\n' >> modules/demo/test/demo.sh && git add -A \
         && GIT_COMMITTER_DATE='2026-01-04T00:00:00Z' \
            git -c user.email=t@t -c user.name=t commit -qm 'a case only' \
                --date='2026-01-04T00:00:00Z') > /dev/null 2>&1
     out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
     assert_not_contains "$out" "module 'demo'" \
         "and a commit touching only its cases is not the module changing:"$'\n'"$out"
+
+    # The same question of a LIBRARY, which is the half of the glob a module never exercises.
+    (cd "$sb" && printf 'i <- function() 2\n' >> modules/lib/helper/helper.R && git add -A \
+        && GIT_COMMITTER_DATE='2026-01-05T00:00:00Z' \
+           git -c user.email=t@t -c user.name=t commit -qm 'change helper' \
+               --date='2026-01-05T00:00:00Z') > /dev/null 2>&1
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
+    assert_contains "$out" "helper" \
+        "a committed library change with a stale version must be caught too:"$'\n'"$out"
 }
 
 test_release_archive_carries_the_runtime() {
@@ -405,7 +470,13 @@ test_release_archive_carries_the_runtime() {
     local needed
     for needed in "poolseqflow.nf" "nextflow.config" "parameters.config.template" \
                   "PoolSeqFlow" "analysis.nf" "metadata.csv.template" \
-                  "scripts/" "bin/" "lib/" "analysis/" "install/"; do
+                  "scripts/" "bin/" "lib/" "analysis/" "install/" "citations/"; do
+        assert_contains "$listing" "$needed" "release tarball must carry $needed"
+    done
+    # Named files and not only their directories: a directory traveling empty would satisfy
+    # every line above, and each of these is read at run time by something that does not check.
+    for needed in "citations/citations.json" "bin/check_install.sh" "bin/check_project.sh" \
+                  "install/environment.yml"; do
         assert_contains "$listing" "$needed" "release tarball must carry $needed"
     done
 }
@@ -542,7 +613,7 @@ test_check_install_hint_uses_the_versioned_environment() {
     # a branch it never entered, so it passed where the install was broken and failed where it
     # worked. /usr/bin:/bin because an empty PATH kills the script at `dirname` long before the
     # summary.
-    out=$(cd "$REPO_ROOT" && env -u ENV_NAME PATH=/usr/bin:/bin bash install/check_install.sh 2>&1)
+    out=$(cd "$REPO_ROOT" && env -u ENV_NAME PATH=/usr/bin:/bin bash bin/check_install.sh 2>&1)
     status=$?
     # The precondition, asserted rather than assumed: a machine carrying every tool on the bare
     # PATH would otherwise fail below on an empty string, which reads like a broken epilogue.
@@ -572,6 +643,39 @@ test_prep_version_rejects_a_malformed_version() {
 
 # Release-prep logs are one machine's package solve on one day. They must not become
 # history, and the broad `!test/**` style re-inclusions elsewhere make that worth asserting.
+# THE RELEASE BODY IS THIS VERSION'S CHANGELOG SECTION, and release.yml publishes whatever the
+# extractor prints. A tag build is the expensive place to discover the section is missing, so the
+# same extractor is the gate in release.yml's version step - this checks it answers here first.
+#
+# The executable bit is checked because release.yml calls the script bare. A file committed
+# 100644 passes every other check in this suite and dies with "Permission denied" in the first
+# step of a tag build.
+test_the_release_body_extracts_for_this_version() {
+    local script="$REPO_ROOT/dev/scripts/changelog-section.sh"
+    [ -x "$script" ] || { fail_case "dev/scripts/changelog-section.sh is not executable"; return; }
+
+    local version; version=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/PoolSeqFlow" | head -1)
+    local out status
+    out=$(cd "$REPO_ROOT" && "$script" "$version" 2>&1) && status=0 || status=$?
+    assert_status 0 "$status" "the changelog has no section for $version:"$'\n'"$out"
+    assert_contains "$out" "## [$version]" "the section should start with its own heading"
+
+    # A version the changelog does not describe must fail, not print an empty body.
+    out=$(cd "$REPO_ROOT" && "$script" 99.99.99 2>&1) && status=0 || status=$?
+    assert_status 1 "$status" "an absent section should be refused"
+    assert_contains "$out" "no '## [99.99.99]' section" "and should say what is missing"
+
+    # The standing tail release.yml appends, and its authoring comment, which must not reach a
+    # reader: the sed that strips it is anchored on a line that has to stay a line of its own.
+    local tail_file="$REPO_ROOT/dev/release-notes-tail.md"
+    [ -f "$tail_file" ] || { fail_case "dev/release-notes-tail.md is missing"; return; }
+    assert_contains "$(sed -n '/^-->$/p' "$tail_file")" "-->" \
+        "the tail's comment must close on a line of its own, or the sed strips the whole file"
+    local rendered; rendered=$(sed "1,/^-->$/d" "$tail_file")
+    assert_not_contains "$rendered" "<!--" "the authoring comment must not reach the release body"
+    assert_contains "$rendered" "@VERSION@" "the tail should carry the placeholders release.yml fills"
+}
+
 test_release_prep_logs_are_not_tracked() {
     local ignored
     ignored=$(cd "$REPO_ROOT" && git check-ignore dev/logs/example/summary.txt 2>/dev/null)
@@ -685,7 +789,7 @@ test_every_analysis_citation_is_in_the_bibliography() {
     local manual="$REPO_ROOT/manual/PoolSeqFlow-manual.md"
     local missing file doi
     missing=""
-    for file in "$REPO_ROOT"/analysis/citations.json "$REPO_ROOT"/analysis/modules/*/citations.json; do
+    for file in "$REPO_ROOT"/analysis/citations.json "$REPO_ROOT"/modules/*/citations.json; do
         [ -f "$file" ] || continue
         while read -r doi; do
             [ -n "$doi" ] || continue
@@ -975,42 +1079,62 @@ for step, names in sorted(declared.items()):
 # read it. A dead link is silent - the folder is written, the anchor is wrong, and nobody finds
 # out until they follow it. Authored on one side and verified from the other, the way the step
 # parameter map is.
-# A published analysis carries the shared library folded into the module's own script, and
-# libraryFiles() is the list that gets folded. Two ways for it to be wrong, and only one of them
-# is loud: a function the module CALLS and does not list breaks the run, while a function it
-# lists and never calls travels beside a result it did not compute - which is quiet, and is what
-# rule 15 exists to stop.
+# A published analysis carries the libraries the module used folded into its own script, and the
+# manifest's `libraries` is the list that gets fetched and folded. Two ways for it to be wrong,
+# and only one of them is loud: a library the module CALLS and does not declare breaks the run,
+# while one it declares and never calls is installed beside a result it did not compute, holds
+# that library in the store against uninstall, and travels in the published script - which is
+# quiet, and is what rule 15 exists to stop.
+#
+# The list used to live in each main.nf as libraryFiles(); it is the manifest's now, so the
+# question is which LIBRARY owns a called function rather than which file declares it.
 test_a_module_publishes_the_library_it_calls() {
     local out
     out=$(cd "$REPO_ROOT" && python3 - <<'PY'
-import pathlib, re
+import json, pathlib, re, sys
 
-available = {p.stem for p in pathlib.Path("analysis/lib/R").glob("*.R")}
+libdir = pathlib.Path("modules/lib")
+DEFINES = re.compile(r"^([A-Za-z._][A-Za-z0-9._]*)\s*<-\s*function", re.M)
 
-for main in sorted(pathlib.Path("analysis/modules").glob("*/main.nf")):
-    block = re.search(r"def libraryFiles\(\)\s*\{(.*?)\n\}", main.read_text(encoding="utf-8"), re.S)
-    if not block:
-        continue
-    listed = [name[:-2] for name in re.findall(r"'([^']+\.R)'", block.group(1))]
+# Which library provides which function. A library is a directory of .R files and the functions
+# in them are what a module calls; nothing maps a function to a library except this.
+owner = {}
+for lib in sorted(p for p in libdir.glob("*") if p.is_dir()):
+    for f in sorted(lib.glob("*.R")):
+        for fn in DEFINES.findall(f.read_text(encoding="utf-8")):
+            owner[fn] = lib.name
 
-    source = main.parent / (main.parent.name + ".R")
+mods = sorted(p for p in pathlib.Path("modules").glob("*") if p.is_dir() and p.name != "lib"
+              and (p / "manifest.json").exists())
+if not owner or not mods:
+    print("nothing to check: %d functions across the libraries, %d modules"
+          % (len(owner), len(mods)))
+    sys.exit(0)
+
+for mod in mods:
+    manifest = json.loads((mod / "manifest.json").read_text(encoding="utf-8"))
+    declared = set(manifest.get("libraries", []))
+    source = mod / (mod.name + ".R")
     if not source.exists():
-        print("%s: lists library files and has no %s to call them from" % (main, source.name))
+        print("%s: has a manifest and no %s to call a library from" % (mod, source.name))
         continue
     text = source.read_text(encoding="utf-8")
     # A call, not a mention: the name followed by an open bracket, outside a comment.
-    called = {fn for fn in available
+    called = {owner[fn] for fn in owner
               if re.search(r"^[^#\n]*\b%s\(" % re.escape(fn), text, re.M)}
 
-    for fn in sorted(called - set(listed)):
-        print("%s: calls %s() and does not list %s.R" % (source, fn, fn))
-    for fn in sorted(set(listed) - called):
-        print("%s: lists %s.R and %s never calls %s()" % (main, fn, source.name, fn))
-    for fn in sorted(set(listed) - available):
-        print("%s: lists %s.R, which analysis/lib/R does not have" % (main, fn))
+    for lib in sorted(called - declared):
+        print("%s: calls %s and does not declare it in libraries" % (source, lib))
+    for lib in sorted(declared - called):
+        if (libdir / lib).is_dir():
+            print("%s: declares %s and %s calls nothing from it"
+                  % (mod / "manifest.json", lib, source.name))
+        else:
+            print("%s: declares %s, which modules/lib does not have"
+                  % (mod / "manifest.json", lib))
 PY
 )
-    assert_eq "" "$out" "a module must publish exactly the library it calls:"$'\n'"$out"
+    assert_eq "" "$out" "a module must declare exactly the libraries it calls:"$'\n'"$out"
 }
 
 # EVERY SOURCE FILE IS REACHED BY SOME SUITE.
@@ -1054,7 +1178,7 @@ PY
 # and the suite stops being selected for the thing it was written to cover.
 test_every_path_a_suite_claims_exists() {
     local suite name claim bad=""
-    for suite in "$REPO_ROOT"/test/suites/*.sh "$REPO_ROOT"/analysis/modules/*/test/*.sh; do
+    for suite in "$REPO_ROOT"/test/suites/*.sh "$REPO_ROOT"/modules/*/test/*.sh; do
         [ -f "$suite" ] || continue
         name=$(basename "$suite" .sh)
         while read -r claim; do
@@ -1073,7 +1197,7 @@ test_every_path_a_suite_claims_exists() {
 # no filter at all and the suite simply never runs.
 test_every_suite_declares_what_it_costs() {
     local suite name declared bad=""
-    for suite in "$REPO_ROOT"/test/suites/*.sh "$REPO_ROOT"/analysis/modules/*/test/*.sh; do
+    for suite in "$REPO_ROOT"/test/suites/*.sh "$REPO_ROOT"/modules/*/test/*.sh; do
         [ -f "$suite" ] || continue
         name=$(basename "$suite" .sh)
         declared=$(sed -n '1,12s/^# cost: *//p' "$suite" | head -1)
@@ -1092,7 +1216,7 @@ test_every_suite_declares_what_it_costs() {
 # and is how 00_static holds its own lint case.
 test_a_static_suite_builds_nothing() {
     local suite name declared builder bad=""
-    for suite in "$REPO_ROOT"/test/suites/*.sh "$REPO_ROOT"/analysis/modules/*/test/*.sh; do
+    for suite in "$REPO_ROOT"/test/suites/*.sh "$REPO_ROOT"/modules/*/test/*.sh; do
         [ -f "$suite" ] || continue
         declared=$(sed -n '1,12s/^# cost: *//p' "$suite" | head -1)
         [ "$declared" = "static" ] || continue
@@ -1138,7 +1262,7 @@ for path in ["test/run_tests.sh", "test/lib/harness.sh", "test/lib/sandbox.sh",
     shared |= defs(path)
 
 suites = sorted(pathlib.Path("test/suites").glob("*.sh"))
-suites += sorted(pathlib.Path(".").glob("analysis/modules/*/test/*.sh"))
+suites += sorted(pathlib.Path(".").glob("modules/*/test/*.sh"))
 
 # Only names that ARE functions somewhere are looked for. A bare word in a heredoc is not a
 # call, and guessing which words are calls is what makes a checker like this cry wolf.
@@ -1193,17 +1317,17 @@ conda-forge::r-poolfstat=3.0.0 no
 SPECS
 }
 
-# The compatibility fields every module declares, checked for the modules that ship inside a
-# release. `frame` and `environment` are minima and a third-party module sets its own; a shipped
-# one is installed with the frame and the environment it names, so its `environment` is this
-# release exactly and its `frame` is no newer than this frame.
+# The compatibility fields every module and library declares, checked for the SOURCES this
+# repository publishes from. Nothing here ships inside a release any more, so `environment` is a
+# minimum its author sets when the module's needs change - not this release, and not something a
+# version bump rewrites. What is still checkable is that the fields are present and well formed,
+# and that nothing declares a `frame` newer than the frame in this checkout, which would be a
+# module this repository could not itself run.
 test_every_shipped_manifest_declares_its_compatibility() {
     local out
     out=$(cd "$REPO_ROOT" && python3 - <<'PY'
 import json, pathlib, re
 
-release = re.search(r"version\s*=\s*'([^']+)'",
-                    pathlib.Path("nextflow.config").read_text(encoding="utf-8")).group(1)
 frame = [line.strip() for line in
          pathlib.Path("analysis/frame.version").read_text(encoding="utf-8").splitlines()
          if line.strip() and not line.startswith("#")][0]
@@ -1211,9 +1335,10 @@ frame = [line.strip() for line in
 def parts(version):
     return [int(n) for n in version.split(".")]
 
-paths = sorted(pathlib.Path("analysis/modules").glob("*/manifest.json"))
+paths = (sorted(pathlib.Path("modules").glob("*/manifest.json"))
+         + sorted(pathlib.Path("modules/lib").glob("*/manifest.json")))
 if not paths:
-    print("no module ships in this checkout, so this case checked nothing")
+    print("no module or library source found, so this case checked nothing")
 for path in paths:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     for field in ("license", "frame", "environment"):
@@ -1225,15 +1350,15 @@ for path in paths:
                   % (path, manifest["frame"], frame))
     elif "frame" in manifest:
         print("%s: gives frame as '%s', which is not YYYYMMDD.NNN" % (path, manifest["frame"]))
-    if "environment" in manifest and str(manifest["environment"]) != release:
-        print("%s: names environment %s, and this release is %s"
-              % (path, manifest["environment"], release))
+    if "environment" in manifest and not re.fullmatch(r"\d+(\.\d+)*", str(manifest["environment"])):
+        print("%s: gives environment as '%s', which is not a release version"
+              % (path, manifest["environment"]))
     for spec in manifest.get("packages", []):
         if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*=[A-Za-z0-9][A-Za-z0-9._+]*", str(spec)):
             print("%s: '%s' is not a pinned conda spec" % (path, spec))
 PY
 )
-    assert_eq "" "$out" "every shipped manifest declares what it runs on:"$'\n'"$out"
+    assert_eq "" "$out" "every module and library manifest declares what it runs on:"$'\n'"$out"
 }
 
 test_every_declared_manual_anchor_exists() {
@@ -1253,7 +1378,7 @@ for line in pathlib.Path("manual/PoolSeqFlow-manual.md").read_text(encoding="utf
 declared = [("analysis/lib/nf/outputs.nf", a) for a in
             re.findall(r"anchor\s*:\s*'([^']+)'",
                        pathlib.Path("analysis/lib/nf/outputs.nf").read_text(encoding="utf-8"))]
-for path in sorted(pathlib.Path("analysis/modules").glob("*/manifest.json")):
+for path in sorted(pathlib.Path("modules").glob("*/manifest.json")):
     for entry in json.loads(path.read_text(encoding="utf-8")).get("outputs", []):
         if entry.get("anchor"):
             declared.append((str(path), entry["anchor"]))

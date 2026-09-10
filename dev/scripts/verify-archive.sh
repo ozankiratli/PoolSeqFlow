@@ -46,12 +46,12 @@ done
 # as well as out of the archive, and the check would pass. So an export-ignore fails here until
 # it is named in this list too.
 #
-# modules-repo/ is the whole directory and not just the catalogue in it. It holds the published
-# module tarballs as well, and those are served from the site: a copy inside a release would be
-# a second answer to what can be installed, frozen on the day the release was built.
+# modules/ covers the module and library sources AND modules/repo/, the published catalogue and
+# the tarballs beside it. Those are served from the site: a copy inside a release would be a
+# second answer to what can be installed, frozen on the day the release was built.
 excluded='docs/ .github/ mkdocs.yml .gitignore .gitattributes dev/ Project/ test/
           .claude/ CLAUDE.md
-          analysis/modules/*/test/ modules-repo/'
+          modules/'
 
 # Whether one tracked path is meant to reach the archive at all.
 ships() {
@@ -85,12 +85,21 @@ for f in docs .github mkdocs.yml .gitignore .gitattributes dev Project .claude C
     [ ! -e "$root/$f" ] || fail "should have been export-ignored: $f"
 done
 
-# The same for a module's own cases, which no wildcard above would have caught: `ships` only
-# says a path need not be there, and a rule that stopped working would go unnoticed without
-# somebody looking for the file.
-for d in "$root"/analysis/modules/*/test; do
-    [ ! -e "$d" ] || fail "should have been export-ignored: ${d#$root/}"
-done
+# NO MODULE SHIPS INSIDE A RELEASE, which is the point of the module system: a module carried
+# in the tarball is one nobody installed, that `modules install` then refuses to replace with a
+# newer version, and that `modules uninstall` would strip out of the release itself.
+#
+# Asserted by looking, not by the `excluded` list above - that list only says a path NEED NOT be
+# in the archive, so a rule that stopped working would leave the modules in it and nothing would
+# say so.
+#
+# Two directories, because the sources and the store are deliberately different places. modules/
+# is the tracked source of every module and of the libraries they install alongside themselves;
+# analysis/modules/ is the STORE those are installed into, gitignored and empty in a checkout.
+# While the two were one directory, a release shipped the modules because they were sources
+# sitting in the install path - which is the whole reason they are apart now.
+[ ! -e "$root/modules" ] || fail "modules/ shipped in the archive"
+[ ! -e "$root/analysis/modules" ] || fail "the module store shipped in the archive"
 
 # Compiled Python must not ship. Checked here and not by the executable-bit loop below, which a
 # directory passes.

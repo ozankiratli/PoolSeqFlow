@@ -1,0 +1,82 @@
+{
+  "name": "association",
+  "version": "20260910.004",
+  "contract": "freq-1",
+  "license": "GPL-3.0-or-later",
+  "frame": "20260910.001",
+  "environment": "3.0.0",
+  "summary": "each allele's frequency regressed on a phenotype measured per pool, with a permutation p",
+  "needs": [
+    "depths"
+  ],
+  "libraries": [
+    "n_eff",
+    "allele_frequencies",
+    "chunk_ranges"
+  ],
+  "gates": [
+    "THIS IS A MODEL-BASED TEST AND NOT AN ASSUMPTION-LIGHT ONE. It asserts that the variance of a pool's frequency is p(1-p) times (dispersion + 1/n_eff), that units are independent, and that a site's alleles are several views of one comparison. Where those do not describe your experiment the numbers will still be produced and will still be wrong; the diagnostics in permutations.tsv are what say so.",
+    "The fit is on UNITS, not pools. Each unit's pools are collapsed onto one value first, weighted by their effective sizes, and the degrees of freedom are the units carrying data at that site minus two. Where a unit holds one pool the collapse changes nothing.",
+    "The published p is a permutation p, and the permutation moves the STANDARDISED RESIDUALS rather than the phenotype labels. Units read at different depths are not interchangeable however correctly they are weighted, so permuting labels across them is invalid; measured at twice its nominal rate for a design whose depths line up with the phenotype.",
+    "The permutation set is enumerated whole when it fits inside analysis.modules.association.permutations, and sampled above it as (1 + reached) / (1 + draws). Sampling a set small enough to enumerate can return a p below the smallest value the design supports, so this is a correctness requirement rather than a speed one.",
+    "THE SMALLEST P ANY DESIGN CAN REACH IS 2 / (units factorial), because reversing the phenotype negates every slope and leaves the statistic alone. Four units put that at 0.083, so nothing in such a run can be significant at 0.05 and the table is a ranking of effect sizes rather than a test. permutations.tsv reports it as design_floor.",
+    "Weights are n_eff at that pool's own depth plus the excess dispersion uneven pooling leaves behind, estimated across sites unless analysis.modules.association.dispersion sets it. Only the RATIO between units is ever a claim: multiplying every weight by a constant leaves the statistic unchanged, so a pool size wrong by the same factor everywhere costs nothing and one wrong differently per pool costs calibration.",
+    "The site statistic is the largest |t| over EVERY allele including the reference. A site's frequencies sum to one, so the reference row carries the negated sum of the others and is where a signal spread across several alternates appears; dropping it costs 40% of the power at such a site and corrects nothing.",
+    "Computed from the DEPTH table alone. Every published frequency is a six-significant-digit rendering of a ratio the depth table holds exactly, and a cell with no reads is published there as 0 rather than as missing.",
+    "A site where an allele has no residual left is flagged rather than read. Two alleles of one perfectly separated site are algebraically the same test, and whether each lands on exactly zero or on 1e-32 decides between an infinite t and a merely enormous one, so those numbers are not comparable between implementations and the flag says so.",
+    "Pool sizes and ploidy come from the project's metadata as the frame resolved them, not from anything this module infers. Ploidy enters once, through n_chrom = ploidy * poolSize inside n_eff, so nothing here is limited to diploids.",
+    "bin/cap_depth.awk keeps reads in coordinate order until the cap rather than subsampling, so at a capped position the retained reads are biased toward those mapping earliest. That is an allele-frequency bias and not only a depth truncation.",
+    "filterFalsePositives.sh admits an allele that clears half of one chromosome's frequency in a fraction of the samples, and MajorAlleleToRef.py re-polarizes on cohort totals. Both depend on which pools were in the run, so a result from six pools is not the same quantity as one from twelve and the two are not comparable across targets."
+  ],
+  "outputs": [
+    {
+      "file": "association.tsv",
+      "summary": "one row per site, always complete: how many alleles and units it held, the site statistic, its permutation p, the adjusted p, and the leverage of the unit carrying most of the slope",
+      "anchor": "association-sites"
+    },
+    {
+      "file": "association_alleles.tsv",
+      "summary": "one row per allele for the sites reportBelow and reportTop select: the slope, its standard error, and the parametric t and p as diagnostics",
+      "anchor": "association-alleles"
+    },
+    {
+      "file": "permutations.tsv",
+      "summary": "what the run assumed and what it had to absorb: the permutation count and both floors, the estimated dispersion, the depth-phenotype correlation, the genomic inflation factor, and the allele counts of the sites selected against all of them",
+      "anchor": "association-diagnostics"
+    },
+    {
+      "file": "phenotype.tsv",
+      "summary": "the phenotype as it was written beside the number that was fitted, one row per pool with the unit it belongs to; for a categorical scale, which level became 1",
+      "anchor": "association-phenotype"
+    },
+    {
+      "file": "qq.png",
+      "summary": "the permutation p-values against the uniform they should follow, always drawn: a permutation p is discrete, so the points sit on a ladder whose ceiling is the design's own floor",
+      "anchor": "association-qq"
+    },
+    {
+      "file": "manhattan_*.png",
+      "summary": "association along each sequence you named in analysis.modules.association.chromosomes; a flat ceiling on one of these is the design's floor rather than the data",
+      "anchor": "association-manhattan",
+      "optional": true
+    },
+    {
+      "file": "association.R",
+      "summary": "the script that produced everything here, with the shared library it sourced folded in",
+      "anchor": "analysis-script"
+    },
+    {
+      "file": "allele_frequencies.cpp",
+      "summary": "the compiled form of the per-site parse, shipped whether or not this run used it; the header of association.R says which path produced the numbers",
+      "anchor": "association-compiled"
+    }
+  ],
+  "packages": [
+    "r-dofuture=1.3.0",
+    "r-foreach=1.5.2",
+    "r-future=1.75.0",
+    "r-ggplot2=4.0.3",
+    "r-jsonlite=2.0.0",
+    "r-rcpp=1.1.2"
+  ]
+}

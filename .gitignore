@@ -76,3 +76,9 @@ test/**/*.pyc
 
 # Build output from dev/scripts/verify-archive.sh.
 dist/
+
+# THE MODULE STORE. Running ./PoolSeqFlow out of a checkout makes the checkout the installation,
+# so `analysis modules install` unpacks into analysis/modules/ here - installed artifacts, not
+# sources. The sources live in modules/, which is tracked and export-ignored; this is where they
+# arrive after being published and installed back.
+analysis/modules/

@@ -256,7 +256,7 @@ for suite in "$SCRIPT_DIR"/suites/*.sh; do
     [ -f "$suite" ] || continue
     SUITES+=("$suite")
 done
-for suite in "$REPO_ROOT"/analysis/modules/*/test/*.sh; do
+for suite in "$REPO_ROOT"/modules/*/test/*.sh; do
     [ -f "$suite" ] || continue
     SUITES+=("$suite")
 done

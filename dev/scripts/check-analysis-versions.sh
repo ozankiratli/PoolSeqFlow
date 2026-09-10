@@ -15,8 +15,9 @@
 # bump - by hand while working, and as a release gate.
 #
 #   frame     analysis/frame.version       covers analysis/frame.config and analysis/lib/
-#   index     the #!index-version header    covers the rows in modules-repo/index.tsv
-#   module    manifest.json's version       covers that module's own directory
+#   index     the #!index-version header    covers the rows in modules/repo/index.tsv
+#   module    manifest.json's version       covers that module's or library's own directory,
+#                                           under modules/ and modules/lib/
 #
 # It reads the working tree first and git second, so a change that is still uncommitted is
 # reported the same way as one that is already in. Exits 1 when anything is behind.
@@ -161,7 +162,7 @@ fi
 # The catalogue. Its rows and its version live in ONE file, so the question is not which
 # changed last but whether the change that touched the rows also touched the header.
 
-INDEX=modules-repo/index.tsv
+INDEX=modules/repo/index.tsv
 
 index_rows() {
     grep -v '^[[:space:]]*#' "$1" | grep -v '^[[:space:]]*$' || true
@@ -186,39 +187,43 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------
-# Each installed module, against its own manifest.
+# Each module and each library SOURCE, against its own manifest.
+#
+# `analysis/modules/` is the install store: gitignored, empty in a checkout, and nothing git can
+# say anything about. Reading it here checked nothing and reported success - so the paths below
+# are the tracked sources, and `modules/lib/*/` is in the list because a library carries a
+# manifest and a version exactly like a module. `modules/lib/` and `modules/repo/` are swept up
+# by the first glob and drop out on the manifest test, which is what makes one loop enough.
 
-if [ -d analysis/modules ]; then
-    for dir in analysis/modules/*/; do
-        [ -f "${dir}manifest.json" ] || continue
-        name=$(basename "$dir")
-        # A manifest that is not in HEAD yet is a module being added, and its version is new by
-        # construction - there is no earlier one it could have failed to move from. Without this
-        # every new module reports as behind, because `git diff HEAD` says nothing at all about
-        # an untracked file.
-        git cat-file -e "HEAD:${dir}manifest.json" 2>/dev/null || continue
-        # NOT THE MODULE'S OWN CASES. `analysis/modules/*/test/` carries export-ignore, so those
-        # files are in no published module and can change nothing a user installs - and the
-        # version is what an installation and every published result record the module BY.
-        if dirty "$dir" ":(exclude)${dir}test"; then
-            if ! git diff HEAD -- "${dir}manifest.json" | grep -q '^+.*"version"'; then
-                report "module '$name' changed and its manifest version did not" \
-                    "bump it: dev/scripts/bump-analysis-version.sh module $name"
-            fi
-        else
-            # Committed, which is the state a release is cut in: the last commit that touched
-            # the module has to be the one that moved its version. Without this the loop asks
-            # nothing at all of a clean tree, and every module passes a release unexamined.
-            last=$(git log -1 --format=%H -- "$dir" ":(exclude)${dir}test" 2>/dev/null || true)
-            if [ -n "${last:-}" ] \
-               && ! git show "$last" -- "${dir}manifest.json" | grep -q '^+.*"version"'; then
-                report "module '$name' last changed in a commit that did not move its version" \
-                    "commit:  $(git log -1 --format='%h %ad %s' --date=short -- "$dir" ":(exclude)${dir}test")" \
-                    "bump it: dev/scripts/bump-analysis-version.sh module $name"
-            fi
+for dir in modules/*/ modules/lib/*/; do
+    [ -f "${dir}manifest.json" ] || continue
+    name=$(basename "$dir")
+    # A manifest that is not in HEAD yet is a module being added, and its version is new by
+    # construction - there is no earlier one it could have failed to move from. Without this
+    # every new module reports as behind, because `git diff HEAD` says nothing at all about
+    # an untracked file.
+    git cat-file -e "HEAD:${dir}manifest.json" 2>/dev/null || continue
+    # NOT THE MODULE'S OWN CASES. publish-module.sh drops `test/` from the tarball, so those
+    # files are in no published module and can change nothing a user installs - and the
+    # version is what an installation and every published result record the module BY.
+    if dirty "$dir" ":(exclude)${dir}test"; then
+        if ! git diff HEAD -- "${dir}manifest.json" | grep -q '^+.*"version"'; then
+            report "module '$name' changed and its manifest version did not" \
+                "bump it: dev/scripts/bump-analysis-version.sh module $name"
         fi
-    done
-fi
+    else
+        # Committed, which is the state a release is cut in: the last commit that touched
+        # the module has to be the one that moved its version. Without this the loop asks
+        # nothing at all of a clean tree, and every module passes a release unexamined.
+        last=$(git log -1 --format=%H -- "$dir" ":(exclude)${dir}test" 2>/dev/null || true)
+        if [ -n "${last:-}" ] \
+           && ! git show "$last" -- "${dir}manifest.json" | grep -q '^+.*"version"'; then
+            report "module '$name' last changed in a commit that did not move its version" \
+                "commit:  $(git log -1 --format='%h %ad %s' --date=short -- "$dir" ":(exclude)${dir}test")" \
+                "bump it: dev/scripts/bump-analysis-version.sh module $name"
+        fi
+    fi
+done
 
 # ---------------------------------------------------------------------------------------
 

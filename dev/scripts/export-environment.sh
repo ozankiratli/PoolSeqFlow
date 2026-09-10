@@ -78,18 +78,31 @@ fi
 # Only the module's OWN specs are looked for. What conda pulled in beneath them is not
 # distinguishable here from what the baseline needed anyway, which is exactly why the answer is
 # to rebuild the environment rather than to subtract from it.
+#
+# TWO STORES AND THE SOURCES. A module can reach this environment from an installation's store
+# or by being installed out of this checkout, so both are read - and `modules/` with it, because
+# `$REPO_ROOT/analysis/modules` is the checkout's own store, which is gitignored and empty and
+# says nothing at all. Reading it alone left this guard answering over nothing.
+#
+# THE BASELINE IS SUBTRACTED. Every module declares what it needs whether or not the release
+# already carries it, so `r-ggplot2` appears in a manifest and in environment-analysis.yml both.
+# Without this the guard refuses every export, which is the same failure as refusing none.
 INSTALL="$REPO_ROOT"
 POOLSEQFLOW_INSTALLED_HOME="${POOLSEQFLOW_INSTALLED_HOME:-}"
 # shellcheck source=../../lib/wrapper_lib.sh
 . "$REPO_ROOT/lib/wrapper_lib.sh"
 
 INSTALLED_STORE="$(install_prefix)/opt/PoolSeqFlow-$VERSION/analysis/modules"
+BASELINE=$(baseline_packages)
 DECLARED=$( { store_packages "$REPO_ROOT/analysis/modules"
+              store_packages "$REPO_ROOT/modules"
+              store_packages "$REPO_ROOT/modules/lib"
               store_packages "$INSTALLED_STORE"; } | sort -u )
 HELD=$(conda_installed_packages "$ENV_NAME")
 CARRIED=""
 while IFS= read -r SPEC; do
     [ -n "$SPEC" ] || continue
+    printf '%s\n' "$BASELINE" | grep -qxF "${SPEC%%=*}" && continue
     if printf '%s\n' "$HELD" | grep -qxF "${SPEC%%=*}"; then
         CARRIED="$CARRIED    $SPEC"$'\n'
     fi

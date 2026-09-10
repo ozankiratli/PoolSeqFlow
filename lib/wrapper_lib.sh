@@ -53,7 +53,7 @@ nf_config_value() {
 }
 
 # Zenodo all-versions DOI. A release's own DOI is reached through it. Also recorded in
-# install/citations.json, which the per-run CITATIONS.md is built from.
+# citations/citations.json, which the per-run CITATIONS.md is built from.
 CONCEPT_DOI="10.5281/zenodo.19245611"
 
 # The catalogue of modules that can be installed. It is export-ignored, so a release carries no
@@ -112,7 +112,7 @@ module_contract() {
 }
 
 # The order this release reads a catalogue row in, whatever order the file writes them in.
-MODULE_INDEX_COLUMNS="name version contract frame environment url sha256 summary"
+MODULE_INDEX_COLUMNS="name kind version contract frame environment url sha256 summary"
 
 # What separates the fields of a normalized row, and it is NOT the tab the file uses.
 #
@@ -235,6 +235,27 @@ analysis_r_packages() {
     sed -n 's/^ *- *r-\([^=]*\).*$/\1/p' "$ENV_FILE" | grep -vx base
 }
 
+# Every package the release's own analysis environment is built from, one name per line, with no
+# version. This is the baseline: what `analysis install` creates before any module is installed.
+#
+# NOTHING HERE MAY BE REMOVED BY A MODULE UNINSTALL. A module declares what it needs whether or
+# not the baseline already has it - that is what makes its manifest a true statement of its
+# dependencies rather than a statement about one release's environment - so the set a module
+# declares and the baseline overlap by design, and the overlap belongs to the release.
+#
+# Reads the shipped file rather than the live environment: the live one has whatever modules
+# added merged into it and cannot say which packages are the release's own.
+#
+# Defined here and not only in the wrapper, because baseline_packages() reads it and every
+# dev/ script that sources this file needs the same answer. An unset path makes the sed below
+# silently produce nothing, which reads as "the baseline is empty" and subtracts nothing.
+ANALYSIS_ENV_FILE="${ANALYSIS_ENV_FILE:-${INSTALL:-}/install/environment-analysis.yml}"
+
+baseline_packages() {
+    sed -n 's/^ *- *\([A-Za-z0-9][A-Za-z0-9._-]*\).*$/\1/p' "$ANALYSIS_ENV_FILE" 2>/dev/null \
+        | grep -vx 'pip' | sort -u
+}
+
 # The shape a module's `packages` entry must have: a name, one `=`, an exact version. No build
 # string, no range, no channel prefix. The analysis frame applies the same rule when a module
 # runs; this is what refuses one before it is installed.
@@ -246,10 +267,48 @@ MODULE_SPEC_RE='^[a-z0-9][a-z0-9._-]*=[A-Za-z0-9][A-Za-z0-9._+]*$'
 module_packages() {
     local manifest="$1"
     [ -f "$manifest" ] || return 0
+    # awk for the last step and not sed: it terminates its final record. store_packages runs
+    # this once per module and concatenates the results, so an unterminated last line arrives
+    # joined to the next module's first one as a single token.
     tr '\n' ' ' < "$manifest" \
         | sed -n 's/.*"packages"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' \
         | tr ',' '\n' \
-        | sed -n 's/^[^"]*"\([^"]*\)".*/\1/p'
+        | awk -F'"' 'NF > 1 { print $2 }'
+}
+
+# The libraries one module declares, one per line, read out of its manifest the same way as its
+# packages. A module with no `libraries` field yields nothing.
+module_libraries() {
+    local manifest="$1"
+    [ -f "$manifest" ] || return 0
+    # awk for the last step and not sed, for the reason module_packages gives: store_libraries
+    # concatenates one of these per module and an unterminated last line glues two names.
+    tr '\n' ' ' < "$manifest" \
+        | sed -n 's/.*"libraries"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' \
+        | tr ',' '\n' \
+        | awk -F'"' 'NF > 1 { print $2 }'
+}
+
+# Where installed libraries live: inside the module store, under a name no module may take.
+# analysis/lib/nf/modules.nf resolves the same path when a module runs.
+LIBRARY_DIR_NAME="lib"
+
+library_store() {
+    printf '%s' "$MODULE_STORE/$LIBRARY_DIR_NAME"
+}
+
+# Every library the modules in a store declare, sorted and deduplicated, optionally skipping one
+# module by name. This is what says whether a library is still wanted after a module leaves.
+store_libraries() {
+    local store="$1" skip="${2:-}" dir name
+    [ -d "$store" ] || return 0
+    for dir in "$store"/*/; do
+        [ -d "$dir" ] || continue
+        name=$(basename "$dir")
+        if [ "$name" = "$LIBRARY_DIR_NAME" ]; then continue; fi
+        if [ -n "$skip" ] && [ "$name" = "$skip" ]; then continue; fi
+        module_libraries "$dir/manifest.json"
+    done | sort -u
 }
 
 # Every spec the modules in a store declare, sorted and deduplicated, optionally skipping one
@@ -260,6 +319,7 @@ store_packages() {
     for dir in "$store"/*/; do
         [ -d "$dir" ] || continue
         name=$(basename "$dir")
+        if [ "$name" = "$LIBRARY_DIR_NAME" ]; then continue; fi
         if [ -n "$skip" ] && [ "$name" = "$skip" ]; then continue; fi
         module_packages "$dir/manifest.json"
     done | sort -u
@@ -337,4 +397,23 @@ conda_remove_packages() {
         return 1
     fi
     conda remove -n "$env" -y "$@"
+}
+
+# Is $1 a parameters.config written for THIS release? Every config for this release sets
+# storageDir and no earlier one did, so that single key answers it.
+#
+# Shared because two callers ask the same question and must not drift: the wrapper refuses a
+# stale config before any command that reads one, and `check project` reports it as a line.
+config_is_current() {
+    grep -qE '^[[:space:]]*storageDir[[:space:]]*=' "$1" 2>/dev/null
+}
+
+# The parameters this release renamed or removed that $1 still sets, space-separated. Advisory:
+# it names an old file as recognized rather than damaged, and migrate_config reports the full set.
+config_stale_parameters() {
+    local old found=""
+    for old in projectDir diploidy rgTagsFile rgTagsPath; do
+        grep -qE "^[[:space:]]*${old}[[:space:]]*=" "$1" 2>/dev/null && found="$found $old"
+    done
+    printf '%s' "$found"
 }

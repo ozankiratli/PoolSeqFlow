@@ -57,7 +57,11 @@ STATIC = ("assets", "stylesheets", "javascripts")
 # The module repository, copied into the site verbatim: the catalogue the wrapper fetches and
 # the tarballs its rows point at. Published in the same deploy as the page below, so a row can
 # never advertise a download that is not there yet.
-REPO_DIR = REPO / "modules-repo"
+# The source directory and the PUBLISHED path are deliberately different. The source moved under
+# modules/ to keep everything module-related together; the published path may never move, because
+# MODULE_INDEX_URL in lib/wrapper_lib.sh compiles into every release and asks for this address
+# for as long as that release exists.
+REPO_DIR = REPO / "modules" / "repo"
 REPO_PATH = "modules-repo"
 
 
@@ -93,7 +97,7 @@ def module_repo_page():
 
     if not rows:
         lines += [
-            "No module is published yet. The modules that ship inside a release — `basicstats`, `association` and `mds` — are installed with it and are not listed here.",
+            "No module is published yet. No module ships inside a release either, so an installation starts with an empty store and stays that way until one is published here.",
             "",
         ]
     else:
@@ -395,9 +399,9 @@ def render_nav(home: Page, sections: list[Section]) -> str:
 def reference_files() -> list[Path]:
     """Every references.bib: what a run cites, plus the manual's own context-only entries."""
     found = [MANUAL.parent / "references.bib",
-             REPO / "install" / "references.bib",
+             REPO / "citations" / "references.bib",
              REPO / "analysis" / "references.bib"]
-    found += sorted((REPO / "analysis" / "modules").glob("*/references.bib"))
+    found += sorted((REPO / "modules").glob("*/references.bib"))
     return [path for path in found if path.exists()]
 
 

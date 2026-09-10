@@ -24,12 +24,16 @@ sizes <- if (length(args) > 0) as.numeric(args) else 3.2e6
 REPS <- 5
 POOLS <- 6
 
-for (f in list.files(file.path(repo, "analysis/lib/R"), pattern = "[.]R$", full.names = TRUE)) {
+# Every library, from the sources rather than from an installation. A library is a directory
+# under modules/lib/ holding its .R and, where it has one, the .cpp beside it - so `recursive`
+# is what reaches into them, and a library added later is picked up with no edit here.
+libs <- file.path(repo, "modules/lib")
+for (f in list.files(libs, pattern = "[.]R$", full.names = TRUE, recursive = TRUE)) {
     source(f)
 }
-Rcpp::sourceCpp(file.path(repo, "analysis/lib/cpp/allele_frequencies.cpp"))
-Rcpp::sourceCpp(file.path(repo, "analysis/lib/cpp/site_diversity.cpp"))
-Rcpp::sourceCpp(file.path(repo, "analysis/lib/cpp/nei_distance.cpp"))
+for (f in list.files(libs, pattern = "[.]cpp$", full.names = TRUE, recursive = TRUE)) {
+    Rcpp::sourceCpp(f)
+}
 
 # A published depth table is overwhelmingly biallelic. A uniform draw over arities would give
 # the compiled path more digits to parse per site than a real cohort does.

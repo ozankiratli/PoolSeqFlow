@@ -12,7 +12,7 @@ Nothing here runs in `run_tests.sh` and nothing here gates a commit. **What ship
 
 ## The discipline that makes it worth running
 
-**The generator never calls `analysis/lib/R/`.** It draws with `rbinom` and arithmetic and nothing else.
+**The generator never calls the libraries under `modules/lib/`.** It draws with `rbinom` and arithmetic and nothing else.
 
 This is the whole reason a measurement here is evidence. If the simulation drew its read counts using our own `n_eff`, a wrong `n_eff` would cancel on both sides and the harness would report agreement to twelve figures while being wrong about the world. The library is on trial; it does not get to write the exam.
 
@@ -42,7 +42,7 @@ The same rule holds for every section added later: the truth is constructed from
 Both source `lib.R`, which holds every generator and estimator they share. They fit and permute identically or neither result says anything about the other, so nothing is defined twice.
 
 ```
-Rscript dev/validation/external.R analysis/lib/R /tmp/bp 1200
+Rscript dev/validation/external.R modules/lib /tmp/bp 1200
 ```
 
 BayPass is `g_baypass` on the PATH, and it lives in an environment of its own:
@@ -59,9 +59,9 @@ conda activate poolseqflow-validation
 Run one section, or all of them:
 
 ```
-Rscript dev/validation/calibrate.R analysis/lib/R
-Rscript dev/validation/calibrate.R analysis/lib/R n_eff
-Rscript dev/validation/calibrate.R analysis/lib/R n_eff 500000
+Rscript dev/validation/calibrate.R modules/lib
+Rscript dev/validation/calibrate.R modules/lib n_eff
+Rscript dev/validation/calibrate.R modules/lib n_eff 500000
 ```
 
 The third argument is the replicate count per cell; it defaults low enough to run in seconds and high enough to separate the hypotheses. Every run prints the seed it used and is reproducible from it.

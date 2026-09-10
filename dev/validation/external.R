@@ -28,7 +28,12 @@ work <- args[2]
 sites <- if (length(args) > 2) as.integer(args[3]) else 2000L
 seed <- if (length(args) > 3) as.integer(args[4]) else 20260907L
 
-for (path in list.files(lib, pattern = "[.]R$", full.names = TRUE)) source(path)
+# `recursive` because a library is a DIRECTORY under modules/lib/ and its .R sits inside it, so
+# a flat listing returns nothing - and sourcing nothing here would score BayPass against an
+# empty library rather than against ours, which is a result that looks like a finding.
+sources <- list.files(lib, pattern = "[.]R$", full.names = TRUE, recursive = TRUE)
+if (length(sources) == 0) stop("no R sources in ", lib)
+for (path in sources) source(path)
 here <- dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE)[1]))
 source(file.path(here, "lib.R"))
 

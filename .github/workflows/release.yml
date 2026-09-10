@@ -69,11 +69,10 @@ jobs:
             fi
           fi
 
-          # Refuses to publish a version the changelog does not describe.
-          if ! grep -q "^## \[$declared\]" CHANGELOG.md; then
-            echo "CHANGELOG.md has no '## [$declared]' section" >&2
-            exit 1
-          fi
+          # Refuses to publish a version the changelog does not describe. The same extractor
+          # that writes the release body, so the gate cannot pass over a section the body step
+          # would then fail to read.
+          dev/scripts/changelog-section.sh "$declared" > /dev/null
 
           echo "version=$declared" >> "$GITHUB_OUTPUT"
           echo "name=PoolSeqFlow-$declared" >> "$GITHUB_OUTPUT"
@@ -101,6 +100,23 @@ jobs:
           ( cd dist && sha256sum ./*.tar.gz > SHA256SUMS )
           ls -lh dist/
 
+      - name: Build the release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NAME: ${{ steps.version.outputs.name }}
+        run: |
+          # This version's CHANGELOG section, then the standing tail. Runs on every trigger and
+          # not only on a tag, so a rehearsal proves the notes extract before the tag exists.
+          dev/scripts/changelog-section.sh "$VERSION" > dist/RELEASE_NOTES.md
+          printf '\n' >> dist/RELEASE_NOTES.md
+          sed -e "1,/^-->$/d" -e "s|@VERSION@|${VERSION}|g" -e "s|@NAME@|${NAME}|g" \
+              dev/release-notes-tail.md >> dist/RELEASE_NOTES.md
+
+          [ -s dist/RELEASE_NOTES.md ] || { echo "the release notes came out empty" >&2; exit 1; }
+          echo "::group::release body"
+          cat dist/RELEASE_NOTES.md
+          echo "::endgroup::"
+
       - name: Publish the release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v3
@@ -108,31 +124,4 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS
-          body: |
-            ## Download and install
-
-            ```bash
-            curl -LO https://github.com/ozankiratli/PoolSeqFlow/releases/download/${{ github.ref_name }}/${{ steps.version.outputs.name }}.tar.gz
-            tar -xzf ${{ steps.version.outputs.name }}.tar.gz
-            cd ${{ steps.version.outputs.name }}
-
-            cp parameters.config.template parameters.config
-            ./PoolSeqFlow install
-            ```
-
-            Then edit `parameters.config` and `metadata.csv` for your data and run
-            `./PoolSeqFlow run`.
-
-            Verify the download with `sha256sum -c SHA256SUMS`.
-
-            `PoolSeqFlow.tar.gz` is the same archive under a stable name, for
-            scripted installs:
-            `https://github.com/ozankiratli/PoolSeqFlow/releases/latest/download/PoolSeqFlow.tar.gz`
-
-            **Upgrading an existing project?** Your `parameters.config` is not
-            touched by a new version and can be missing parameters this release
-            expects. Run `./PoolSeqFlow migrate_config` and read what it reports —
-            see [Upgrading](https://ozankiratli.github.io/PoolSeqFlow/getting-started/upgrading/).
-
-            Full documentation: <https://ozankiratli.github.io/PoolSeqFlow/>
-            Changes in this release: see `CHANGELOG.md`.
+          body_path: dist/RELEASE_NOTES.md

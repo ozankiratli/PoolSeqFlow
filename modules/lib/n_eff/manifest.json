@@ -1,0 +1,11 @@
+{
+  "name": "n_eff",
+  "version": "20260910.002",
+  "kind": "library",
+  "license": "GPL-3.0-or-later",
+  "frame": "20260910.001",
+  "environment": "3.0.0",
+  "summary": "effective pool size at a site and over a pool, and the harmonic mean it needs",
+  "libraries": [],
+  "packages": []
+}

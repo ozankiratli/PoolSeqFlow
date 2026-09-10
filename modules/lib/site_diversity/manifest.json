@@ -1,0 +1,14 @@
+{
+  "name": "site_diversity",
+  "version": "20260910.002",
+  "kind": "library",
+  "contract": "freq-1",
+  "license": "GPL-3.0-or-later",
+  "frame": "20260910.001",
+  "environment": "3.0.0",
+  "summary": "gene diversity per site, 1 - sum(p^2), vectorized R with a compiled path",
+  "libraries": [],
+  "packages": [
+    "r-rcpp=1.1.2"
+  ]
+}

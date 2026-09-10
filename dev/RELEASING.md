@@ -4,7 +4,7 @@ The order to do a release in, what each step must show, and what bites.
 
 **This is a living procedure, not a record.** Correct it when a release teaches you something; it is not dated and it does not describe a particular version. `.claude/development-notes/` is where the dated records go.
 
-Everything happens on `dev` until step 4. Steps 4 to 9 happen on `main`. Step 10 brings `main` back.
+Everything happens on `dev` until step 4. Steps 4 to 10 happen on `main`. Step 11 brings `main` back.
 
 **Two things are not written down here and are checked by the suite instead**: the release archive (`verify-archive.sh`), the docs and citation gates (`build_docs.py --check`, `bib2citations.py --check`), the analysis versions (`check-analysis-versions.sh`) and the version-consistency case all run inside `00_static`. If the suite is green they passed. What follows is only the work the suite cannot do for you.
 
@@ -55,7 +55,7 @@ dev/scripts/check-module-packages.sh
 
 **Real conda, real network, minutes.** It is deliberately not in the suite, which is exactly why it gets skipped — it is on this checklist or it is lost.
 
-It builds the baseline, installs what the shipped modules declare, and checks a module cannot move a version another module or the release itself is running on. It found on its first run that `--freeze-installed` does **less** than its name suggests: it refuses to change a package the solve reaches on its own, but a package named on the command line it installs at the version asked for, downgrading what is there.
+It builds the baseline, installs what the modules published from this repository declare, and checks a module cannot move a version another module or the release itself is running on. It found on its first run that `--freeze-installed` does **less** than its name suggests: it refuses to change a package the solve reaches on its own, but a package named on the command line it installs at the version asked for, downgrading what is there.
 
 Every check must say `ok`. A failure here is a compatibility problem between this release and a module, and it is settled by publishing, not on a user's machine.
 
@@ -103,7 +103,7 @@ dev/scripts/americanize.py          # report; --fix rewrites the safe ones
 
 Open the merge request, review the diff as a whole, merge.
 
-The release commits — the version bump and the CHANGELOG — are made on `main` after this, so `main` briefly holds the merge at the old version. That state is never tagged, so it costs nothing, and it keeps release-only commits off `dev` until step 10.
+The release commits — the version bump and the CHANGELOG — are made on `main` after this, so `main` briefly holds the merge at the old version. That state is never tagged, so it costs nothing, and it keeps release-only commits off `dev` until step 11.
 
 ## 5. Run the analysis version gate
 
@@ -125,11 +125,9 @@ Mid-development a version is legitimately behind, which is why the plain run onl
 dev/scripts/bump-version.sh <new-version>
 ```
 
-It rewrites the version in the wrapper (header comment and `VERSION=`) and in `nextflow.config`'s manifest, sets `"environment"` in every shipped module's manifest and moves that module's own version with it, and prepends a CHANGELOG section listing every commit since the last release tag. It does not commit, tag or push — it prints those commands.
+It rewrites the version in the wrapper (header comment and `VERSION=`) and in `nextflow.config`'s manifest, and prepends a CHANGELOG section listing every commit since the last release tag. It does not commit, tag or push — it prints those commands.
 
-**The shipped manifests are part of the bump and no longer a separate step.** A module shipped inside a release travels in the same tarball as the analysis environment it names, so at a release the two agree by construction and there is nothing to decide. `00_static` still asserts `"environment"` equals `nextflow.config`'s version exactly, so a manifest that somehow disagrees still fails the next step — the check is unchanged, only the typing is gone.
-
-A module published **outside** a release is different and is still yours: its `"environment"` is a claim about which release it was built against, and `dev/scripts/bump-analysis-version.sh module <name>` is what moves its version when you change it.
+**It does not touch a module or library manifest, and must not.** No module ships inside a release, so a module's `"environment"` is the oldest release its author says it needs — moved when its needs move, by whoever maintains it, not by a release bump acting on its behalf. `dev/scripts/bump-analysis-version.sh module <name>` is what moves a module's own version when you change it.
 
 ## 7. Run the full suite
 
@@ -139,7 +137,17 @@ bash test/run_tests.sh
 
 On `main`, at the new version, with the frozen environments. This is the run that matters — everything before it tested a version string that is no longer the one shipping.
 
-**Check the counts against the previous run, not only the exit status.** A filter that matches nothing also reports success. `nextflow lint .` must be at zero errors *and* zero warnings.
+**Run it with conda on `PATH`.** The suite finds the analysis environment through `conda info --base`, and a shell without a working `conda` finds nothing: three cases then skip — the PDF report, the compiled hot path, and the compiled-and-parallel agreement — and the run still reports success. Set `TEST_ANALYSIS_ENV=<prefix>/envs/PoolSeqFlow-<version>-analysis` if discovery cannot find it.
+
+**Check the counts against the previous run, not only the exit status** — cases passed *and* cases skipped. A filter that matches nothing also reports success, and a skip is how a case that should have run says so quietly.
+
+**Lint without `modules/`**, at zero errors and zero warnings:
+
+```
+nextflow lint analysis analysis.nf dryrun.nf poolseqflow.nf scripts
+```
+
+`nextflow lint .` cannot pass: a module's `main.nf` imports the frame as `'../../lib/nf/plan.nf'`, which resolves from the store it is installed into and not from `modules/<name>/`. `00_static` lints the modules, in an assembled store layout.
 
 ## 8. Write the CHANGELOG
 
@@ -154,7 +162,23 @@ What the notes owe a reader, beyond the commits: anything a user has to *do*, an
 - **Zenodo mints a DOI for the version.** The citation machinery points at the all-versions DOI and tells a user to pick their version from it, so the version record has to exist for the citation the release prints to be answerable.
 - Verify the published archive installs from scratch on a machine that has never had it.
 
-## 10. Return to `dev`
+## 10. Publish the modules and libraries this release runs
+
+No module ships inside a release, so a release on its own leaves users with an empty store. Publishing is what makes the modules installable, and it is separate on purpose: a module moves on its own timetable, and one published tomorrow is installable into this release without re-releasing anything.
+
+```
+dev/scripts/publish-module.sh <name> [ref]
+```
+
+It builds the tarball into `modules/repo/`, reads `kind`, `contract`, `frame`, `environment` and `summary` out of the thing's own manifest, appends the catalogue row and bumps `#!index-version`. It takes a module or a library by name and finds it in `modules/` or `modules/lib/`.
+
+**Publish from a commit.** The script refuses a source with no commit timestamp, because the tarball's reproducibility depends on it — archiving a tree stamps *now* and two builds of one ref stop matching. So this comes after the release is committed, not before.
+
+**The tarball and the row it advertises go out in one commit.** The site deploys `modules/repo/` wholesale at the published address `/PoolSeqFlow/modules-repo/`, so a row committed without its file advertises a download that 404s until the next deploy.
+
+**A published version is never rewritten.** Somebody may have installed it and its checksum is in the catalogue. Change means bumping the version and publishing that; `00_static` checks every row's file exists and its checksum matches.
+
+## 11. Return to `dev`
 
 Sync `dev` with `main` so the version bump and the CHANGELOG come back, then carry on. The first commits after a release are usually the things this protocol found and deferred.
 
@@ -174,3 +198,27 @@ They look alike, and each one is cheap to spot once you know the shape:
 - **A literal that happens to be right still says PASS.** A case asserted `${EXPECTED_VERSION:-2.2.0}` against a variable set nowhere. Correct until the bump, then a failure that says nothing about what it tests.
 
 **A version bump is when this class surfaces**, because everything before it ran against a tree carrying the old version. That is why step 7 is after step 6 and not before it.
+
+---
+
+## Post-release triage
+
+Things this protocol worked around rather than fixed. Each has a note saying what the workaround is, so a release is never blocked on one — and each is a gate that is weaker than it reads, so none of them should sit here long.
+
+**`run_tests.sh` reports success over three cases it never ran.** The analysis environment is discovered through `conda info --base`, so a run in a shell with no working `conda` finds none and silently skips the PDF report, the compiled hot path, and the compiled-and-parallel agreement. Measured on 2026-09-10: a full run said `549 passed, 3 skipped` and exit 0, and the three that skipped are among the least trivial in the suite — F1's Rcpp worker bug was caught by the combination of compiled *and* parallel and by nothing else.
+
+The workaround is step 7's, and it is a person remembering: run with conda on `PATH`, and read the skip count. What it should do instead is **refuse**, the way `check-analysis-versions.sh --release` refuses rather than answering — a suite that cannot find the environment for cases that need it should say so and exit non-zero when it was asked for a full run. `--fast` and `--cost static` legitimately skip those, so the refusal belongs to the unfiltered run alone.
+
+**A release step that shells out to `conda` cannot assume `conda` works.** On a machine where the shell function is set up for an interactive shell of a different family, a non-interactive `bash -c 'conda env list'` fails with `__conda_exe: permission denied` — and `env_exists()` in `prep-version.sh` is `conda env list | grep -qxF`, so a broken function reads as *the environment is not there* and the script refuses a release that had nothing wrong with it. A misconfigured plugin is the milder version of the same thing: `anaconda-anon-usage` prints an error line on every invocation while conda still works, which is noise in a log that a person is being asked to read carefully.
+
+The workaround is to `source <base>/etc/profile.d/conda.sh` before running anything that needs conda. What the scripts should do instead is source it themselves, or resolve the real binary and stop depending on the shell at all — and `env_exists()` in particular should tell *conda said no* apart from *conda did not run*, because those are opposite problems wearing the same message.
+
+**Step 2 is skippable when nothing has drifted, and the protocol should say how to know.** Its expensive half updates and re-freezes both environments; when the last freeze already describes them, that work produces an identical file and an hour of nothing. The check is two exports to a scratch path and a diff:
+
+```
+dev/scripts/export-environment.sh PoolSeqFlow-<version> /tmp/a.yml
+dev/scripts/export-environment.sh PoolSeqFlow-<version>-analysis /tmp/b.yml
+diff /tmp/a.yml install/environment.yml && diff /tmp/b.yml install/environment-analysis.yml
+```
+
+Identical both ways means the freeze still holds and the update-and-export cycle is redundant. **`check-module-packages.sh` is not part of that skip** — it asks a different question, whether the modules' own pins still solve against the frozen baseline, and a module's manifest can change on a day the environments do not.

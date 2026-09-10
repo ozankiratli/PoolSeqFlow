@@ -191,7 +191,7 @@ Check the [requirements](#getting-started) first if you have not — in particul
     cd PoolSeqFlow-*/
     ```
 
-    This is the recommended route. The archive is the pipeline only — no documentation sources or CI config — and it extracts into a versioned directory, so you always know which release a working copy came from.
+    This is the recommended route. The archive is the pipeline, the analysis frame and this manual — no site sources, no CI config, no test suite, and **no analysis modules**. Every module is published on its own timetable and installed from the catalogue, so a new installation starts with an empty module store and you choose what goes into it. It extracts into a versioned directory, so you always know which release a working copy came from.
 
     Verify it if you like: download `SHA256SUMS` from the same release and run `sha256sum -c SHA256SUMS`.
 
@@ -273,37 +273,82 @@ Analyzing one set of reads under several parameter sets — two reference genome
 
 ### 4. Verify it any time { #check }
 
+**There are two checks and they answer different questions**, so `check` takes a word and refuses without one. An installation is a tool; a project is your configuration and your data. Neither answers the other, and a bare `check` would have to guess which you meant — leaving the other unchecked without saying so.
+
 ```bash
-./PoolSeqFlow check
+./PoolSeqFlow check install    # the tools and helpers this release is built to run
+./PoolSeqFlow check project    # the configuration and the commands this project names
 ```
+
+Both end by reporting how many checks passed, and **fail loudly if any did not** rather than summarizing.
+
+#### `check install` { #check-install }
 
 ```text
 Tools
+  from ~/.local/opt/miniconda3/envs/PoolSeqFlow-3.0.0
 
   nextflow       nextflow     OK       26.04.6 build 12646
+  cutadapt       cutadapt     OK       5.2
+  …
   samtools       samtools     OK       samtools 1.24
   bcftools       bcftools     OK       bcftools 1.24
   …
-  tool list from: params.software in parameters.config
 
 Pipeline helpers
 
   atomic_mv.sh                 OK
   depth2freq.awk               OK
   …
-
-Configuration
-
-  parameters.config            PARSES
 ```
 
-It ends by reporting how many checks passed, and **fails loudly if any did not** rather than summarizing. It covers three things:
+**Every command the release is built to run**, with the version each reports. The list is the canonical one — what this release expects its environment to provide.
 
-**Every command the pipeline invokes**, with the version each reports. Once you have a `parameters.config`, the list is read from `params.software` through `nextflow config` rather than assumed — so a command [repointed at a system binary](#using-system-tools) is checked as *you* configured it. That override is the setting most likely to be wrong and least likely to announce itself.
+**And each has to come from that environment.** Every tool on the list is pinned in `install/environment.yml`, so one that resolves from anywhere else means the environment is missing a package and your system's copy is standing in — at whatever version it happens to be, and only on this machine. That is reported, not passed over:
 
-**Every helper in `bin/`**, present and executable. `nextflow.config` puts that directory on `PATH` and the process scripts call the helpers by bare name, so a lost executable bit fails mid-run rather than at startup. `lib/` is checked for presence only — what is in there is sourced by another script rather than run, which is the whole reason the two directories are separate.
+```text
+  samtools       samtools     OUTSIDE THE ENVIRONMENT  /usr/bin/samtools
+```
 
-**That `parameters.config` parses**, once it exists.
+It is the failure worth catching, because it is the quiet one: the pipeline runs, the results look fine, and nothing reproduces anywhere else. Reinstalling is the fix — `PoolSeqFlow install`.
+
+**Every helper in `bin/`**, present and executable. `nextflow.config` puts that directory on `PATH` and the process scripts call the helpers by bare name, so a lost executable bit fails mid-run rather than at startup. `bin/` is enumerated rather than listed, so a helper added to a release is checked without anyone remembering to say so.
+
+The three `check_*.sh` scripts live there too — `bin/` is where everything that is *run* rather than sourced lives — and are the one thing skipped: they are run by the command line, never by a process script, so a run does not depend on them. `lib/` is not enumerated at all, because what is in there is sourced rather than run, which is the whole reason the two directories are separate.
+
+**It reads no `parameters.config` and needs no project.** Run it from anywhere, including straight after installing and before you have a project at all.
+
+#### `check project` { #check-project }
+
+Run it from your project directory.
+
+```text
+Configuration
+
+  parameters.config            WRITTEN FOR THIS RELEASE
+  parameters.config            PARSES
+  metadata.csv                 PARSES
+  runs.csv                     not in use
+
+Tools, as this project configures them
+
+  nextflow       nextflow               OK       26.04.6 build 12646
+  samtools       /usr/bin/samtools      OK       samtools 1.19
+  bcftools       bcftools               OK       bcftools 1.24
+  …
+
+  tool list from: params.software in parameters.config
+```
+
+**Your files parse** — `parameters.config` through Nextflow itself, and `metadata.csv` and the run table through the same parsers step 0 uses, so what you are told here is what a run would tell you. It also says whether the config was written for this release, which is the one thing that stops a run before anything else is read.
+
+**Every command, as *you* configured it.** The list comes from `params.software`, so a command [repointed at a system binary](#using-system-tools) is checked the way the run will call it — and the second column shows what will actually be invoked. That override is the setting most likely to be wrong and least likely to announce itself.
+
+**A path outside the environment is not a finding here.** `check install` treats one as a fault, because the installation is supposed to provide its own tools; `check project` does the opposite, because repointing one is a thing you are allowed to do and this is where you see the result. It reports what will be invoked and whether it runs, and leaves the judgment to you.
+
+A project that repoints nothing gets the same tool answers from both checks. **That is the point**: the difference between them is exactly your own configuration.
+
+If `params.software` cannot be read, `check project` says so and checks no tool. It never falls back to the canonical list — the whole reason the section exists is that it reads yours.
 
 ---
 
@@ -465,7 +510,8 @@ How to read the tables: [Interpreting Results](#interpreting-results).
 | `PoolSeqFlow install` | Create this release's conda environment, install the pipeline, then verify both |
 | `PoolSeqFlow init` | Populate the current directory as a project ([what it writes](#3-make-your-project)) |
 | `PoolSeqFlow init_multi` | The same, for a project running several parameter sets over one set of reads |
-| `PoolSeqFlow check` | Verify an existing installation ([what it covers](#check)) |
+| `PoolSeqFlow check install` | Verify an installation — the tools and helpers it is built to run ([what it covers](#check-install)) |
+| `PoolSeqFlow check project` | Verify a project — its configuration, and the commands it names ([what it covers](#check-project)) |
 | `PoolSeqFlow run` | Start — or resume — the pipeline |
 | `PoolSeqFlow dryrun` | Create the directory tree the run would write, empty, so the layout can be approved before any compute is spent. Records nothing and changes none of your files |
 | `PoolSeqFlow dryclean` | Remove the preview `dryrun` made |
@@ -531,6 +577,15 @@ Two separate things upgrade here, and it helps to keep them apart. **The install
 Download and install it exactly as you did the first time. Nothing is replaced: `~/.local/opt` gains a directory, `~/.local/bin` gains a `PoolSeqFlow-<version>` command, and plain `PoolSeqFlow` starts meaning the new one. Every earlier release still runs, under its own name.
 
 Your projects are untouched by this. `parameters.config` lives in your project directory, not in the installation, so nothing an install or an uninstall does can reach it.
+
+**The new release's module store starts empty.** No module ships inside a release, and the store belongs to the installation that runs it — so the old release keeps everything you installed into it and the new one has nothing. Ask the old one what to reinstall, then install each into the new one:
+
+```bash
+PoolSeqFlow-3.0.0 analysis modules list      # what the old release has
+PoolSeqFlow analysis modules install mds     # and again, into the new one
+```
+
+Nothing is lost by this. A module installs the libraries it needs along with it, and the analyses it has already produced are results — no install or uninstall reaches them.
 
 ### A project belongs to one release
 
@@ -771,7 +826,7 @@ Standard, optional, and unchanged in approach. It runs only when you ask for it,
 
 ### The analysis layer
 
-The modules that read these tables — what each one estimates, what it assumes and what it cannot tell you — are documented with the modules themselves in [Shipped Modules](#shipped-modules). This section will grow as they do.
+The modules that read these tables — what each one estimates, what it assumes and what it cannot tell you — are documented with the modules themselves in [Modules](#modules). This section will grow as they do.
 
 ## Design Decisions
 <!--@ page: design-decisions -->
@@ -1749,9 +1804,12 @@ There are three directories, and keeping them apart is most of understanding the
 
 ```text
 ~/.local/opt/PoolSeqFlow-<version>/
-├── bin/                          # Run by the pipeline; all executable, all on PATH
+├── bin/                          # Run, never sourced; all executable, all on PATH
 │   ├── atomic_mv.sh              # Cross-filesystem moves, staged and renamed
 │   ├── cap_depth.awk             # Truncate a BAM to a depth ceiling
+│   ├── check_install.sh          # Verifies an installation (PoolSeqFlow check install)
+│   ├── check_project.sh          # Verifies a project (PoolSeqFlow check project)
+│   ├── check_analysis_install.sh # The analysis layer, R packages included
 │   ├── classify_manifest.sh      # Sorts a parameter change into added/changed/removed
 │   ├── config_migrate.sh         # Backs migrate_config
 │   ├── createDepthFile.sh        # Extract AD/DP columns from a VCF
@@ -1765,12 +1823,13 @@ There are three directories, and keeping them apart is most of understanding the
 │   └── write_citations.py        # Writes CITATIONS.md and references.bib per run
 ├── lib/                          # Sourced by another script, never run; not on PATH
 │   ├── tool_version.sh           # Asks each tool its version, one way per tool
-│   └── wrapper_lib.sh            # Machinery shared by the wrapper and the install checks
-├── install/
-│   ├── environment.yml           # Pinned conda environment
-│   ├── environment-analysis.yml  # Pinned conda environment for the analysis layer
-│   ├── check_install.sh          # Verifies an installation (PoolSeqFlow check)
-│   └── check_analysis_install.sh # The same for the analysis layer, R packages included
+│   └── wrapper_lib.sh            # Machinery shared by the wrapper and the checks
+├── install/                      # The pinned environments, and nothing else
+│   ├── environment.yml           # The pipeline's
+│   └── environment-analysis.yml  # The analysis layer's
+├── citations/                    # What the pipeline itself cites
+│   ├── references.bib            # Authored; edit this one
+│   └── citations.json            # Generated from it, and what a run reads
 ├── scripts/
 │   ├── 0_verify_environment.nf   # The nine checks that gate everything else
 │   ├── 1_build_dictionaries.nf   # BWA, SAMtools and SnpEff indices from your reference
@@ -1786,17 +1845,32 @@ There are three directories, and keeping them apart is most of understanding the
 │   ├── metadata.nf               # Reading metadata.csv, and the projections from it
 │   ├── resolve_parameters.nf     # Computed parameters, and one parameter set per run
 │   └── variants.nf               # Which runs share which work, and where it goes
+├── analysis/                     # The analysis frame. No module is part of it
+│   ├── lib/nf/                   # The workflow library a module imports
+│   ├── lib/rmd/report.Rmd        # The PDF report every analysis carries
+│   ├── modules.nf                # Finds and dispatches an installed module
+│   ├── 0_verify_analysis.nf      # The builtin verify module
+│   ├── complete.nf               # Promotion for analysis results
+│   ├── frame.config
+│   ├── frame.version             # What a module declares it needs
+│   ├── analysis.config.template
+│   ├── citations.json
+│   ├── references.bib
+│   └── modules/                  # THE MODULE STORE — created empty, and yours to fill
 ├── manual/                       # This manual
 ├── nextflow.config
 ├── parameters.config.template
 ├── metadata.csv.template
 ├── multi-run.csv.example
 ├── poolseqflow.nf                # Workflow entry point
+├── analysis.nf                   # Entry point for the analysis layer
 ├── dryrun.nf                     # Entry point for the layout preview
 └── PoolSeqFlow                   # CLI wrapper, pipeline and analysis layer alike
 ```
 
 One copy serves any number of projects, and it is replaced wholesale when you upgrade — which is why nothing of yours belongs in it. `bin/` is prepended to `PATH` by `nextflow.config`, which is how the helper scripts are callable by bare name inside process scripts.
+
+**`analysis/modules/` is the one part of the installation you add to.** No module arrives with a release, so a fresh copy has an empty store; `analysis modules install <name>` puts a module there along with the libraries it declares, which live together under `analysis/modules/lib/`. It is still part of the installation and not part of a project — replaced wholesale on upgrade, like everything else here, which is why [upgrading](#upgrading) means installing your modules again.
 
 ### What you provide, on `mainDir`
 
@@ -3086,7 +3160,9 @@ cd /path/to/project
 PoolSeqFlow analysis verify
 ```
 
-Four ship with the release — `verify`, `basicstats`, `association` and `mds` — and each has a page of its own under [Shipped Modules](#shipped-modules), which is where what they compute and what they assume is written down. Every other module is installed separately and published on its own timetable.
+**Only `verify` comes with the pipeline.** It is part of the analysis frame itself, reports what the layer can see and produces nothing. Every other module — `basicstats`, `association` and `mds` among them — is published on its own timetable and installed from the catalogue, so a fresh installation has an empty store and you choose what goes into it. Each has a page of its own under [Modules](#modules), which is where what it computes and what it assumes is written down.
+
+A module is installed with the **libraries** it declares: the shared arithmetic more than one module wants, each one published and versioned like a module and installed into `analysis/modules/lib/`. You never ask for a library by name; it arrives with whatever needs it, and leaves when nothing installed still declares it.
 
 ### The modules installed here { #analysis-modules }
 
@@ -3116,7 +3192,7 @@ All of them read the installation rather than your project, so they work from an
 
 #### What installing a module does to your environment { #module-packages }
 
-**There is one analysis environment per release and every module shares it.** A module that needs an R package the release does not ship names it in its manifest, pinned to an exact version, and `modules install` puts it in that shared environment. No module shipped with this release names one — they run on base R plus what the environment already carries — so this is what you will see when you install one of the modules published separately:
+**There is one analysis environment per release and every module shares it.** A module names every R package it needs in its manifest, pinned to an exact version, and `modules install` puts them in that shared environment. It names them whether or not the release's own environment already carries them: the manifest is a statement of what the module needs, not of what one release happens to provide, and removing a module never takes a package the release itself is built on. This is what you see when you install one:
 
 ```
 Installing what fst runs on, into 'PoolSeqFlow-3.0.0-analysis':
@@ -3136,7 +3212,7 @@ Either way it is a compatibility question between a release and a module, settle
 
 **Uninstalling takes back only what nothing else asks for.** If two modules both name `r-poolfstat=3.0.0`, removing one leaves it installed for the other. And because `conda remove` takes everything that depends on what it is given, the removal is planned before it is run: if taking a package out would take something else with it, nothing is removed and the module stays installed.
 
-**Two things follow from the store living inside the installation.** Reinstalling the pipeline over itself wipes the store, so the packages its modules added are taken out of the environment first, while the manifests declaring them still exist — afterwards both are back to what the release ships. And `analysis uninstall` removes the environment while leaving the store, so `analysis install` puts back what the modules still there need. Neither is something to manage by hand.
+**Two things follow from the store living inside the installation.** Reinstalling the pipeline over itself wipes the store, so the packages its modules added are taken out of the environment first, while the manifests declaring them still exist — afterwards both are back to what a fresh installation is, which is empty, and the modules you want are installed again. And `analysis uninstall` removes the environment while leaving the store, so `analysis install` puts back what the modules still there need. Neither is something to manage by hand.
 
 `list` is worth knowing about before you need it. Modules live inside the release's own installation, so each release has its own set and a module installed for one is never picked up by another — reinstalling the same version wipes them, and one command puts each back. More usefully: **a module directory that has lost its pipeline stops every analysis run, not only its own**, and `list` is what names the one at fault. It also tells you where the store is, which is the directory a module is installed into.
 
@@ -3626,7 +3702,7 @@ The kinds are the phenotype's — `quantitative`, `binary`, `ordinal`, `nominal`
 
 #### What adjusting for one costs, and why it is a decision { #covariates-not-adjusted }
 
-**The frame never adjusts for anything.** It resolves each covariate, says which are [part of the design](#design-covariates), and publishes both. Whether a module puts a covariate in its model is that module's business, declared in its own section — and no module ships without saying.
+**The frame never adjusts for anything.** It resolves each covariate, says which are [part of the design](#design-covariates), and publishes both. Whether a module puts a covariate in its model is that module's business, declared in its own section — and no module is published without saying.
 
 **The arithmetic is why it has to be your decision.** *n* is the number of **pools**, typically six to twenty, so every covariate a model fits is a degree of freedom the effect you came for does not get. At six pools a comparison starts with four; a single covariate makes it three; a repeated-measures design of three units has one left before any covariate at all.
 
@@ -3721,7 +3797,7 @@ Everything the analysis layer produces goes under `Analysis/` — on `mainDir` w
 
 **Every published analysis carries the script that produced it.** That is a guarantee of the layer rather than a convention module authors are asked to follow: an analysis handed over without one is refused, nothing is published, and the folder is left exactly as it was. So a result you find in `Analysis/Results` can always be regenerated, and the folder also holds the verification record that cleared it — which names the module, its version, the runs it covered and the configuration it was assembled from.
 
-**It carries the shared library it used, folded in.** A module sources functions the analysis layer provides — effective sample size, gene diversity, the harmonic means — and what is published is those functions and the module's own code in one file, stamped with the frame version that defined them. A driver that merely `source()`s code the reader does not have would satisfy the letter of the guarantee and none of its point.
+**It carries the libraries it used, folded in.** A module declares the libraries it needs — effective sample size, gene diversity, the harmonic means — and each is installed alongside it; what is published is those functions and the module's own code in one file, headed by the frame version it ran against. A driver that merely `source()`s code the reader does not have would satisfy the letter of the guarantee and none of its point — and a library lives in the module store, which you can uninstall from. The file in your results is the copy that ran, whatever the store holds afterward.
 
 **And a `README.md` that says how to read what is in the folder.** { #analysis-readme } Every module declares, for each file it publishes, the section of this manual that explains it; the frame renders one table from those declarations and from what every analysis carries anyway:
 
@@ -3793,10 +3869,10 @@ The cost of a working cycle is therefore one transfer, not two — which matters
 
 **Do not run it while a module is running.** The two would be moving the same folders in opposite directions, and neither checks for the other.
 
-# Shipped Modules
+# Modules
 <!--@ section: modules | nav: Modules -->
 
-Most modules are installed separately. These are the ones a release carries, so they are available the moment the analysis environment exists, and their versions move on the pipeline's timetable rather than a catalogue's.
+**Every module is installed separately** — none comes with the pipeline, and a fresh installation has an empty store. These are the ones published alongside this release, each on its own timetable and at its own version, installed with `PoolSeqFlow analysis modules install <name>` and documented here so you can read what one computes before deciding to install it.
 
 | Module | What it computes | Needs |
 |---|---|---|
@@ -4527,7 +4603,7 @@ Some things cannot be asserted from inside the suite, so they are separate gates
 - **`nextflow lint`** over every workflow file, at zero errors *and* zero warnings. The strict parser rejects a good deal of ordinary Groovy, and it reports a parse failure in one file as "not defined" at every call site in *other* files — so a clean lint is worth more than it sounds.
 - **The citation check.** Every reference is authored once in BibTeX and compiled to the JSON the pipeline reads; the gate regenerates it and fails if the two disagree, so the file a run cites from cannot drift from the file I edit.
 - **The manual check.** This manual is one file, and every page of the site is generated from it. The gate re-parses it, resolves every cross-reference, and fails on a link to a heading that no longer exists or two headings that would collide — which is what stops the documentation rotting quietly as things are renamed.
-- **The version check**, which fails when a shared library has changed without its version moving, and the **archive check**, which builds the release tarball and asserts that everything a user needs is in it and everything they do not need is out.
+- **The version check**, which fails when the analysis frame, a module or a library has changed without its own version moving, and the **archive check**, which builds the release tarball and asserts that everything a user needs is in it and everything they do not need is out — modules included, since none of them ships.
 
 ### What this does not do
 
@@ -4823,7 +4899,7 @@ The diversity statistic itself is [Nei 1973](#ref-nei1973diversity), the correct
 #### Nei 1972 { #ref-nei1972distance }
 
 **Nei, M.** (1972). Genetic Distance between Populations. *The American Naturalist* 106(949), 283–292. [10.1086/282771](https://doi.org/10.1086/282771)
-: The distance the analysis layer places pools by, D_m = (J_X + J_Y)/2 - J_XY, where J is the probability that two chromosomes carry the same allele. It is the MINIMUM distance of this paper and not the standard distance D, which is defined in the same one and is a log of a ratio; the minimum distance is linear in the J terms, so averaging over loci and averaging over sites are the same operation and no ratio-of-averages question arises. What is applied here beyond the paper is the sampling correction: each J is replaced by its unbiased estimator from a sample of n_eff chromosomes, and J_XY takes none because the two pools are sequenced independently. It is HERE rather than in a module because analysis/lib/R/nei_distance.R is library code.
+: The distance the analysis layer places pools by, D_m = (J_X + J_Y)/2 - J_XY, where J is the probability that two chromosomes carry the same allele. It is the MINIMUM distance of this paper and not the standard distance D, which is defined in the same one and is a log of a ratio; the minimum distance is linear in the J terms, so averaging over loci and averaging over sites are the same operation and no ratio-of-averages question arises. What is applied here beyond the paper is the sampling correction: each J is replaced by its unbiased estimator from a sample of n_eff chromosomes, and J_XY takes none because the two pools are sequenced independently. It is HERE rather than in a module because it is the nei_distance library, installed with whatever module declares it.
 
 #### Nei 1973 { #ref-nei1973diversity }
 
@@ -4848,7 +4924,7 @@ The diversity statistic itself is [Nei 1973](#ref-nei1973diversity), the correct
 #### Hivert et al. 2018 { #ref-hivert2018poolseq }
 
 **Hivert, V., Leblois, R., Petit, E. J., Gautier, M. & Vitalis, R.** (2018). Measuring Genetic Differentiation from Pool-seq Data. *Genetics* 210(1), 315–330. [10.1534/genetics.118.300900](https://doi.org/10.1534/genetics.118.300900)
-: The effective sample size the analysis layer weights by, n_eff = n*d / (n + d - 1) for a pool of n chromosomes read to depth d. The paper does not write it in that form - it defines D2 as the sum of (d + n - 1)/n, which is the sum of d / n_eff under this form and under no other. Its pools are parameterized by HAPLOID size, which is what leaves n_eff, and everything weighted by it, general over ploidy. It is HERE rather than in a module because analysis/lib/R/n_eff.R is library code and every module that weights anything calls it.
+: The effective sample size the analysis layer weights by, n_eff = n*d / (n + d - 1) for a pool of n chromosomes read to depth d. The paper does not write it in that form - it defines D2 as the sum of (d + n - 1)/n, which is the sum of d / n_eff under this form and under no other. Its pools are parameterized by HAPLOID size, which is what leaves n_eff, and everything weighted by it, general over ploidy. It is HERE rather than in a module because it is the n_eff library, installed with whatever module declares it, and every module that weights anything calls it.
 
 ### Estimating from pooled reads
 

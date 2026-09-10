@@ -21,7 +21,9 @@ section    <- if (length(args) > 1) args[2] else "all"
 replicates <- if (length(args) > 2) as.integer(args[3]) else 200000L
 seed       <- if (length(args) > 3) as.integer(args[4]) else 20260907L
 
-sources <- list.files(lib, pattern = "[.]R$", full.names = TRUE)
+# `recursive` because a library is a DIRECTORY under modules/lib/ and its .R sits inside it, so
+# a flat listing of the store or the source tree returns nothing at all.
+sources <- list.files(lib, pattern = "[.]R$", full.names = TRUE, recursive = TRUE)
 if (length(sources) == 0) stop("no R sources in ", lib)
 for (path in sources) source(path)
 

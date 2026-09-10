@@ -3,7 +3,7 @@
 
     dev/scripts/select-tests.py                 # against the working tree
     dev/scripts/select-tests.py --ref HEAD~3    # against a commit
-    dev/scripts/select-tests.py scripts/7_vcf2freq.nf analysis/lib/R/n_eff.R
+    dev/scripts/select-tests.py scripts/7_vcf2freq.nf modules/lib/n_eff/n_eff.R
     dev/scripts/select-tests.py --command       # print the run_tests.sh line and nothing else
 
 HOW IT DECIDES, in two halves.
@@ -43,7 +43,7 @@ def suites():
     """Every suite file, with the source paths its header claims."""
     found = {}
     roots = [os.path.join(ROOT, "test", "suites")]
-    modules = os.path.join(ROOT, "analysis", "modules")
+    modules = os.path.join(ROOT, "modules")
     if os.path.isdir(modules):
         roots += [os.path.join(modules, m, "test") for m in sorted(os.listdir(modules))]
     for directory in roots:
@@ -66,7 +66,12 @@ def sources():
     listed = subprocess.run(["git", "ls-files"], capture_output=True, text=True, cwd=ROOT)
     extra = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"],
                            capture_output=True, text=True, cwd=ROOT)
-    return [p for p in (listed.stdout + extra.stdout).split("\n") if p]
+    # Only what is actually THERE. `git ls-files` reads the index, which still names a file
+    # that has been moved or deleted in the working tree until the change is staged - and a
+    # path nothing can land in any more is not a source. Without this, every check built on
+    # sources() reports files that do not exist.
+    return [p for p in (listed.stdout + extra.stdout).split("\n")
+            if p and os.path.exists(os.path.join(ROOT, p))]
 
 
 def graph():

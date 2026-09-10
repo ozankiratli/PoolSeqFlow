@@ -1,8 +1,8 @@
 #!/bin/bash
 # The ./PoolSeqFlow wrapper's environment handling, against a stub conda.
 # cost: static
-# covers: PoolSeqFlow lib/wrapper_lib.sh lib/tool_version.sh install/check_install.sh
-# covers: install/check_analysis_install.sh
+# covers: PoolSeqFlow lib/wrapper_lib.sh lib/tool_version.sh bin/check_install.sh
+# covers: bin/check_analysis_install.sh bin/check_project.sh
 #
 # These run entirely against the fake conda in lib/sandbox.sh. Nothing here creates,
 # activates or removes a real environment: a test suite that could delete an operator's
@@ -13,7 +13,7 @@ VERSIONED_ENV="PoolSeqFlow-$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/Pool
 # The whole point of naming environments after the release: an older shared environment
 # must not be silently borrowed, because the pinned tools are part of what made a result.
 test_run_refuses_to_fall_back_to_the_legacy_environment() {
-    run_launcher_with_envs "base PoolSeqFlow" check
+    run_launcher_with_envs "base PoolSeqFlow" check install
     assert_status 1 "$LAUNCHER_STATUS" "check should fail when this version's env is absent"
     assert_contains "$LAUNCHER_OUTPUT" "$VERSIONED_ENV" "should name the environment it wanted"
     assert_contains "$LAUNCHER_OUTPUT" "kept every version in one environment" \
@@ -24,7 +24,7 @@ test_run_refuses_to_fall_back_to_the_legacy_environment() {
 }
 
 test_run_lists_other_versions_without_using_them() {
-    run_launcher_with_envs "base PoolSeqFlow-0.1.0 PoolSeqFlow-9.9.9" check
+    run_launcher_with_envs "base PoolSeqFlow-0.1.0 PoolSeqFlow-9.9.9" check install
     assert_status 1 "$LAUNCHER_STATUS" "check should fail"
     assert_contains "$LAUNCHER_OUTPUT" "PoolSeqFlow-0.1.0" "should list other installed versions"
     assert_contains "$LAUNCHER_OUTPUT" "PoolSeqFlow-9.9.9" "should list other installed versions"
@@ -32,11 +32,132 @@ test_run_lists_other_versions_without_using_them() {
 }
 
 test_check_activates_when_the_matching_environment_exists() {
-    run_launcher_with_envs "base $VERSIONED_ENV" check
+    run_launcher_with_envs "base $VERSIONED_ENV" check install
     assert_status 0 "$LAUNCHER_STATUS" "check should succeed"
     assert_contains "$(cat "$LAUNCHER_CONDA_LOG")" "activate $VERSIONED_ENV" \
         "should activate this version's environment"
     assert_contains "$LAUNCHER_OUTPUT" "STUB check_install ran" "should go on to verify the install"
+}
+
+# A TOOL FROM OUTSIDE THE ENVIRONMENT IS A FAULT, AND IT IS THE SILENT ONE. Every tool the
+# installation check looks for is pinned in install/environment.yml, so one resolving elsewhere
+# means the environment is missing a package and the machine's own copy is standing in - at
+# some other version, and nowhere but here. The run works and reproduces nowhere.
+#
+# The real script, not the stub every other case in this suite uses: what is being checked is
+# the script's own logic, and a stub that echoes a line proves nothing about it. No conda and
+# no JVM - a directory named after the environment and CONDA_PREFIX pointing at it is the whole
+# fixture, because that is all the script reads.
+#
+# THE ENVIRONMENT DIRECTORY MUST BE NAMED FOR THE ENVIRONMENT. The script only compares paths
+# when CONDA_PREFIX's basename matches ENV_NAME - otherwise it cannot say which environment it
+# is in, and checks nothing. A fixture that gets that wrong disables the very comparison under
+# test and passes, which is what the first version of these cases did.
+CHECK_ENV_NAME="fixture-env"
+
+check_install_fixture() {
+    local sb; sb=$(guard_path "$TEST_TMPDIR/check-install-env")
+    rm -rf "$sb"; mkdir -p "$sb/$CHECK_ENV_NAME/bin" "$sb/system"
+    # The canonical list out of the script itself, so this cannot drift from what it checks.
+    local tools; tools=$(sed -n 's/^CANONICAL="\(.*\)"$/\1/p' "$REPO_ROOT/bin/check_install.sh")
+    [ -n "$tools" ] || { skip_case "could not read CANONICAL out of check_install.sh"; return 1; }
+    local t
+    for t in $tools nextflow python3 awk; do
+        printf '#!/bin/bash\necho "%s 1.0"\n' "$t" > "$sb/$CHECK_ENV_NAME/bin/$t"
+        chmod +x "$sb/$CHECK_ENV_NAME/bin/$t"
+    done
+    printf '%s' "$sb"
+}
+
+test_the_install_check_wants_the_environments_own_tools() {
+    local sb; sb=$(check_install_fixture) || return
+    local out
+    out=$(cd "$REPO_ROOT" && ENV_NAME="$CHECK_ENV_NAME" CONDA_PREFIX="$sb/$CHECK_ENV_NAME" \
+          PATH="$sb/$CHECK_ENV_NAME/bin:/usr/bin:/bin" bash bin/check_install.sh 2>&1)
+    # This assertion is what stops the case passing over a disabled comparison: the header
+    # names the prefix only when the script decided it knows which environment it is in.
+    assert_contains "$out" "from $sb/$CHECK_ENV_NAME" \
+        "the check must say it is reading the environment:"$'\n'"$out"
+    assert_contains "$out" "checks passed" "and every tool comes from it here"
+    assert_not_contains "$out" "OUTSIDE THE ENVIRONMENT" "so none is outside it"
+}
+
+test_the_install_check_catches_a_tool_from_outside_the_environment() {
+    local sb; sb=$(check_install_fixture) || return
+    # samtools leaves the environment and only the system has it - the exact shape of a
+    # package missing from environment.yml's solve with a system copy standing in.
+    mv "$sb/$CHECK_ENV_NAME/bin/samtools" "$sb/system/samtools"
+    local out
+    out=$(cd "$REPO_ROOT" && ENV_NAME="$CHECK_ENV_NAME" CONDA_PREFIX="$sb/$CHECK_ENV_NAME" \
+          PATH="$sb/$CHECK_ENV_NAME/bin:$sb/system:/usr/bin:/bin" bash bin/check_install.sh 2>&1)
+    assert_contains "$out" "OUTSIDE THE ENVIRONMENT" \
+        "a tool resolving outside the environment must be reported:"$'\n'"$out"
+    assert_contains "$out" "$sb/system/samtools" "naming where it actually came from"
+    assert_contains "$out" "checks failed" "and it must fail the check, not warn"
+}
+
+# Run without the environment active there is nothing to compare a path against, so the check
+# says so instead of comparing against nothing and calling every tool fine.
+test_the_install_check_says_when_it_cannot_tell_where_a_tool_came_from() {
+    local sb; sb=$(check_install_fixture) || return
+    local out
+    out=$(cd "$REPO_ROOT" && ENV_NAME="$CHECK_ENV_NAME" CONDA_PREFIX="" \
+          PATH="$sb/$CHECK_ENV_NAME/bin:/usr/bin:/bin" bash bin/check_install.sh 2>&1)
+    assert_contains "$out" "is not active" "must say the environment is not active:"$'\n'"$out"
+    assert_not_contains "$out" "OUTSIDE THE ENVIRONMENT" "and claim nothing about where tools came from"
+}
+
+# TWO CHECKS THAT ANSWER DIFFERENT QUESTIONS, and a bare `check` must not pick one. Whichever
+# it picked would leave the other unchecked while reporting success, which is the failure the
+# word exists to prevent.
+test_check_refuses_without_a_word() {
+    run_launcher_with_envs "base $VERSIONED_ENV" check
+    assert_status 1 "$LAUNCHER_STATUS" "a bare check must refuse"
+    assert_contains "$LAUNCHER_OUTPUT" "check {install|project}" "naming both"
+    assert_not_contains "$LAUNCHER_OUTPUT" "STUB check_install ran" "and running neither"
+    assert_not_contains "$LAUNCHER_OUTPUT" "STUB check_project ran" "and running neither"
+}
+
+test_check_refuses_a_word_it_does_not_know() {
+    run_launcher_with_envs "base $VERSIONED_ENV" check everything
+    assert_status 1 "$LAUNCHER_STATUS" "an unknown check must refuse"
+    assert_contains "$LAUNCHER_OUTPUT" "check {install|project}" "naming the two that exist"
+    assert_not_contains "$LAUNCHER_OUTPUT" "STUB check" "and running neither"
+}
+
+# `project` reads the directory you are standing in, so it refuses where there is no project
+# rather than checking the installation and calling that an answer.
+test_check_project_refuses_outside_a_project() {
+    run_launcher_with_envs "base $VERSIONED_ENV" check project
+    assert_status 1 "$LAUNCHER_STATUS" "check project must refuse without a parameters.config"
+    assert_contains "$LAUNCHER_OUTPUT" "no parameters.config" "saying what is missing"
+    assert_contains "$LAUNCHER_OUTPUT" "check project" "and naming the command to run again"
+    assert_not_contains "$LAUNCHER_OUTPUT" "STUB check_project ran" "having run nothing"
+}
+
+# An older config stops `check project` the same way it stops a run, and with the same advice.
+# Checking a project against a config this release cannot read would report on a file the
+# pipeline would refuse.
+test_check_project_refuses_a_config_from_an_older_release() {
+    local sb; sb=$(guard_path "$TEST_TMPDIR/launcher")
+    LAUNCHER_PROJECT_CONFIG='projectDir = "/tmp/x"'
+    run_launcher_with_envs "base $VERSIONED_ENV" check project
+    unset LAUNCHER_PROJECT_CONFIG
+    assert_status 1 "$LAUNCHER_STATUS" "an older config must stop the project check"
+    assert_contains "$LAUNCHER_OUTPUT" "older release" "saying what is wrong"
+    assert_contains "$LAUNCHER_OUTPUT" "migrate_config" "and how to fix it"
+    assert_not_contains "$LAUNCHER_OUTPUT" "STUB check_project ran" "having run nothing"
+}
+
+test_check_project_runs_in_the_project_with_the_environment_active() {
+    LAUNCHER_PROJECT_CONFIG='storageDir = "/tmp/x"'
+    run_launcher_with_envs "base $VERSIONED_ENV" check project
+    unset LAUNCHER_PROJECT_CONFIG
+    assert_status 0 "$LAUNCHER_STATUS" "check project should succeed: $LAUNCHER_OUTPUT"
+    assert_contains "$(cat "$LAUNCHER_CONDA_LOG")" "activate $VERSIONED_ENV" \
+        "the project check needs the environment: it runs nextflow and asks tools their versions"
+    assert_contains "$LAUNCHER_OUTPUT" "STUB check_project ran" "and it is the project script"
+    assert_not_contains "$LAUNCHER_OUTPUT" "STUB check_install ran" "not the installation one"
 }
 
 # `conda env create` takes its name from environment.yml unless -n overrides it. Without the
@@ -941,6 +1062,42 @@ test_modules_uninstall_leaves_a_package_another_module_declares() {
     assert_not_contains "$log" "-y r-shared" "the one the other module declares stays"
 }
 
+# THE KEEP-LIST IS BUILT BY CONCATENATING ONE MANIFEST READ PER MODULE, and the case above
+# cannot see what that costs: with a single other module there is no join to get wrong. At two
+# the last entry of one manifest meets the first entry of the next, and an unterminated read
+# hands them over as one token - which drops a real name out of the keep-list silently, so the
+# package is removed while a module that declares it is still installed.
+#
+# Called directly rather than through the launcher. What is being asked is what two functions
+# return, and a conda log is a slow and indirect way to ask it.
+test_the_keep_list_survives_more_than_one_other_module() {
+    local sb; sb=$(guard_path "$TEST_TMPDIR/keep-list")
+    rm -rf "$sb"; mkdir -p "$sb/going" "$sb/first" "$sb/second"
+    # `going` is being removed; both of the others declare something it also declares, and the
+    # shared names sit at the ENDS of their lists, which is where a join lands.
+    printf '{"name":"going","packages":["r-edge=1.0"],"libraries":["lib_edge"]}\n' \
+        > "$sb/going/manifest.json"
+    printf '{"name":"first","packages":["r-a=1.0","r-b=2.0"],"libraries":["lib_a","lib_b"]}\n' \
+        > "$sb/first/manifest.json"
+    printf '{"name":"second","packages":["r-edge=1.0"],"libraries":["lib_edge"]}\n' \
+        > "$sb/second/manifest.json"
+
+    local packages libraries
+    packages=$(INSTALL="$REPO_ROOT"; . "$REPO_ROOT/lib/wrapper_lib.sh" >/dev/null 2>&1
+               store_packages "$sb" going | cut -d= -f1 | sort -u)
+    libraries=$(INSTALL="$REPO_ROOT"; . "$REPO_ROOT/lib/wrapper_lib.sh" >/dev/null 2>&1
+                store_libraries "$sb" going | sort -u)
+
+    assert_contains "$packages" "r-edge" \
+        "the package the second module also declares must be in the keep-list:"$'\n'"$packages"
+    assert_contains "$libraries" "lib_edge" \
+        "and so must the library:"$'\n'"$libraries"
+    # A joined pair is the symptom, and naming it makes a failure say what happened rather than
+    # only that something is missing.
+    assert_not_contains "$packages" "r-br-edge" "two specs must not arrive as one token"
+    assert_not_contains "$libraries" "lib_blib_edge" "nor two library names"
+}
+
 # `conda remove` takes everything depending on what it is given, so the plan is read before
 # it runs and a name beyond the ones asked for stops the removal.
 test_modules_uninstall_stops_when_the_removal_would_cascade() {
@@ -1145,8 +1302,8 @@ test_modules_usage_and_implementation_agree() {
     assert_eq "$advertised" "$implemented" "the advertised module verbs and the implemented arms"
 }
 
-# `check` is the analysis half of `PoolSeqFlow check`: it activates this version's analysis
-# environment and hands off to the checker, never borrowing the pipeline's.
+# `analysis check` is the analysis layer's counterpart to `check install`: it activates this
+# version's analysis environment and hands off to the checker, never borrowing the pipeline's.
 test_analysis_check_activates_the_analysis_environment() {
     run_analysis_launcher_with_envs "base $VERSIONED_ENV ${VERSIONED_ENV}-analysis" check
     assert_status 0 "$LAUNCHER_STATUS" "check should succeed"
