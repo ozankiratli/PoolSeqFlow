@@ -5,6 +5,13 @@
 #
 # There is no 'name:' key. Environments are named after the release
 # (PoolSeqFlow-<version>-analysis), which is what ./PoolSeqFlow analysis install supplies with -n.
+#
+# host-glibc-floor: 2.17
+#
+# The oldest glibc this file installs on. A package pinned here that requires a newer
+# one makes the release uninstallable on every older machine, which is a property of
+# whoever ran the export rather than of the software. Read by dev/scripts and checked
+# by the test suite; raising it drops machines and is a release decision.
 channels:
   - conda-forge
   - bioconda
@@ -46,7 +53,7 @@ dependencies:
   - harfbuzz=14.4.0=ha770c72_1
   - htslib=1.24=ha79157c_0
   - icu=78.3=py310h44b86e0_2
-  - kernel-headers_linux-64=6.12.0=he073ed8_6
+  - kernel-headers_linux-64=3.10.0=he073ed8_18
   - keyutils=1.6.3=h7cc23a3_1
   - krb5=1.22.2=hbc21106_2
   - lcms2=2.19.1=h9073bf1_2
@@ -177,7 +184,7 @@ dependencies:
   - rsync=3.4.4=hffd6c76_1
   - samtools=1.24=h9dcdb79_1
   - sed=4.10=h19d0853_0
-  - sysroot_linux-64=2.39=hc4b9eeb_6
+  - sysroot_linux-64=2.17=h0157908_18
   - tk=8.6.13=noxft_h1df4ec4_4
   - tktable=2.10=h0eb2ad0_10
   - typst=0.15.1=he64ecbb_0

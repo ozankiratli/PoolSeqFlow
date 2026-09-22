@@ -602,6 +602,53 @@ test_no_package_leaves_a_shipped_environment_file() {
     assert_eq "2" "$checked" "both environment files should have had a baseline to compare against"
 }
 
+# A SHIPPED ENVIRONMENT MUST NOT REQUIRE A NEWER HOST THAN THE RELEASE PROMISES.
+#
+# v3.1.1 shipped environment-analysis.yml pinning sysroot_linux-64=2.39, which declares
+# `__glibc >=2.39` - a constraint on the machine, not on anything installable. It solved on the
+# machine that froze it (glibc 2.44) and could not be solved on any older one, so the analysis
+# layer was uninstallable on most clusters and every check in this suite passed. Reported from a
+# cluster on 2026-09-21.
+#
+# The comparison here is written with `sort -V` where export-environment.sh walks the fields in
+# awk, on purpose: two implementations of one comparison that share nothing cannot both be wrong
+# in the same way. A test that called the script's own function would agree with it about 2.9
+# being newer than 2.17.
+test_no_shipped_environment_outruns_the_host_floor() {
+    local f floor declared script_floor found newer checked=0
+
+    script_floor=$(sed -n 's/^HOST_GLIBC_FLOOR="\(.*\)"$/\1/p' \
+                   "$REPO_ROOT/dev/scripts/export-environment.sh" | head -1)
+    if [ -z "$script_floor" ]; then
+        fail_case "export-environment.sh should declare HOST_GLIBC_FLOOR"
+        return
+    fi
+
+    for f in environment.yml environment-analysis.yml; do
+        checked=$((checked + 1))
+
+        # The floor the file itself states. Read from the file rather than assumed, because the
+        # file is what ships and a user reading the error needs it to be true there.
+        declared=$(sed -n 's/^# host-glibc-floor: *\(.*\)$/\1/p' "$REPO_ROOT/install/$f" | head -1)
+        assert_eq "$script_floor" "$declared" \
+            "install/$f should declare host-glibc-floor $script_floor; re-export it"
+
+        # sysroot_linux-64's version IS the glibc it targets, which is what makes this readable
+        # without asking conda anything. A package that raises the floor some other way carries
+        # the constraint in its conda metadata rather than in its version, so it is invisible to
+        # any textual check and needs a release-time pass against real conda.
+        found=$(sed -n 's/^ *- *sysroot_linux-64=\([^=]*\).*$/\1/p' "$REPO_ROOT/install/$f" | head -1)
+        [ -n "$found" ] || continue
+
+        newer=$(printf '%s\n%s\n' "$found" "$script_floor" | sort -V | tail -1)
+        if [ "$newer" = "$found" ] && [ "$found" != "$script_floor" ]; then
+            fail_case "install/$f pins sysroot_linux-64=$found, above the floor of $script_floor."$'\n'"No host below glibc $found can install this release."
+        fi
+    done
+
+    assert_eq "2" "$checked" "both environment files should have been read"
+}
+
 # The tool list a user is told to expect and the one that is pinned have to agree, and the
 # epilogue that tells them how to fix a broken install has to name the right environment.
 test_check_install_hint_uses_the_versioned_environment() {

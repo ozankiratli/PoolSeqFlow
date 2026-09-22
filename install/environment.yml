@@ -5,6 +5,13 @@
 #
 # There is no 'name:' key. Environments are named after the release
 # (PoolSeqFlow-<version>), which is what ./PoolSeqFlow install supplies with -n.
+#
+# host-glibc-floor: 2.17
+#
+# The oldest glibc this file installs on. A package pinned here that requires a newer
+# one makes the release uninstallable on every older machine, which is a property of
+# whoever ran the export rather than of the software. Read by dev/scripts and checked
+# by the test suite; raising it drops machines and is a release decision.
 channels:
   - conda-forge
   - bioconda

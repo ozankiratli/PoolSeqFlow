@@ -138,6 +138,7 @@ If PoolSeqFlow contributes to published work, please cite it — the DOI and a f
 | | |
 |---|---|
 | **Operating system** | Linux or macOS. Windows is not supported — see [below](#why-not-windows) |
+| **glibc** | 2.17 or newer, on Linux. Every distribution from about 2014 onward clears this. It matters because the analysis layer compiles each module's hot path on your own machine and so ships a compiler toolchain, and a toolchain is built against a particular glibc — see [below](#glibc-floor) |
 | **Conda** | [Conda or Miniconda](https://docs.conda.io/en/miniconda.html) |
 | **Git** | Optional, for cloning |
 | **Working directory** | `mainDir` — where you launch the pipeline. Holds your reads, the reference, this project's configuration and everything actively processed. It has to persist between runs; it is not scratch space |
@@ -165,6 +166,19 @@ Pinning is deliberate. Pool-seq results depend on the exact behavior of the pile
 #### Why not Windows
 
 The pipeline moves each file it produces to where it belongs and leaves a symbolic link behind, and it relies on Unix path semantics throughout. Neither behaves correctly on native Windows filesystems, and WSL only works under some filesystem configurations — which is not a guarantee worth documenting. See [Symbolic links instead of copies](#symbolic-links-instead-of-copies).
+
+#### The glibc floor { #glibc-floor }
+
+**Only the analysis layer has one.** The pipeline environment holds finished programs and runs on anything that can run them. The analysis environment also holds a C and C++ compiler, because every module offers a compiled hot path and builds it on your machine rather than shipping a binary — and a compiler is built against the system headers of a particular glibc.
+
+**The floor is 2.17**, which is what the toolchain's own runtime already targets. Code built against it runs on glibc 2.17 and everything after, so a newer machine is never a problem. An older one is: conda refuses the solve rather than installing something that would fail later, and the message names a virtual package instead of a distribution:
+
+```text
+LibMambaUnsatisfiableError: Encountered problems while solving:
+  - nothing provides __glibc >=2.17 needed by sysroot_linux-64-...
+```
+
+`__glibc` is conda's name for the glibc your machine has, and `ldd --version` prints it. If yours is below the floor, the analysis layer cannot be installed on that machine and no flag works around it — forcing the solve would build module hot paths against headers newer than the system can run, turning an install-time refusal into a run-time crash. Run the analysis layer on a newer host; the pipeline itself is unaffected and its results are portable between the two.
 
 ---
 
@@ -4723,6 +4737,7 @@ Both are development material and are kept out of release downloads, so they liv
 | Problem | Cause and fix |
 |---|---|
 | Environment creation fails | `conda update -n base conda`, then retry `./PoolSeqFlow install` |
+| `nothing provides __glibc >=N` | Your machine's glibc is older than the analysis layer's floor. `ldd --version` prints what you have; the floor and why it exists are under [The glibc floor](#glibc-floor). There is no flag for it — run the analysis layer on a newer host |
 | Missing dependencies after install | Activate it: `conda activate PoolSeqFlow` |
 | A tool is found but misbehaves | Check whether `params.software.*` points at a system binary rather than the environment's — version mismatches are not detected |
 

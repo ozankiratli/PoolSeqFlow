@@ -181,9 +181,33 @@ say ""
 # $3 is the suffix that keeps the two environments' log files apart; the pipeline's is empty,
 # so its file names are unchanged.
 prepare_env() {
-    local source="$1" scratch="$2" tag="$3" changed
+    local source="$1" scratch="$2" tag="$3" changed prefix floor
     conda create --name "$scratch" --clone "$source" --yes > "$LOGDIR/clone$tag.log" 2>&1 \
         || { say "      FAILED to clone '$source' - see $LOGDIR/clone$tag.log"; exit 1; }
+
+    # THE UPDATE IS TOLD THE HOST FLOOR BEFORE IT RUNS, NOT CORRECTED AFTERWARDS.
+    #
+    # `conda update --all` takes the newest build of everything this machine can install, and
+    # sysroot_linux-64 is the package whose newest build encodes the glibc of whoever ran it.
+    # Left alone it climbs to the maintainer's own glibc every release - which is how v3.1.1
+    # shipped an analysis environment no cluster below glibc 2.39 could install.
+    #
+    # conda's own pinned-specs file is what states that up front, so the solver never proposes
+    # the raise and there is nothing to undo. Correcting it after the fact would mean a second
+    # solve that can itself fail, and would be automating away a decision rather than stating a
+    # constraint: raising the floor drops machines and belongs to a person.
+    #
+    # Only where the package is already present. The pipeline environment has no sysroot and
+    # must not gain one from a pin written on its behalf.
+    floor=$(sed -n 's/^# host-glibc-floor: *\(.*\)$/\1/p' \
+            install/environment-analysis.yml | head -1)
+    prefix=$(conda env list | awk -v n="$scratch" '$1 == n {print $NF}')
+    if [ -n "$floor" ] && [ -n "$prefix" ] && [ -d "$prefix/conda-meta" ] &&
+       conda list --name "$scratch" 2>/dev/null | grep -q '^sysroot_linux-64 '; then
+        say "      holding sysroot_linux-64 at <=$floor (the host floor)"
+        echo "sysroot_linux-64 <=$floor" >> "$prefix/conda-meta/pinned"
+    fi
+
     conda update --all --name "$scratch" --yes > "$LOGDIR/update$tag.log" 2>&1 \
         || { say "      FAILED to update '$scratch' - see $LOGDIR/update$tag.log"; exit 1; }
     conda list --name "$scratch" --export > "$LOGDIR/packages-after$tag.txt"
