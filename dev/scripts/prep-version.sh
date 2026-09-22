@@ -213,12 +213,24 @@ prepare_env() {
     conda list --name "$scratch" --export > "$LOGDIR/packages-after$tag.txt"
 
     # What actually moved: the release-note material, and the first thing to read on a failure.
+    #
+    # COMPARED ON version=build, NOT ON version ALONE. `conda list --export` prints
+    # name=version=build, and comparing only the version hides a conda-forge rebuild - the same
+    # version against a newer libgcc, which is a different binary and can behave differently.
+    # RELEASING.md asks the reader to classify exactly that category, so a table that cannot
+    # show it sends them looking for a cause it has hidden.
+    #
+    # Measured on the 3.1.2 attempt: this table reported 3 packages changed in the analysis
+    # environment while the real diff was 26, the other 23 being build-string moves across the
+    # whole gcc/libstdcxx/libgfortran/libblas stack.
     awk -F'=' '
-        FNR == NR { if ($0 !~ /^#/ && NF >= 2) before[$1] = $2; next }
+        function spec(v, b) { return b == "" ? v : v "=" b }
+        FNR == NR { if ($0 !~ /^#/ && NF >= 2) before[$1] = spec($2, $3); next }
         /^#/ || NF < 2 { next }
         {
-            if (!($1 in before))          { printf "%s\t(new)\t%s\n", $1, $2 }
-            else if (before[$1] != $2)    { printf "%s\t%s\t%s\n", $1, before[$1], $2 }
+            now = spec($2, $3)
+            if (!($1 in before))        { printf "%s\t(new)\t%s\n", $1, now }
+            else if (before[$1] != now) { printf "%s\t%s\t%s\n", $1, before[$1], now }
             seen[$1] = 1
         }
         END {
@@ -308,7 +320,32 @@ if [ "$TEST_STATUS" -ne 0 ]; then
 fi
 
 # ----------------------------------------------------------------------- export ---------
-say "[4/5] Tests passed. Exporting both to install/environment*.yml..."
+
+# THE FLOOR IS CHECKED BEFORE THE EXPORT, AGAINST THE SCRATCH ENVIRONMENT ITSELF.
+#
+# `conda update --all` takes the newest build reachable on THIS host, and this host is whatever
+# glibc the maintainer runs. The pin written in prepare_env holds sysroot_linux-64 down, and the
+# export refuses a file whose sysroot breaks the floor - but both of those see one package,
+# because sysroot is the only one whose VERSION is the glibc it targets. Every other package
+# carries the bound in its conda metadata: rsync requires `__glibc >=2.28` and nothing in the
+# string "3.4.4" says so.
+#
+# So an update can raise the real floor without either guard noticing, and the exported file
+# would then carry a header promising a floor its own contents break. Checking the scratch
+# environment here catches that while the solve is still in hand, instead of after the file is
+# written and an install has been done from it.
+say "[4/5] Tests passed. Checking what each environment requires of its host..."
+for e in "$UPDATE_ENV" "$UPDATE_ANALYSIS_ENV"; do
+    if ! FLOOR_OUT=$(bash dev/scripts/check-host-floor.sh "$e" 2>&1); then
+        printf '%s\n' "$FLOOR_OUT" | tee -a "$LOGDIR/summary.txt" | sed 's/^/      /'
+        say "      Nothing was exported. The update raised the floor above what this release"
+        say "      promises, which drops machines and is a decision rather than a solve result."
+        exit 1
+    fi
+    printf '%s\n' "$FLOOR_OUT" >> "$LOGDIR/summary.txt"
+done
+
+say "      Exporting both to install/environment*.yml..."
 for e in "$UPDATE_ENV" "$UPDATE_ANALYSIS_ENV"; do
     bash dev/scripts/export-environment.sh "$e" >> "$LOGDIR/summary.txt" 2>&1 \
         || { say "      FAILED to export '$e' - see $LOGDIR/summary.txt"; exit 1; }

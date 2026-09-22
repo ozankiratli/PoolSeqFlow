@@ -57,6 +57,22 @@ Measured across both environments: of 134 packages in the pipeline environment, 
 
 **`rsync` decides the floor; `sysroot` broke the cluster.** Keeping those apart is the point — a floor is the highest bound anything imposes, and a defect is a bound that moved for no reason. Only the second one was a bug.
 
+## The update reintroduces the defect immediately, and the pin was measured rather than trusted
+
+Asked directly by Z, 2026-09-21: does `conda update --all` break the floor? Measured on the installed 3.1.1 analysis environment with `--dry-run --json`:
+
+| | unpinned | with `sysroot_linux-64 <=2.28` in `conda-meta/pinned` |
+|---|---|---|
+| packages moved | 28 | 26 |
+| `sysroot_linux-64` | `2.17` → **`2.39`** | unchanged |
+| `kernel-headers_linux-64` | `3.10.0` → **`6.12.0`** | unchanged |
+
+**The update restores the exact v3.1.1 defect**, as two of twenty-eight ordinary-looking build bumps, with the suite green and every static check passing. So the pin in `prepare_env` is load-bearing rather than defensive.
+
+**And the pin works**, holding back precisely those two and letting the other twenty-six through. That was worth measuring rather than reading: conda's documentation already misled this project once, when `--freeze-installed` turned out to refuse only packages the solve reaches on its own while happily downgrading one named on the command line.
+
+**What the pin does not cover is everything else.** It names one package. Had `rsync` moved to a 2.34 build the floor would have risen with nothing to stop it, so `prep-version.sh` now runs `check-host-floor.sh` against each scratch environment at `[4/5]`, **before** the export, and refuses with nothing written. Previously the only thing that could catch it ran after the file existed and an install had been made from it.
+
 ## Why four guards and not one
 
 Z, 2026-09-21: *"Possibly both and more. Because when we prepare the release, we upgrade conda. It needs to change. We are pinning this library for now but more might come later."* The sysroot is one instance of a class — any package constraining a host virtual package freezes a property of the build machine into a file that ships everywhere — and the release cycle's update step keeps producing new instances.

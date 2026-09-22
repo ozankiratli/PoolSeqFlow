@@ -72,10 +72,26 @@ fi
 echo "Reading what '$ENV_NAME' requires of its host."
 echo "  promised floor: __glibc >= $FLOOR"
 
-python3 - "$PREFIX" "$FLOOR" <<'PY'
+python3 - "$PREFIX" "$FLOOR" "$FLOOR_FILE" "$ENV_NAME" <<'PY'
 import glob, json, os, re, sys
 
-prefix, floor = sys.argv[1], sys.argv[2]
+prefix, floor, floor_file, env_name = sys.argv[1:5]
+
+# What the shipped file pins, so a refusal can tell a DRIFTED environment apart from one that
+# genuinely needs a higher floor. Those are opposite problems: the first is fixed by rebuilding
+# the environment, the second by a release decision, and the advice for one is wrong for the
+# other. A hand-run `conda update --all` produces the first and produced it on 2026-09-21.
+shipped = {}
+indeps = False
+for line in open(floor_file):
+    if line.startswith("dependencies:"):
+        indeps = True
+        continue
+    if indeps and re.match(r"^[a-z]", line):
+        indeps = False
+    if indeps and line.strip().startswith("- ") and "=" in line:
+        name, _, rest = line.strip()[2:].partition("=")
+        shipped[name] = rest.split("=")[0]
 
 def key(v):
     # Field by field, so 2.9 does not read as newer than 2.28.
@@ -117,10 +133,35 @@ if key(worst) > key(floor):
     print(f"  but the release promises {floor}. Imposed by:")
     for name, dep in sorted(set(imposed_by)):
         print(f"      {name}  ({dep})")
+    # Installed versions of the offending packages, to compare against what ships.
+    held = {}
+    for path in glob.glob(os.path.join(prefix, "conda-meta", "*.json")):
+        try:
+            meta = json.load(open(path))
+        except (OSError, ValueError):
+            continue
+        if meta.get("name") in {n for n, _ in imposed_by}:
+            held[meta["name"]] = meta.get("version", "?")
+
+    drifted = {n: (shipped[n], held[n]) for n in held
+               if n in shipped and shipped[n] != held[n]}
+
     print()
-    print("  Either pull the offending package back to a build with a lower bound, or move")
-    print("  HOST_GLIBC_FLOOR in dev/scripts/export-environment.sh, say so in the manual's")
-    print("  Requirements, re-export, and write it in the CHANGELOG. Raising it drops machines.")
+    if drifted:
+        print(f"  THIS ENVIRONMENT HAS DRIFTED FROM {floor_file}, which pins them lower:")
+        for n, (want, have) in sorted(drifted.items()):
+            print(f"      {n}: file pins {want}, environment holds {have}")
+        print()
+        print("  So the release is fine and this machine's copy is not. A hand-run")
+        print("  `conda update --all` does exactly this. Rebuild it from what ships:")
+        print(f"      conda env remove -n {env_name} -y")
+        print("      ./PoolSeqFlow analysis install")
+        print()
+        print("  Do not re-export this environment - it would write the drift into the file.")
+    else:
+        print("  Either pull the offending package back to a build with a lower bound, or move")
+        print("  HOST_GLIBC_FLOOR in dev/scripts/export-environment.sh, say so in the manual's")
+        print("  Requirements, re-export, and write it in the CHANGELOG. Raising it drops machines.")
     sys.exit(1)
 
 print()
