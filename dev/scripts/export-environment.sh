@@ -45,6 +45,16 @@
 # sysroot 2.17 runs on glibc 2.17 and everything after it. Raising it drops machines and is a
 # release decision, not a side effect of whoever ran the export.
 #
+# WHY THE FLOOR IS 2.28 AND NOT 2.17, WHICH IS WHERE IT STARTED
+# -------------------------------------------------------------
+# The toolchain reaches 2.17 and the sysroot is pinned there, but `rsync` requires
+# `__glibc >=2.28` and carries that in its conda metadata rather than in its version, so no
+# amount of reading this file could see it. check-host-floor.sh found it on its first run
+# against a real installed environment - which is the entire argument for that script existing.
+#
+# Z's call, 2026-09-21, on measuring it: hold the floor at 2.28 rather than pull rsync back.
+# The cluster this is run on is RHEL 9, and the one machine below 2.28 is EOL.
+#
 # Two keys are stripped from conda's output:
 #
 #   prefix:  an absolute path into whoever ran the export.
@@ -68,7 +78,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 # The oldest glibc a shipped environment may require of the host, and the authority for it.
 # Written into every exported file's header, enforced below, and read back by prep-version.sh
 # and by 00_static. Moving it is a release decision: see THE HOST FLOOR above.
-HOST_GLIBC_FLOOR="2.17"
+HOST_GLIBC_FLOOR="2.28"
 
 # Every package a conda env export names whose version would require a newer glibc than the
 # floor, as `name version` pairs. sysroot_linux-64 is the only one today: its version IS the
@@ -83,7 +93,7 @@ host_floor_violations() {
             spec = $0
             sub(/^ *- *sysroot_linux-64=/, "", spec)
             sub(/=.*/, "", spec)
-            # Version compare, field by field, so 2.9 does not read as newer than 2.17.
+            # Version compare, field by field, so 2.9 does not read as newer than 2.28.
             n = split(spec, a, "."); split(floor, b, ".")
             for (i = 1; i <= n; i++) {
                 if ((a[i] + 0) > (b[i] + 0)) { print "sysroot_linux-64 " spec; break }

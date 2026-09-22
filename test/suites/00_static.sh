@@ -613,7 +613,7 @@ test_no_package_leaves_a_shipped_environment_file() {
 # The comparison here is written with `sort -V` where export-environment.sh walks the fields in
 # awk, on purpose: two implementations of one comparison that share nothing cannot both be wrong
 # in the same way. A test that called the script's own function would agree with it about 2.9
-# being newer than 2.17.
+# being newer than 2.28.
 test_no_shipped_environment_outruns_the_host_floor() {
     local f floor declared script_floor found newer checked=0
 

@@ -47,10 +47,16 @@ VERSION=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' PoolSeqFlow | head -1)
 ENV_NAME="${1:-PoolSeqFlow-$VERSION-analysis}"
 
 # The promise, taken from the file that ships rather than from this script, so the two cannot
-# disagree about what a user was told.
-FLOOR=$(sed -n 's/^# host-glibc-floor: *\(.*\)$/\1/p' install/environment-analysis.yml | head -1)
+# disagree about what a user was told - and from the file belonging to the environment being
+# checked, not always the analysis one. Both carry rsync and so both have a floor; reading one
+# file for both would answer about the wrong promise the moment they differ.
+case "$ENV_NAME" in
+    *-analysis) FLOOR_FILE="install/environment-analysis.yml" ;;
+    *)          FLOOR_FILE="install/environment.yml" ;;
+esac
+FLOOR=$(sed -n 's/^# host-glibc-floor: *\(.*\)$/\1/p' "$FLOOR_FILE" | head -1)
 if [ -z "$FLOOR" ]; then
-    echo "check-host-floor: install/environment-analysis.yml declares no host-glibc-floor." >&2
+    echo "check-host-floor: $FLOOR_FILE declares no host-glibc-floor." >&2
     echo "Re-export it: dev/scripts/export-environment.sh $ENV_NAME" >&2
     exit 1
 fi
@@ -72,7 +78,7 @@ import glob, json, os, re, sys
 prefix, floor = sys.argv[1], sys.argv[2]
 
 def key(v):
-    # Field by field, so 2.9 does not read as newer than 2.17.
+    # Field by field, so 2.9 does not read as newer than 2.28.
     return tuple(int(p) if p.isdigit() else 0 for p in v.split("."))
 
 # `__glibc >=2.17,<3.0.a0` and `__glibc >=2.39` both appear; only the lower bound constrains

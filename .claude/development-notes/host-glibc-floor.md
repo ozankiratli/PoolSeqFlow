@@ -8,13 +8,19 @@
 
 The maintainer's machine reports `__glibc=2.44`. It solved there, every release, invisibly.
 
-**Only the analysis environment has the problem**, and the reason is a design decision rather than an accident: every module offers a compiled hot path and builds it on the user's machine rather than shipping a binary, so the environment carries a compiler, and a compiler is built against a particular glibc's headers. The pipeline environment holds finished programs and no sysroot at all.
+**Only the analysis environment had the 2.39 problem**, and the reason is a design decision rather than an accident: every module offers a compiled hot path and builds it on the user's machine rather than shipping a binary, so the environment carries a compiler, and a compiler is built against a particular glibc's headers. The pipeline environment holds finished programs and no sysroot at all.
+
+**But the pipeline environment was never floor-free either**, which is what the first draft of this note and of the manual both said. `rsync` is in both files and requires `__glibc >=2.28`. So before the fix the pipeline environment needed 2.28 and the analysis environment needed 2.39, and afterwards both need 2.28.
+
+**Z's observation is what settled the causality**, 2026-09-21: *"I could install PoolSeqFlow but not analysis to the cluster."* That brackets the machine. `rsync` is in both environments, so if it had been the obstacle the pipeline install would have failed too — it did not. The cluster therefore clears 2.28 and not 2.39, which is consistent with RHEL 9 at glibc 2.34. **The failure was `sysroot_linux-64=2.39` and nothing else**, exactly as the error said, and `rsync` is an unrelated lower bound that happened to surface later. Worth recording because the two were briefly conflated here: the package that sets the *declared floor* and the package that *broke the install* are different, and only the second one is the defect.
 
 ## Nothing asked for it
 
 Measured before choosing a fix. `gcc_impl_linux-64`, `gxx_impl_linux-64` and `binutils_impl_linux-64` all depend on a **bare** `sysroot_linux-64` with no version constraint, and conda-forge publishes 2.12, 2.17, 2.28, 2.34 and 2.39. The solver was free to take the newest the host allowed and did; `conda update --all` in `prep-version.sh` would have done it again every release.
 
-`libsanitizer=16.2.0` requires `__glibc >=2.17,<3.0.a0`, and measuring a surviving environment showed conda-forge's whole base stack — `libgcc`, `libstdcxx`, `python`, `openssl`, `numpy` and twenty others — sitting at exactly `>=2.17`. So 2.17 is not a conservative choice, it is where the ecosystem already is. Z's call: 2.17.
+`libsanitizer=16.2.0` requires `__glibc >=2.17,<3.0.a0`, and measuring a surviving environment showed conda-forge's whole base stack — `libgcc`, `libstdcxx`, `python`, `openssl`, `numpy` and twenty others — sitting at exactly `>=2.17`. So 2.17 is not a conservative choice, it is where the ecosystem already is, and the sysroot was pinned there.
+
+**The floor was set to 2.17 on that reasoning and it was wrong**, because the reasoning was about the toolchain and the floor is about the whole environment. See *What the release-time check found* below: the answer is 2.28, and it is forced rather than chosen.
 
 ## The fix is two packages and it was proved surgical before it was written
 
@@ -28,6 +34,28 @@ Rather than guessing build strings, the two host-dependent pins were relaxed in 
 The build hash is worth noting: `conda search` listed 2.17 builds as `h4a8ded7_*`, and the solver picked `h0157908_18`. A hand-written pin taken from the search listing would have been wrong.
 
 **A lower floor costs nothing and reaches more machines.** Code built against sysroot 2.17 runs on glibc 2.17 and everything after it, so raising the floor is the only direction that loses anything.
+
+## What the release-time check found, on its first real run
+
+`check-host-floor.sh` was written against a fixture environment and then run for the first time against a freshly installed `PoolSeqFlow-3.1.1-analysis`. It refused:
+
+```text
+  promised floor: __glibc >= 2.17
+  read 190 package records
+  actual floor:   __glibc >= 2.28
+
+  REFUSED: this environment cannot be installed on a host below glibc 2.28,
+  but the release promises 2.17. Imposed by:
+      rsync  (__glibc >=2.28,<3.0.a0)
+```
+
+**This is the entire argument for the script existing, made on the day it was written.** `rsync` carries its constraint in conda metadata, not in its version, so no amount of reading `environment-analysis.yml` could see it — the static case had passed, correctly, over a file whose real floor was 2.28.
+
+Measured across both environments: of 134 packages in the pipeline environment, 100 declare `__glibc >=2.17` and exactly one declares more; of 190 in the analysis environment, 121 and one. The one is `rsync`, in both. And every `rsync` build published on conda-forge — 3.4.3 and both 3.4.4 builds — requires 2.28, so there is no lower build to fall back to.
+
+**So 2.28 is forced, not chosen.** Dropping to 2.17 would mean removing `rsync`, and `bin/atomic_mv.sh` stages every promoted artifact with it. Z's call, 2026-09-21: hold at 2.28. The cluster in use is RHEL 9 at glibc 2.34, and the machine below 2.28 is CentOS 7, end of life since June 2024.
+
+**`rsync` decides the floor; `sysroot` broke the cluster.** Keeping those apart is the point — a floor is the highest bound anything imposes, and a defect is a bound that moved for no reason. Only the second one was a bug.
 
 ## Why four guards and not one
 
