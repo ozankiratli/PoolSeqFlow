@@ -458,7 +458,28 @@ _run_entry() {
         # Nextflow computes points at the installation. SANDBOX_INSTALL_OVERRIDE is for the case
         # that launches without one, and is honoured when set to an empty string.
         export POOLSEQFLOW_HOME="${SANDBOX_INSTALL_OVERRIDE-$sb/install}"
-        nextflow -q run "$sb/install/$entry" "$@" > "$out" 2>&1
+        # -ansi-log false RATHER THAN -q, AND THE TWO CANNOT BE COMBINED.
+        #
+        # Nextflow refuses `quiet` and `ansi-log` together, so with -q it decides its own log
+        # format - and that decision differs between machines. Three cases assert on the line
+        # it prints at the end:
+        #
+        #     03_pipeline:39   failed=0        04_guards:648  completed=0
+        #     04_guards:835    completed=0
+        #
+        # Measured 2026-09-22: under -q that line appeared on one machine and never on another,
+        # with the same nextflow build, the same JDK and the same conda environment. Those three
+        # cases then failed on the second machine every time and passed on the first every time,
+        # which read as a flaky suite and was not - it was an assertion on auto-detected output.
+        #
+        # Asking explicitly settles it. Redirected to a file the two values are identical, byte
+        # for byte and with no escape characters, because Nextflow renders plain when stdout is
+        # not a terminal; `false` is chosen so that stays true if this ever runs unredirected,
+        # where `true` would emit real escape codes and break the same three assertions.
+        #
+        # Dropping -q adds [PIPELINE], [WORKDIR] and [PROCESS] lines to run.out. Nothing asserts
+        # on their absence, and task_count reads the trace file rather than this output.
+        nextflow run -ansi-log false "$sb/install/$entry" "$@" > "$out" 2>&1
     )
     printf '%s' "$?"
 }

@@ -286,14 +286,56 @@ if [ -z "$ANALYSIS_PREFIX" ] || [ ! -x "$ANALYSIS_PREFIX/bin/Rscript" ]; then
     exit 1
 fi
 
-# Both named explicitly. The suite finds an analysis environment by globbing
+# What the machine looked like going in. A suite that passes by hand and fails here is a
+# difference in the surroundings, and without this there is nothing to compare.
+{
+    echo "== before the suite =="
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
+    echo "-- memory --";  free -h 2>/dev/null
+    echo "-- disk --";    df -h /tmp /dev/shm "${TMPDIR:-/tmp}" 2>/dev/null | sort -u
+    echo "-- load --";    uptime 2>/dev/null
+    echo "-- cpus --";    nproc 2>/dev/null
+    echo "-- nextflow/java env --"; env | grep -E "^(NXF_|JAVA_|_JAVA|TMPDIR|CONDA_)" | sort
+    echo "-- tty --";     tty 2>/dev/null || echo "not a tty"
+} > "$LOGDIR/system-before.txt" 2>&1
+
+# --keep so a failure leaves its sandboxes behind. run_tests.sh removes TEST_TMPDIR on exit
+# otherwise, which throws away every run.out and .nextflow.log - the only record of what
+# Nextflow actually did. Harvested below on failure and deleted on success.
+#
+# Both environments named explicitly. The suite finds an analysis environment by globbing
 # PoolSeqFlow-*-analysis and taking the first that has an Rscript, which is whichever name
 # sorts first rather than the one being prepared.
 set +e
 TEST_CONDA_ENV="$ENV_PREFIX" TEST_ANALYSIS_ENV="$ANALYSIS_PREFIX" \
-    ./test/run_tests.sh > "$LOGDIR/tests.log" 2>&1
+    ./test/run_tests.sh --keep > "$LOGDIR/tests.log" 2>&1
 TEST_STATUS=$?
 set -e
+
+{
+    echo "== after the suite =="
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
+    echo "-- memory --"; free -h 2>/dev/null
+    echo "-- disk --";   df -h /tmp /dev/shm "${TMPDIR:-/tmp}" 2>/dev/null | sort -u
+    echo "-- load --";   uptime 2>/dev/null
+} > "$LOGDIR/system-after.txt" 2>&1
+
+# The paths --keep printed, so the artifacts can be collected and then removed.
+KEPT_TMP=$(sed -n 's/^working directory kept at //p'  "$LOGDIR/tests.log" | tail -1)
+KEPT_XDEV=$(sed -n 's/^second filesystem kept at //p' "$LOGDIR/tests.log" | tail -1)
+
+harvest_artifacts() {
+    local dest="$LOGDIR/artifacts"
+    [ -n "$KEPT_TMP" ] && [ -d "$KEPT_TMP" ] || return 0
+    mkdir -p "$dest"
+    # Every Nextflow run's captured output and its own log, under the sandbox it came from.
+    ( cd "$KEPT_TMP" && find . \( -name 'run*.out' -o -name '.nextflow.log*' \) -print0 \
+        | while IFS= read -r -d '' f; do
+              mkdir -p "$dest/$(dirname "$f")"
+              cp "$f" "$dest/$f" 2>/dev/null
+          done )
+    du -sh "$dest" 2>/dev/null | awk '{print "      artifacts: " $1 " in '"${dest#"$ROOT"/}"'"}'
+}
 
 tail -n 20 "$LOGDIR/tests.log" | sed 's/^/      /' | tee -a "$LOGDIR/summary.txt"
 say ""
@@ -304,19 +346,46 @@ if [ "$TEST_STATUS" -ne 0 ]; then
     say "      Both install/environment.yml and install/environment-analysis.yml are"
     say "      unchanged, so the current release still describes a tool set that works."
     say ""
+    say "      Collecting what the failing runs left behind..."
+    harvest_artifacts | tee -a "$LOGDIR/summary.txt"
+    say "      Each failing case's run.out is there, with the .nextflow.log beside it."
+    say "      Read run.out first: three cases assert on Nextflow's own status line"
+    say "      ([SUCCESS]/[FAILED] completed=N failed=N cached=N), and its absence is a"
+    say "      different fault from a number in it being wrong."
+    say ""
+    say "      Machine state either side of the run:"
+    say "          $LOGDIR/system-before.txt"
+    say "          $LOGDIR/system-after.txt"
+    say ""
+    say "      The sandboxes themselves are still at:"
+    say "          $KEPT_TMP"
+    [ -n "$KEPT_XDEV" ] && say "          $KEPT_XDEV"
+    say "      Delete them when you are done - they are not small."
+    say ""
     say "      Both scratch environments have been kept so the failure can be reproduced:"
     say "          TEST_CONDA_ENV=$ENV_PREFIX \\"
     say "          TEST_ANALYSIS_ENV=$ANALYSIS_PREFIX \\"
     say "              ./test/run_tests.sh --suite <name>"
     say ""
-    say "      Start with $LOGDIR/packages-changed.tsv and"
-    say "      $LOGDIR/packages-changed-analysis.tsv - the failure is"
-    say "      almost certainly one of the packages listed there."
+    say "      $LOGDIR/packages-changed.tsv and"
+    say "      $LOGDIR/packages-changed-analysis.tsv say what moved, compared on"
+    say "      version AND build. A package is one candidate among several: the same"
+    say "      suite passing by hand against these very environments means the cause is"
+    say "      the surroundings, not the packages, and the artifacts above are where"
+    say "      that shows."
     say ""
     say "      Discard the attempt with:"
     say "          conda env remove -n $UPDATE_ENV"
     say "          conda env remove -n $UPDATE_ANALYSIS_ENV"
     exit 1
+fi
+
+# Nothing to diagnose, so nothing to keep. --keep left these behind unconditionally.
+if [ -n "$KEPT_TMP" ] && [ -d "$KEPT_TMP" ]; then
+    rm -rf "$KEPT_TMP"
+fi
+if [ -n "$KEPT_XDEV" ] && [ -d "$KEPT_XDEV" ]; then
+    rm -rf "$KEPT_XDEV"
 fi
 
 # ----------------------------------------------------------------------- export ---------
