@@ -2,7 +2,7 @@
 #
 # Verify a PoolSeqFlow installation before a run depends on it.
 #
-# Usage:  ./PoolSeqFlow check install   (the wrapper activates the environment first)
+# Usage:  PoolSeqFlow check install   (the wrapper activates the environment first)
 #
 # Checks two things:
 #   1. Every command the pipeline invokes resolves and runs, with its version.
@@ -18,7 +18,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 INSTALL_DIR="$PWD"
 
-# Which environment this copy expects: from ./PoolSeqFlow's export, or read out of the wrapper
+# Which environment this copy expects: from PoolSeqFlow's export, or read out of the wrapper
 # when this script is run directly.
 if [ -z "${ENV_NAME:-}" ]; then
     _version=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' PoolSeqFlow 2>/dev/null | head -1)
@@ -159,6 +159,6 @@ fi
 echo "${RED}$missing of $checked checks failed.${RESET}"
 echo
 echo "If tools are missing, the environment is either not active or not built:"
-echo "  ./PoolSeqFlow install"
+echo "  PoolSeqFlow install"
 echo "  conda activate $ENV_NAME"
 exit 1

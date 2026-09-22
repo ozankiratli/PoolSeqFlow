@@ -2,7 +2,7 @@
 #
 # Verify a PoolSeqFlow analysis-layer installation before a module depends on it.
 #
-# Usage:  ./PoolSeqFlow analysis check     (the wrapper activates the environment first)
+# Usage:  PoolSeqFlow analysis check     (the wrapper activates the environment first)
 #
 # Checks three things:
 #   1. Every command an analysis module invokes resolves and runs, with its version.
@@ -20,7 +20,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 INSTALL_DIR="$PWD"
 
-# Which environment this copy expects: from ./PoolSeqFlow's export, or read out of the wrapper
+# Which environment this copy expects: from PoolSeqFlow's export, or read out of the wrapper
 # when this script is run directly. ANALYSIS_ENV_NAME and not ENV_NAME, which the same wrapper
 # exports carrying the pipeline's own environment.
 ENV_NAME="${ANALYSIS_ENV_NAME:-}"
@@ -152,6 +152,6 @@ fi
 echo "${RED}$missing of $checked checks failed.${RESET}"
 echo
 echo "If tools or packages are missing, the environment is either not active or not built:"
-echo "  ./PoolSeqFlow analysis install"
+echo "  PoolSeqFlow analysis install"
 echo "  conda activate $ENV_NAME"
 exit 1

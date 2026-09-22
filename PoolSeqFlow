@@ -5,7 +5,7 @@
 # email  : ozankiratli@protonmail.com
 #
 # Wrapper script for PoolSeqFlow
-# Usage: ./PoolSeqFlow {install|init|init_multi|check <target>|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}
+# Usage: PoolSeqFlow {install|init|init_multi|check <target>|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}
 #  install        - creates this release's conda environment and installs the pipeline
 #  init           - populates the current directory as a project
 #  init_multi     - the same, plus multiRun on

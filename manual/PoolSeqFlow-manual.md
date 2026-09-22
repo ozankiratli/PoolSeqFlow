@@ -112,7 +112,7 @@ Each step is an independent Nextflow DSL2 module. Full detail in [Pipeline Steps
 
 **Configuration is a file, never a flag.** PoolSeqFlow rejects command-line parameter overrides. A run is therefore fully described by a file you can version, diff and publish. It also sidesteps a silent failure mode: Nextflow delivers `--param` values as strings, so `--annotate false` sets the *string* `"false"`, which Groovy evaluates as true and leaves annotation quietly switched on. [Why →](#configuration-is-a-file-never-a-flag)
 
-**Resume is filesystem-based, so there is no `-resume` to remember.** Every step checks whether its outputs already exist in permanent storage and skips itself if they do. That survives job timeouts, reboots and `work/` cleanups that would invalidate Nextflow's own cache. `./PoolSeqFlow run` is both "start" and "resume". [Why →](#resume-is-filesystem-based)
+**Resume is filesystem-based, so there is no `-resume` to remember.** Every step checks whether its outputs already exist in permanent storage and skips itself if they do. That survives job timeouts, reboots and `work/` cleanups that would invalidate Nextflow's own cache. `PoolSeqFlow run` is both "start" and "resume". [Why →](#resume-is-filesystem-based)
 
 **Nothing is copied.** You give the pipeline two directories: `mainDir`, where you launch it and where everything it works on lives, and `storageDir`, where finished results are kept. Every file a step produces is *moved* out of `work/` and symlinked back, so nothing the pipeline touches — not just the big files — ever exists twice on disk. Results stay on `mainDir` while later steps still need them, and move to `storageDir` once nothing does. [Why →](#symbolic-links-instead-of-copies)
 
@@ -184,7 +184,7 @@ LibMambaUnsatisfiableError: Encountered problems while solving:
 
 ### Ready
 
-Download a release, create your configuration, and build the environment — four steps, with a verification pass at the end that fails loudly rather than letting a half-built environment through.
+Two pages. [Install](#install) gets the tool onto your machine and verifies it, which is two steps and a wait. [Quick Start](#quick-start) is everything to do with your own data — making the project, filling in the three files that describe it, and starting the run.
 
 [Install PoolSeqFlow](#install){ .md-button .md-button--primary } [Quick Start](#quick-start){ .md-button }
 
@@ -245,7 +245,37 @@ Installing takes a while the first time; later installs reuse the conda package 
 
 Once this is done the folder you downloaded has served its purpose. Everything from here uses the installed command, from your own project directory.
 
-### 3. Make your project
+
+---
+
+### Next
+
+<div class="grid cards" markdown>
+
+-   **Set up your project and run it**
+
+    ---
+
+    Make the project directory, fill in the three files that describe your data, and start the pipeline.
+
+    [Quick Start →](#quick-start)
+
+-   **Coming from an earlier version**
+
+    ---
+
+    Your existing `parameters.config` will be missing parameters the new code expects, and nothing detects that automatically.
+
+    [Upgrading →](#upgrading)
+
+</div>
+
+## Quick Start
+<!--@ page: quick-start -->
+
+This page takes you from an installed PoolSeqFlow to a running pipeline. It assumes only that [Install](#install) is done; everything to do with your own data starts here.
+
+### 1. Make your project { #make-your-project }
 
 A project is a directory of your own. It is **not** the installation — that is a tool, shared by any number of projects and replaced wholesale when you upgrade, so a project kept inside it would not survive one. The pipeline refuses to start if you point it at the installation.
 
@@ -285,13 +315,13 @@ Then edit `parameters.config`: `mainDir`, `storageDir`, `readPattern`, `referenc
 
 Analyzing one set of reads under several parameter sets — two reference genomes, say? Run `PoolSeqFlow init_multi` instead. It does everything `init` does, switches `multiRun` on, and copies `multi-run.csv.example` into the project. It does not write the run table itself, for the same reason it does not write `metadata.csv`.
 
-### 4. Verify it any time { #check }
+### 2. Verify it any time { #check }
 
 **There are two checks and they answer different questions**, so `check` takes a word and refuses without one. An installation is a tool; a project is your configuration and your data. Neither answers the other, and a bare `check` would have to guess which you meant — leaving the other unchecked without saying so.
 
 ```bash
-./PoolSeqFlow check install    # the tools and helpers this release is built to run
-./PoolSeqFlow check project    # the configuration and the commands this project names
+PoolSeqFlow check install    # the tools and helpers this release is built to run
+PoolSeqFlow check project    # the configuration and the commands this project names
 ```
 
 Both end by reporting how many checks passed, and **fail loudly if any did not** rather than summarizing.
@@ -364,36 +394,7 @@ A project that repoints nothing gets the same tool answers from both checks. **T
 
 If `params.software` cannot be read, `check project` says so and checks no tool. It never falls back to the canonical list — the whole reason the section exists is that it reads yours.
 
----
-
-### Next
-
-<div class="grid cards" markdown>
-
--   **Configure and run**
-
-    ---
-
-    Fill in `parameters.config` and start the pipeline.
-
-    [Quick Start →](#quick-start)
-
--   **Coming from an earlier version**
-
-    ---
-
-    Your existing `parameters.config` will be missing parameters the new code expects, and nothing detects that automatically.
-
-    [Upgrading →](#upgrading)
-
-</div>
-
-## Quick Start
-<!--@ page: quick-start -->
-
-This page gets a run going. It assumes you have installed the environment and laid out your project directory as described in [Getting Started](#getting-started).
-
-### 1. Fill in the essentials
+### 3. Fill in the essentials
 
 Open `parameters.config`. Nine settings need your attention before a first run; everything else has a working default.
 
@@ -426,7 +427,7 @@ params {
 
 The two directories cannot be the same path. They are storage tiers, not a preference: the pipeline works on `mainDir` and moves each output to `storageDir` once the last step that needed it has finished, which cannot mean anything if they are one place. On a cluster this is the difference between a node's fast disk and the archive it is backed by; on a laptop, make them two directories and the same reasoning still holds — one is churn, the other is what you keep.
 
-### 2. Size the run to your machine
+### 4. Size the run to your machine
 
 ```groovy
 threads = 8          // cores a single task may use
@@ -441,7 +442,7 @@ Process requirement exceeds available CPUs -- req: 12; avail: 8
 
 Details and the full ladder: [Resources](#resources).
 
-### 3. Write `metadata.csv`
+### 5. Write `metadata.csv`
 
 One row per FASTQ pair. `SampleID` must match the sample name `readPattern` takes from your filenames — with `*_R{1,2}.fq.gz`, the file `Sample1T1Rep1_R1.fq.gz` gives `Sample1T1Rep1`.
 
@@ -477,7 +478,7 @@ Add as many of each as your experiment needs; the names after the prefix are you
 
 All of it is covered in [Metadata](#metadata). Getting `RG_Sample` wrong is the most common way to end up with results that are valid but not what you meant.
 
-### 4. Run
+### 6. Run
 
 ```bash
 PoolSeqFlow run
@@ -491,7 +492,7 @@ To see where a run's results would go before spending any compute on it, `PoolSe
 
 To start genuinely from scratch, use `PoolSeqFlow reset` first — it requires typing `DELETE_MY_ANALYSIS` to confirm.
 
-### 5. Check the output
+### 7. Check the output
 
 ```text
 storageDir/
@@ -522,7 +523,7 @@ How to read the tables: [Interpreting Results](#interpreting-results).
 | Command | Description |
 |---|---|
 | `PoolSeqFlow install` | Create this release's conda environment, install the pipeline, then verify both |
-| `PoolSeqFlow init` | Populate the current directory as a project ([what it writes](#3-make-your-project)) |
+| `PoolSeqFlow init` | Populate the current directory as a project ([what it writes](#make-your-project)) |
 | `PoolSeqFlow init_multi` | The same, for a project running several parameter sets over one set of reads |
 | `PoolSeqFlow check install` | Verify an installation — the tools and helpers it is built to run ([what it covers](#check-install)) |
 | `PoolSeqFlow check project` | Verify a project — its configuration, and the commands it names ([what it covers](#check-project)) |
@@ -1480,7 +1481,7 @@ That pattern is what makes the pipeline resumable without Nextflow's cache, keep
 
 `ClipReads` is the exception, with `errorStrategy 'retry'` and `maxRetries 3` — it is the one step whose failures are commonly transient.
 
-`cleanup = true` removes task working directories after a successful run, leaving only empty hash-prefix folders under `work/`. `./PoolSeqFlow clean` clears those.
+`cleanup = true` removes task working directories after a successful run, leaving only empty hash-prefix folders under `work/`. `PoolSeqFlow clean` clears those.
 
 **These five are yours to change, from `parameters.config`** — `errorStrategy`, `maxRetries`, `maxErrors`, `cleanup` and `conda.enabled`. They are defaults the installation sets *before* it reads your config, so anything you write wins. Nextflow scopes go outside the `params { }` block:
 
@@ -5005,7 +5006,7 @@ The diversity statistic itself is [Nei 1973](#ref-nei1973diversity), the correct
 The installed copy will print its own citation, with its version filled in:
 
 ```bash
-./PoolSeqFlow cite
+PoolSeqFlow cite
 ```
 
 Use that rather than copying from here — it knows which version you have, and this page does not.
@@ -5023,9 +5024,9 @@ Zenodo issues **two kinds of DOI**, and the difference matters.
 
     Results depend on which release produced them. Filters, defaults and parameter names have all changed between versions — `vcffilter.minDP` went from having no effect to removing whole sites, and sample column ordering changed in 2.1.1. A paper citing the current release for numbers produced by an older one is describing a method it did not use.
 
-    Find the version that produced a given set of results in that project's `Output/run_parameters.txt`, which lists every release that has run there — `./PoolSeqFlow version` tells you only what is installed now, which is not the same thing once you have upgraded. Then open the [all-versions record](https://doi.org/10.5281/zenodo.19245611) and pick that version from the **Versions** list to get its DOI.
+    Find the version that produced a given set of results in that project's `Output/run_parameters.txt`, which lists every release that has run there — `PoolSeqFlow version` tells you only what is installed now, which is not the same thing once you have upgraded. Then open the [all-versions record](https://doi.org/10.5281/zenodo.19245611) and pick that version from the **Versions** list to get its DOI.
 
-    If more than one version is listed, the outputs were not all produced by the same release: completed steps are not redone on upgrade. Say so in your methods, or `./PoolSeqFlow reset` and re-run under one version.
+    If more than one version is listed, the outputs were not all produced by the same release: completed steps are not redone on upgrade. Say so in your methods, or `PoolSeqFlow reset` and re-run under one version.
 
 ### Reference
 
