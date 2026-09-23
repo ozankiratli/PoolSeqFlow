@@ -11,6 +11,17 @@
 
 # Where installations live: POOLSEQFLOW_PREFIX, else an installed wrapper's own location,
 # else ~/.local.
+# conda's name for `hash -r` when it believes it is in zsh. Not dead code: conda's own
+# profile.d/conda.sh runs `__conda_hashr` after every activate and deactivate, and picks
+# `\rehash` whenever ZSH_VERSION is set - which bash does not provide, so every conda call
+# through this wrapper prints `rehash: command not found` on a machine where that variable
+# reaches a bash script. The backslash suppresses aliases, not functions, so this is what runs.
+#
+# Defined rather than the output suppressed: silencing conda's stderr would hide its real
+# failures too, and refreshing the command table is what conda was asking for. Harmless where
+# ZSH_VERSION is unset, because nothing calls it.
+rehash() { hash -r; }
+
 # Whether a directory is on PATH, compared as directories rather than as strings.
 #
 # `case ":$PATH:" in *":$dir:"*)` is the usual idiom and it answers about spelling, not about
