@@ -306,10 +306,13 @@ fi
 # Both environments named explicitly. The suite finds an analysis environment by globbing
 # PoolSeqFlow-*-analysis and taking the first that has an Rscript, which is whichever name
 # sorts first rather than the one being prepared.
+# Streamed rather than captured: the suite is the long step and watching it is how you notice
+# a case hanging, or a wave of skips, while there is still time to stop. tee keeps the full log
+# for the harvest below, and PIPESTATUS[0] reads the suite's own exit rather than tee's.
 set +e
 TEST_CONDA_ENV="$ENV_PREFIX" TEST_ANALYSIS_ENV="$ANALYSIS_PREFIX" \
-    ./test/run_tests.sh --keep > "$LOGDIR/tests.log" 2>&1
-TEST_STATUS=$?
+    ./test/run_tests.sh --keep 2>&1 | tee "$LOGDIR/tests.log"
+TEST_STATUS=${PIPESTATUS[0]}
 set -e
 
 {
@@ -333,8 +336,12 @@ harvest_artifacts() {
     local dest="$ROOT/$LOGDIR/artifacts"
     [ -n "$KEPT_TMP" ] && [ -d "$KEPT_TMP" ] || return 0
     mkdir -p "$dest"
-    # Every Nextflow run's captured output and its own log, under the sandbox it came from.
-    ( cd "$KEPT_TMP" && find . \( -name 'run*.out' -o -name '.nextflow.log*' \) -print0 \
+    # Every Nextflow run's captured output and its own log, under the sandbox it came from -
+    # plus the per-task logs and report_knit.log, which is where the frame writes the reason a
+    # PDF report could not be built. Reading run.out alone missed that on 2026-09-22.
+    ( cd "$KEPT_TMP" && find . \( -name 'run*.out' -o -name '.nextflow.log*' \
+                                  -o -name '.command.log' -o -name '.exitcode' \
+                                  -o -name 'report_knit.log' \) -print0 \
         | while IFS= read -r -d '' f; do
               mkdir -p "$dest/$(dirname "$f")"
               cp "$f" "$dest/$f" 2>/dev/null
@@ -342,7 +349,9 @@ harvest_artifacts() {
     du -sh "$dest" 2>/dev/null | awk '{print "      artifacts: " $1 " in '"${dest#"$ROOT"/}"'"}'
 }
 
-tail -n 20 "$LOGDIR/tests.log" | sed 's/^/      /' | tee -a "$LOGDIR/summary.txt"
+# Into the summary only. The suite has just printed itself in full, so repeating its tail here
+# would say the same thing twice on the terminal.
+tail -n 20 "$LOGDIR/tests.log" | sed 's/^/      /' >> "$LOGDIR/summary.txt"
 say ""
 
 if [ "$TEST_STATUS" -ne 0 ]; then
