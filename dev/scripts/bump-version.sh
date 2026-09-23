@@ -3,6 +3,13 @@
 # Bump the PoolSeqFlow version and add a CHANGELOG entry from the git log.
 #
 # Usage: dev/scripts/bump-version.sh <new-version>          e.g. 1.0.2
+#        dev/scripts/bump-version.sh --revert               undo the bump that is in the tree
+#
+# --revert puts the version back to the last released tag and removes the CHANGELOG section this
+# script added, with its reference link. A release cycle is often abandoned partway - a gate
+# fails, or something turns up that should not ship - and the bump is then three edits across
+# three files to undo by hand, which is how a half-reverted version reaches a commit. It refuses
+# once the version has been tagged, because at that point it is published rather than prepared.
 #
 # Rewrites the version in the PoolSeqFlow wrapper (both the header comment and
 # VERSION=) and in nextflow.config's manifest, and prepends a
@@ -20,13 +27,74 @@
 set -euo pipefail
 
 NEW="${1-}"
-if [[ ! "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+REVERT=0
+if [ "$NEW" = "--revert" ]; then
+    REVERT=1
+elif [[ ! "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "Usage: $0 <new-version>   (e.g. 1.0.2)" >&2
+    echo "       $0 --revert        (undo the bump in the tree)" >&2
     exit 1
 fi
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+
+if [ "$REVERT" -eq 1 ]; then
+    MAIN="PoolSeqFlow"
+    LOG="CHANGELOG.md"
+    NFCONFIG="nextflow.config"
+    CURRENT="$(sed -n 's/^VERSION="\(.*\)"/\1/p' "$MAIN" | head -1)"
+    [ -n "$CURRENT" ] || { echo "ERROR: no VERSION= line in $MAIN" >&2; exit 1; }
+
+    # Tagged means published. Reverting then would leave the tree claiming a version older than
+    # a release that exists, which is worse than the half-bumped state this is meant to fix.
+    if git rev-parse -q --verify "refs/tags/v$CURRENT" > /dev/null; then
+        echo "ERROR: v$CURRENT is tagged, so it is released rather than prepared." >&2
+        echo "Reverting a published version is not what this does." >&2
+        exit 1
+    fi
+
+    PREVIOUS="$(git tag --sort=-v:refname | head -1 | sed 's/^v//')"
+    [ -n "$PREVIOUS" ] || { echo "ERROR: no release tag to go back to" >&2; exit 1; }
+    [ "$PREVIOUS" != "$CURRENT" ] || {
+        echo "ERROR: $MAIN is already at $PREVIOUS - there is no bump to revert." >&2; exit 1; }
+
+    sed -i -E "s|^# Version: .*|# Version: $PREVIOUS|; s|^VERSION=\".*\"|VERSION=\"$PREVIOUS\"|" "$MAIN"
+    sed -i -E "s|^(\s*version\s*=\s*)'.*'|\1'$PREVIOUS'|" "$NFCONFIG"
+
+    # The section runs from its heading to the `---` that closes it, and the reference link sits
+    # at the foot of the file. Both go, or the next bump refuses on a [x.y.z] section it finds.
+    if grep -q "^## \[$CURRENT\]" "$LOG"; then
+        awk -v v="$CURRENT" '
+            $0 ~ "^## \\[" v "\\]" { dropping = 1; next }
+            dropping && /^---$/    { dropping = 0; next }
+            dropping               { next }
+            $0 ~ "^\\[" v "\\]: "  { next }
+            { print }
+        ' "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+        # A section leaves one blank line behind where it was; the file is normalized rather
+        # than left with a widening gap every time a cycle is abandoned.
+        awk 'NF == 0 { blank++; if (blank > 1) next } NF { blank = 0 } { print }' \
+            "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+        LOGNOTE="the [$CURRENT] section and its link removed"
+    else
+        LOGNOTE="no [$CURRENT] section to remove"
+    fi
+
+    grep -q "^VERSION=\"$PREVIOUS\"$" "$MAIN" || {
+        echo "ERROR: could not put VERSION= back in $MAIN" >&2; exit 1; }
+    grep -q "version *= *'$PREVIOUS'" "$NFCONFIG" || {
+        echo "ERROR: could not put the manifest version back in $NFCONFIG" >&2; exit 1; }
+
+    echo "$CURRENT -> $PREVIOUS  (reverted)"
+    echo "  $MAIN      : header comment and VERSION="
+    echo "  $NFCONFIG : manifest version"
+    echo "  $LOG   : $LOGNOTE"
+    echo
+    echo "Nothing was committed. Check it:"
+    echo "  git diff $MAIN $NFCONFIG $LOG"
+    exit 0
+fi
 
 MAIN="PoolSeqFlow"
 # The wrapper carries the release twice, in its header comment and in VERSION=. release.yml

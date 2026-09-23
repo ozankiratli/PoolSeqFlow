@@ -79,10 +79,31 @@ export -f have_tools
 # True when there is an R to run the shared analysis library against. Any R will do, and that is
 # the point of that library being base R: the pipeline environment carries none, the analysis
 # environment is not built on a development machine, and a system R is enough.
+#
+# ONLY FOR THE BASE-R LIBRARY. A module loads pinned packages and publishes numbers from them,
+# so it must be measured against the R the release ships - have_analysis_r below. Gating a
+# module case on this one validates the developer's own R instead, which is how the report
+# tools went wrong for five days in September 2026.
 have_r() {
     command -v Rscript > /dev/null 2>&1
 }
 export -f have_r
+
+# The R a module actually runs under. Every module case must use this: a number computed by the
+# system R was computed against different package versions than the ones the release pins, so a
+# green result describes software nobody receives.
+#
+# A function rather than a variable, because TEST_ANALYSIS_ENV is discovered further down and a
+# variable assigned here would be fixed to the empty string before discovery ever ran.
+have_analysis_r() {
+    [ -n "${TEST_ANALYSIS_ENV:-}" ] && [ -x "$TEST_ANALYSIS_ENV/bin/Rscript" ]
+}
+export -f have_analysis_r
+
+analysis_rscript() {
+    printf '%s' "${TEST_ANALYSIS_ENV:-}/bin/Rscript"
+}
+export -f analysis_rscript
 
 # True when a named R package is installed. A module may offer a path that needs one, and the
 # case for that path skips where it is absent rather than failing the machine for not having it.

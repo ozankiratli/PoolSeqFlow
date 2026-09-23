@@ -146,13 +146,27 @@ It rewrites the version in the wrapper (header comment and `VERSION=`) and in `n
 
 ## 7. Run the full suite
 
+**Install the new version first, and name both environments.** The suite is worthless without them and says so only in the skip count:
+
 ```
-bash test/run_tests.sh
+./PoolSeqFlow install
+./PoolSeqFlow analysis install
+dev/scripts/check-host-floor.sh
+
+TEST_CONDA_ENV=$HOME/.local/opt/miniconda3/envs/PoolSeqFlow-<version> \
+TEST_ANALYSIS_ENV=$HOME/.local/opt/miniconda3/envs/PoolSeqFlow-<version>-analysis \
+    bash test/run_tests.sh
 ```
 
-On `main`, at the new version, with the frozen environments. This is the run that matters — everything before it tested a version string that is no longer the one shipping.
+On `main`, at the new version, with the frozen environments. This is the run that matters — everything before it tested a version string that is no longer the one shipping. The install is also what proves the files frozen at step 2 actually describe an installable environment, which nothing else checks.
 
-**Run it with conda on `PATH`.** The suite finds the analysis environment through `conda info --base`, and a shell without a working `conda` finds nothing: three cases then skip — the PDF report, the compiled hot path, and the compiled-and-parallel agreement — and the run still reports success. Set `TEST_ANALYSIS_ENV=<prefix>/envs/PoolSeqFlow-<version>-analysis` if discovery cannot find it.
+**The environments are named after the version, so step 6's bump renames them out from under the suite.** Discovery globs `$HOME/.conda/envs/PoolSeqFlow-*` and finds nothing when conda keeps its environments elsewhere — as miniconda does, under its own `envs/`. On 2026-09-23 that produced a full run in which every module case skipped for "no conda environment" and the run still reported success. Name both explicitly and the problem cannot arise.
+
+**A skip is a hole, not a pass.** `555 passed, 0 skipped` is the number. Read the skip list, never the count alone:
+
+```
+bash test/run_tests.sh 2>&1 | grep SKIP
+```
 
 **Check the counts against the previous run, not only the exit status** — cases passed *and* cases skipped. A filter that matches nothing also reports success, and a skip is how a case that should have run says so quietly.
 
