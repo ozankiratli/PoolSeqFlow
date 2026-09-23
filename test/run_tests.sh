@@ -57,15 +57,78 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# The version this tree is. An environment is named PoolSeqFlow-<version>[-analysis], so this is
+# what tells this release's own environment from one another release left behind.
+TREE_VERSION=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/PoolSeqFlow" | head -1)
+export TREE_VERSION
+
+# WHERE CONDA KEEPS ENVIRONMENTS. The wrapper never has to know, because it activates by name; a
+# test has to probe bin/nextflow and bin/Rscript, so it needs the directory.
+#
+# DERIVED FROM THE conda EXECUTABLE, NEVER FROM `conda info --base`. That command prints a
+# plugin's load error onto stdout ahead of its answer, on every invocation:
+#
+#     Error loading anaconda-anon-usage: module 'conda.cli.install' has no attribute 'check_prefix'
+#     /home/tholian/.local/opt/miniconda3
+#
+# so the variable holds an error message with a path stuck on the end, every directory built from
+# it is nonsense, the glob matches nothing and discovery falls through in silence. `conda env
+# list --json` is corrupted the same way, the error landing ahead of the opening brace. conda
+# itself lives at <base>/condabin/conda, so the base is two directories up and needs no conda to
+# say so.
+#
+# Both directories are searched because conda uses both: envs_dirs puts the installation's own
+# envs/ ahead of ~/.conda/envs and `conda env create -n` takes the first writable one, so which
+# it is depends on where conda was installed and neither can be assumed. Searching only
+# ~/.conda/envs is what made every environment invisible on a machine with miniconda under
+# ~/.local/opt, however many were installed.
+conda_env_dirs() {
+    local exe base
+    exe=$(command -v conda 2>/dev/null || true)
+    if [ -n "$exe" ]; then
+        base=$(dirname "$(dirname "$exe")")
+        [ -d "$base/envs" ] && printf '%s\n' "$base/envs"
+    fi
+    [ -d "$HOME/.conda/envs" ] && printf '%s\n' "$HOME/.conda/envs"
+    return 0
+}
+
+# The installed environment for this tree's version. <suffix> is "" for the pipeline environment
+# and "-analysis" for the other; <probe> is the binary that proves it is usable.
+#
+# THIS TREE'S VERSION FIRST, and another only with a warning on stderr. A bare PoolSeqFlow-*
+# glob takes whatever sorts first, which is the oldest environment on the machine, so a tree at
+# 3.1.2 with 3.1.1 still installed measured 3.1.1 and said nothing. The same glob had already
+# been caught doing the same thing in prep-version.sh.
+#
+# The analysis environment is excluded by name rather than by probe, because it carries nextflow
+# too - measured, all four installed environments do - so `PoolSeqFlow-*` probed for bin/nextflow
+# returns PoolSeqFlow-<version>-analysis as the pipeline environment.
+find_release_env() {
+    local suffix="$1" probe="$2" dir candidate other=""
+    while IFS= read -r dir; do
+        candidate="$dir/PoolSeqFlow-${TREE_VERSION}${suffix}"
+        if [ -x "$candidate/bin/$probe" ]; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+        for candidate in "$dir"/PoolSeqFlow-*"$suffix"; do
+            [ -z "$suffix" ] && case "$candidate" in *-analysis) continue ;; esac
+            [ -x "$candidate/bin/$probe" ] && [ -z "$other" ] && other="$candidate"
+        done
+    done < <(conda_env_dirs)
+    if [ -n "$other" ]; then
+        printf 'WARNING: PoolSeqFlow-%s%s is not installed; testing %s instead\n' \
+            "$TREE_VERSION" "$suffix" "$(basename "$other")" >&2
+        printf '%s' "$other"
+    fi
+    return 0
+}
+
 # The conda environment supplying nextflow, bwa, samtools and the rest. Point
 # TEST_CONDA_ENV at another one to test against it; suites that need tools skip without it.
 if [ -z "${TEST_CONDA_ENV:-}" ]; then
-    for candidate in "$HOME"/.conda/envs/PoolSeqFlow-* "$HOME"/.conda/envs/PoolSeqFlow; do
-        if [ -x "$candidate/bin/nextflow" ]; then
-            TEST_CONDA_ENV="$candidate"
-            break
-        fi
-    done
+    TEST_CONDA_ENV=$(find_release_env "" nextflow)
 fi
 TEST_CONDA_ENV="${TEST_CONDA_ENV:-}"
 export TEST_CONDA_ENV
@@ -102,19 +165,14 @@ export -f have_analysis_rcpp
 
 # The analysis environment, which is where a module actually runs. Found rather than assumed:
 # the wrapper creates it with `conda env create -n`, naming it and leaving the directory to
-# conda - the first writable entry of envs_dirs, which is the conda installation's own envs/
-# before ~/.conda/envs. TEST_ANALYSIS_ENV points it at another one.
+# conda. TEST_ANALYSIS_ENV points it at another one.
+#
+# This discovery used to call `conda info --base` itself, which is the trap the activation block
+# below describes - the fix landed on the activation and never reached the search that decides
+# whether there is anything to activate. So the hook was resolved correctly from a variable that
+# was always empty.
 if [ -z "${TEST_ANALYSIS_ENV:-}" ]; then
-    _conda_base=$(conda info --base 2>/dev/null || true)
-    for _dir in ${_conda_base:+"$_conda_base/envs"} "$HOME/.conda/envs"; do
-        for _candidate in "$_dir"/PoolSeqFlow-*-analysis; do
-            if [ -x "$_candidate/bin/Rscript" ]; then
-                TEST_ANALYSIS_ENV="$_candidate"
-                break 2
-            fi
-        done
-    done
-    unset _conda_base _dir _candidate
+    TEST_ANALYSIS_ENV=$(find_release_env -analysis Rscript)
 fi
 TEST_ANALYSIS_ENV="${TEST_ANALYSIS_ENV:-}"
 export TEST_ANALYSIS_ENV
@@ -303,10 +361,19 @@ if [ "$LIST_ONLY" -eq 1 ]; then
 fi
 
 printf '%sPoolSeqFlow test suite%s\n' "$C_HEAD" "$C_OFF"
+
+# BOTH ENVIRONMENTS, NAMED. Only the pipeline one was printed, so an analysis environment that
+# was never found looked exactly like a run that did not need one - and the skips it caused read
+# as a machine without R rather than as a suite that had failed to look in the right place.
 if have_tools; then
-    printf '%stools: %s%s\n' "$C_DIM" "$TEST_CONDA_ENV" "$C_OFF"
+    printf '%stools:    %s%s\n' "$C_DIM" "$TEST_CONDA_ENV" "$C_OFF"
 else
-    printf '%stools: none found - suites needing the pipeline will skip%s\n' "$C_DIM" "$C_OFF"
+    printf '%stools:    none found - suites needing the pipeline will skip%s\n' "$C_DIM" "$C_OFF"
+fi
+if have_analysis_r; then
+    printf '%sanalysis: %s%s\n' "$C_DIM" "$TEST_ANALYSIS_ENV" "$C_OFF"
+else
+    printf '%sanalysis: none found - suites needing R will skip%s\n' "$C_DIM" "$C_OFF"
 fi
 
 # WHAT THIS RUN COVERS, before it covers it. A filtered run and a full one are told apart by
