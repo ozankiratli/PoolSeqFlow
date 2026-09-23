@@ -56,6 +56,33 @@ So those three passed for one person and failed for the other, on the same commi
 
 **The first version of that helper was itself vacuous**, and the project's own habit caught it: counting task directories at depth two returned **0 for a run that did everything**, because `cleanup = true` removes the inner directory and leaves the hash prefix. Measured against three real sandboxes - a guard-stopped run had an entirely empty `work/`, while finished runs held 21 and 128 prefixes with 24 and 0 inner directories. Counting at depth one discriminates; depth two cannot.
 
+## Three more, on the test side, 2026-09-23
+
+The same disease in the instrument rather than the product: the suite measured the developer's machine and reported it as the release's behavior. Z found all three by reading a skip list and asking why a case had passed.
+
+**Module cases ran against the system R.** They gated on `have_r` - any `Rscript` on PATH - and invoked a bare `Rscript`, which on the machine in question was `/usr/sbin/Rscript`. So `basicstats computes what the corpus says` validated published numbers against system `data.table` and `Rcpp` rather than the pinned ones. Every release up to 3.1.1 was checked that way. Now `have_analysis_r` and `analysis_rscript`, with `have_r` left only for the base-R library suite.
+
+**Nothing was compiled.** Pointing the cases at the environment's R immediately produced `sh: x86_64-conda-linux-gnu-c++: command not found`. `mds_direct` and `association_direct` never put the environment's bin on PATH, and conda's compiler exists on no other. `basicstats_direct` had handled it all along, with a comment naming the exact failure - the other two never got the same treatment, and the system compiler hid it. **So the compiled-path agreement cases had never once compiled.**
+
+The fix Z asked for is one activation for the whole run, because `PoolSeqFlow analysis <module>` activates and a case that only prepends a bin is testing something else. The analysis environment is the one activated: only one can be, and `_run_entry` serves the pipeline side explicitly.
+
+**The activation was then skipped in silence**, because it was found through `conda info --base`, which prints a plugin's load error onto **stdout**:
+
+```
+Error loading anaconda-anon-usage: module 'conda.cli.install' has no attribute 'check_prefix'
+/home/tholian/.local/opt/miniconda3
+```
+
+The variable held that whole string, the `-f` test failed against nonsense, and `|| true` swallowed it. That plugin was already in the triage queue as harmless noise. The hook is now derived from the environment's own path - an env lives at `<base>/envs/<name>`, so the base is two directories up and needs nothing to say so.
+
+**A package could not be made absent.** `basicstats refuses workers it cannot use` hid `doFuture` by pointing `R_LIBS_USER` at a library built without it. Conda R keeps packages in `$PREFIX/lib/R/library`, which **is** `.Library` - always searched, searched last, and removable by no `R_LIBS` variable. Shadowing with an empty directory does not work either: R skips a directory that is not a package. The case could never have tested what it claimed. It now prepends a masking `requireNamespace` to the script `basicstats_direct` concatenates, because the module asks `requireNamespace("doFuture", quietly = TRUE)` and that is what to answer.
+
+**And the shared library was checked against the wrong R entirely.** `08_analysis_rlib` ran under whatever `Rscript` was on PATH, on the argument that the library is base R. Measured: the system carried **4.6.1** and the release ships **4.5.3**. Base R is not one thing - formatting, sort order and `seq` edges move between minor versions.
+
+The first fix preferred the release's R and fell back to the system one, to keep a suite that costs three seconds and no JVM runnable while editing the library. **Z rejected the fallback and was right to.** A fallback is a PASS that does not describe the release, which is the shape of every defect in this note; the convenience argument for keeping it is the same argument that let the others in. `r_lib_section` now uses the release's R or nothing, the cases gate on `have_analysis_r`, and without an environment ten of the eleven skip - the survivor greps the `.R` sources for `library()` calls and never runs R.
+
+`have_r` was deleted in the same change. Once the fallback went it had no callers, which is the tell that it existed only to keep a wrong idea alive.
+
 ## Why the suite was green for all of them
 
 Because the suite runs on the machine where the assumption holds. That is not a gap to be closed by more cases - a case asserting "glibc is at least 2.28" would pass here for the same reason the bug did.

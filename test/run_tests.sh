@@ -76,19 +76,6 @@ have_tools() {
 }
 export -f have_tools
 
-# True when there is an R to run the shared analysis library against. Any R will do, and that is
-# the point of that library being base R: the pipeline environment carries none, the analysis
-# environment is not built on a development machine, and a system R is enough.
-#
-# ONLY FOR THE BASE-R LIBRARY. A module loads pinned packages and publishes numbers from them,
-# so it must be measured against the R the release ships - have_analysis_r below. Gating a
-# module case on this one validates the developer's own R instead, which is how the report
-# tools went wrong for five days in September 2026.
-have_r() {
-    command -v Rscript > /dev/null 2>&1
-}
-export -f have_r
-
 # The R a module actually runs under. Every module case must use this: a number computed by the
 # system R was computed against different package versions than the ones the release pins, so a
 # green result describes software nobody receives.
@@ -100,27 +87,18 @@ have_analysis_r() {
 }
 export -f have_analysis_r
 
-analysis_rscript() {
-    printf '%s' "${TEST_ANALYSIS_ENV:-}/bin/Rscript"
+# Whether the environment a module runs in can build a compiled path: Rcpp AND the toolchain it
+# drives. Rcpp alone is not enough. Its compiler is conda's own -
+# x86_64-conda-linux-gnu-c++ - which lives in that environment's bin and nowhere else, so the
+# search has to happen with that bin on PATH or Rcpp reports "tools not found".
+have_analysis_rcpp() {
+    have_analysis_r_package Rcpp || return 1
+    local cxx
+    cxx=$("$TEST_ANALYSIS_ENV/bin/R" CMD config CXX 2>/dev/null | awk '{print $1}')
+    [ -n "$cxx" ] || return 1
+    PATH="$TEST_ANALYSIS_ENV/bin:$PATH" command -v "$cxx" > /dev/null 2>&1
 }
-export -f analysis_rscript
-
-# True when a named R package is installed. A module may offer a path that needs one, and the
-# case for that path skips where it is absent rather than failing the machine for not having it.
-have_r_package() {
-    have_r || return 1
-    Rscript --vanilla -e "quit(status = !requireNamespace('$1', quietly = TRUE))" > /dev/null 2>&1
-}
-export -f have_r_package
-
-# True when a compiled path can actually be built here: Rcpp AND the toolchain it drives. Rcpp
-# alone is not enough - it compiles against whatever the machine has, and a release ships no
-# compiler.
-have_rcpp() {
-    have_r_package Rcpp || return 1
-    command -v "$(R CMD config CXX 2>/dev/null | awk '{print $1}')" > /dev/null 2>&1
-}
-export -f have_rcpp
+export -f have_analysis_rcpp
 
 # The analysis environment, which is where a module actually runs. Found rather than assumed:
 # the wrapper creates it with `conda env create -n`, naming it and leaving the directory to
@@ -140,6 +118,38 @@ if [ -z "${TEST_ANALYSIS_ENV:-}" ]; then
 fi
 TEST_ANALYSIS_ENV="${TEST_ANALYSIS_ENV:-}"
 export TEST_ANALYSIS_ENV
+
+# ONE ACTIVATION FOR THE WHOLE RUN, because that is how the tool runs a module.
+#
+# `PoolSeqFlow analysis <module>` does `conda activate <analysis env>` before it starts, and a
+# case that only puts the environment's bin on PATH is testing something else. The difference is
+# not theoretical: conda's R compiles with conda's own x86_64-conda-linux-gnu-c++, which lives in
+# that environment and is on no other PATH, so every compiled-path case failed with
+#
+#     sh: x86_64-conda-linux-gnu-c++: command not found
+#     WARNING: The tools required to build C++ code for R were not found.
+#
+# until the suite was run against the environment's R rather than the machine's.
+#
+# The ANALYSIS environment is the one activated, not the pipeline's: only one can be, and
+# _run_entry puts the pipeline environment's bin at the front of PATH for every Nextflow run, so
+# that side is served explicitly while this side needs the activation scripts. Silent when conda
+# is not reachable - the cases that need it check have_analysis_r and skip.
+#
+# THE HOOK IS FOUND FROM THE ENVIRONMENT'S OWN PATH, NOT FROM `conda info --base`. That command
+# prints a plugin's load error onto stdout alongside the answer - anaconda-anon-usage does it on
+# every invocation - so the variable holds an error message with a path stuck on the end, the
+# `-f` test fails against nonsense, and the activation is skipped in silence. An environment
+# lives at <base>/envs/<name>, so the base is two directories up and needs nothing to say so.
+if [ -n "$TEST_ANALYSIS_ENV" ]; then
+    _conda_hook="$(dirname "$(dirname "$TEST_ANALYSIS_ENV")")/etc/profile.d/conda.sh"
+    if [ -f "$_conda_hook" ]; then
+        # shellcheck disable=SC1091
+        . "$_conda_hook"
+        conda activate "$TEST_ANALYSIS_ENV" 2>/dev/null || true
+    fi
+    unset _conda_hook
+fi
 
 # The analysis environment's Rscript, empty when there is none. A module's own R may use the
 # packages that environment pins, and some of its paths need one the system R does not carry;

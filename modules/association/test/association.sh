@@ -36,7 +36,7 @@ association_direct() {
     cat "$REPO_ROOT"/modules/lib/*/*.R \
         "$REPO_ROOT/modules/association/association.R" > "$dest/association.R"
     printf '%s' "$options" > "$dest/options.json"
-    ( cd "$CORPUS_DIR/Frequencies" && Rscript --vanilla "$dest/association.R" \
+    ( cd "$CORPUS_DIR/Frequencies" && "$(analysis_rscript)" --vanilla "$dest/association.R" \
         --design "$design" --pools "$CORPUS_DIR/pools.json" \
         --options "$dest/options.json" \
         --cpp "$REPO_ROOT/modules/lib/allele_frequencies/allele_frequencies.cpp" \
@@ -68,7 +68,7 @@ ASSOCIATION_OPTIONS='{"phenotypes":["pt_wingspan"],"permutations":5000,"dispersi
 # on exactly zero residual or on 1e-32 decides between an infinite t and 1.15e16 - the corpus's
 # Python reaches one and the R reaches the other from the same counts.
 test_association_computes_what_the_corpus_says() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/assoc-corpus")
     association_corpus "$sb"
 
@@ -113,7 +113,7 @@ test_association_computes_what_the_corpus_says() {
 # identical counts. A design whose depths line up with its phenotype is where label permutation
 # was measured at twice its nominal rate, and this site is the corpus's smallest version of it.
 test_the_permutation_moves_residuals_and_not_labels() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/assoc-scheme")
     association_corpus "$sb"
     association_direct "$sb/run" "$ASSOCIATION_OPTIONS"
@@ -129,7 +129,7 @@ test_the_permutation_moves_residuals_and_not_labels() {
 # them reaches under 0.05 by luck alone. Six units allow 720, so a budget above that must be
 # spent enumerating and the reported count must be exactly 720.
 test_a_rearrangement_set_that_fits_is_enumerated() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/assoc-enumerate")
     association_corpus "$sb"
     association_direct "$sb/run" "$ASSOCIATION_OPTIONS"
@@ -146,7 +146,7 @@ test_a_rearrangement_set_that_fits_is_enumerated() {
 # reach by rearrangement at all - two over the units factorial, because reversing the phenotype
 # negates every slope and leaves the statistic alone, so the reversal always ties.
 test_both_floors_and_the_diagnostics_are_published() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/assoc-floors")
     association_corpus "$sb"
     association_direct "$sb/run" "$ASSOCIATION_OPTIONS"
@@ -166,7 +166,7 @@ test_both_floors_and_the_diagnostics_are_published() {
 # when they were not. The fixture pairs the six pools into three units that agree about the
 # phenotype, so the module must fit three units and permute over six rearrangements, not 720.
 test_a_unit_of_several_pools_is_collapsed_before_the_fit() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/assoc-rollup")
     association_corpus "$sb"
     python3 - "$CORPUS_DIR/design.json" "$sb/paired.json" <<'PY'
@@ -198,7 +198,7 @@ PY
 # contradicts itself or a repeated measure, and the second is a mixed model this release does not
 # fit - so it refuses by name rather than averaging the two into something nobody measured.
 test_a_phenotype_that_disagrees_within_a_unit_refuses() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/assoc-disagree")
     association_corpus "$sb"
     association_direct "$sb/run" "$ASSOCIATION_OPTIONS" "$CORPUS_DIR/design_timed.json"
@@ -210,7 +210,7 @@ test_a_phenotype_that_disagrees_within_a_unit_refuses() {
 
 # The compiled parse and the R one are the same table or one of them is wrong.
 test_both_paths_through_the_parse_agree() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/assoc-paths")
     association_corpus "$sb"
     association_direct "$sb/plain" "$ASSOCIATION_OPTIONS"
@@ -263,7 +263,7 @@ test_association_cites_the_statistics_it_computes() {
 # module is right to reject it.
 test_association_runs_through_the_frame() {
     analysis_ready single || return
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,exp_population,exp_time,pt_wingspan
 TestSample1,TestSample1,Lib1,ILLUMINA,Unit1,Pop1,T1,10.5
 TestSample2,TestSample2,Lib1,ILLUMINA,Unit1,Pop1,T2,10.5

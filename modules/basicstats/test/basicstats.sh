@@ -17,10 +17,15 @@
 # changes. The Nextflow case above is what proves main.nf assembles the same thing, and
 # 00_static is what proves the manifest declares exactly what the module calls.
 basicstats_direct() {
-    local dest="$1" options="$2" corpus="$3" rscript="${4:-Rscript}" bin=""
+    local dest="$1" options="$2" corpus="$3" rscript="${4:-$(analysis_rscript)}" prelude="${5:-}" bin=""
     mkdir -p "$dest"
+    # $5 is R sourced before the module, for a case that needs the module to meet a machine it
+    # would otherwise have to be given. The file is read top to bottom into the global
+    # environment, so a definition here is what the module's own calls find.
+    : > "$dest/basicstats.R"
+    [ -n "$prelude" ] && printf '%s\n' "$prelude" >> "$dest/basicstats.R"
     cat "$REPO_ROOT"/modules/lib/*/*.R "$REPO_ROOT/modules/basicstats/basicstats.R" \
-        > "$dest/basicstats.R"
+        >> "$dest/basicstats.R"
     printf '%s' "$options" > "$dest/options.json"
     # An environment's R drives an environment's compiler - conda's is
     # x86_64-conda-linux-gnu-c++, which lives in that environment and nowhere else - so an R
@@ -36,20 +41,6 @@ basicstats_direct() {
         --out "$dest" ) > "$dest/out.txt" 2>&1
 }
 
-# A library holding everything the user library holds except $1, for a case that needs a
-# package to be absent on a machine that has it. R_LIBS_USER REPLACES the user library rather
-# than adding to it, so the rest of what the module needs has to be linked back in.
-r_lib_without() {
-    local hide="$1" dest="$2" user entry
-    user=$(Rscript --vanilla -e 'cat(Sys.getenv("R_LIBS_USER"))' 2>/dev/null)
-    mkdir -p "$dest"
-    [ -d "$user" ] || return 0
-    for entry in "$user"/*; do
-        [ -d "$entry" ] || continue
-        [ "$(basename "$entry")" = "$hide" ] && continue
-        ln -sfn "$entry" "$dest/$(basename "$entry")"
-    done
-}
 
 # ---------------------------------------------------------------------------------------
 # basicstats, which a release ships. Unlike every module above it this one is not planted by
@@ -59,7 +50,7 @@ r_lib_without() {
 # over two, at the template's poolSize 100 and ploidy 2.
 test_basicstats_publishes_a_row_for_every_pool() {
     analysis_ready single || return
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     local status; status=$(analysis_run_module basicstats)
     assert_status 0 "$status" "basicstats should run; see $ANALYSIS_SB/run.out"
@@ -82,7 +73,7 @@ test_basicstats_publishes_a_row_for_every_pool() {
 # definition is one they cannot check, and the two n_eff forms in circulation differ.
 test_basicstats_cites_the_statistics_it_computes() {
     analysis_ready single || return
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     analysis_run_module basicstats > /dev/null
 
@@ -101,7 +92,7 @@ test_basicstats_cites_the_statistics_it_computes() {
 # functions that computed the numbers are in the file.
 test_basicstats_publishes_the_library_it_computed_with() {
     analysis_ready single || return
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     analysis_run_module basicstats > /dev/null
 
@@ -116,7 +107,7 @@ test_basicstats_publishes_the_library_it_computed_with() {
 # by the case below this one, which calls the same R directly and costs no JVM.
 test_basicstats_publishes_what_it_measured() {
     analysis_ready single || return
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     analysis_plant_results "$ANALYSIS_SB/store/Output"
     local status; status=$(analysis_run_module basicstats)
     assert_status 0 "$status" "basicstats should run; see $ANALYSIS_SB/run.out"
@@ -159,7 +150,7 @@ test_basicstats_publishes_what_it_measured() {
 # come from plain Python loops in test/tools/freq_corpus.py that share nothing with the R, so a
 # change made to both at once still fails.
 test_basicstats_computes_what_the_corpus_says() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-direct")
     rm -rf "$sb"; mkdir -p "$sb"
     CORPUS_DIR="$sb"
@@ -216,7 +207,7 @@ test_basicstats_computes_what_the_corpus_says() {
 # between them is what a reader will check first, and it holds for a reason - the calls are
 # left-censored at vcffilter.minDP where the histogram counts every covered position.
 test_the_effective_size_is_reported_at_both_levels() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-neff")
     rm -rf "$sb"; mkdir -p "$sb"
     CORPUS_DIR="$sb"
@@ -255,7 +246,7 @@ test_the_effective_size_is_reported_at_both_levels() {
 # The corpus's --merged layout is three pools of two libraries: the depth table is named by
 # RG_Sample and the histograms by SampleID, which is the only shape that separates them.
 test_a_merged_pool_reports_a_bound() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-merged")
     rm -rf "$sb"; mkdir -p "$sb"
     CORPUS_DIR="$sb"
@@ -289,8 +280,8 @@ test_a_merged_pool_reports_a_bound() {
 # with hundreds of scaffolds needs; the run has to say what it could have drawn instead, or the
 # setting is undiscoverable.
 test_a_depth_plot_is_drawn_only_for_named_sequences() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
-    if ! have_r_package ggplot2; then skip_case "no ggplot2"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
+    if ! have_analysis_r_package ggplot2; then skip_case "no ggplot2"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-plots")
     rm -rf "$sb"; mkdir -p "$sb"
     python3 "$REPO_ROOT/test/tools/freq_corpus.py" "$sb" "$sb"
@@ -323,7 +314,7 @@ test_a_depth_plot_is_drawn_only_for_named_sequences() {
 # to make a large genome finish, and either is worthless if it moves a number: sites are
 # independent, so a bin boundary must be invisible, and the C++ is judged against the R.
 test_every_path_through_the_hot_loop_agrees() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-paths")
     rm -rf "$sb"; mkdir -p "$sb"
     python3 "$REPO_ROOT/test/tools/freq_corpus.py" "$sb" "$sb"
@@ -345,7 +336,7 @@ test_every_path_through_the_hot_loop_agrees() {
     done
 
     # Rcpp needs a compiler, which is not shipped and is not on every machine.
-    if ! have_rcpp; then skip_case "no Rcpp and compiler"; return; fi
+    if ! have_analysis_rcpp; then skip_case "no Rcpp and compiler in the analysis environment"; return; fi
     basicstats_direct "$sb/cpp" '{"minReads":2,"binSize":4,"workers":1,"usecpp":true}' "$sb"
     assert_eq "" "$(diff "$sb/ref/diversity.tsv" "$sb/cpp/diversity.tsv" 2>&1)" \
         "the compiled path must agree with the R it replaces: $(cat "$sb/cpp/out.txt" 2>/dev/null)"
@@ -409,16 +400,26 @@ test_a_worker_compiles_the_hot_path_for_itself() {
 # it makes the case skip on every properly provisioned one - which is every machine that would
 # ever run it - and the refusal would then be tested nowhere.
 test_basicstats_refuses_workers_it_cannot_use() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-workers")
     rm -rf "$sb"; mkdir -p "$sb"
     python3 "$REPO_ROOT/test/tools/freq_corpus.py" "$sb" "$sb"
-    r_lib_without doFuture "$sb/nolib"
-
-    local saved="${R_LIBS_USER-}"
-    export R_LIBS_USER="$sb/nolib"
-    basicstats_direct "$sb/many" '{"minReads":2,"binSize":2,"workers":4,"usecpp":false}' "$sb"
-    if [ -n "$saved" ]; then export R_LIBS_USER="$saved"; else unset R_LIBS_USER; fi
+    # THE PACKAGE IS MADE TO ANSWER "ABSENT", NOT HIDDEN ON DISK.
+    #
+    # This hid it by pointing R_LIBS_USER at a library built without it, which worked while the
+    # case ran against a system R that kept its packages in the user library. The analysis
+    # environment keeps them in $PREFIX/lib/R/library, which IS .Library - always searched, last,
+    # and not removable by any R_LIBS variable. Shadowing it with an empty directory does not
+    # work either: R skips a directory that is not a package and falls through.
+    #
+    # The module asks `requireNamespace("doFuture", quietly = TRUE)`, so that is what is answered.
+    # Braced: at top level R closes an `if` at the end of the line, so a bare `else` on the next
+    # one is a syntax error rather than the other half of the same statement.
+    basicstats_direct "$sb/many" '{"minReads":2,"binSize":2,"workers":4,"usecpp":false}' "$sb" "" \
+        'requireNamespace <- function(package, ...) {
+             if (identical(package, "doFuture")) return(FALSE)
+             base::requireNamespace(package, ...)
+         }'
 
     assert_no_file "$sb/many/diversity.tsv" "nothing is published when the run cannot go parallel"
     assert_contains "$(cat "$sb/many/out.txt" 2>/dev/null)" "doFuture is not installed" \

@@ -236,9 +236,19 @@ analysis_output() {
 # Run one section of the R unit tests. Stores the output and echoes the exit status.
 R_LIB_OUTPUT=""
 
+# THE RELEASE'S R, OR NOTHING. There is no fallback to whatever Rscript is on PATH.
+#
+# The library is base R, which is why a system R can run it at all - but base R is not one thing.
+# Measured 2026-09-23 on one machine: the system carried 4.6.1 while the release ships 4.5.3, and
+# this suite was checking hand-computed arithmetic against the version nobody receives. Numeric
+# formatting, sort order and seq edges all move between minor versions.
+#
+# Falling back would keep the suite runnable without conda, which is worth something - it costs
+# three seconds and no JVM. It is not worth a PASS that does not describe the release, which is
+# how every other defect of this shape got in. The cases gate on have_analysis_r and skip.
 r_lib_section() {
     local out status=0
-    out=$(Rscript --vanilla "$REPO_ROOT/test/tools/r_lib_tests.R" \
+    out=$("$(analysis_rscript)" --vanilla "$REPO_ROOT/test/tools/r_lib_tests.R" \
             "$REPO_ROOT/modules/lib" "$1" 2>&1) || status=$?
     R_LIB_OUTPUT="$out"
     printf '%s' "$status"

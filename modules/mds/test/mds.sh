@@ -35,7 +35,7 @@ mds_direct() {
     [ -n "$design" ] || design="$CORPUS_DIR/design.json"
     cat "$REPO_ROOT"/modules/lib/*/*.R "$REPO_ROOT/modules/mds/mds.R" > "$dest/mds.R"
     printf '%s' "$options" > "$dest/options.json"
-    ( cd "$CORPUS_DIR/Frequencies" && Rscript --vanilla "$dest/mds.R" \
+    ( cd "$CORPUS_DIR/Frequencies" && "$(analysis_rscript)" --vanilla "$dest/mds.R" \
         --design "$design" --pools "$CORPUS_DIR/pools.json" \
         --options "$dest/options.json" \
         --cpp-frequencies "$REPO_ROOT/modules/lib/allele_frequencies/allele_frequencies.cpp" \
@@ -52,7 +52,7 @@ mds_direct() {
 # `correction` column is a difference of two nearly equal sums and shows it first. Comparing the
 # files byte for byte would fail on every change to either that did not change the arithmetic.
 table_gap() {
-    Rscript --vanilla -e '
+    "$(analysis_rscript)" --vanilla -e '
         args <- commandArgs(trailingOnly = TRUE)
         left <- read.delim(args[1], check.names = FALSE)
         right <- read.delim(args[2], check.names = FALSE)
@@ -129,7 +129,7 @@ mds_on_cohort() {
     mkdir -p "$3"
     cat "$REPO_ROOT"/modules/lib/*/*.R "$REPO_ROOT/modules/mds/mds.R" > "$3/mds.R"
     printf '%s' "$2" > "$3/options.json"
-    ( cd "$1/Frequencies" && Rscript --vanilla "$3/mds.R" \
+    ( cd "$1/Frequencies" && "$(analysis_rscript)" --vanilla "$3/mds.R" \
         --design "$1/design.json" --pools "$1/pools.json" --options "$3/options.json" \
         --cpp-frequencies "$REPO_ROOT/modules/lib/allele_frequencies/allele_frequencies.cpp" \
         --cpp-distance "$REPO_ROOT/modules/lib/nei_distance/nei_distance.cpp" \
@@ -152,7 +152,7 @@ MDS_OPTIONS='{"dimensions":2,"colorBy":"","shapeBy":"","includeIndels":false,"ch
 
 # EVERY DISTANCE THE CORPUS HOLDS, all fifteen pairs and all four columns.
 test_mds_computes_the_distances_the_corpus_says() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/mds-corpus")
     mds_corpus "$sb"
     mds_direct "$sb/run" "$MDS_OPTIONS"
@@ -181,7 +181,7 @@ test_mds_computes_the_distances_the_corpus_says() {
 # be positive at every pair. A correction that came out zero would mean the unbiased form was
 # never applied and the table would still look ordinary.
 test_the_sampling_correction_is_applied_and_positive() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/mds-correction")
     mds_corpus "$sb"
     mds_direct "$sb/run" "$MDS_OPTIONS"
@@ -203,7 +203,7 @@ test_the_sampling_correction_is_applied_and_positive() {
 # between two of them and the totals are identical whatever the bin size - which is what makes
 # binSize a memory knob rather than a setting that changes a result.
 test_the_bin_size_changes_no_number() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/mds-bins")
     mds_corpus "$sb"
     mds_direct "$sb/whole" "$MDS_OPTIONS"
@@ -222,8 +222,8 @@ test_the_bin_size_changes_no_number() {
 # reached it, and a compiled function cannot cross a process boundary, so a worker that does not
 # source it for itself fails only here.
 test_every_path_through_the_distance_agrees() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
-    if ! Rscript --vanilla -e 'quit(status = !requireNamespace("Rcpp", quietly = TRUE))' \
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
+    if ! "$(analysis_rscript)" --vanilla -e 'quit(status = !requireNamespace("Rcpp", quietly = TRUE))' \
          > /dev/null 2>&1; then
         skip_case "no Rcpp"
         return
@@ -236,7 +236,7 @@ test_every_path_through_the_distance_agrees() {
     assert_tables_agree "$sb/r/distance.tsv" "$sb/cpp/distance.tsv" \
                         "the compiled path disagrees with the R"
 
-    if Rscript --vanilla -e 'quit(status = !requireNamespace("doFuture", quietly = TRUE))' \
+    if "$(analysis_rscript)" --vanilla -e 'quit(status = !requireNamespace("doFuture", quietly = TRUE))' \
        > /dev/null 2>&1; then
         local both="${MDS_OPTIONS/\"usecpp\":false/\"usecpp\":true}"
         mds_direct "$sb/both" "${both/\"workers\":1,/\"workers\":2,}"
@@ -253,7 +253,7 @@ test_every_path_through_the_distance_agrees() {
 # the matrix directly would ordinate a quartic. This is the case that would fail if the double
 # centering were ever replaced by a cmdscale call on the distances themselves.
 test_the_coordinates_reproduce_the_distance_matrix() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/mds-coords")
     mds_corpus "$sb"
     mds_direct "$sb/run" "${MDS_OPTIONS/\"dimensions\":2/\"dimensions\":5}"
@@ -261,7 +261,7 @@ test_the_coordinates_reproduce_the_distance_matrix() {
     # Six pools span five dimensions exactly, so on all five axes the coordinates must
     # reproduce every distance the matrix holds.
     local worst
-    worst=$(Rscript --vanilla -e '
+    worst=$("$(analysis_rscript)" --vanilla -e '
         args <- commandArgs(trailingOnly = TRUE)
         coords <- read.delim(file.path(args[1], "mds.tsv"), check.names = FALSE)
         pairs <- read.delim(file.path(args[1], "distance.tsv"), check.names = FALSE)
@@ -282,7 +282,7 @@ test_the_coordinates_reproduce_the_distance_matrix() {
 # EIGENVALUES ARE PUBLISHED WITH THEIR SIGNS AND UNDER BOTH DENOMINATORS. With nothing negative
 # the two agree, which is what makes a disagreement elsewhere readable as "not flat".
 test_the_eigenvalues_are_published_whole() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/mds-eigen")
     mds_corpus "$sb"
     mds_direct "$sb/run" "$MDS_OPTIONS"
@@ -299,7 +299,7 @@ test_the_eigenvalues_are_published_whole() {
 # THE POINTS ARE POOLS AND CARRY THE UNIT THEY BELONG TO, so a reader can see which of them
 # should have coincided. Collapsing to units first would remove exactly that.
 test_every_pool_is_placed_and_carries_its_unit() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/mds-pools")
     mds_corpus "$sb"
     mds_direct "$sb/run" "$MDS_OPTIONS"
@@ -316,7 +316,7 @@ test_every_pool_is_placed_and_carries_its_unit() {
 # A POOL OF ONE CHROMOSOME IS REFUSED BY NAME. n_eff is 1 there at every depth, so the
 # correction divides by zero at every site and the whole matrix would come back empty.
 test_a_single_haploid_genome_is_refused() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/mds-haploid")
     mds_corpus "$sb"
     sed 's/"nChrom": *[0-9]*/"nChrom": 1/; s/"ploidy": *[0-9]*/"ploidy": 1/; s/"size": *[0-9]*/"size": 1/' \
@@ -324,7 +324,7 @@ test_a_single_haploid_genome_is_refused() {
     mkdir -p "$sb/run"
     cat "$REPO_ROOT"/modules/lib/*/*.R "$REPO_ROOT/modules/mds/mds.R" > "$sb/run/mds.R"
     printf '%s' "$MDS_OPTIONS" > "$sb/run/options.json"
-    ( cd "$CORPUS_DIR/Frequencies" && Rscript --vanilla "$sb/run/mds.R" \
+    ( cd "$CORPUS_DIR/Frequencies" && "$(analysis_rscript)" --vanilla "$sb/run/mds.R" \
         --design "$CORPUS_DIR/design.json" --pools "$sb/one.json" \
         --options "$sb/run/options.json" \
         --cpp-frequencies "$REPO_ROOT/modules/lib/allele_frequencies/allele_frequencies.cpp" \
@@ -340,7 +340,7 @@ test_a_single_haploid_genome_is_refused() {
 # AN UNKNOWN colorBy OR shapeBy IS REFUSED BEFORE ANY WORK, naming what the project does have.
 # A plot silently drawn without the key would look like the setting had been honoured.
 test_an_unknown_plot_column_is_refused() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/mds-color")
     mds_corpus "$sb"
 
@@ -359,7 +359,7 @@ test_an_unknown_plot_column_is_refused() {
 # THE TWO KEYS COMPOSE, which is the question a six-pool ordination is usually asked: do the
 # pools group by what was set up, or by when they were sampled.
 test_the_points_can_carry_a_color_and_a_shape() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/mds-keys")
     mds_corpus "$sb"
     local options="${MDS_OPTIONS/\"colorBy\":\"\"/\"colorBy\":\"exp_population\"}"
@@ -382,7 +382,7 @@ test_the_points_can_carry_a_color_and_a_shape() {
 # six and assigns NA beyond it, so this is the case that fails if the explicit symbol list is
 # ever removed - the plot would still be written, one pool short and one warning quieter.
 test_a_seventh_shape_level_is_drawn() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/mds-shapes")
     mds_corpus "$sb"
     mds_wide_cohort "$sb/wide" 7
@@ -404,7 +404,7 @@ test_a_seventh_shape_level_is_drawn() {
 # PAST R'S OWN SYMBOLS THERE IS NOTHING LEFT TO GIVE, so the refusal names the count rather than
 # letting scale_shape_manual stop with "insufficient values in manual scale".
 test_more_levels_than_r_has_symbols_is_refused() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/mds-symbols")
     mds_corpus "$sb"
     mds_wide_cohort "$sb/wide" 27
@@ -434,7 +434,7 @@ test_more_levels_than_r_has_symbols_is_refused() {
 # negative. Every other pair in the corpus is positive, which is why the corpus alone cannot
 # catch a max(0, ...) slipped into the accumulation.
 test_two_identical_pools_come_out_negative() {
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/mds-identical")
     mds_corpus "$sb"
     mds_wide_cohort "$sb/wide" 7
@@ -463,7 +463,7 @@ test_two_identical_pools_come_out_negative() {
 # AND ONCE THROUGH NEXTFLOW, which is what proves main.nf assembles what the direct cases check.
 test_mds_runs_through_the_frame() {
     analysis_ready single || return
-    if ! have_r; then skip_case "no Rscript"; return; fi
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
     analysis_plant_results "$ANALYSIS_SB/store/Output"
 
     local status; status=$(analysis_run_module mds)
