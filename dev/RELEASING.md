@@ -186,12 +186,41 @@ nextflow lint analysis analysis.nf dryrun.nf poolseqflow.nf scripts
 
 What the notes owe a reader, beyond the commits: anything a user has to *do*, anything whose meaning changed, and every parameter that is gone or is now computed.
 
+Then check the section extracts, because `release.yml` refuses to publish a version the CHANGELOG does not describe, and this is the extractor that writes the release body. Cheaper here than as a deleted tag:
+
+```bash
+dev/scripts/changelog-section.sh 3.1.2
+```
+
 ## 9. Finish the release
 
-- Commit, tag, push the tag.
-- The GitHub release from the tag.
+**Pushing the tag is the release.** `release.yml` fires on `v*`, rebuilds and verifies the archive, uses this version's CHANGELOG section as the release body, and publishes with both tarballs and `SHA256SUMS` attached. Nothing to assemble by hand.
+
+```bash
+git add -A && git commit -m "Version bump v3.1.2"
+git push origin main
+git tag v3.1.2
+git push origin v3.1.2
+```
+
+Watch it at <https://github.com/ozankiratli/PoolSeqFlow/actions>.
+
 - **Zenodo mints a DOI for the version.** The citation machinery points at the all-versions DOI and tells a user to pick their version from it, so the version record has to exist for the citation the release prints to be answerable.
-- Verify the published archive installs from scratch on a machine that has never had it.
+- Verify the published archive installs from scratch on a machine that has never had it:
+
+```bash
+V=3.1.2
+cd "$(mktemp -d)"
+curl -LO "https://github.com/ozankiratli/PoolSeqFlow/releases/download/v$V/PoolSeqFlow-$V.tar.gz"
+curl -LO "https://github.com/ozankiratli/PoolSeqFlow/releases/download/v$V/SHA256SUMS"
+sha256sum --ignore-missing -c SHA256SUMS
+tar -xzf "PoolSeqFlow-$V.tar.gz"
+cd "PoolSeqFlow-$V"
+cp parameters.config.template parameters.config
+./PoolSeqFlow install
+./PoolSeqFlow analysis install
+./PoolSeqFlow check install
+```
 
 ## 10. Publish the modules and libraries this release runs
 

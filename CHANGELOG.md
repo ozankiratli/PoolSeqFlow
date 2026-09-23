@@ -10,6 +10,42 @@ In practice a version number says what upgrading will cost you: a third number i
 
 ---
 
+## [3.1.2] - 2026-09-23
+
+**A compatibility release. Nothing you set changes and no result moves.** Not one tool that computes anything moved a version; what changed is which machines the analysis layer installs on, plus three annoyances on machines that are not the one it was built on.
+
+### Fixed
+
+- **`analysis install` failed on any machine with glibc older than 2.39**, which is most clusters. `install/environment-analysis.yml` pinned `sysroot_linux-64=2.39`, and that is a demand on your machine rather than something conda installs — `__glibc` is conda's name for the glibc you already have. Nothing asked for it: the solver took the newest the exporting machine allowed. Both environments now install on anything from glibc 2.28 up. The pipeline layer was never affected, so if `PoolSeqFlow install` worked while `analysis install` did not, this was why.
+- **`rehash: command not found` on every conda call**, where something in your environment exports `ZSH_VERSION`. conda runs `\rehash` — zsh's name for `hash -r` — whenever that is set, including inside the bash wrapper, where the command does not exist. Nothing was failing underneath it. The wrapper now defines `rehash`.
+- **`~/.local/bin is NOT on your PATH` when it is.** The check compared `$PATH` as text, so a trailing slash, a doubled slash or a symlinked home each made it answer no. It resolves directories now. Worth fixing for what follows it: the message tells you to edit a shell profile that was correct.
+- **`uninstall` reported `Directory not empty` and stopped there**, on network storage, where removing a file that is still open leaves a `.nfs*` placeholder — and the process holding them open is `PoolSeqFlow` itself. It now finishes the uninstall and tells you the placeholders go when it exits. Previously it left `~/.local/bin` pointing at the release you were removing.
+
+### Changed
+
+- **The manual states the host requirement.** No document had named a glibc minimum, so there was no way to know before installing. It now carries the floor of 2.28, why no flag works around it, and the error text under Troubleshooting. `rsync` is what sets the floor, in both environments. The only common machine below it is CentOS 7, end of life since June 2024.
+
+### Commits
+
+- (d4c4028) development notes
+- (45737e3) The analysis install error due to glibc dependency is resolved by decreasing the floor
+- (f4876a9) Manual updates
+- (6ec83c4) glibc floor raised to 2.28 rsync requires it
+- (8936bbc) Version prep fix
+- (aa72721) Potential solution to prep-version.sh error that blocks version preparation
+- (3b745cb) fixes and debug on test suite
+- (de1459e) prep_version is now verbose
+- (aad713c) environment files are exported for v3.1.2
+- (9e4c36a) wrapper fixes
+- (af7939b) wrapper fix
+- (d9737de) Development notes added
+- (b143021) rm error fix
+- (2e3ead6) test suite fix, version bump has revert
+- (430f987) test suite fixes
+- (fd01d41) Test suite fixed, now uses right conda env
+
+---
+
 ## [3.1.1] - 2026-09-10
 
 **Inconveniences fixed. No known incompatibilities.** Nothing you set changes, nothing you have installed needs touching, and no result computed under 3.1.0 is affected. This tidies two things that were merely noisy and one page that was actively misleading.
@@ -467,6 +503,7 @@ Major upgrade to **Nextflow 26** and **Trim Galore 2.x**. This release is not ba
 
 ---
 
+[3.1.2]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.1.2
 [3.1.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.1.1
 [3.1.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.1.0
 [3.0.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.0.0
