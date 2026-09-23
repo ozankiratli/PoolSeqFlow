@@ -11,6 +11,37 @@
 
 # Where installations live: POOLSEQFLOW_PREFIX, else an installed wrapper's own location,
 # else ~/.local.
+# Whether a directory is on PATH, compared as directories rather than as strings.
+#
+# `case ":$PATH:" in *":$dir:"*)` is the usual idiom and it answers about spelling, not about
+# the filesystem. Any of these make it say no while the commands work perfectly:
+#
+#     PATH holds  /home/you/.local/bin/     a trailing slash
+#     HOME is     /home/you/                so $HOME/.local/bin doubles the slash
+#     PATH holds  /mnt/home/you/.local/bin  a symlinked home resolving elsewhere
+#
+# Reported from a server on 2026-09-22, where install insisted ~/.local/bin was not on PATH
+# and every command it had just linked was runnable by name. Telling someone to fix a PATH that
+# is already right is worse than saying nothing: they edit a shell profile that was correct.
+#
+# Each entry is resolved with `cd`+`pwd -P`, so the comparison is between real directories. An
+# entry that does not exist cannot be the one, and is skipped rather than failing the loop.
+dir_on_path() {
+    local want entry resolved oldifs
+    want=$(cd "$1" 2>/dev/null && pwd -P) || return 1
+    oldifs=$IFS
+    IFS=:
+    for entry in $PATH; do
+        IFS=$oldifs
+        [ -n "$entry" ] || continue
+        resolved=$(cd "$entry" 2>/dev/null && pwd -P) || { IFS=:; continue; }
+        [ "$resolved" = "$want" ] && return 0
+        IFS=:
+    done
+    IFS=$oldifs
+    return 1
+}
+
 install_prefix() {
     if [ -n "${POOLSEQFLOW_PREFIX:-}" ]; then
         printf '%s' "$POOLSEQFLOW_PREFIX"
