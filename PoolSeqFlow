@@ -285,8 +285,21 @@ remove_payload() {
     bindir="$prefix/bin"
     [ -d "$dest" ] || return 1
 
-    rm -rf "$dest"
-    echo "Removed $dest"
+    # The running script usually lives in $dest: `PoolSeqFlow` on PATH is a symlink into it and
+    # $0 resolves through it. A network filesystem leaves a .nfs* placeholder for a file that is
+    # still open, so the directory cannot be removed. Allowed to fail, because under `set -e` it
+    # would otherwise abandon the uninstall before $bindir is re-pointed below.
+    rm -rf "$dest" 2>/dev/null || true
+    if [ -d "$dest" ]; then
+        echo "Removed the contents of $dest, but the directory itself remains."
+        echo "  Files still in it:"
+        ls -A "$dest" 2>/dev/null | sed 's/^/    /'
+        echo "  On a network filesystem these are placeholders for files this very command"
+        echo "  still has open, and they go when it exits. Remove the directory afterwards:"
+        echo "      rm -rf $dest"
+    else
+        echo "Removed $dest"
+    fi
     newest=$(newest_installed_version "$prefix")
     for item in $WRAPPERS; do
         rm -f "$bindir/${item}-${version}"
@@ -374,7 +387,6 @@ deploy_payload() {
         fi
     done
     echo ""
-    # dir_on_path compares directories, not spellings: see lib/wrapper_lib.sh.
     case "$(dir_on_path "$bindir" && echo yes || echo no)" in
         yes)
             echo "$bindir is on your PATH, so those commands work from anywhere."
@@ -2000,13 +2012,8 @@ EOF
 
         # Installed together, but any part can be missing on its own, so each is checked
         # before it is removed.
-        # Stepped out of before removal, and quietly: there may be no active environment, and
-        # conda's own shell hook writes to stderr on some machines - a server running bash with
-        # a zsh-flavored hook answers `rehash: command not found`, which is conda reaching for
-        # zsh's name for `hash -r`. Alarming output in the middle of a destructive command, and
-        # about nothing. `|| true` because a bare deactivate under `set -e` could otherwise
-        # abandon the uninstall with the environment half removed. uninstall_all already did
-        # this; the two said the same thing two ways.
+        # There may be no active environment to step out of, and under `set -e` a non-zero
+        # deactivate would abandon the uninstall with the environment half removed.
         if [ "$HAVE_ENV" -eq 1 ]; then
             echo "Uninstalling conda environment '$TARGET_ENV'..."
             conda deactivate 2>/dev/null || true

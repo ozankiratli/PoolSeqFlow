@@ -11,32 +11,13 @@
 
 # Where installations live: POOLSEQFLOW_PREFIX, else an installed wrapper's own location,
 # else ~/.local.
-# conda's name for `hash -r` when it believes it is in zsh. Not dead code: conda's own
-# profile.d/conda.sh runs `__conda_hashr` after every activate and deactivate, and picks
-# `\rehash` whenever ZSH_VERSION is set - which bash does not provide, so every conda call
-# through this wrapper prints `rehash: command not found` on a machine where that variable
-# reaches a bash script. The backslash suppresses aliases, not functions, so this is what runs.
-#
-# Defined rather than the output suppressed: silencing conda's stderr would hide its real
-# failures too, and refreshing the command table is what conda was asking for. Harmless where
-# ZSH_VERSION is unset, because nothing calls it.
+# Not dead code. conda's `__conda_hashr` calls `\rehash` - zsh's name for `hash -r` - whenever
+# ZSH_VERSION is set, including inside a bash script, where the command does not exist.
 rehash() { hash -r; }
 
-# Whether a directory is on PATH, compared as directories rather than as strings.
-#
-# `case ":$PATH:" in *":$dir:"*)` is the usual idiom and it answers about spelling, not about
-# the filesystem. Any of these make it say no while the commands work perfectly:
-#
-#     PATH holds  /home/you/.local/bin/     a trailing slash
-#     HOME is     /home/you/                so $HOME/.local/bin doubles the slash
-#     PATH holds  /mnt/home/you/.local/bin  a symlinked home resolving elsewhere
-#
-# Reported from a server on 2026-09-22, where install insisted ~/.local/bin was not on PATH
-# and every command it had just linked was runnable by name. Telling someone to fix a PATH that
-# is already right is worse than saying nothing: they edit a shell profile that was correct.
-#
-# Each entry is resolved with `cd`+`pwd -P`, so the comparison is between real directories. An
-# entry that does not exist cannot be the one, and is skipped rather than failing the loop.
+# Whether a directory is on PATH, compared as resolved directories rather than as strings: a
+# trailing slash, a doubled slash or a symlinked home each defeat `case ":$PATH:" in *":$dir:"*`.
+# An entry that does not resolve is skipped rather than failing the loop.
 dir_on_path() {
     local want entry resolved oldifs
     want=$(cd "$1" 2>/dev/null && pwd -P) || return 1
