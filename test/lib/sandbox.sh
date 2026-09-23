@@ -458,24 +458,37 @@ _run_entry() {
         # Nextflow computes points at the installation. SANDBOX_INSTALL_OVERRIDE is for the case
         # that launches without one, and is honoured when set to an empty string.
         export POOLSEQFLOW_HOME="${SANDBOX_INSTALL_OVERRIDE-$sb/install}"
-        # -ansi-log false RATHER THAN -q, AND THE TWO CANNOT BE COMBINED.
+        # A debugging hook, off unless TEST_DEBUG_DIR names a directory. Dumped from INSIDE this
+        # subshell and after the exports above, so it is what the JVM actually inherits rather
+        # than what the calling shell happens to hold - the two differ by everything this
+        # function sets. dev/scripts/debug-status-line.sh drives it.
+        if [ -n "${TEST_DEBUG_DIR:-}" ]; then
+            mkdir -p "$TEST_DEBUG_DIR"
+            {
+                echo "== command =="
+                echo "nextflow run -ansi-log false $sb/install/$entry $*"
+                echo "== cwd ==";   pwd
+                echo "== tty ==";   tty 2>/dev/null || echo "not a tty"
+                echo "== stdin/stdout/stderr =="
+                echo "stdin=$([ -t 0 ] && echo tty || echo not-tty) stdout=$([ -t 1 ] && echo tty || echo not-tty) stderr=$([ -t 2 ] && echo tty || echo not-tty)"
+                echo "== shell =="; echo "\$0=$0  BASH_VERSION=${BASH_VERSION:-none}  ZSH_VERSION=${ZSH_VERSION:-none}"
+                echo "== which java/nextflow =="
+                command -v nextflow; command -v java
+                echo "== env as the JVM sees it =="
+                env | sort
+            # The entry is a path for a module run - analysis/modules/<name>/main.nf - so the
+            # slashes are flattened rather than creating directories nobody asked for.
+            } > "$TEST_DEBUG_DIR/$(basename "$sb")-$(printf '%s' "${entry%.nf}" | tr '/' '-').env" 2>&1
+        fi
+
+        # -ansi-log false rather than -q, and the two cannot be combined: Nextflow refuses
+        # `quiet` and `ansi-log` together. Asked explicitly so run.out has one shape everywhere;
+        # under -q, 26.04.6 chooses between a compact renderer and a classic one by itself, and
+        # it chose differently on two shells of one machine.
         #
-        # Nextflow refuses `quiet` and `ansi-log` together, so with -q it decides its own log
-        # format - and that decision differs between machines. Three cases assert on the line
-        # it prints at the end:
-        #
-        #     03_pipeline:39   failed=0        04_guards:648  completed=0
-        #     04_guards:835    completed=0
-        #
-        # Measured 2026-09-22: under -q that line appeared on one machine and never on another,
-        # with the same nextflow build, the same JDK and the same conda environment. Those three
-        # cases then failed on the second machine every time and passed on the first every time,
-        # which read as a flaky suite and was not - it was an assertion on auto-detected output.
-        #
-        # Asking explicitly settles it. Redirected to a file the two values are identical, byte
-        # for byte and with no escape characters, because Nextflow renders plain when stdout is
-        # not a terminal; `false` is chosen so that stays true if this ever runs unredirected,
-        # where `true` would emit real escape codes and break the same three assertions.
+        # THIS IS NOT WHAT MADE THE THREE STATUS-LINE CASES PASS - it was tried as a fix and
+        # changed nothing. Those cases were asserting on that rendered line at all, and now read
+        # the work tree and the trace instead. See tasks_started().
         #
         # Dropping -q adds [PIPELINE], [WORKDIR] and [PROCESS] lines to run.out. Nothing asserts
         # on their absence, and task_count reads the trace file rather than this output.
@@ -506,6 +519,40 @@ sandbox_config_flat() {
 # having nothing to be shared with. Both are looked for rather than the layout being reasoned
 # about at each call site: a wrong guess reports "no-trace", which reads as a broken run
 # rather than as a test looking in the wrong place.
+# How many tasks Nextflow actually started, counted from the work tree.
+#
+# ASK THE FILESYSTEM, NOT THE SUMMARY LINE. A guard that stops a run during configuration leaves
+# work/ empty, and that is the fact "nothing ran first" means. Reading it from Nextflow's closing
+# `completed=N failed=N cached=N` instead made three cases depend on which of its two renderers
+# it chose for itself - the compact one prints that line and the classic one does not, and 26.04.6
+# picks between them per environment. Those cases then passed for one person and failed for
+# another on the same commit, the same build and the same JVM. 2026-09-22.
+#
+# COUNTED AT DEPTH ONE, WHICH IS THE ONLY DEPTH THAT SURVIVES. A task directory is
+# work/<2 hex>/<hex>, but `cleanup = true` removes the inner one after a successful run and
+# leaves the hash prefix behind - so counting at depth two returns zero for a run that did all
+# its work, which is the same answer as for a run that did none. Measured 2026-09-22 against
+# three real sandboxes: a guard-stopped run has an entirely empty work/, while finished runs
+# held 21 and 128 prefixes with 24 and 0 inner directories respectively.
+tasks_started() {
+    local sb="$1" proj="${2:-$sb/main}"
+    [ -d "$proj/work" ] || { printf '0'; return; }
+    find "$proj/work" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' '
+}
+
+# Rows of the trace carrying one status - COMPLETED, FAILED, CACHED. The status column is found
+# by name because the trace's column order is a Nextflow decision, not ours.
+trace_status_count() {
+    local sb="$1" want="$2" trace
+    trace=$(trace_file "$sb")
+    [ -n "$trace" ] && [ -f "$trace" ] || { printf '0'; return; }
+    awk -F'\t' -v want="$want" '
+        NR == 1 { for (i = 1; i <= NF; i++) if ($i == "status") c = i; next }
+        c && $c == want { n++ }
+        END { print n + 0 }
+    ' "$trace"
+}
+
 trace_file() {
     local sb="$1" candidate
     for candidate in "$sb/store/Output/All_Runs/Reports/PoolSeqFlow_pipeline_trace.txt" \

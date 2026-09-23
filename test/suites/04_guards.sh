@@ -645,7 +645,8 @@ r1,20
     assert_contains "$out" "cannot be used as a multi-run table" "it should say what is wrong"
     assert_contains "$out" "write 'poolSize'"        "the params. prefix should be named"
     assert_contains "$out" "each run needs its own name" "and the duplicate RunID too"
-    assert_contains "$out" "completed=0" "and nothing should have run first"
+    # From the work tree, not from Nextflow's closing summary: see tasks_started().
+    assert_count 0 "$(tasks_started "$sb")" "and nothing should have run first"
 }
 
 # What a run definition actually resolves to, across several kinds of divergence at once.
@@ -832,7 +833,7 @@ TABLE
         "and should say what the problem is"
     assert_contains "$out" "snpEff.buildOptions" "naming the parameter they disagree about"
     assert_contains "$out" "'a' and 'b'" "and the two runs involved"
-    assert_contains "$out" "completed=0" "nothing should have been computed before it stopped"
+    assert_count 0 "$(tasks_started "$sb")" "nothing should have been computed before it stopped"
 }
 
 # The cohort completeness guard. bcftools calls whatever samples it is handed and writes a VCF

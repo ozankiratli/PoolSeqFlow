@@ -35,9 +35,12 @@ needs_run() {
 
 test_full_run_completes() {
     needs_run || return
-    local out; out=$(cat "$PIPELINE_SB/run.out")
-    assert_contains "$out" "failed=0" "no task should fail"
-    assert_contains "$out" "SUCCESS" "the run should report success"
+    # The trace records what every task did, which is the question. Nextflow's closing summary
+    # was read here instead and carried the run's whole verdict on one line it does not always
+    # print - see tasks_started() in test/lib/sandbox.sh.
+    assert_count 0 "$(trace_status_count "$PIPELINE_SB" FAILED)" "no task should fail"
+    local ran; ran=$(trace_status_count "$PIPELINE_SB" COMPLETED)
+    [ "${ran:-0}" -gt 0 ] || fail_case "the run should have completed tasks; the trace records $ran"
 }
 
 test_every_step_produces_its_outputs() {

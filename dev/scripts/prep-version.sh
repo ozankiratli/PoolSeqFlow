@@ -325,7 +325,12 @@ KEPT_TMP=$(sed -n 's/^working directory kept at //p'  "$LOGDIR/tests.log" | tail
 KEPT_XDEV=$(sed -n 's/^second filesystem kept at //p' "$LOGDIR/tests.log" | tail -1)
 
 harvest_artifacts() {
-    local dest="$LOGDIR/artifacts"
+    # ABSOLUTE. $LOGDIR is relative to the repository root, and the copy loop below runs after a
+    # cd into the sandbox - so a relative destination resolves under /tmp and the harvest writes
+    # its entire output inside the very directory it is reading from. That is what happened on
+    # the 3.1.2 attempt of 2026-09-22: 80 run.out files existed, 0 were collected, and the
+    # summary reported "artifacts: 4.0K" because the empty directory had been created here.
+    local dest="$ROOT/$LOGDIR/artifacts"
     [ -n "$KEPT_TMP" ] && [ -d "$KEPT_TMP" ] || return 0
     mkdir -p "$dest"
     # Every Nextflow run's captured output and its own log, under the sandbox it came from.
