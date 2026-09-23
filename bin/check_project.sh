@@ -2,7 +2,7 @@
 #
 # Verify a PoolSeqFlow PROJECT before a run depends on it.
 #
-# Usage:  ./PoolSeqFlow check project   (the wrapper activates the environment first)
+# Usage:  PoolSeqFlow check project   (the wrapper activates the environment first)
 #         run from the project directory, which is where parameters.config lives
 #
 # Checks two things:

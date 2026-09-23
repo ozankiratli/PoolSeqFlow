@@ -181,20 +181,56 @@ say ""
 # $3 is the suffix that keeps the two environments' log files apart; the pipeline's is empty,
 # so its file names are unchanged.
 prepare_env() {
-    local source="$1" scratch="$2" tag="$3" changed
+    local source="$1" scratch="$2" tag="$3" changed prefix floor
     conda create --name "$scratch" --clone "$source" --yes > "$LOGDIR/clone$tag.log" 2>&1 \
         || { say "      FAILED to clone '$source' - see $LOGDIR/clone$tag.log"; exit 1; }
+
+    # THE UPDATE IS TOLD THE HOST FLOOR BEFORE IT RUNS, NOT CORRECTED AFTERWARDS.
+    #
+    # `conda update --all` takes the newest build of everything this machine can install, and
+    # sysroot_linux-64 is the package whose newest build encodes the glibc of whoever ran it.
+    # Left alone it climbs to the maintainer's own glibc every release - which is how v3.1.1
+    # shipped an analysis environment no cluster below glibc 2.39 could install.
+    #
+    # conda's own pinned-specs file is what states that up front, so the solver never proposes
+    # the raise and there is nothing to undo. Correcting it after the fact would mean a second
+    # solve that can itself fail, and would be automating away a decision rather than stating a
+    # constraint: raising the floor drops machines and belongs to a person.
+    #
+    # Only where the package is already present. The pipeline environment has no sysroot and
+    # must not gain one from a pin written on its behalf.
+    floor=$(sed -n 's/^# host-glibc-floor: *\(.*\)$/\1/p' \
+            install/environment-analysis.yml | head -1)
+    prefix=$(conda env list | awk -v n="$scratch" '$1 == n {print $NF}')
+    if [ -n "$floor" ] && [ -n "$prefix" ] && [ -d "$prefix/conda-meta" ] &&
+       conda list --name "$scratch" 2>/dev/null | grep -q '^sysroot_linux-64 '; then
+        say "      holding sysroot_linux-64 at <=$floor (the host floor)"
+        echo "sysroot_linux-64 <=$floor" >> "$prefix/conda-meta/pinned"
+    fi
+
     conda update --all --name "$scratch" --yes > "$LOGDIR/update$tag.log" 2>&1 \
         || { say "      FAILED to update '$scratch' - see $LOGDIR/update$tag.log"; exit 1; }
     conda list --name "$scratch" --export > "$LOGDIR/packages-after$tag.txt"
 
     # What actually moved: the release-note material, and the first thing to read on a failure.
+    #
+    # COMPARED ON version=build, NOT ON version ALONE. `conda list --export` prints
+    # name=version=build, and comparing only the version hides a conda-forge rebuild - the same
+    # version against a newer libgcc, which is a different binary and can behave differently.
+    # RELEASING.md asks the reader to classify exactly that category, so a table that cannot
+    # show it sends them looking for a cause it has hidden.
+    #
+    # Measured on the 3.1.2 attempt: this table reported 3 packages changed in the analysis
+    # environment while the real diff was 26, the other 23 being build-string moves across the
+    # whole gcc/libstdcxx/libgfortran/libblas stack.
     awk -F'=' '
-        FNR == NR { if ($0 !~ /^#/ && NF >= 2) before[$1] = $2; next }
+        function spec(v, b) { return b == "" ? v : v "=" b }
+        FNR == NR { if ($0 !~ /^#/ && NF >= 2) before[$1] = spec($2, $3); next }
         /^#/ || NF < 2 { next }
         {
-            if (!($1 in before))          { printf "%s\t(new)\t%s\n", $1, $2 }
-            else if (before[$1] != $2)    { printf "%s\t%s\t%s\n", $1, before[$1], $2 }
+            now = spec($2, $3)
+            if (!($1 in before))        { printf "%s\t(new)\t%s\n", $1, now }
+            else if (before[$1] != now) { printf "%s\t%s\t%s\n", $1, before[$1], now }
             seen[$1] = 1
         }
         END {
@@ -250,16 +286,72 @@ if [ -z "$ANALYSIS_PREFIX" ] || [ ! -x "$ANALYSIS_PREFIX/bin/Rscript" ]; then
     exit 1
 fi
 
-# Both named explicitly. The suite finds an analysis environment by globbing
+# What the machine looked like going in. A suite that passes by hand and fails here is a
+# difference in the surroundings, and without this there is nothing to compare.
+{
+    echo "== before the suite =="
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
+    echo "-- memory --";  free -h 2>/dev/null
+    echo "-- disk --";    df -h /tmp /dev/shm "${TMPDIR:-/tmp}" 2>/dev/null | sort -u
+    echo "-- load --";    uptime 2>/dev/null
+    echo "-- cpus --";    nproc 2>/dev/null
+    echo "-- nextflow/java env --"; env | grep -E "^(NXF_|JAVA_|_JAVA|TMPDIR|CONDA_)" | sort
+    echo "-- tty --";     tty 2>/dev/null || echo "not a tty"
+} > "$LOGDIR/system-before.txt" 2>&1
+
+# --keep so a failure leaves its sandboxes behind. run_tests.sh removes TEST_TMPDIR on exit
+# otherwise, which throws away every run.out and .nextflow.log - the only record of what
+# Nextflow actually did. Harvested below on failure and deleted on success.
+#
+# Both environments named explicitly. The suite finds an analysis environment by globbing
 # PoolSeqFlow-*-analysis and taking the first that has an Rscript, which is whichever name
 # sorts first rather than the one being prepared.
+# Streamed rather than captured: the suite is the long step and watching it is how you notice
+# a case hanging, or a wave of skips, while there is still time to stop. tee keeps the full log
+# for the harvest below, and PIPESTATUS[0] reads the suite's own exit rather than tee's.
 set +e
 TEST_CONDA_ENV="$ENV_PREFIX" TEST_ANALYSIS_ENV="$ANALYSIS_PREFIX" \
-    ./test/run_tests.sh > "$LOGDIR/tests.log" 2>&1
-TEST_STATUS=$?
+    ./test/run_tests.sh --keep 2>&1 | tee "$LOGDIR/tests.log"
+TEST_STATUS=${PIPESTATUS[0]}
 set -e
 
-tail -n 20 "$LOGDIR/tests.log" | sed 's/^/      /' | tee -a "$LOGDIR/summary.txt"
+{
+    echo "== after the suite =="
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
+    echo "-- memory --"; free -h 2>/dev/null
+    echo "-- disk --";   df -h /tmp /dev/shm "${TMPDIR:-/tmp}" 2>/dev/null | sort -u
+    echo "-- load --";   uptime 2>/dev/null
+} > "$LOGDIR/system-after.txt" 2>&1
+
+# The paths --keep printed, so the artifacts can be collected and then removed.
+KEPT_TMP=$(sed -n 's/^working directory kept at //p'  "$LOGDIR/tests.log" | tail -1)
+KEPT_XDEV=$(sed -n 's/^second filesystem kept at //p' "$LOGDIR/tests.log" | tail -1)
+
+harvest_artifacts() {
+    # ABSOLUTE. $LOGDIR is relative to the repository root, and the copy loop below runs after a
+    # cd into the sandbox - so a relative destination resolves under /tmp and the harvest writes
+    # its entire output inside the very directory it is reading from. That is what happened on
+    # the 3.1.2 attempt of 2026-09-22: 80 run.out files existed, 0 were collected, and the
+    # summary reported "artifacts: 4.0K" because the empty directory had been created here.
+    local dest="$ROOT/$LOGDIR/artifacts"
+    [ -n "$KEPT_TMP" ] && [ -d "$KEPT_TMP" ] || return 0
+    mkdir -p "$dest"
+    # Every Nextflow run's captured output and its own log, under the sandbox it came from -
+    # plus the per-task logs and report_knit.log, which is where the frame writes the reason a
+    # PDF report could not be built. Reading run.out alone missed that on 2026-09-22.
+    ( cd "$KEPT_TMP" && find . \( -name 'run*.out' -o -name '.nextflow.log*' \
+                                  -o -name '.command.log' -o -name '.exitcode' \
+                                  -o -name 'report_knit.log' \) -print0 \
+        | while IFS= read -r -d '' f; do
+              mkdir -p "$dest/$(dirname "$f")"
+              cp "$f" "$dest/$f" 2>/dev/null
+          done )
+    du -sh "$dest" 2>/dev/null | awk '{print "      artifacts: " $1 " in '"${dest#"$ROOT"/}"'"}'
+}
+
+# Into the summary only. The suite has just printed itself in full, so repeating its tail here
+# would say the same thing twice on the terminal.
+tail -n 20 "$LOGDIR/tests.log" | sed 's/^/      /' >> "$LOGDIR/summary.txt"
 say ""
 
 if [ "$TEST_STATUS" -ne 0 ]; then
@@ -268,14 +360,33 @@ if [ "$TEST_STATUS" -ne 0 ]; then
     say "      Both install/environment.yml and install/environment-analysis.yml are"
     say "      unchanged, so the current release still describes a tool set that works."
     say ""
+    say "      Collecting what the failing runs left behind..."
+    harvest_artifacts | tee -a "$LOGDIR/summary.txt"
+    say "      Each failing case's run.out is there, with the .nextflow.log beside it."
+    say "      Read run.out first: three cases assert on Nextflow's own status line"
+    say "      ([SUCCESS]/[FAILED] completed=N failed=N cached=N), and its absence is a"
+    say "      different fault from a number in it being wrong."
+    say ""
+    say "      Machine state either side of the run:"
+    say "          $LOGDIR/system-before.txt"
+    say "          $LOGDIR/system-after.txt"
+    say ""
+    say "      The sandboxes themselves are still at:"
+    say "          $KEPT_TMP"
+    [ -n "$KEPT_XDEV" ] && say "          $KEPT_XDEV"
+    say "      Delete them when you are done - they are not small."
+    say ""
     say "      Both scratch environments have been kept so the failure can be reproduced:"
     say "          TEST_CONDA_ENV=$ENV_PREFIX \\"
     say "          TEST_ANALYSIS_ENV=$ANALYSIS_PREFIX \\"
     say "              ./test/run_tests.sh --suite <name>"
     say ""
-    say "      Start with $LOGDIR/packages-changed.tsv and"
-    say "      $LOGDIR/packages-changed-analysis.tsv - the failure is"
-    say "      almost certainly one of the packages listed there."
+    say "      $LOGDIR/packages-changed.tsv and"
+    say "      $LOGDIR/packages-changed-analysis.tsv say what moved, compared on"
+    say "      version AND build. A package is one candidate among several: the same"
+    say "      suite passing by hand against these very environments means the cause is"
+    say "      the surroundings, not the packages, and the artifacts above are where"
+    say "      that shows."
     say ""
     say "      Discard the attempt with:"
     say "          conda env remove -n $UPDATE_ENV"
@@ -283,8 +394,41 @@ if [ "$TEST_STATUS" -ne 0 ]; then
     exit 1
 fi
 
+# Nothing to diagnose, so nothing to keep. --keep left these behind unconditionally.
+if [ -n "$KEPT_TMP" ] && [ -d "$KEPT_TMP" ]; then
+    rm -rf "$KEPT_TMP"
+fi
+if [ -n "$KEPT_XDEV" ] && [ -d "$KEPT_XDEV" ]; then
+    rm -rf "$KEPT_XDEV"
+fi
+
 # ----------------------------------------------------------------------- export ---------
-say "[4/5] Tests passed. Exporting both to install/environment*.yml..."
+
+# THE FLOOR IS CHECKED BEFORE THE EXPORT, AGAINST THE SCRATCH ENVIRONMENT ITSELF.
+#
+# `conda update --all` takes the newest build reachable on THIS host, and this host is whatever
+# glibc the maintainer runs. The pin written in prepare_env holds sysroot_linux-64 down, and the
+# export refuses a file whose sysroot breaks the floor - but both of those see one package,
+# because sysroot is the only one whose VERSION is the glibc it targets. Every other package
+# carries the bound in its conda metadata: rsync requires `__glibc >=2.28` and nothing in the
+# string "3.4.4" says so.
+#
+# So an update can raise the real floor without either guard noticing, and the exported file
+# would then carry a header promising a floor its own contents break. Checking the scratch
+# environment here catches that while the solve is still in hand, instead of after the file is
+# written and an install has been done from it.
+say "[4/5] Tests passed. Checking what each environment requires of its host..."
+for e in "$UPDATE_ENV" "$UPDATE_ANALYSIS_ENV"; do
+    if ! FLOOR_OUT=$(bash dev/scripts/check-host-floor.sh "$e" 2>&1); then
+        printf '%s\n' "$FLOOR_OUT" | tee -a "$LOGDIR/summary.txt" | sed 's/^/      /'
+        say "      Nothing was exported. The update raised the floor above what this release"
+        say "      promises, which drops machines and is a decision rather than a solve result."
+        exit 1
+    fi
+    printf '%s\n' "$FLOOR_OUT" >> "$LOGDIR/summary.txt"
+done
+
+say "      Exporting both to install/environment*.yml..."
 for e in "$UPDATE_ENV" "$UPDATE_ANALYSIS_ENV"; do
     bash dev/scripts/export-environment.sh "$e" >> "$LOGDIR/summary.txt" 2>&1 \
         || { say "      FAILED to export '$e' - see $LOGDIR/summary.txt"; exit 1; }

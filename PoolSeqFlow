@@ -5,7 +5,7 @@
 # email  : ozankiratli@protonmail.com
 #
 # Wrapper script for PoolSeqFlow
-# Usage: ./PoolSeqFlow {install|init|init_multi|check <target>|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}
+# Usage: PoolSeqFlow {install|init|init_multi|check <target>|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}
 #  install        - creates this release's conda environment and installs the pipeline
 #  init           - populates the current directory as a project
 #  init_multi     - the same, plus multiRun on
@@ -285,8 +285,21 @@ remove_payload() {
     bindir="$prefix/bin"
     [ -d "$dest" ] || return 1
 
-    rm -rf "$dest"
-    echo "Removed $dest"
+    # The running script usually lives in $dest: `PoolSeqFlow` on PATH is a symlink into it and
+    # $0 resolves through it. A network filesystem leaves a .nfs* placeholder for a file that is
+    # still open, so the directory cannot be removed. Allowed to fail, because under `set -e` it
+    # would otherwise abandon the uninstall before $bindir is re-pointed below.
+    rm -rf "$dest" 2>/dev/null || true
+    if [ -d "$dest" ]; then
+        echo "Removed the contents of $dest, but the directory itself remains."
+        echo "  Files still in it:"
+        ls -A "$dest" 2>/dev/null | sed 's/^/    /'
+        echo "  On a network filesystem these are placeholders for files this very command"
+        echo "  still has open, and they go when it exits. Remove the directory afterwards:"
+        echo "      rm -rf $dest"
+    else
+        echo "Removed $dest"
+    fi
     newest=$(newest_installed_version "$prefix")
     for item in $WRAPPERS; do
         rm -f "$bindir/${item}-${version}"
@@ -374,8 +387,8 @@ deploy_payload() {
         fi
     done
     echo ""
-    case ":$PATH:" in
-        *":$bindir:"*)
+    case "$(dir_on_path "$bindir" && echo yes || echo no)" in
+        yes)
             echo "$bindir is on your PATH, so those commands work from anywhere."
             ;;
         *)
@@ -1999,16 +2012,18 @@ EOF
 
         # Installed together, but any part can be missing on its own, so each is checked
         # before it is removed.
+        # There may be no active environment to step out of, and under `set -e` a non-zero
+        # deactivate would abandon the uninstall with the environment half removed.
         if [ "$HAVE_ENV" -eq 1 ]; then
             echo "Uninstalling conda environment '$TARGET_ENV'..."
-            conda deactivate
+            conda deactivate 2>/dev/null || true
             conda env remove -n "$TARGET_ENV" -y
         else
             echo "Conda environment '$TARGET_ENV' is already absent."
         fi
         if [ "$HAVE_ANALYSIS_ENV" -eq 1 ]; then
             echo "Uninstalling conda environment '$TARGET_ANALYSIS_ENV'..."
-            conda deactivate
+            conda deactivate 2>/dev/null || true
             conda env remove -n "$TARGET_ANALYSIS_ENV" -y
         fi
         if [ "$HAVE_PAYLOAD" -eq 1 ]; then

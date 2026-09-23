@@ -20,6 +20,41 @@
 # asked for that the environment never actually held is dropped here, permanently, and the
 # release loses it with nothing saying so. typst went exactly that way on 2026-09-09.
 #
+# THE HOST FLOOR, AND THE DEFECT THAT PUT IT HERE
+# -----------------------------------------------
+# A conda package may depend on a VIRTUAL package - a `__`-prefixed name describing the machine
+# rather than anything installable. `__glibc` is the one that matters here, and a constraint on
+# it is a property of the host the export was taken on, frozen into a file that ships to every
+# other host.
+#
+# v3.1.1 shipped environment-analysis.yml pinning `sysroot_linux-64=2.39`, which declares
+# `__glibc >=2.39`. It solved on the machine that froze it, which reports `__glibc=2.44`, and
+# could not be installed on any cluster older than that - the analysis layer was uninstallable
+# on most HPC and nothing said so. Reported from a cluster on 2026-09-21.
+#
+# The toolchain did not ask for it. gcc_impl_linux-64, gxx_impl_linux-64 and
+# binutils_impl_linux-64 all depend on a bare `sysroot_linux-64` with no version constraint, so
+# the solver was free to take the newest the host allowed and did. Nothing in the environment
+# needs a sysroot newer than the floor below.
+#
+# So the export declares the floor in the file's own header and refuses to write a file that
+# breaks it. The header is what prep-version.sh reads to pull the floor back down after
+# `conda update --all`, and what 00_static compares the pins against. One number, three readers.
+#
+# It is a FLOOR ON THE HOST, so a LOWER value reaches more machines: code built against
+# sysroot 2.17 runs on glibc 2.17 and everything after it. Raising it drops machines and is a
+# release decision, not a side effect of whoever ran the export.
+#
+# WHY THE FLOOR IS 2.28 AND NOT 2.17, WHICH IS WHERE IT STARTED
+# -------------------------------------------------------------
+# The toolchain reaches 2.17 and the sysroot is pinned there, but `rsync` requires
+# `__glibc >=2.28` and carries that in its conda metadata rather than in its version, so no
+# amount of reading this file could see it. check-host-floor.sh found it on its first run
+# against a real installed environment - which is the entire argument for that script existing.
+#
+# Z's call, 2026-09-21, on measuring it: hold the floor at 2.28 rather than pull rsync back.
+# The cluster this is run on is RHEL 9, and the one machine below 2.28 is EOL.
+#
 # Two keys are stripped from conda's output:
 #
 #   prefix:  an absolute path into whoever ran the export.
@@ -39,6 +74,33 @@ while :; do
 done
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+
+# The oldest glibc a shipped environment may require of the host, and the authority for it.
+# Written into every exported file's header, enforced below, and read back by prep-version.sh
+# and by 00_static. Moving it is a release decision: see THE HOST FLOOR above.
+HOST_GLIBC_FLOOR="2.28"
+
+# Every package a conda env export names whose version would require a newer glibc than the
+# floor, as `name version` pairs. sysroot_linux-64 is the only one today: its version IS the
+# glibc it targets, which is what makes it checkable without asking conda anything. A package
+# that raises the floor some other way is invisible here and is what the release-time check
+# exists for.
+host_floor_violations() {
+    awk -v floor="$HOST_GLIBC_FLOOR" '
+        /^dependencies:/ { d = 1; next }
+        /^[a-z]/         { d = 0 }
+        d && /^ *- *sysroot_linux-64=/ {
+            spec = $0
+            sub(/^ *- *sysroot_linux-64=/, "", spec)
+            sub(/=.*/, "", spec)
+            # Version compare, field by field, so 2.9 does not read as newer than 2.28.
+            n = split(spec, a, "."); split(floor, b, ".")
+            for (i = 1; i <= n; i++) {
+                if ((a[i] + 0) > (b[i] + 0)) { print "sysroot_linux-64 " spec; break }
+                if ((a[i] + 0) < (b[i] + 0)) break
+            }
+        }' "$1"
+}
 
 VERSION=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$REPO_ROOT/PoolSeqFlow" | head -1)
 if [ -z "$VERSION" ]; then
@@ -137,6 +199,13 @@ trap 'rm -f "$TMP"' EXIT
     echo "#"
     echo "# There is no 'name:' key. Environments are named after the release"
     echo "# ($NAMED_AFTER), which is what $INSTALL_CMD supplies with -n."
+    echo "#"
+    echo "# host-glibc-floor: $HOST_GLIBC_FLOOR"
+    echo "#"
+    echo "# The oldest glibc this file installs on. A package pinned here that requires a newer"
+    echo "# one makes the release uninstallable on every older machine, which is a property of"
+    echo "# whoever ran the export rather than of the software. Read by dev/scripts and checked"
+    echo "# by the test suite; raising it drops machines and is a release decision."
     conda env export --name "$ENV_NAME" | sed -e '/^name:/d' -e '/^prefix:/d'
 } > "$TMP"
 
@@ -163,6 +232,24 @@ if [ -f "$OUTPUT" ] && [ "$ALLOW_REMOVALS" -eq 0 ]; then
         echo "If they are meant to go, say so: --allow-removals" >&2
         exit 1
     fi
+fi
+
+# Checked on the generated content rather than on the environment, so it answers about the file
+# that is one line from being written and not about something adjacent to it.
+RAISING=$(host_floor_violations "$TMP")
+if [ -n "$RAISING" ]; then
+    echo "export-environment: '$ENV_NAME' would ship a file no older host can install:" >&2
+    printf '%s\n' "$RAISING" | sed "s/^/    /; s/\$/  (floor is $HOST_GLIBC_FLOOR)/" >&2
+    echo "" >&2
+    echo "Those pins require a newer glibc than this release promises, so every machine below" >&2
+    echo "it would fail to solve - as a cluster did on v3.1.1. Nothing in the environment asks" >&2
+    echo "for them; the solver took what this host happened to allow. Pull them back down and" >&2
+    echo "export again:" >&2
+    echo "    conda install -n $ENV_NAME -c conda-forge sysroot_linux-64=$HOST_GLIBC_FLOOR" >&2
+    echo "" >&2
+    echo "If the release really is dropping those machines, move HOST_GLIBC_FLOOR in this" >&2
+    echo "script, say so in the manual's Requirements, and write it in the CHANGELOG." >&2
+    exit 1
 fi
 
 mv "$TMP" "$OUTPUT"

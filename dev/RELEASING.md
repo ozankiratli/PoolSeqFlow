@@ -59,6 +59,21 @@ It builds the baseline, installs what the modules published from this repository
 
 Every check must say `ok`. A failure here is a compatibility problem between this release and a module, and it is settled by publishing, not on a user's machine.
 
+### Prove the frozen environment installs on an older host than this one
+
+```
+./PoolSeqFlow analysis install
+dev/scripts/check-host-floor.sh
+```
+
+**This is the step v3.1.1 did not have, and a cluster found what it missed.** The analysis environment carries a compiler, because every module builds its hot path on the user's machine, and a compiler is built against a particular glibc. `conda update --all` takes the newest build of everything *this* machine can install, so `sysroot_linux-64` climbs to the maintainer's own glibc unless something says otherwise — v3.1.1 shipped `sysroot_linux-64=2.39`, which declares `__glibc >=2.39`, and no host below that could solve it. It installed perfectly here and nowhere older.
+
+`prep-version.sh` now pins the floor into the scratch environment before it updates, and `export-environment.sh` refuses to write a file that breaks it, so this should pass without incident. Run it anyway: those two guard the package whose *version* is the glibc it targets, and **every other package carries its constraint in conda metadata instead**. `libsanitizer=16.2.0` requires `__glibc >=2.17` and nothing in the string `16.2.0` says so. This reads `conda-meta/*.json` in the installed environment, which is where the real constraints are, and reports the highest lower bound anything actually imposes.
+
+It needs the environment to exist, which is why it comes after an install rather than instead of one. A dry-run solve cannot substitute: measured 2026-09-21, `conda env create --dry-run --json` returns no `depends` key at all — 0 of 190 records carried one.
+
+If it refuses, the floor is a release decision and not a solve artifact. Raising it drops machines, so it takes a line in the manual's Requirements, a move of `HOST_GLIBC_FLOOR` in `export-environment.sh`, and a CHANGELOG entry saying which machines just lost support.
+
 ### Run `00_static` again, against the files that were just written
 
 ```

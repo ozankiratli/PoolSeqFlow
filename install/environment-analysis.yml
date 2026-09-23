@@ -5,6 +5,13 @@
 #
 # There is no 'name:' key. Environments are named after the release
 # (PoolSeqFlow-<version>-analysis), which is what ./PoolSeqFlow analysis install supplies with -n.
+#
+# host-glibc-floor: 2.28
+#
+# The oldest glibc this file installs on. A package pinned here that requires a newer
+# one makes the release uninstallable on every older machine, which is a property of
+# whoever ran the export rather than of the software. Read by dev/scripts and checked
+# by the test suite; raising it drops machines and is a release decision.
 channels:
   - conda-forge
   - bioconda
@@ -21,8 +28,8 @@ dependencies:
   - bzip2=1.0.8=hda65f42_10
   - c-ares=1.34.8=hebe6cf0_2
   - ca-certificates=2026.7.22=hbd8a1cb_0
-  - cairo=1.18.4=h3c89d7e_3
-  - coreutils=9.11=h280c20c_0
+  - cairo=1.18.6=h3c89d7e_0
+  - coreutils=9.12=hebe6cf0_0
   - curl=8.22.0=ha042cf0_0
   - diffutils=3.12=h73b1eb8_0
   - findutils=4.10.0=h86094a7_1
@@ -34,64 +41,64 @@ dependencies:
   - fonts-conda-ecosystem=1=0
   - fonts-conda-forge=1=hc364b38_1
   - freetype=2.14.3=ha770c72_2
-  - fribidi=1.0.16=h7cc23a3_2
-  - gcc_impl_linux-64=16.2.0=h176d5d0_4
-  - gcc_linux-64=16.2.0=h0ab548f_1
-  - gfortran_impl_linux-64=16.2.0=hf930d89_4
+  - fribidi=1.0.17=h7cc23a3_0
+  - gcc_impl_linux-64=16.2.0=hfe51025_5
+  - gcc_linux-64=16.2.0=h0ab548f_2
+  - gfortran_impl_linux-64=16.2.0=hf930d89_5
   - giflib=6.1.3=hebe6cf0_2
   - graphite2=1.3.15=h54a6638_1
   - gsl=2.7=he838d99_0
-  - gxx_impl_linux-64=16.2.0=h0d273dc_4
-  - gxx_linux-64=16.2.0=h38dc33c_1
-  - harfbuzz=14.4.0=ha770c72_1
+  - gxx_impl_linux-64=16.2.0=h0d273dc_5
+  - gxx_linux-64=16.2.0=h23aca61_2
+  - harfbuzz=14.5.0=ha770c72_0
   - htslib=1.24=ha79157c_0
   - icu=78.3=py310h44b86e0_2
-  - kernel-headers_linux-64=6.12.0=he073ed8_6
+  - kernel-headers_linux-64=3.10.0=he073ed8_18
   - keyutils=1.6.3=h7cc23a3_1
   - krb5=1.22.2=hbc21106_2
-  - lcms2=2.19.1=h9073bf1_2
+  - lcms2=2.19.1=h9073bf1_3
   - ld_impl_linux-64=2.46.1=default_hbd61a6d_102
   - lerc=4.2.0=hdb68285_0
-  - libblas=3.11.0=10_h4a7cf45_openblas
-  - libcblas=3.11.0=10_h0358290_openblas
+  - libblas=3.11.0=11_h4a7cf45_openblas
+  - libcblas=3.11.0=11_h0358290_openblas
   - libcups=2.3.3=h7a8fb5f_6
   - libcurl=8.22.0=ha042cf0_0
   - libdeflate=1.25=hd45a770_1
   - libedit=3.1.20250104=pl5321h373387f_1
   - libev=4.33=h280c20c_3
-  - libexpat=2.8.1=hecca717_1
+  - libexpat=2.8.4=hd2095e1_0
   - libffi=3.7.0=h81df57d_1
   - libfreetype=2.14.3=ha770c72_2
   - libfreetype6=2.14.3=h5e6c136_2
-  - libgcc=16.2.0=ha9f2e26_4
-  - libgcc-devel_linux-64=16.2.0=he3ce08f_104
-  - libgcc-ng=16.2.0=h69a702a_4
-  - libgfortran=16.2.0=h69a702a_4
-  - libgfortran-ng=16.2.0=h69a702a_4
-  - libgfortran5=16.2.0=h6b99dfc_4
-  - libglib=2.88.3=he503a2a_3
-  - libgomp=16.2.0=he0feb66_4
-  - libharfbuzz=14.4.0=h23af247_1
-  - libharfbuzz-devel=14.4.0=h23af247_1
+  - libgcc=16.2.0=ha9f2e26_5
+  - libgcc-devel_linux-64=16.2.0=he3ce08f_105
+  - libgcc-ng=16.2.0=h69a702a_5
+  - libgfortran=16.2.0=h69a702a_5
+  - libgfortran-ng=16.2.0=h69a702a_5
+  - libgfortran5=16.2.0=h6b99dfc_5
+  - libglib=2.90.0=h569388d_0
+  - libgomp=16.2.0=he0feb66_5
+  - libharfbuzz=14.5.0=h23af247_0
+  - libharfbuzz-devel=14.5.0=h23af247_0
   - libiconv=1.18=h0cb94f2_3
   - libjpeg-turbo=3.2.0=hb03c661_1
-  - liblapack=3.11.0=10_h47877c9_openblas
+  - liblapack=3.11.0=11_h47877c9_openblas
   - liblzma=5.8.3=hb03c661_1
   - liblzma-devel=5.8.3=hb03c661_1
   - libmpdec=4.0.0=hb03c661_2
   - libnghttp2=1.68.1=h74cf4be_1
-  - libopenblas=0.3.34=pthreads_hcf972fe_1
+  - libopenblas=0.3.34=pthreads_hf13c14d_2
   - libpng=1.6.58=h922cc85_1
   - libpsl=0.23.1=hd9e3e90_1
   - libpython=3.14.7=hdc7f604_106_cp314
-  - libsanitizer=16.2.0=h3048135_4
+  - libsanitizer=16.2.0=h3048135_5
   - libsqlite=3.53.4=h0737f62_1
   - libssh2=1.11.1=h6154650_1
-  - libstdcxx=16.2.0=h934c35e_4
-  - libstdcxx-devel_linux-64=16.2.0=h86e191b_104
-  - libstdcxx-ng=16.2.0=hdf11a46_4
+  - libstdcxx=16.2.0=h934c35e_5
+  - libstdcxx-devel_linux-64=16.2.0=h86e191b_105
+  - libstdcxx-ng=16.2.0=hdf11a46_5
   - libtiff=4.7.2=hcc2c06a_1
-  - libuuid=2.42.3=hcfc3c73_0
+  - libuuid=2.42.4=hcfc3c73_0
   - libuv=1.52.1=h280c20c_1
   - libwebp-base=1.6.0=hd42ef1d_1
   - libxcb=1.17.0=hb83e432_2
@@ -106,7 +113,7 @@ dependencies:
   - pandoc=3.11=ha770c72_0
   - pango=1.58.2=h7bb47b9_1
   - pcre2=10.47=h8b3dc9c_1
-  - perl=5.32.1=7_hd590300_perl5
+  - perl=5.32.1=9_h7cc23a3_perl5
   - pip=26.2.1=pyh145f28c_0
   - pixman=0.46.4=h54a6638_3
   - popt=1.19=hcfc3c73_2
@@ -177,9 +184,9 @@ dependencies:
   - rsync=3.4.4=hffd6c76_1
   - samtools=1.24=h9dcdb79_1
   - sed=4.10=h19d0853_0
-  - sysroot_linux-64=2.39=hc4b9eeb_6
+  - sysroot_linux-64=2.17=h0157908_18
   - tk=8.6.13=noxft_h1df4ec4_4
-  - tktable=2.10=h0eb2ad0_10
+  - tktable=2.10=h0eb2ad0_11
   - typst=0.15.1=he64ecbb_0
   - tzdata=2026c=h151e31d_0
   - xorg-libice=1.1.2=h280c20c_0
