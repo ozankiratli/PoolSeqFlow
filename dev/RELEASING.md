@@ -62,15 +62,20 @@ Every check must say `ok`. A failure here is a compatibility problem between thi
 ### Prove the frozen environment installs on an older host than this one
 
 ```
-./PoolSeqFlow analysis install
-dev/scripts/check-host-floor.sh
+dev/scripts/check-exported-floor.sh
 ```
+
+It solves each exported file into a scratch environment of its own, reads what that really requires of its host, and discards it. Minutes, and a real network solve.
+
+**It replaces `./PoolSeqFlow analysis install` + `check-host-floor.sh`, which could not answer this and was unsafe besides.** The bump is step 6, so here the wrapper still declares the *old* version. `analysis install` therefore looks for `PoolSeqFlow-<old>-analysis`, finds it, prints `already exists` and creates nothing — and `check-host-floor.sh` defaults to that same old name, so the step read out the floor of the release being replaced while looking like a check on the new one. And removing the old environment first, which is the obvious way to make the install actually run, is worse: it builds the **new** file under the **old** version's name, leaving the release you have not replaced yet pointing at an environment that is no longer its own.
 
 **This is the step v3.1.1 did not have, and a cluster found what it missed.** The analysis environment carries a compiler, because every module builds its hot path on the user's machine, and a compiler is built against a particular glibc. `conda update --all` takes the newest build of everything *this* machine can install, so `sysroot_linux-64` climbs to the maintainer's own glibc unless something says otherwise — v3.1.1 shipped `sysroot_linux-64=2.39`, which declares `__glibc >=2.39`, and no host below that could solve it. It installed perfectly here and nowhere older.
 
 `prep-version.sh` now pins the floor into the scratch environment before it updates, and `export-environment.sh` refuses to write a file that breaks it, so this should pass without incident. Run it anyway: those two guard the package whose *version* is the glibc it targets, and **every other package carries its constraint in conda metadata instead**. `libsanitizer=16.2.0` requires `__glibc >=2.17` and nothing in the string `16.2.0` says so. This reads `conda-meta/*.json` in the installed environment, which is where the real constraints are, and reports the highest lower bound anything actually imposes.
 
-It needs the environment to exist, which is why it comes after an install rather than instead of one. A dry-run solve cannot substitute: measured 2026-09-21, `conda env create --dry-run --json` returns no `depends` key at all — 0 of 190 records carried one.
+It needs an environment that really exists, which is why the script builds one rather than asking. A dry-run solve cannot substitute: measured 2026-09-21, `conda env create --dry-run --json` returns no `depends` key at all — 0 of 190 records carried one.
+
+**And it asks a different question from the one `prep-version.sh` already answered at `[4/5]`.** That checks the floor of the **cloned and updated** scratch environments, before the export, which is what catches an update raising the floor while the solve is still in hand. This checks the file that was then **written**, solved from nothing the way a user's install resolves it. A clone carries whatever the source environment held; a file names constraints and lets the solver choose again.
 
 If it refuses, the floor is a release decision and not a solve artifact. Raising it drops machines, so it takes a line in the manual's Requirements, a move of `HOST_GLIBC_FLOOR` in `export-environment.sh`, and a CHANGELOG entry saying which machines just lost support.
 
