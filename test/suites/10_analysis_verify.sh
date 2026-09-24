@@ -1,12 +1,13 @@
 #!/bin/bash
 # Verification: what the frame checks before a module reads anything.
 # cost: jvm
+# env: analysis
 # covers: analysis/0_verify_analysis.nf analysis/lib/nf/citations.nf
 # covers: analysis.nf
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and re-proving it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and re-proving it here would
 # cost minutes a case.
 
 # ---------------------------------------------------------------------------------------

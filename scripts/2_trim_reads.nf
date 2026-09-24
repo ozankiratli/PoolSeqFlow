@@ -6,9 +6,24 @@ include { sampleTrimOptions } from './metadata.nf'
 // The (variant, sample) read channel, and what derives every sample id. Takes the variant LIST,
 // not a channel: channel.fromFilePairs globs while the DAG is built and fixes N there. One glob
 // per step-2 variant, not per run.
+// True when a read lies under a directory whose name begins with a dot, counted from the data
+// root DOWN. Only below the root, because the project itself may sit under one - ~/.local is
+// the default install prefix - and that says nothing about the reads.
+//
+// The case this exists for is `.snapshot`, which NetApp exposes read-only inside every
+// directory on a large share of HPC storage and which holds a copy of every file per snapshot.
+// Since the reads may now be nested, `**` walks into those too: measured, a single flat sample
+// on such a mount is found once for itself and once per snapshot.
+def hiddenBelow(String root, String path) {
+    def rel = path.startsWith(root) ? path.substring(root.length()) : path
+    return rel.tokenize('/').any { part -> part.startsWith('.') }
+}
+
 def readPairChannel(List variants) {
     def per = variants.collect { variant ->
+        def dataRoot = "${variant.dir.data}".toString()
         channel.fromFilePairs("${variant.reads}", checkIfExists: true)
+            .filter { _id, files -> !hiddenBelow(dataRoot, "${files[0]}".toString()) }
             .map { id, files -> tuple(variant, id, files[0], files[1]) }
     }
     return per.size() == 1 ? per[0] : per.inject { a, b -> a.mix(b) }

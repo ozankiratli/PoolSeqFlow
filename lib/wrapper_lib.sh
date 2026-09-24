@@ -9,12 +9,6 @@
 # POOLSEQFLOW_PREFIX from the caller, ENV_FILE for analysis_r_packages, and
 # POOLSEQFLOW_MODULE_INDEX where the user overrides the catalogue location.
 
-# Where installations live: POOLSEQFLOW_PREFIX, else an installed wrapper's own location,
-# else ~/.local.
-# Not dead code. conda's `__conda_hashr` calls `\rehash` - zsh's name for `hash -r` - whenever
-# ZSH_VERSION is set, including inside a bash script, where the command does not exist.
-rehash() { hash -r; }
-
 # Whether a directory is on PATH, compared as resolved directories rather than as strings: a
 # trailing slash, a doubled slash or a symlinked home each defeat `case ":$PATH:" in *":$dir:"*`.
 # An entry that does not resolve is skipped rather than failing the loop.
@@ -34,6 +28,8 @@ dir_on_path() {
     return 1
 }
 
+# Where installations live: POOLSEQFLOW_PREFIX, else an installed wrapper's own location,
+# else ~/.local.
 install_prefix() {
     if [ -n "${POOLSEQFLOW_PREFIX:-}" ]; then
         printf '%s' "$POOLSEQFLOW_PREFIX"

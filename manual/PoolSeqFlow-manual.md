@@ -15,7 +15,7 @@ A Nextflow pipeline for allele frequency analysis from pooled Illumina sequencin
 
 !!! info "Platform support"
 
-    PoolSeqFlow is developed and tested on **Linux and macOS**. Windows is not supported — the resume logic relies on symbolic links and Unix-style paths that do not behave correctly on native Windows filesystems.
+    PoolSeqFlow is developed and tested on **Linux**. macOS and Windows are not supported: the shipped conda environments are pinned to `linux-64` builds, and the resume logic relies on symbolic links and Unix-style paths that do not behave correctly on native Windows filesystems.
 
 ---
 
@@ -137,8 +137,8 @@ If PoolSeqFlow contributes to published work, please cite it — the DOI and a f
 
 | | |
 |---|---|
-| **Operating system** | Linux or macOS. Windows is not supported — see [below](#why-not-windows) |
-| **glibc** | 2.28 or newer, on Linux — RHEL and Rocky 8, Debian 10, Ubuntu 18.10, or anything later. `ldd --version` prints what you have. CentOS 7 is the one common machine below it, and is end of life. [Why →](#glibc-floor) |
+| **Operating system** | Linux. macOS and Windows are not supported — see [below](#why-not-windows) |
+| **glibc** | 2.28 or newer — RHEL and Rocky 8, Debian 10, Ubuntu 18.10, or anything later. `ldd --version` prints what you have. CentOS 7 is the one common machine below it, and is end of life. [Why →](#glibc-floor) |
 | **Conda** | [Conda or Miniconda](https://docs.conda.io/en/miniconda.html) |
 | **Git** | Optional, for cloning |
 | **Working directory** | `mainDir` — where you launch the pipeline. Holds your reads, the reference, this project's configuration and everything actively processed. It has to persist between runs; it is not scratch space |
@@ -163,9 +163,11 @@ Everything else is installed for you. `./PoolSeqFlow install` builds an isolated
 
 Pinning is deliberate. Pool-seq results depend on the exact behavior of the pileup and filtering tools, and an unpinned environment would make two runs of the same config non-comparable.
 
-#### Why not Windows
+#### Why Linux only { #why-not-windows }
 
-The pipeline moves each file it produces to where it belongs and leaves a symbolic link behind, and it relies on Unix path semantics throughout. Neither behaves correctly on native Windows filesystems, and WSL only works under some filesystem configurations — which is not a guarantee worth documenting. See [Symbolic links instead of copies](#symbolic-links-instead-of-copies).
+**Windows.** The pipeline moves each file it produces to where it belongs and leaves a symbolic link behind, and it relies on Unix path semantics throughout. Neither behaves correctly on native Windows filesystems, and WSL only works under some filesystem configurations — which is not a guarantee worth documenting. See [Symbolic links instead of copies](#symbolic-links-instead-of-copies).
+
+**macOS.** Every tool a release runs is pinned to an exact build in `install/environment.yml` and `install/environment-analysis.yml`, and those files are exports from a Linux machine: they name builds that exist for `linux-64` and for no other platform. Conda cannot solve either of them on a Mac, so the install fails before anything else is reached. Supporting macOS means a second set of pinned files exported and verified on a Mac — one for Apple Silicon and one for Intel, since conda treats them as different platforms — and that is a piece of work rather than a flag. Earlier releases listed macOS as supported; that was never true of the pinned environments, and saying so was the error.
 
 #### The glibc floor { #glibc-floor }
 
@@ -195,7 +197,7 @@ Already have it installed and upgrading from an earlier version? Read [Upgrading
 ## Install
 <!--@ page: install -->
 
-Check the [requirements](#getting-started) first if you have not — in particular that you are on Linux or macOS, and that conda is available.
+Check the [requirements](#getting-started) first if you have not — in particular that you are on Linux, and that conda is available.
 
 ### 1. Get PoolSeqFlow
 
@@ -246,6 +248,23 @@ POOLSEQFLOW_PREFIX=/opt/shared ./PoolSeqFlow install
 Installing takes a while the first time; later installs reuse the conda package cache. It finishes by verifying itself and **fails if anything is missing** — an environment that was created but is short a tool is not an install, and the alternative is finding out hours into a run.
 
 Once this is done the folder you downloaded has served its purpose. Everything from here uses the installed command, from your own project directory.
+
+#### Tab completion { #tab-completion }
+
+Installing also writes a completion for `PoolSeqFlow` into `~/.local/share/bash-completion/completions/`, or wherever `XDG_DATA_HOME` points. **In bash it works in your next shell and there is nothing to do.**
+
+**zsh does not read that directory**, so it needs two lines in `~/.zshrc` — the installer prints them with the right path filled in:
+
+```bash
+autoload -U +X bashcompinit && bashcompinit
+. ~/.local/share/bash-completion/completions/PoolSeqFlow
+```
+
+It completes every command, the two targets `check` takes, the analysis commands, and **the modules you actually have installed** — so `PoolSeqFlow analysis <TAB>` lists the modules in that installation's store rather than a fixed list. `analysis modules install <TAB>` deliberately offers nothing: those names come from the catalogue over the network, and a keystroke should not make a network request.
+
+Uninstalling the last installed version removes the completion. Another version left installed keeps it, since the command it completes is still there.
+
+It never runs `PoolSeqFlow` itself. Starting the wrapper means starting conda, which takes long enough to be felt on a keypress, so the completion reads what it needs from the filesystem instead.
 
 
 ---
@@ -306,6 +325,32 @@ The paths are yours to choose; the structure inside them is not. A project ready
 ```
 
 The file names are examples. `readPattern` is what finds the reads — `*_R{1,2}.fq.gz` by default, which is what matches the pairs above — and `referenceFile` and `gffFile` name the two in `Reference/`.
+
+**The reads may sit in subfolders of `Data/` instead, or as well.** However your sequencing facility handed them over is how you can leave them — one folder per sample, one per run or lane, nested as deep as you like, or all together as above. All three of these are read the same way:
+
+```
+Data/                    Data/                      Data/
+├── Sample1_R1.fq.gz     ├── Sample1/               ├── run_A/
+├── Sample1_R2.fq.gz     │   ├── Sample1_R1.fq.gz   │   ├── Sample1_R1.fq.gz
+├── Sample2_R1.fq.gz     │   └── Sample1_R2.fq.gz   │   └── Sample1_R2.fq.gz
+└── Sample2_R2.fq.gz     └── Sample2/               └── run_B/
+                             ├── Sample2_R1.fq.gz       ├── Sample2_R1.fq.gz
+                             └── Sample2_R2.fq.gz       └── Sample2_R2.fq.gz
+```
+
+**A sample is named by its file, never by its folder.** `Sample1_R1.fq.gz` is sample `Sample1` wherever it lies, so `metadata.csv` does not change and neither does `readPattern` — the folders are yours to arrange and the pipeline does not read meaning into them. A pair whose mates are in two *different* folders is still that pair, and is taken as one.
+
+What step 0 checks is the pair itself: **every sample has exactly one of each mate.** Three ways to break it, all of which the reader would otherwise accept in silence:
+
+| in `Data/` | what it is |
+|---|---|
+| `Sample1_R1.fq.gz` with no `Sample1_R2.fq.gz` anywhere | a sample that would be left out of the run without a word |
+| `run_A/Sample1_R1.fq.gz` and `run_B/Sample1_R1.fq.gz` | the same mate twice, which would be aligned against itself |
+| a full pair under both `run_A/` and `run_B/` | one sample over again, each copy overwriting the other's results |
+
+If two folders really do hold two different samples, give them two names. If they are one sample sequenced twice, that is two rows in `metadata.csv` sharing an `RG_Sample` — see [What a unit is](#what-a-unit-is).
+
+**Hidden folders are skipped, and the run says so.** Anything beginning with a dot is not searched — `.snapshot` on NetApp storage holds a copy of every file per snapshot, and searching it would find every sample many times over. If one of them does hold reads, step 0 names it so you know what was left out.
 
 `init` never overwrites. Running it again in a project you have already filled in reports what is there and changes nothing.
 
@@ -3941,7 +3986,7 @@ What the table is really for is the decision it supports. For `association`, rea
 
 `dev/scripts/bench-compiled-paths.R` is what produced the table, and re-running it on your own machine is how you find out what these numbers are where you work.
 
-**The analysis environment already has a compiler.** Conda's `r-base` depends on one — GCC on Linux, clang on macOS — because R needs a toolchain to build packages from source, so an environment built by `PoolSeqFlow analysis install` can compile on every platform this ships to.
+**The analysis environment already has a compiler.** Conda's `r-base` depends on GCC, because R needs a toolchain to build packages from source, so an environment built by `PoolSeqFlow analysis install` can always compile.
 
 Each module publishes its compiled source into the results folder whether or not the run used it, and the header of the module's own script beside it names the path that produced the numbers.
 
@@ -4797,7 +4842,7 @@ Exit **3** means the FastQC per-base composition table did not have the expected
 
 #### Symbolic link errors
 
-Confirm you are on Linux or macOS. Windows — including WSL under some filesystem configurations — is not supported. Also check that `storageDir` is still mounted and was not cleared while the run was in flight.
+Confirm you are on Linux. macOS and Windows — including WSL under some filesystem configurations — are not supported. Also check that `storageDir` is still mounted and was not cleared while the run was in flight.
 
 #### A step fails and I cannot tell why
 

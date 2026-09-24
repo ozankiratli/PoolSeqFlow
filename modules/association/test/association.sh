@@ -1,13 +1,14 @@
 #!/bin/bash
 # association, against the analytic corpus its own tools build.
 # cost: jvm
+# env: analysis
 # covers: modules/association/ modules/lib/
 # covers: test/tools/freq_corpus.py
 # covers: analysis.nf modules/association/main.nf
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and re-proving it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and re-proving it here would
 # cost minutes a case.
 #
 # Every expectation is `test/tools/freq_corpus.py`'s, computed by plain Python loops that share
@@ -215,8 +216,11 @@ test_both_paths_through_the_parse_agree() {
     association_corpus "$sb"
     association_direct "$sb/plain" "$ASSOCIATION_OPTIONS"
     association_direct "$sb/compiled" "${ASSOCIATION_OPTIONS/\"usecpp\":false/\"usecpp\":true}"
+    # A FAILURE, NOT A SKIP. The analysis environment pins gcc_linux-64 and gxx_linux-64, so a
+    # compiled path that does not build is a broken release rather than a machine without a
+    # compiler. As a skip this read as "no compiler" and the run still exited 0.
     if [ ! -s "$sb/compiled/association.tsv" ]; then
-        skip_case "the compiled path did not build: $(tail -3 "$sb/compiled/out.txt")"
+        fail_case "the compiled path did not build: $(tail -3 "$sb/compiled/out.txt")"
         return
     fi
     diff -q "$sb/plain/association.tsv" "$sb/compiled/association.tsv" >/dev/null \

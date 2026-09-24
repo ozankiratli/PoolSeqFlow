@@ -1,6 +1,7 @@
 #!/bin/bash
 # The dry run: where the work would go, shown before any of it is done.
 # cost: jvm
+# env: pipeline
 # covers: dryrun.nf scripts/variants.nf scripts/resolve_parameters.nf
 #
 # What these are about is the promise the subcommand makes. A preview verifies the project and

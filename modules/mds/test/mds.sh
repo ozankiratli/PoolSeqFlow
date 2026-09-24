@@ -1,13 +1,14 @@
 #!/bin/bash
 # mds, against the analytic corpus its own tools build.
 # cost: jvm
+# env: analysis
 # covers: modules/mds/ modules/lib/
 # covers: test/tools/freq_corpus.py
 # covers: analysis.nf modules/mds/main.nf
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and re-proving it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and re-proving it here would
 # cost minutes a case.
 #
 # Every expectation is `test/tools/freq_corpus.py`'s, computed by plain Python loops that share
@@ -74,9 +75,18 @@ table_gap() {
 # $1 and $2 agree to within rounding; $3 names what was being compared.
 assert_tables_agree() {
     local gap; gap=$(table_gap "$1" "$2")
-    if ! awk -v g="$gap" 'BEGIN { exit !(g + 0 < 1e-9 && g != "") }' 2>/dev/null; then
-        fail_case "$3: the tables differ by $gap"
+    # THE ANSWER IS NUMERIC OR IT IS A REFUSAL. table_gap replies with a number, or with one of
+    # its own sentinels - "shape" when the dimensions or names differ, "text" when a character
+    # column does - or with R's error text on stderr when a file is missing or unreadable. awk
+    # coerces every non-numeric string to 0, so `g + 0 < 1e-9` passed all three: measured
+    # 2026-09-23, gap="shape", gap="text" and gap="Error in read.delim" each passed. Both
+    # sentinels were dead from the day they were written, and so was the missing-table case.
+    if ! printf '%s' "$gap" | grep -qE '^[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$'; then
+        fail_case "$3: $gap"
+        return
     fi
+    awk -v g="$gap" 'BEGIN { exit !(g + 0 < 1e-9) }' \
+        || fail_case "$3: the tables differ by $gap"
 }
 
 # A COHORT OF $2 POOLS INTO $1, the corpus's six plus copies of the sixth, with an `exp_cage`
@@ -186,8 +196,9 @@ test_the_sampling_correction_is_applied_and_positive() {
     mds_corpus "$sb"
     mds_direct "$sb/run" "$MDS_OPTIONS"
 
-    local a b raw distance correction
+    local a b raw distance correction rows=0
     while IFS=$'\t' read -r a b _ distance raw correction; do
+        rows=$((rows + 1))
         # %.17g, because assert_close's tolerance is absolute and awk's default six significant
         # figures lands outside it on a number this small.
         assert_close "$correction" \
@@ -197,6 +208,10 @@ test_the_sampling_correction_is_applied_and_positive() {
             fail_case "$a-$b: the correction is $correction, so nothing was subtracted"
         fi
     done < <(awk -F'\t' 'NR > 1' "$sb/run/distance.tsv")
+    # A published table with no rows would otherwise run the loop zero times and pass, which is
+    # the state the module is in when it is most broken. Its sibling guards with `[ ! -s ]`; a
+    # row count also catches a table that carries its header and nothing else.
+    [ "$rows" -gt 0 ] || fail_case "nothing published"$'\n'"$(cat "$sb/run/out.txt" 2>/dev/null)"
 }
 
 # A BIN BOUNDARY MUST NOT MOVE A NUMBER. The distances are sums over sites, so a bin falls
@@ -372,7 +387,16 @@ test_the_points_can_carry_a_color_and_a_shape() {
     # A ggplot2 warning about an unknown label or a dropped shape is written to stderr, which
     # a Nextflow task swallows; out.txt is where a case can still see it.
     assert_not_contains "$(cat "$sb/run/out.txt")" "Warning" "and it must draw without warning"
-    assert_tables_agree "$sb/run/distance.tsv" "$sb/run/distance.tsv" "self-comparison sanity"
+
+    # A COLOR AND A SHAPE ARE PRESENTATION, so the numbers must not move. That is what the
+    # keyed run is compared against here. The line this replaces compared distance.tsv with
+    # ITSELF and was labeled "self-comparison sanity", so it answered 0e+00 whatever the keys
+    # had done - the only assertion in the case about the keys affecting anything.
+    mds_direct "$sb/plain" "$MDS_OPTIONS"
+    assert_tables_agree "$sb/run/distance.tsv" "$sb/plain/distance.tsv" \
+                        "a color and a shape key changed the distances"
+    assert_tables_agree "$sb/run/mds.tsv" "$sb/plain/mds.tsv" \
+                        "a color and a shape key changed the coordinates"
 }
 
 # SIX SHAPES AND NO MORE. ggplot2 assigns none to a seventh level and leaves those pools off the

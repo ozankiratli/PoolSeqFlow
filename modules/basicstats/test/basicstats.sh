@@ -1,13 +1,14 @@
 #!/bin/bash
 # basicstats, against the analytic corpus its own tools build.
 # cost: jvm
+# env: analysis
 # covers: modules/basicstats/ modules/lib/
 # covers: test/tools/freq_corpus.py
 # covers: analysis.nf modules/basicstats/main.nf
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and re-proving it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and re-proving it here would
 # cost minutes a case.
 
 # Run the module's R directly over the corpus, under one set of options, into $1.
@@ -42,6 +43,31 @@ basicstats_direct() {
 }
 
 
+# THE MODULE RUN ONCE FOR THE WHOLE SUITE. Four cases below assert against the same published
+# folder, and each was paying for its own baseline copy and its own two Nextflow launches -
+# eight launches to check a file list, three DOIs, three greps and one set of numbers.
+#
+# The folder is copied out of the sandbox rather than read in place, because analysis_ready
+# wipes $ANALYSIS_SB and cases run in alphabetical order, so another case may rebuild it
+# between two of these.
+#
+# Sets BASICSTATS_PUBLISHED to the copy and BASICSTATS_STATUS to what the run returned. Returns
+# non-zero when the case should stop, having already skipped or failed.
+BASICSTATS_PUBLISHED=""
+BASICSTATS_STATUS=""
+basicstats_published() {
+    [ -n "$BASICSTATS_PUBLISHED" ] && return 0
+    analysis_ready single || return 1
+    if ! have_analysis_r; then skip_case "no analysis environment"; return 1; fi
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    BASICSTATS_STATUS=$(analysis_run_module basicstats)
+    local keep; keep=$(guard_path "$TEST_TMPDIR/basicstats-published")
+    rm -rf "$keep"
+    cp -a "$ANALYSIS_SB/main/Analysis/Results/basicstats" "$keep" 2>/dev/null || true
+    BASICSTATS_PUBLISHED="$keep"
+    return 0
+}
+
 # ---------------------------------------------------------------------------------------
 # basicstats, which a release ships. Unlike every module above it this one is not planted by
 # the case - it is in the store because the release carries it, which is also why an error in
@@ -49,13 +75,10 @@ basicstats_direct() {
 # The fixture is six pools of one library each, exp_population over three levels and exp_time
 # over two, at the template's poolSize 100 and ploidy 2.
 test_basicstats_publishes_a_row_for_every_pool() {
-    analysis_ready single || return
-    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
-    analysis_plant_results "$ANALYSIS_SB/store/Output"
-    local status; status=$(analysis_run_module basicstats)
-    assert_status 0 "$status" "basicstats should run; see $ANALYSIS_SB/run.out"
+    basicstats_published || return
+    assert_status 0 "$BASICSTATS_STATUS" "basicstats should run; see $ANALYSIS_SB/run.out"
 
-    local folder="$ANALYSIS_SB/main/Analysis/Results/basicstats"
+    local folder="$BASICSTATS_PUBLISHED"
     assert_file "$folder/design.tsv" "the design table is published"
     assert_file "$folder/basicstats.R" "and the script that produced it"
     assert_file "$folder/CITATIONS.md" "and what to cite for it"
@@ -72,12 +95,9 @@ test_basicstats_publishes_a_row_for_every_pool() {
 # THE METHODS ARE CITED, NOT ONLY THE SOFTWARE. A diversity estimate a reader cannot trace to a
 # definition is one they cannot check, and the two n_eff forms in circulation differ.
 test_basicstats_cites_the_statistics_it_computes() {
-    analysis_ready single || return
-    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
-    analysis_plant_results "$ANALYSIS_SB/store/Output"
-    analysis_run_module basicstats > /dev/null
+    basicstats_published || return
 
-    local folder="$ANALYSIS_SB/main/Analysis/Results/basicstats"
+    local folder="$BASICSTATS_PUBLISHED"
     local cites; cites=$(cat "$folder/CITATIONS.md" 2>/dev/null)
     assert_contains "$cites" "10.1073/pnas.70.12.3321" "Nei, for the diversity statistic"
     assert_contains "$cites" "10.1534/genetics.118.300900" "Hivert, for the effective sample size"
@@ -91,12 +111,9 @@ test_basicstats_cites_the_statistics_it_computes() {
 # not have. What is published is the shared library folded into the module's own script, so the
 # functions that computed the numbers are in the file.
 test_basicstats_publishes_the_library_it_computed_with() {
-    analysis_ready single || return
-    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
-    analysis_plant_results "$ANALYSIS_SB/store/Output"
-    analysis_run_module basicstats > /dev/null
+    basicstats_published || return
 
-    local script; script=$(cat "$ANALYSIS_SB/main/Analysis/Results/basicstats/basicstats.R" 2>/dev/null)
+    local script; script=$(cat "$BASICSTATS_PUBLISHED/basicstats.R" 2>/dev/null)
     assert_contains "$script" "n_eff <- function" "n_eff travels with the result"
     assert_contains "$script" "site_diversity <- function" "and so does gene diversity"
     assert_contains "$script" "analysis frame 2026" "under the frame version that defined them"
@@ -106,13 +123,10 @@ test_basicstats_publishes_the_library_it_computed_with() {
 # and the three tables it computes from them are published. The arithmetic in them is checked
 # by the case below this one, which calls the same R directly and costs no JVM.
 test_basicstats_publishes_what_it_measured() {
-    analysis_ready single || return
-    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
-    analysis_plant_results "$ANALYSIS_SB/store/Output"
-    local status; status=$(analysis_run_module basicstats)
-    assert_status 0 "$status" "basicstats should run; see $ANALYSIS_SB/run.out"
+    basicstats_published || return
+    assert_status 0 "$BASICSTATS_STATUS" "basicstats should run; see $ANALYSIS_SB/run.out"
 
-    local folder="$ANALYSIS_SB/main/Analysis/Results/basicstats"
+    local folder="$BASICSTATS_PUBLISHED"
     assert_file "$folder/sites.tsv" "the site counts are published"
     assert_file "$folder/depth.tsv" "and the depth summaries"
     assert_file "$folder/diversity.tsv" "and the diversity"
@@ -281,7 +295,6 @@ test_a_merged_pool_reports_a_bound() {
 # setting is undiscoverable.
 test_a_depth_plot_is_drawn_only_for_named_sequences() {
     if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
-    if ! have_analysis_r_package ggplot2; then skip_case "no ggplot2"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-plots")
     rm -rf "$sb"; mkdir -p "$sb"
     python3 "$REPO_ROOT/test/tools/freq_corpus.py" "$sb" "$sb"
@@ -335,8 +348,6 @@ test_every_path_through_the_hot_loop_agrees() {
             "$name: nor a depth summary"
     done
 
-    # Rcpp needs a compiler, which is not shipped and is not on every machine.
-    if ! have_analysis_rcpp; then skip_case "no Rcpp and compiler in the analysis environment"; return; fi
     basicstats_direct "$sb/cpp" '{"minReads":2,"binSize":4,"workers":1,"usecpp":true}' "$sb"
     assert_eq "" "$(diff "$sb/ref/diversity.tsv" "$sb/cpp/diversity.tsv" 2>&1)" \
         "the compiled path must agree with the R it replaces: $(cat "$sb/cpp/out.txt" 2>/dev/null)"
@@ -352,7 +363,6 @@ test_every_path_through_the_hot_loop_agrees() {
 test_the_parallel_path_agrees_with_the_sequential_one() {
     local rscript; rscript=$(analysis_rscript)
     if [ -z "$rscript" ]; then skip_case "no analysis environment"; return; fi
-    if ! have_analysis_r_package doFuture; then skip_case "no doFuture"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-parallel")
     rm -rf "$sb"; mkdir -p "$sb"
     python3 "$REPO_ROOT/test/tools/freq_corpus.py" "$sb" "$sb"
@@ -377,8 +387,6 @@ test_the_parallel_path_agrees_with_the_sequential_one() {
 test_a_worker_compiles_the_hot_path_for_itself() {
     local rscript; rscript=$(analysis_rscript)
     if [ -z "$rscript" ]; then skip_case "no analysis environment"; return; fi
-    if ! have_analysis_r_package doFuture; then skip_case "no doFuture"; return; fi
-    if ! have_analysis_r_package Rcpp; then skip_case "no Rcpp in the analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-parallel-cpp")
     rm -rf "$sb"; mkdir -p "$sb"
     python3 "$REPO_ROOT/test/tools/freq_corpus.py" "$sb" "$sb"

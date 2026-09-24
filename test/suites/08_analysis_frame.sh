@@ -1,12 +1,13 @@
 #!/bin/bash
 # The analysis frame: what it is, what it reads, what keeps it optional.
 # cost: jvm
+# env: analysis
 # covers: analysis.nf analysis/frame.config analysis/frame.version analysis/lib/nf/paths.nf
 # covers: analysis/analysis.config.template
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and re-proving it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and re-proving it here would
 # cost minutes a case.
 
 # ---------------------------------------------------------------------------------------

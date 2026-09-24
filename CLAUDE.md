@@ -106,22 +106,22 @@ bash test/run_tests.sh --suite 07_analysis --case citation
 
 | you changed | run |
 |---|---|
-| `bin/` | `05_helpers` — except the three `check_*.sh`, which are `02_launcher` |
+| `bin/` | `03_helpers` — except the three `check_*.sh`, which are `02_launcher` |
 | `PoolSeqFlow`, install/uninstall, the check scripts | `02_launcher` |
 | `bin/config_migrate.sh`, the templates | `01_migrate` |
-| step 0, parameter resolution, the change guards | `04_guards` |
-| wiring, channels, promotion, a step's script | `03_pipeline` |
+| step 0, parameter resolution, the change guards | `05_guards` |
+| wiring, channels, promotion, a step's script | `04_pipeline` |
 | `dryrun.nf`, `dryrun`/`dryclean` | `06_dryrun` |
 | version strings, packaging, syntax | `00_static` |
 | a module library under `modules/lib/` | `analysis_rlib` — no JVM, 3 seconds |
 | `analysis/lib/nf/`, the frame | the analysis seam you touched: `analysis_frame`, `analysis_plan`, `analysis_verify`, `analysis_design`, `analysis_time`, `analysis_series`, `analysis_modules`, `analysis_results` |
 | a module | `--suite <module name>`; its cases travel with it under `modules/<name>/test/` |
 
-`--fast` runs everything that does not start a JVM; what it skips is `03_pipeline`, `04_guards`, and the pipeline halves of `06_dryrun` and the analysis suites.
+`--fast` runs everything that does not start a JVM; what it skips is `04_pipeline`, `05_guards`, and the pipeline halves of `06_dryrun` and the analysis suites.
 
 **`bash test/run_tests.sh --changed` picks the suites for you**, from what each suite declares it runs expanded through the include graph. `dev/scripts/select-tests.py <file>` shows the reasoning without running anything. It errs wide — a change to `test/lib/` or to the selector selects everything — so a narrow answer is trustworthy and a wide one is only expensive.
 
-**Every suite declares what it may cost** — `static`, `jvm` or `pipeline` — in a `# cost:` line in its own header. `--cost static` is the set that completes with nothing installed: `00_static`, `01_migrate`, `02_launcher`, `05_helpers`, `08_analysis_rlib`. `--fast` is a different axis and still a case-level switch, so the two compose.
+**Every suite declares what it may cost** — `static`, `jvm` or `pipeline` — in a `# cost:` line in its own header. `--cost static` is the set that completes with nothing installed: `00_static`, `01_migrate`, `02_launcher`, `03_helpers`, `07_analysis_rlib`. `--fast` is a different axis and still a case-level switch, so the two compose.
 
 **`--suite` and `--case` accumulate and match by name, not by number.** `--suite analysis_time --suite analysis_series` runs both, and `--suite analysis` runs all nine. Every run prints the scope it selected, so a narrowed run cannot be mistaken for a full one; renumbering a suite therefore costs nothing, because nothing addresses one by its number.
 

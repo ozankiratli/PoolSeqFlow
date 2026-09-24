@@ -40,17 +40,17 @@ the same arrangement `dev/` uses.
 | `suites/00_static.sh` | Syntax, release packaging, version consistency. No data needed |
 | `suites/01_migrate.sh` | `bin/config_migrate.sh`, against configs written for earlier releases |
 | `suites/02_launcher.sh` | `./PoolSeqFlow` environment handling, against a stub conda |
-| `suites/03_pipeline.sh` | End-to-end runs against the fixture. The slow one |
-| `suites/04_guards.sh` | The step 0 change guards, via step-0-only runs |
-| `suites/05_helpers.sh` | Unit coverage for `bin/`, called directly. No conda, no fixture |
+| `suites/04_pipeline.sh` | End-to-end runs against the fixture. The slow one |
+| `suites/05_guards.sh` | The step 0 change guards, via step-0-only runs |
+| `suites/03_helpers.sh` | Unit coverage for `bin/`, called directly. No conda, no fixture |
 | `suites/06_dryrun.sh` | The layout preview, and what `dryclean` will and will not delete |
 
 The analysis layer is nine suites rather than one. It runs **no** pipeline — artifacts are planted — but most of it still starts a Nextflow run per case, which is what makes running only the seam you touched worth doing.
 
 | Path | What it is |
 |---|---|
-| `suites/07_analysis_frame.sh` | What the frame is, what it reads, and what keeps it optional |
-| `suites/08_analysis_rlib.sh` | The shared R library, called directly. **No Nextflow at all** — seconds, not minutes |
+| `suites/08_analysis_frame.sh` | What the frame is, what it reads, and what keeps it optional |
+| `suites/07_analysis_rlib.sh` | The shared R library, called directly. **No Nextflow at all** — seconds, not minutes |
 | `suites/09_analysis_modules.sh` | The module store, and what a module gets from the frame: its library, settings and artifact classes |
 | `suites/10_analysis_verify.sh` | What the frame checks before a module reads anything |
 | `suites/11_analysis_plan.sh` | Which results an invocation covers, and where each lands |
@@ -65,9 +65,9 @@ The analysis layer is nine suites rather than one. It runs **no** pipeline — a
 
 | class | what it promises | suites |
 |---|---|---|
-| `static` | completes with **nothing installed**; a case wanting a tool skips rather than building | `00_static` `01_migrate` `02_launcher` `05_helpers` `08_analysis_rlib` |
-| `jvm` | starts Nextflow per case, against planted artifacts | `04_guards` `06_dryrun`, the other analysis suites, and a module's own |
-| `pipeline` | runs the pipeline itself against the fixture | `03_pipeline` |
+| `static` | completes with **nothing installed**; a case wanting a tool skips rather than building | `00_static` `01_migrate` `02_launcher` `03_helpers` `07_analysis_rlib` |
+| `jvm` | starts Nextflow per case, against planted artifacts | `05_guards` `06_dryrun`, the other analysis suites, and a module's own |
+| `pipeline` | runs the pipeline itself against the fixture | `04_pipeline` |
 
 The line between `static` and `jvm` is whether a case **builds** something. Asking `have_tools` and skipping is static — that is how `00_static` holds its `nextflow lint` case. Calling for a baseline or a pipeline run is not, and `00_static` refuses a suite that does both.
 
@@ -80,7 +80,7 @@ suite. Run the script directly to see the reasoning before committing to it:
 
 ```
 $ dev/scripts/select-tests.py analysis/lib/nf/plan.nf
-$ dev/scripts/select-tests.py bin/depth_cutoff.py     # 03_pipeline 04_guards 05_helpers
+$ dev/scripts/select-tests.py bin/depth_cutoff.py     # 04_pipeline 05_guards 03_helpers
 ```
 
 **Two halves, and only one of them is maintained by hand.** The graph is derived — `include {}
@@ -114,12 +114,12 @@ startup**, flat, cached or not. Nothing in the pipeline dominates that at fixtur
 suite runtime is essentially a count of `nextflow run` invocations. Two consequences worth
 knowing before adding a case:
 
-- Prefer a **unit test in `05_helpers.sh`** over an end-to-end one. `bin/classify_manifest.sh`
+- Prefer a **unit test in `03_helpers.sh`** over an end-to-end one. `bin/classify_manifest.sh`
   exists as a separate script for exactly this reason — its edge cases (a value containing
   `=`, an empty value, no trailing newline, an unparseable line) are milliseconds there and a
   JVM start each through a pipeline run. When new guard logic is worth testing thoroughly,
   extract it to `bin/` first.
-- Never give a case its own setup run. `04_guards.sh` builds one verified project and each
+- Never give a case its own setup run. `05_guards.sh` builds one verified project and each
   case works on a copy — 22ms against 21s. Doing it per case was most of that suite's
   runtime and tested nothing.
 
@@ -204,7 +204,7 @@ Two details worth knowing when writing assertions against the frequency tables:
 ## Known gaps
 
 - **`depth2freq.awk` and `MajorAlleleToRef.py` still have no unit coverage** and are exercised
-  end to end only. Most of this gap has closed since it was written — `05_helpers.sh` now covers
+  end to end only. Most of this gap has closed since it was written — `03_helpers.sh` now covers
   `classify_manifest.sh`, `find_artifact.sh`, `depth_cutoff.py`, `filterFalsePositives.sh`, both
   parsers and `atomic_mv.sh`, and `config_migrate.sh` has a suite of its own — but those two are
   the ones left.

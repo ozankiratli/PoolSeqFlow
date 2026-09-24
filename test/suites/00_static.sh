@@ -136,9 +136,13 @@ test_release_archive_excludes_development_material() {
 # One-line loops, which is how all of these are written. The multi-line one in 9_completion.nf
 # carries the same guard inside its body and is not matched here.
 test_glob_loops_publishing_artifacts_are_guarded() {
-    local unguarded
-    unguarded=$(cd "$REPO_ROOT" && grep -n 'for [A-Za-z_]* in [^;]*\*[^;]*; *do' scripts/*.nf \
-                | grep 'atomic_mv\.sh' | grep -v '\[ -e ' || true)
+    local loops unguarded
+    loops=$(cd "$REPO_ROOT" && grep -n 'for [A-Za-z_]* in [^;]*\*[^;]*; *do' scripts/*.nf \
+                | grep 'atomic_mv\.sh' || true)
+    # A POSITIVE CONTROL. The assertion below is about an absence, so a change to how these
+    # loops are written empties the search and the case passes over nothing at all.
+    [ -n "$loops" ] || { fail_case "no glob loops calling atomic_mv.sh were found at all"; return; }
+    unguarded=$(printf '%s\n' "$loops" | grep -v '\[ -e ' || true)
     [ -z "$unguarded" ] || fail_case \
         "glob loops calling atomic_mv.sh with no existence guard:"$'\n'"$unguarded"
 }
@@ -756,11 +760,14 @@ test_install_payload_matches_the_release_archive() {
 # this rather than turning up in someone's log tree months later. The one-writer-per-file rule
 # is carried by the file NAME, which is what makes the flattening safe.
 test_every_process_logs_into_its_workflows_own_directory() {
-    local offenders
-    offenders=$(grep -rh 'dir_log = "' "$REPO_ROOT"/scripts/*.nf "$REPO_ROOT"/dryrun.nf \
-                | sed 's|.*dir_log = "||; s|".*||' \
-                | grep -vE '^[$]\{(run\.dir\.logs|params\.dir\.allLogs)\}/[0-9A-Za-z_]+$' \
-                | sort -u)
+    local declared offenders
+    declared=$(grep -rh 'dir_log = "' "$REPO_ROOT"/scripts/*.nf "$REPO_ROOT"/dryrun.nf \
+                | sed 's|.*dir_log = "||; s|".*||' | sort -u)
+    # A POSITIVE CONTROL, for the same reason: the assertion is about an absence, and a change
+    # to how dir_log is written would empty the extraction rather than fail the case.
+    [ -n "$declared" ] || { fail_case "no dir_log assignments were found at all"; return; }
+    offenders=$(printf '%s\n' "$declared" \
+                | grep -vE '^[$]\{(run\.dir\.logs|params\.dir\.allLogs)\}/[0-9A-Za-z_]+$' || true)
     assert_eq "" "$offenders" \
         "a log directory should be the workflow's own, with nothing nested below it"
 }
@@ -802,14 +809,19 @@ test_the_per_sample_parameter_table_is_the_same_on_both_sides() {
 # not exist. Checked against the template rather than against a list here, so adding a column
 # for a parameter that was never added to parameters.config fails.
 test_every_per_sample_parameter_names_a_real_parameter() {
-    local leaf
-    sed -n '/^PARAM_COLUMNS = {/,/^}/p' "$REPO_ROOT/bin/parse_metadata.py" \
-        | sed -n 's/.*"param_[A-Za-z0-9]*": "\([A-Za-z0-9._]*\)".*/\1/p' \
-        | while read -r parameter; do
-            leaf="${parameter##*.}"
-            grep -qE "^[[:space:]]*${leaf}[[:space:]]*=" "$REPO_ROOT/parameters.config.template" \
-                || fail_case "param_ column overrides '$parameter', which parameters.config.template does not define"
-        done
+    local leaf parameter checked=0
+    # Fed by a redirect rather than a pipe. The last stage of a pipeline runs in a subshell, so
+    # `... | while read` reaches fail_case but its CASE_FAILED never returns to run_case - this
+    # case reported PASS for any template at all until 2026-09-23.
+    while read -r parameter; do
+        checked=$((checked + 1))
+        leaf="${parameter##*.}"
+        grep -qE "^[[:space:]]*${leaf}[[:space:]]*=" "$REPO_ROOT/parameters.config.template" \
+            || fail_case "param_ column overrides '$parameter', which parameters.config.template does not define"
+    done < <(sed -n '/^PARAM_COLUMNS = {/,/^}/p' "$REPO_ROOT/bin/parse_metadata.py" \
+        | sed -n 's/.*"param_[A-Za-z0-9]*": "\([A-Za-z0-9._]*\)".*/\1/p')
+    # An extraction that matches nothing would otherwise pass over an empty loop.
+    [ "$checked" -gt 0 ] || fail_case "no param_ columns found in bin/parse_metadata.py"
 }
 
 # EVERY citations.json IS GENERATED, and this is what stops one being edited by hand.
@@ -1439,3 +1451,42 @@ PY
 )
     assert_eq "" "$out" "every declared manual anchor must exist:"$'\n'"$out"
 }
+
+# THE COMPLETION OFFERS EXACTLY WHAT THE WRAPPER DISPATCHES, and this is checked by running the
+# completion rather than by reading its source, so how the list is written cannot fool it.
+#
+# A hand-kept list beside a `case` is the shape that rots: the wrapper gains a verb, the
+# completion does not, and nothing says so. Strict equality both ways, with no exception list -
+# an exception list is the next thing to go stale.
+test_the_completion_offers_every_verb_the_wrapper_takes() {
+    local dispatched offered
+    dispatched=$(sed -n '/^case "\?\$COMMAND"\?/,/^esac/p' "$REPO_ROOT/PoolSeqFlow" \
+        | sed -n 's/^    \([a-z_|]*\))$/\1/p' | tr '|' '\n' | sort -u)
+    offered=$(bash -c '
+        . "$1/lib/poolseqflow-completion.bash"
+        COMP_WORDS=(PoolSeqFlow ""); COMP_CWORD=1
+        _poolseqflow
+        printf "%s\n" "${COMPREPLY[@]}"' _ "$REPO_ROOT" | sort -u)
+
+    [ -n "$dispatched" ] || { fail_case "no verbs were extracted from the wrapper's case"; return; }
+    [ -n "$offered" ] || { fail_case "the completion offered nothing at all"; return; }
+    assert_eq "$dispatched" "$offered" "the completion and the wrapper must agree on the verbs"
+}
+
+# The second level, for the two subcommands that have a fixed set. `analysis` also offers the
+# installed modules, which vary by machine, so only the fixed words are compared.
+test_the_completion_offers_the_subcommands_each_verb_takes() {
+    local out
+    out=$(bash -c '
+        . "$1/lib/poolseqflow-completion.bash"
+        reply() { COMP_WORDS=("${@:2}" ""); COMP_CWORD=$1; _poolseqflow; printf "%s\n" "${COMPREPLY[@]}"; }
+        printf "check: %s\n" "$(reply 2 PoolSeqFlow check | sort | tr "\n" " ")"
+        printf "modules: %s\n" "$(reply 3 PoolSeqFlow analysis modules | sort | tr "\n" " ")"
+        ' _ "$REPO_ROOT")
+
+    assert_contains "$out" "check: install project " \
+        "check takes the two targets its usage names"
+    assert_contains "$out" "modules: available install list uninstall " \
+        "analysis modules takes the four verbs its usage names"
+}
+

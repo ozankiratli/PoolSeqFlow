@@ -356,8 +356,11 @@ process CheckData {
 
         log_message "The data source is set to: ${check.dataSource}"
 
-        # Check for FASTQ files
-        FASTQ_COUNT=\$(find \$DATADIR ${read_pattern} | wc -l)
+        # Check for FASTQ files. Hidden directories below the root are pruned, the same way the
+        # sample match and the read channel prune them: reads may be nested, so a `.snapshot`
+        # would otherwise be counted once per snapshot and the pairing test below would read a
+        # count that describes the storage rather than the data.
+        FASTQ_COUNT=\$(find \$DATADIR -mindepth 1 -name '.*' -type d -prune -o ${read_pattern} -print | wc -l)
         if [ \$FASTQ_COUNT -eq 0 ]; then
             log_message "No FASTQ files found in data directory!"
             log_message "Expected pattern: ${check.readPattern}"
@@ -523,13 +526,98 @@ SAMPLEIDS
             log_message "METADATA SAMPLE MATCH: FAIL"
             STATUS="FAIL"
         else
-            sample_ids=\$(find ${dataDir} ${readPattern} | while read -r fq; do
+            # ONE LINE PER READ FILE, as sampleID<TAB>directory. Deliberately NOT deduplicated:
+            # a sample's two mates give two lines, which is how the counts below see a mate
+            # that is missing or a name that appears twice.
+            #
+            # Hidden directories below the data root are pruned, to agree with the read
+            # channel: `.snapshot` on NetApp storage holds a copy of every read per snapshot,
+            # and since the reads may be nested the glob walks into those. -mindepth 1 so the
+            # root is never itself pruned - a project under ~/.local would find nothing.
+            find ${dataDir} -mindepth 1 -name '.*' -type d -prune -o ${readPattern} -print \\
+              | while read -r fq; do
                 base=\$(basename "\$fq")
+                fname="\$base"
+                fqdir=\$(dirname "\$fq")
                 ${stripMate}
-                echo "\$base"
-            done | sort -u)
+                printf '%s\\t%s\\t%s\\n' "\$base" "\$fname" "\$fqdir"
+            done | sort > read_sources.txt
+            sample_ids=\$(cut -f1 read_sources.txt | sort -u)
 
             MATCHED="yes"
+
+            # EXACTLY ONE OF EACH MATE PER SAMPLE, AND THE FOLDERS DO NOT MATTER.
+            #
+            # A pair is a pair wherever it is filed: mates in two different directories group
+            # correctly, because a sample is named by its file and never by its folder. What is
+            # checked is the pair itself - two files carrying two different names.
+            #
+            # Two things it catches, both of which the read channel accepts in silence:
+            #
+            #   a mate with no partner        fromFilePairs emits NOTHING for it, so the sample
+            #                                 is simply absent from the run. The check this
+            #                                 replaces asked only whether the file count was
+            #                                 even, which two orphans satisfy between them.
+            #   the same mate twice           two copies of an R1 in two folders are handed on
+            #                                 as a "pair", and the pipeline would align R1
+            #                                 against R1. Measured, not inferred.
+            #
+            # A full pair duplicated across folders lands here too, as four files for a sample
+            # that takes two: each copy would be written to the outputs named after the sample.
+            for sample in \$sample_ids; do
+                n_files=\$(awk -F'\\t' -v s="\$sample" '\$1 == s' read_sources.txt | wc -l)
+                n_names=\$(awk -F'\\t' -v s="\$sample" '\$1 == s { print \$2 }' read_sources.txt \\
+                           | sort -u | wc -l)
+                [ "\$n_files" -eq 2 ] && [ "\$n_names" -eq 2 ] && continue
+
+                log_message "Sample '\$sample' does not have exactly one of each mate:"
+                awk -F'\\t' -v s="\$sample" '\$1 == s { print \$3 "/" \$2 }' read_sources.txt \\
+                    | sort | while read -r where; do log_message "    \$where"; done
+                if [ "\$n_names" -lt "\$n_files" ]; then
+                    log_message "The same file name appears more than once, so this is one sample"
+                    log_message "over again - and each copy would be written to the outputs named"
+                    log_message "after it. Keep one, or give them names of their own."
+                else
+                    log_message "readPattern '${check.readPattern}' takes the two mates together,"
+                    log_message "and a mate with no partner is left out of the run without a word."
+                fi
+                MATCHED="no"
+            done
+
+            # A SUBFOLDER OF Data/ HOLDING NO READS AT ALL. Empty, or full of something else -
+            # either way the reads that were meant to be in it are not, and a run that simply
+            # ignored it would process fewer samples than the user believes it has.
+            # A parent of a folder that does hold reads is not itself empty.
+            find ${dataDir} -mindepth 1 -name '.*' -type d -prune -o -type d -print \\
+              | while read -r subdir; do
+                if [ -z "\$(find "\$subdir" ${readPattern} -print 2>/dev/null | head -1)" ]; then
+                    echo "\$subdir"
+                fi
+            done > empty_dirs.txt
+            if [ -s empty_dirs.txt ]; then
+                log_message "These folders under ${dataDir} hold no reads matching '${check.readPattern}':"
+                while IFS= read -r d; do log_message "    \$d"; done < empty_dirs.txt
+                log_message "Reads may sit in subfolders, so an empty one is either a layout that"
+                log_message "did not finish copying or a pattern that does not match its files."
+                MATCHED="no"
+            fi
+
+            # HIDDEN FOLDERS ARE SKIPPED, AND SAYING SO IS THE POINT. Silently ignoring a folder
+            # that holds reads is how a user loses samples without being told. Only reported
+            # when one actually holds something the pattern matches.
+            find ${dataDir} -mindepth 1 -type d -name '.*' -print 2>/dev/null \\
+              | while read -r hidden; do
+                if [ -n "\$(find "\$hidden" ${readPattern} -print 2>/dev/null | head -1)" ]; then
+                    echo "\$hidden"
+                fi
+            done > hidden_dirs.txt
+            if [ -s hidden_dirs.txt ]; then
+                log_message "NOTE: these hidden folders hold reads and were skipped:"
+                while IFS= read -r d; do log_message "    \$d"; done < hidden_dirs.txt
+                log_message "Nothing inside them is used. On NetApp storage '.snapshot' is the"
+                log_message "usual one, and it holds a copy of every read per snapshot."
+            fi
+
             # Reads with no row: a hard failure.
             for sample in \$sample_ids; do
                 if ! grep -qxF "\$sample" metadata_ids.txt; then

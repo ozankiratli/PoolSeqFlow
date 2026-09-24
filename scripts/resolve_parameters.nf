@@ -100,8 +100,11 @@ def collectNames(Map m, String prefix, List out) {
 }
 
 // Every name that IS a parameter, so a multi-run column naming something else can be refused.
-// The derived names are unioned in: the template leaves them commented out, so they do not exist
-// in params until resolveParameters() runs.
+//
+// The derived names are unioned in because some of them are not in params yet: parameters.config
+// leaves the knobs and the whole `cores` block commented out, so they come into existence only
+// when resolveParameters() computes them. The seven paths below - referencePath through reads -
+// are live there and so already counted; the union makes the set whole either way.
 def knownParameterNames() {
     return (collectNames(params, '', []) + derivedParameterNames()).unique().sort()
 }
@@ -213,7 +216,14 @@ def deriveRunPaths(Map p) {
     p.multiRunPath  = "${p.mainDir}/${p.multiRunFile}"
     p.reference     = "${p.dir.dictionaries}/${p.referenceFile.replace('.gz', '')}"
     p.gff           = "${p.dir.dictionaries}/${p.gffFile.replace('.gz', '')}"
-    p.reads         = "${p.dir.data}/${p.readPattern}"
+    // `**` so the reads may sit in subfolders of Data/ as well as directly in it. It matches
+    // across directories INCLUDING none, which `**/` does not - `**/` finds only the nested
+    // ones and would stop every flat project.
+    //
+    // This is the value a run uses: it lands in each variant map and readPairChannel globs
+    // `variant.reads`. parameters.config declares the same path and that copy is not consulted,
+    // so editing `reads` there has no effect.
+    p.reads         = "${p.dir.data}/**${p.readPattern}"
 
     if (!sensitivityIsPinned()) p.filterFalsePositives.sensitivity = derivedSensitivity(p)
     if (!snpEffDbIsPinned()) p.snpEff.db = derivedSnpEffDb(p)

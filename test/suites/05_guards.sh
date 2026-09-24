@@ -1,6 +1,7 @@
 #!/bin/bash
 # The step 0 change guards: what invalidates existing outputs and what merely gets recorded.
 # cost: jvm
+# env: pipeline
 # covers: scripts/0_verify_environment.nf scripts/resolve_parameters.nf scripts/variants.nf
 # covers: scripts/metadata.nf bin/parse_metadata.py bin/parse_multirun.py
 # covers: bin/classify_manifest.sh
@@ -1114,4 +1115,211 @@ c,200
     assert_status 1 "$status" "the same values in a different order are still a change"
     assert_contains "$report" "was  a,50"  "for the run that held the old value"
     assert_contains "$report" "now  a,200" "and now holds another run\'s"
+}
+
+# THE COLLISION THE SUBFOLDERS MAKE REACHABLE. Two directories holding the same file name are
+# one sample twice over: both become that sample, and each would overwrite the other's results.
+# Impossible while the reads had to be flat, which is why nothing checked for it before.
+test_one_sample_name_in_two_folders_is_refused() {
+    have_tools || { skip_case "no conda environment"; return; }
+    local sb status out
+    sb=$(make_pipeline_sandbox "duplicate-reads")
+    write_sandbox_config "$sb"
+
+    mkdir -p "$sb/main/Data/run1" "$sb/main/Data/run2"
+    cp "$sb/main/Data/TestSample1_R1.fq.gz" "$sb/main/Data/run1/TestSample1_R1.fq.gz"
+    cp "$sb/main/Data/TestSample1_R2.fq.gz" "$sb/main/Data/run1/TestSample1_R2.fq.gz"
+    cp "$sb/main/Data/TestSample1_R1.fq.gz" "$sb/main/Data/run2/TestSample1_R1.fq.gz"
+    cp "$sb/main/Data/TestSample1_R2.fq.gz" "$sb/main/Data/run2/TestSample1_R2.fq.gz"
+
+    status=$(run_verify_only "$sb")
+    out=$(cat "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)$(cat "$sb/run.out")
+    assert_status 1 "$status" "one name in two folders should stop the run"
+    assert_contains "$out" "does not have exactly one of each mate" "and say what is wrong"
+    assert_contains "$out" "The same file name appears more than once" \
+        "naming the reason rather than the folders"
+    assert_contains "$out" "/Data/run1" "naming the first directory"
+    assert_contains "$out" "/Data/run2" "and the second"
+    assert_contains "$out" "METADATA SAMPLE MATCH: FAIL" "and fail the check that owns it"
+}
+
+# A MATE WITH NO PARTNER IS DROPPED BY THE READ CHANNEL WITHOUT A WORD.
+#
+# fromFilePairs emits nothing at all for a lone file - measured, not inferred - so the sample
+# simply is not in the run. The check this replaces was that the FASTQ count is even, which two
+# samples each missing a mate satisfy between them.
+test_a_sample_missing_one_mate_is_refused() {
+    have_tools || { skip_case "no conda environment"; return; }
+    local sb status out
+    sb=$(make_pipeline_sandbox "orphan-mate")
+    write_sandbox_config "$sb"
+    # TWO samples lose a mate, so the FASTQ count stays EVEN. That is the whole point: the
+    # check this replaces asked only whether the total was divisible by two, which two orphans
+    # satisfy between them. One orphan is caught earlier, by DATA FILES CHECK.
+    rm -f "$sb/main/Data/TestSample5_R2.fq.gz" "$sb/main/Data/TestSample6_R2.fq.gz"
+
+    status=$(run_verify_only "$sb")
+    out=$(cat "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)$(cat "$sb/run.out")
+    assert_status 1 "$status" "two half-present samples should stop the run"
+    assert_contains "$out" "All FASTQ files are properly paired" \
+        "the count is even, so the check this replaces is satisfied"
+    assert_contains "$out" "TestSample5' does not have exactly one of each mate" "naming the first"
+    assert_contains "$out" "TestSample6' does not have exactly one of each mate" "and the second"
+    assert_contains "$out" "METADATA SAMPLE MATCH: FAIL" "and failing the check that owns it"
+}
+
+# A SUBFOLDER OF Data/ WITH NO READS IN IT. Reads may be nested now, so an empty folder is
+# either a copy that did not finish or a readPattern that does not match what is in it -
+# and a run that ignored it would process fewer samples than the user believes it has.
+test_a_data_subfolder_with_no_reads_is_refused() {
+    have_tools || { skip_case "no conda environment"; return; }
+    local sb status out
+    sb=$(make_pipeline_sandbox "empty-subfolder")
+    write_sandbox_config "$sb"
+    mkdir -p "$sb/main/Data/TestSample7"
+
+    status=$(run_verify_only "$sb")
+    out=$(cat "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)$(cat "$sb/run.out")
+    assert_status 1 "$status" "a folder holding no reads should stop the run"
+    assert_contains "$out" "hold no reads matching" "saying what it looked for"
+    assert_contains "$out" "Data/TestSample7" "and naming the folder"
+}
+
+# HIDDEN FOLDERS ARE SKIPPED, AND THE RUN SAYS SO RATHER THAN GOING QUIET.
+#
+# `.snapshot` is NetApp's, exposed read-only inside every directory on much HPC storage, and it
+# holds a copy of every read per snapshot. Since the reads may be nested the glob would walk
+# into those and find every sample twice, so they are pruned - but a folder full of reads that
+# is ignored in silence is how a user loses samples without being told.
+test_hidden_folders_are_skipped_and_reported() {
+    have_tools || { skip_case "no conda environment"; return; }
+    local sb status out
+    sb=$(make_pipeline_sandbox "hidden-reads")
+    write_sandbox_config "$sb"
+    mkdir -p "$sb/main/Data/.snapshot/nightly"
+    cp "$sb/main/Data/TestSample1_R1.fq.gz" "$sb/main/Data/.snapshot/nightly/"
+    cp "$sb/main/Data/TestSample1_R2.fq.gz" "$sb/main/Data/.snapshot/nightly/"
+
+    status=$(run_verify_only "$sb")
+    out=$(cat "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)$(cat "$sb/run.out")
+    # The copy is pruned, so TestSample1 still has two files in one directory and nothing fails.
+    assert_status 0 "$status" "a hidden copy must not fail the run; see $sb/run.out"
+    assert_contains "$out" "hidden folders hold reads and were skipped" "but it must be said"
+    assert_contains "$out" "Data/.snapshot" "naming the folder"
+    assert_contains "$out" "METADATA SAMPLE MATCH: PASS" \
+        "and the real reads still match their rows"
+}
+
+# A PAIR IS A PAIR WHEREVER IT IS FILED. Mates in two different folders group correctly,
+# because a sample is named by its file and never by its folder, so this must not be refused.
+# Z, 2026-09-24: *"mates in separate folders should be fine ... We just need to be looking for
+# pairs. Not where they stored."*
+test_mates_in_separate_folders_are_accepted() {
+    have_tools || { skip_case "no conda environment"; return; }
+    local sb status out
+    sb=$(make_pipeline_sandbox "split-pair")
+    write_sandbox_config "$sb"
+    mkdir -p "$sb/main/Data/first" "$sb/main/Data/second"
+    mv "$sb/main/Data/TestSample1_R1.fq.gz" "$sb/main/Data/first/"
+    mv "$sb/main/Data/TestSample1_R2.fq.gz" "$sb/main/Data/second/"
+
+    status=$(run_verify_only "$sb")
+    out=$(cat "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)$(cat "$sb/run.out")
+    assert_status 0 "$status" "a pair split across folders should verify; see $sb/run.out"
+    assert_contains "$out" "METADATA SAMPLE MATCH: PASS" "the pair is still a pair"
+    assert_not_contains "$out" "exactly one of each mate" "and nothing should be refused"
+}
+
+# THE SAME MATE TWICE IS NOT A PAIR, and the read channel cannot tell. Two copies of an R1 in
+# two folders are handed on as a pair of files, and the pipeline would align R1 against R1 -
+# measured against fromFilePairs, which reports n=2 for them. Only reachable since the reads
+# may be nested, because one directory cannot hold a name twice.
+test_the_same_mate_in_two_folders_is_refused() {
+    have_tools || { skip_case "no conda environment"; return; }
+    local sb status out
+    sb=$(make_pipeline_sandbox "same-mate")
+    write_sandbox_config "$sb"
+    mkdir -p "$sb/main/Data/copyA" "$sb/main/Data/copyB"
+    mv "$sb/main/Data/TestSample2_R1.fq.gz" "$sb/main/Data/copyA/"
+    cp "$sb/main/Data/copyA/TestSample2_R1.fq.gz" "$sb/main/Data/copyB/"
+    rm -f "$sb/main/Data/TestSample2_R2.fq.gz"
+
+    status=$(run_verify_only "$sb")
+    out=$(cat "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)$(cat "$sb/run.out")
+    assert_status 1 "$status" "two copies of one mate are not a pair"
+    assert_contains "$out" "TestSample2' does not have exactly one of each mate" "naming the sample"
+    assert_contains "$out" "The same file name appears more than once" "and the reason"
+}
+
+# THE RECORD HOLDS WHAT YOU SET, NOT WHAT IS DERIVED FROM IT.
+#
+# analysisParams() names the seven derived paths in skipKey, so they never reach
+# .poolseqflow_params. That is what lets the pipeline change how a path is BUILT without telling
+# every existing project its outputs are invalid: `reads` gained a `**` in 3.2.0 and no project
+# noticed, because only dataSource and readPattern are compared.
+#
+# Recording one of them would also break a project that simply moved volumes, since they are
+# absolute. Written as a case because the cost of losing it is paid by users, silently, on an
+# upgrade that looks routine.
+test_the_record_holds_settings_and_not_derived_paths() {
+    guards_ready || return
+    local rec; rec="$GUARD_SB/store/Output/.poolseqflow_params"
+    assert_file "$rec" "the first run should have recorded the settings"
+
+    local body; body=$(cat "$rec" 2>/dev/null)
+    assert_contains "$body" "dataSource=" "what names the folder is a setting"
+    assert_contains "$body" "readPattern=" "and so is what matches the files"
+
+    local name
+    for name in reads reference gff referencePath gffPath metadataPath multiRunPath referenceFa; do
+        assert_not_contains "$body" "$name=" \
+            "$name is derived and absolute, so recording it would refuse a project that moved"
+    done
+}
+
+# CHANGING WHAT MATCHES THE READS IS A CHANGE TO THE READS. readPattern is a setting, so unlike
+# the derived `reads` it is recorded and compared - the other half of the case above.
+test_a_read_pattern_change_invalidates_the_trimming() {
+    guards_ready || return
+    # Something step 2 produced, or the guard adopts the edit as a new baseline and passes.
+    mkdir -p "$GUARD_SB/main/Utilized/Trimmed"
+    : > "$GUARD_SB/main/Utilized/Trimmed/TestSample1_R1_clipped.fq.gz"
+
+    write_sandbox_config "$GUARD_SB" \
+        's|^    readPattern .*|    readPattern     = "*_R{1,2}.fastq.gz"|'
+    local status report
+    status=$(run_verify_only "$GUARD_SB")
+    report=$(guard_report)
+    assert_status 1 "$status" "a readPattern change should fail against existing outputs"
+    assert_contains "$report" "readPattern" "naming what differs"
+}
+
+# THE DATA FOLDER IS NOT THERE AT ALL. dataSource may name any folder under mainDir, so a typo
+# in it lands here rather than on a missing-reads message.
+test_a_missing_data_folder_is_refused() {
+    have_tools || { skip_case "no conda environment"; return; }
+    local sb status out
+    sb=$(make_pipeline_sandbox "no-data-folder")
+    write_sandbox_config "$sb" "s|^    dataSource .*|    dataSource      = 'NotThere'|"
+
+    status=$(run_verify_only "$sb")
+    out=$(cat "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)$(cat "$sb/run.out")
+    assert_status 1 "$status" "a dataSource naming nothing should stop the run"
+    assert_contains "$out" "Data directory" "saying which directory it looked for"
+}
+
+# THE FOLDER IS THERE AND THE PATTERN MATCHES NOTHING IN IT. Distinct from the case above: the
+# reads exist, and the setting that finds them does not describe them.
+test_a_read_pattern_matching_nothing_is_refused() {
+    have_tools || { skip_case "no conda environment"; return; }
+    local sb status out
+    sb=$(make_pipeline_sandbox "pattern-matches-nothing")
+    write_sandbox_config "$sb" \
+        's|^    readPattern .*|    readPattern     = "*_L00{1,2}.fastq.gz"|'
+
+    status=$(run_verify_only "$sb")
+    out=$(cat "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)$(cat "$sb/run.out")
+    assert_status 1 "$status" "a pattern matching nothing should stop the run"
+    assert_contains "$out" "No FASTQ files found" "saying nothing matched"
+    assert_contains "$out" "Expected pattern" "and what it was looking for"
 }

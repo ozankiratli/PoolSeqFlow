@@ -1,12 +1,13 @@
 #!/bin/bash
 # Which results an invocation covers, and which directory each lands in.
 # cost: jvm
+# env: analysis
 # covers: analysis/lib/nf/plan.nf
 # covers: analysis.nf
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and re-proving it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and re-proving it here would
 # cost minutes a case.
 
 # ---------------------------------------------------------------------------------------

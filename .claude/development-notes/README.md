@@ -75,6 +75,7 @@ One file per subject, not per source file — the reasoning crosses file boundar
 | `gates-that-stopped-checking.md` | the failure this project is prone to: a change moves what a checker points at, and the checker keeps exiting 0 over nothing |
 | `host-glibc-floor.md` | v3.1.1's analysis environment installed only on the machine that froze it: virtual packages, the four guards, and why a solve cannot answer it |
 | `someone-elses-machine.md` | four defects a green suite could not see, because the suite runs where the assumption holds; and the second machine that found three of them in an hour |
+| `macos-support.md` | the sizing, after the manual was found claiming a platform the pinned environments cannot solve on: three blockers, and why exporting is what makes it single-platform |
 | `brainstorming.md` | ideas for later releases: what each would buy, what it would break, and where it sits |
 | `module-queue.md` | the plan from v3.1.1: thirteen modules at one a week, published without a release, and the two shape questions the roster raised |
 

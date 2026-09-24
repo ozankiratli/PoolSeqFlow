@@ -401,6 +401,53 @@ deploy_payload() {
             ;;
     esac
     echo ""
+    install_completion "$dest"
+}
+
+# Where a user's own bash completions live, per the XDG base directory specification. The same
+# path bash-completion searches for a file named after the command.
+completion_dir() {
+    printf '%s/bash-completion/completions' "${XDG_DATA_HOME:-$HOME/.local/share}"
+}
+
+# Put the completion where bash will find it by name, and say what zsh needs.
+#
+# Copied rather than symlinked, so uninstalling one version does not leave the file pointing
+# into a directory that is gone. A failure here does not fail the install: completion is a
+# convenience and the tool works without it.
+install_completion() {
+    local src="$1/lib/poolseqflow-completion.bash" dir
+    [ -f "$src" ] || return 0
+    dir=$(completion_dir)
+    mkdir -p "$dir" 2>/dev/null || { echo "Could not create $dir; tab completion not installed."; return 0; }
+    if ! cp "$src" "$dir/PoolSeqFlow" 2>/dev/null; then
+        echo "Could not write $dir/PoolSeqFlow; tab completion not installed."
+        return 0
+    fi
+    echo "Tab completion installed:"
+    echo "    $dir/PoolSeqFlow"
+    echo ""
+    echo "  bash picks it up in your next shell."
+    echo "  zsh does not read that directory. Add this to ~/.zshrc:"
+    echo ""
+    echo "      autoload -U +X bashcompinit && bashcompinit"
+    echo "      . $dir/PoolSeqFlow"
+    echo ""
+}
+
+# Remove the completion, but only when no other installed version still provides one.
+remove_completion() {
+    local prefix file
+    prefix=$(install_prefix)
+    file="$(completion_dir)/PoolSeqFlow"
+    [ -f "$file" ] || return 0
+    # Another version left installed keeps it: the file is the same for every version, and the
+    # command it completes still exists.
+    if ls -d "$prefix"/opt/PoolSeqFlow-*/ > /dev/null 2>&1; then
+        return 0
+    fi
+    rm -f "$file" 2>/dev/null || true
+    echo "Removed $file"
 }
 
 # Every PoolSeqFlow environment except this version's own and the legacy unversioned one.
@@ -1300,14 +1347,7 @@ case $COMMAND in
         bash "$(install_prefix)/opt/PoolSeqFlow-${VERSION}/bin/check_install.sh"
         echo "Installation complete."
         echo ""
-        echo "The analysis layer was copied with everything else, so 'PoolSeqFlow analysis'"
-        echo "answers now. THAT DOES NOT MEAN THE ANALYSIS LAYER IS INSTALLED. The scripts"
-        echo "weigh nothing and travel with the release so that they can never be a version out"
-        echo "of step with the pipeline; the weight is the environment, which carries R and"
-        echo "which nothing here creates. Until you create it, every module refuses and says so."
-        echo ""
-        echo "The pipeline is complete without it. Add the analysis layer whenever you want it,"
-        echo "or never:"
+        echo "To optionally install the analysis layer, run:"
         echo "    $(basename "$0") analysis install"
         ;;
 
@@ -1324,12 +1364,9 @@ case $COMMAND in
     check)
         run_check "$CHECK_TARGET"
         ;;
-    run|resume)
+    run)
         # Resuming is what `run` already does: every step skips itself when its outputs are
         # already in storage. Nextflow's own -resume is not used.
-        if [ "$COMMAND" = "resume" ]; then
-            echo "Note: 'resume' is deprecated - 'run' already resumes automatically."
-        fi
         require_install
         require_project_config
         require_migrated_config
@@ -2028,6 +2065,7 @@ EOF
         fi
         if [ "$HAVE_PAYLOAD" -eq 1 ]; then
             remove_payload "$TARGET_VERSION"
+            remove_completion
         elif [ -n "$TARGET_VERSION" ]; then
             echo "No pipeline installed at $PREFIX/opt/PoolSeqFlow-${TARGET_VERSION}."
         fi
@@ -2084,6 +2122,7 @@ EOF
         for v in $PAYLOADS; do
             remove_payload "$v" || true
         done
+        remove_completion
         echo ""
         echo "All PoolSeqFlow environments and installations removed."
         ;;

@@ -1,6 +1,7 @@
 #!/bin/bash
 # What a module writes: where it lands, what it carries, and completion.
 # cost: jvm
+# env: analysis
 # covers: analysis/lib/nf/results.nf analysis/lib/nf/outputs.nf analysis/complete.nf
 # covers: bin/write_citations.py
 # covers: analysis.nf
@@ -8,7 +9,7 @@
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and re-proving it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and re-proving it here would
 # cost minutes a case.
 
 # ---------------------------------------------------------------------------------------
@@ -436,22 +437,16 @@ test_an_intermediate_comes_back_from_permanent_storage() {
     assert_file "$archived/matrix.tsv.provenance" "record included"
     assert_file "$archived/bystander.txt" \
         "and nothing else in permanent storage was carried off with them"
-}
 
-# The stage the copy lands in belongs to the transfer, not to Analysis/Main. Left behind it
-# would be read as an intermediate by the next `find` that walks Main.
-test_a_copy_back_leaves_no_staging_directory() {
-    analysis_writer_ready || return
-    local status; status=$(analysis_run_module writer)
-    assert_status 0 "$status" "the first run should derive the intermediate"
-
-    analysis_archive_main
-    analysis_folder_name "'from_storage'"
-    status=$(analysis_run_module writer)
-    assert_status 0 "$status" "the module should run against the archived intermediate"
-
+    # AND NO STAGING DIRECTORY SURVIVES IT. The stage the copy lands in belongs to the
+    # transfer, not to Analysis/Main; left behind it would be read as an intermediate by the
+    # next `find` that walks Main.
+    #
+    # Asserted here rather than in a case of its own, which repeated this whole setup for one
+    # line and had nothing in it proving the copy back had happened at all - so the count was
+    # over a directory that need never have existed. The assertions above are that proof.
     local leftovers
-    leftovers=$(find "$(analysis_main_dir)" -maxdepth 1 -name '.restore.*' 2>/dev/null | wc -l)
+    leftovers=$(find "$main" -maxdepth 1 -name '.restore.*' 2>/dev/null | wc -l)
     assert_eq "0" "$leftovers" "no staging directory survives the copy"
 }
 
