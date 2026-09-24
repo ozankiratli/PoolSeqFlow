@@ -43,6 +43,31 @@ basicstats_direct() {
 }
 
 
+# THE MODULE RUN ONCE FOR THE WHOLE SUITE. Four cases below assert against the same published
+# folder, and each was paying for its own baseline copy and its own two Nextflow launches -
+# eight launches to check a file list, three DOIs, three greps and one set of numbers.
+#
+# The folder is copied out of the sandbox rather than read in place, because analysis_ready
+# wipes $ANALYSIS_SB and cases run in alphabetical order, so another case may rebuild it
+# between two of these.
+#
+# Sets BASICSTATS_PUBLISHED to the copy and BASICSTATS_STATUS to what the run returned. Returns
+# non-zero when the case should stop, having already skipped or failed.
+BASICSTATS_PUBLISHED=""
+BASICSTATS_STATUS=""
+basicstats_published() {
+    [ -n "$BASICSTATS_PUBLISHED" ] && return 0
+    analysis_ready single || return 1
+    if ! have_analysis_r; then skip_case "no analysis environment"; return 1; fi
+    analysis_plant_results "$ANALYSIS_SB/store/Output"
+    BASICSTATS_STATUS=$(analysis_run_module basicstats)
+    local keep; keep=$(guard_path "$TEST_TMPDIR/basicstats-published")
+    rm -rf "$keep"
+    cp -a "$ANALYSIS_SB/main/Analysis/Results/basicstats" "$keep" 2>/dev/null || true
+    BASICSTATS_PUBLISHED="$keep"
+    return 0
+}
+
 # ---------------------------------------------------------------------------------------
 # basicstats, which a release ships. Unlike every module above it this one is not planted by
 # the case - it is in the store because the release carries it, which is also why an error in
@@ -50,13 +75,10 @@ basicstats_direct() {
 # The fixture is six pools of one library each, exp_population over three levels and exp_time
 # over two, at the template's poolSize 100 and ploidy 2.
 test_basicstats_publishes_a_row_for_every_pool() {
-    analysis_ready single || return
-    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
-    analysis_plant_results "$ANALYSIS_SB/store/Output"
-    local status; status=$(analysis_run_module basicstats)
-    assert_status 0 "$status" "basicstats should run; see $ANALYSIS_SB/run.out"
+    basicstats_published || return
+    assert_status 0 "$BASICSTATS_STATUS" "basicstats should run; see $ANALYSIS_SB/run.out"
 
-    local folder="$ANALYSIS_SB/main/Analysis/Results/basicstats"
+    local folder="$BASICSTATS_PUBLISHED"
     assert_file "$folder/design.tsv" "the design table is published"
     assert_file "$folder/basicstats.R" "and the script that produced it"
     assert_file "$folder/CITATIONS.md" "and what to cite for it"
@@ -73,12 +95,9 @@ test_basicstats_publishes_a_row_for_every_pool() {
 # THE METHODS ARE CITED, NOT ONLY THE SOFTWARE. A diversity estimate a reader cannot trace to a
 # definition is one they cannot check, and the two n_eff forms in circulation differ.
 test_basicstats_cites_the_statistics_it_computes() {
-    analysis_ready single || return
-    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
-    analysis_plant_results "$ANALYSIS_SB/store/Output"
-    analysis_run_module basicstats > /dev/null
+    basicstats_published || return
 
-    local folder="$ANALYSIS_SB/main/Analysis/Results/basicstats"
+    local folder="$BASICSTATS_PUBLISHED"
     local cites; cites=$(cat "$folder/CITATIONS.md" 2>/dev/null)
     assert_contains "$cites" "10.1073/pnas.70.12.3321" "Nei, for the diversity statistic"
     assert_contains "$cites" "10.1534/genetics.118.300900" "Hivert, for the effective sample size"
@@ -92,12 +111,9 @@ test_basicstats_cites_the_statistics_it_computes() {
 # not have. What is published is the shared library folded into the module's own script, so the
 # functions that computed the numbers are in the file.
 test_basicstats_publishes_the_library_it_computed_with() {
-    analysis_ready single || return
-    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
-    analysis_plant_results "$ANALYSIS_SB/store/Output"
-    analysis_run_module basicstats > /dev/null
+    basicstats_published || return
 
-    local script; script=$(cat "$ANALYSIS_SB/main/Analysis/Results/basicstats/basicstats.R" 2>/dev/null)
+    local script; script=$(cat "$BASICSTATS_PUBLISHED/basicstats.R" 2>/dev/null)
     assert_contains "$script" "n_eff <- function" "n_eff travels with the result"
     assert_contains "$script" "site_diversity <- function" "and so does gene diversity"
     assert_contains "$script" "analysis frame 2026" "under the frame version that defined them"
@@ -107,13 +123,10 @@ test_basicstats_publishes_the_library_it_computed_with() {
 # and the three tables it computes from them are published. The arithmetic in them is checked
 # by the case below this one, which calls the same R directly and costs no JVM.
 test_basicstats_publishes_what_it_measured() {
-    analysis_ready single || return
-    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
-    analysis_plant_results "$ANALYSIS_SB/store/Output"
-    local status; status=$(analysis_run_module basicstats)
-    assert_status 0 "$status" "basicstats should run; see $ANALYSIS_SB/run.out"
+    basicstats_published || return
+    assert_status 0 "$BASICSTATS_STATUS" "basicstats should run; see $ANALYSIS_SB/run.out"
 
-    local folder="$ANALYSIS_SB/main/Analysis/Results/basicstats"
+    local folder="$BASICSTATS_PUBLISHED"
     assert_file "$folder/sites.tsv" "the site counts are published"
     assert_file "$folder/depth.tsv" "and the depth summaries"
     assert_file "$folder/diversity.tsv" "and the diversity"

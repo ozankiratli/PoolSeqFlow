@@ -24,6 +24,14 @@ TestSample2,PoolB,Pop1,T1'
     local out; out=$(analysis_output)
     assert_contains "$out" "2 pools at the same exp_time" "the refusal counts them"
     assert_contains "$out" "'T1': PoolA, PoolB" "and names the timepoint and the pools"
+
+    # BOTH REMEDIES, because the refusal is ambiguous between them and offering only one is
+    # wrong half the time: technical replicates that were meant to be merged belong under one
+    # RG_Sample, not in a new exp_ column.
+    assert_contains "$out" "analysis.design.biologicalRep or technicalRep" \
+        "one remedy is to tell them apart and declare what they are"
+    assert_contains "$out" "give the rows the same" \
+        "and the other is to merge them, which is the pipeline's job and not a series"
 }
 
 test_a_series_key_naming_the_time_column_refuses() {
@@ -235,22 +243,4 @@ S6,P6,control,2,L1,T2'
     run_analysis "$ANALYSIS_SB" verify > /dev/null
     assert_contains "$(analysis_report "$ANALYSIS_SB")" "1-2 technical" \
         "one unit was sequenced twice and the other once"
-}
-
-# The same-key-same-timepoint refusal is ambiguous between the two remedies, and offering only
-# one of them is wrong half the time: technical replicates that were meant to be merged belong
-# under one RG_Sample, not in a new exp_ column.
-test_the_duplicate_pool_refusal_offers_both_remedies() {
-    analysis_ready single || return
-    analysis_write_metadata "$ANALYSIS_SB" 'SampleID,RG_Sample,exp_population,exp_time
-TestSample1,PoolA,Pop1,T1
-TestSample2,PoolB,Pop1,T1'
-    analysis_write_metadata_config "$ANALYSIS_SB" "        timeVar { kind = 'categorical' }"
-    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
-    assert_status 1 "$status" "two pools at one point is still a refusal"
-    local out; out=$(analysis_output)
-    assert_contains "$out" "analysis.design.biologicalRep or technicalRep" \
-        "one remedy is to tell them apart and declare what they are"
-    assert_contains "$out" "give the rows the same" \
-        "and the other is to merge them, which is the pipeline's job and not a series"
 }
