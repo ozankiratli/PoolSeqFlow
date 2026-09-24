@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Version: 3.1.2
+# Version: 3.2.0
 # Author : Ozan L. Z. Kiratli
 # email  : ozankiratli@protonmail.com
 #
@@ -43,7 +43,7 @@
 set -e
 eval "$(conda shell.bash hook)"
 
-VERSION="3.1.2"
+VERSION="3.2.0"
 
 usage() {
     echo "Usage: $0 {install|init|init_multi|check <target>|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}"

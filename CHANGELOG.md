@@ -10,6 +10,42 @@ In practice a version number says what upgrading will cost you: a third number i
 
 ---
 
+## [3.2.0] - 2026-09-24
+
+**Your raw reads can stay where they were handed to you.** `Data/` no longer has to be one flat folder (one folder per sample, one per sequencing run, nested as deep as you like, or all together as before). Nothing you already have needs moving, not one pinned tool changed version, and no result is affected. As with every release, the new installation's module store starts empty and your modules are installed into it again.
+
+**One thing to read before upgrading**, under Changed: a sample with only one of its two mates is now refused, where it used to be dropped from the run without a word. If a project of yours has ever been missing a mate, this release will tell you.
+
+### Added
+
+- **Reads may sit in subfolders of `Data/`.** However your facility handed them over is how you can leave them. A sample is named by its **file**, never by its folder — `Sample1_R1.fq.gz` is sample `Sample1` wherever it lies — so `metadata.csv` does not change, `readPattern` does not change, and the pipeline reads no meaning into the folders you use. A pair whose two mates are in *different* folders is still that pair. What does not work is the same file name in two places: that is one sample twice over, each copy would overwrite the other's results, and the run stops and names both directories.
+- **Hidden folders are skipped.** Anything beginning with a dot is not searched. `.snapshot` is the one that matters: NetApp exposes it read-only inside every directory on a great deal of shared storage, and it holds a copy of every file per snapshot, so searching it would find every sample many times over. If one of them does hold reads, step 0 names it, because a folder full of reads ignored in silence is how you lose samples without being told.
+- **Tab completion**, installed with the pipeline. It completes every command, the two targets `check` takes, the analysis commands, and the modules **you actually have installed** — so `PoolSeqFlow analysis <TAB>` lists what is in your store rather than a fixed list. bash finds it in your next shell with nothing to do; zsh needs two lines, which the installer prints. `PoolSeqFlow analysis modules install <TAB>` offers nothing on purpose: those names come from the catalogue over the network, and a keystroke should not make a network request.
+
+### Changed
+
+- **A sample missing one of its mates is refused.** `readPattern` takes the two together, and a lone file was simply not a pair — so it was left out of the run, silently, with nothing to say a sample had gone. The only check against it asked whether the total number of FASTQ files was even, which two samples each missing a mate satisfy between them. Every sample is now required to have exactly one of each mate, and the run names the ones that do not. This is the change most likely to stop a project that used to start: it is telling you about data that was already incomplete.
+- **macOS is no longer listed as a supported platform.** No released version has installed on one. It ran in early development, when the environment was a plain list of names and versions. Conda solved that per platform, picking builds for whatever machine it is on. Once the environment was frozen by export it stopped being portable, because an export names the exact builds one machine received: `install/environment.yml` has pinned `linux-64` since the repository's first commit, so conda cannot solve it on a Mac and the install fails before anything else is reached. The Requirements table had said "Linux or macOS" since before 3.1.0 and that was never true of a release anyone could download. The manual now says Linux, and explains what supporting macOS would take — three sets of pinned files instead of one, since Apple Silicon and Intel are separate platforms again. It is planned, not prioritized.
+
+### Removed
+
+- **`resume`.** It printed a deprecation notice and then did exactly what `run` does. Resuming is filesystem-based and always has been: every step checks whether its outputs already exist and skips itself if they do, so `PoolSeqFlow run` is both "start" and "resume". Nothing about that behavior changes.
+
+### Commits
+
+- (263f266) rehash addition reverted, incorrect fix
+- (d7ac846) Test suite fixed and reordered
+- (65f66f7) Tab completion added, deprecated resume command removed completely
+- (796811c) Test suite redundancies resolved
+- (7034b19) new release check added
+- (b1b856a) Data directory is now more permissive for different data subfolder structures
+- (8ff7334) prep-release stale message removed
+- (d411635) americanize language
+- (b5c63ba) Removed wordy comment
+- (1f48890) Test suite fixes
+
+---
+
 ## [3.1.2] - 2026-09-23
 
 **A compatibility release. Nothing you set changes and no result moves.** Not one tool that computes anything moved a version; what changed is which machines the analysis layer installs on, plus three annoyances on machines that are not the one it was built on.
@@ -503,6 +539,7 @@ Major upgrade to **Nextflow 26** and **Trim Galore 2.x**. This release is not ba
 
 ---
 
+[3.2.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.2.0
 [3.1.2]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.1.2
 [3.1.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.1.1
 [3.1.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.1.0

@@ -202,10 +202,10 @@ dev/scripts/changelog-section.sh 3.1.2
 **Pushing the tag is the release.** `release.yml` fires on `v*`, rebuilds and verifies the archive, uses this version's CHANGELOG section as the release body, and publishes with both tarballs and `SHA256SUMS` attached. Nothing to assemble by hand.
 
 ```bash
-git add -A && git commit -m "Version bump v3.1.2"
+git add -A && git commit -m "Version bump vX.X.X"
 git push origin main
-git tag v3.1.2
-git push origin v3.1.2
+git tag vX.X.X
+git push origin vX.X.X
 ```
 
 Watch it at <https://github.com/ozankiratli/PoolSeqFlow/actions>.
