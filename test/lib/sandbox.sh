@@ -856,6 +856,9 @@ run_launcher_with_envs() {
     # The one payload file that is not placeholder-able: the wrapper SOURCES it, so an empty
     # lib/ makes every launcher case fail before it reaches what it is testing.
     cp "$REPO_ROOT/lib/wrapper_lib.sh" "$sb/lib/"
+    # Real too, because `install` copies it out to the user's completion directory and a case
+    # asserts what landed there. An empty placeholder would install an empty completion.
+    cp "$REPO_ROOT/lib/poolseqflow-completion.bash" "$sb/lib/"
 
     # A project to stand in, for the arms that read one. Its content is whatever the case set:
     # `storageDir` is the key require_migrated_config turns on, so a case chooses between a
@@ -875,8 +878,13 @@ run_launcher_with_envs() {
     # Installs go inside the sandbox, never into the operator's real ~/.local. Without this
     # a launcher test would deploy a stub payload over a working installation.
     LAUNCHER_PREFIX="$sb/prefix"
+    # XDG_DATA_HOME goes in the sandbox too. `install` writes the tab completion under it and
+    # `uninstall` removes it, so without this every launcher case that installs would reach
+    # into the operator's own ~/.local/share and the uninstall cases would delete from it.
+    LAUNCHER_XDG="$sb/xdg"
     LAUNCHER_OUTPUT=$(cd "$sb" && PATH="$sb/stub/bin:$PATH" \
-                      POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" ./PoolSeqFlow "$@" 2>&1)
+                      POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" XDG_DATA_HOME="$LAUNCHER_XDG" \
+                      ./PoolSeqFlow "$@" 2>&1)
     LAUNCHER_STATUS=$?
 }
 

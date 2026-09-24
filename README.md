@@ -12,7 +12,7 @@
 
 ### 📖 [Read the documentation →](https://ozankiratli.github.io/PoolSeqFlow/)
 
-> **Platform note:** PoolSeqFlow is developed and tested on **Linux and macOS**. Windows is not supported — the resume logic relies on symbolic links and Unix-style paths that are not compatible with native Windows filesystems.
+> **Platform note:** PoolSeqFlow is developed and tested on **Linux**. macOS and Windows are not supported: the shipped conda environments are pinned to `linux-64` builds, and the resume logic relies on symbolic links and Unix-style paths that are not compatible with native Windows filesystems.
 
 ---
 
@@ -55,7 +55,7 @@ Raw FASTQ reads
 
 ## Quick start
 
-Requires Linux or macOS and [conda](https://docs.conda.io/en/miniconda.html). Every bioinformatics tool is installed for you into an isolated environment, pinned to an exact build.
+Requires Linux and [conda](https://docs.conda.io/en/miniconda.html). Every bioinformatics tool is installed for you into an isolated environment, pinned to an exact build.
 
 ```bash
 # 1. Download the latest release

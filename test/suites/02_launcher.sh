@@ -462,8 +462,6 @@ test_usage_and_implementation_agree() {
     done < <(printf '%s\n' "$advertised")
     while read -r cmd; do
         [ -n "$cmd" ] || continue
-        # `resume` is an accepted deprecated alias, deliberately not advertised.
-        [ "$cmd" = "resume" ] && continue
         printf '%s\n' "$advertised" | grep -qx "$cmd" \
             || fail_case "'$cmd' is implemented but not advertised in usage"
     done < <(printf '%s\n' "$implemented")
@@ -1603,4 +1601,36 @@ test_every_environment_removal_passes_minus_y() {
     local without
     without=$(grep -n 'conda env remove -n "' "$REPO_ROOT/PoolSeqFlow" | grep -v -- '-y' || true)
     assert_eq "" "$without" "every conda env remove should pass -y"
+}
+
+# THE COMPLETION IS INSTALLED WHERE BASH LOOKS FOR IT, and the message says what zsh needs,
+# because zsh does not read that directory and would otherwise get nothing with no explanation.
+test_install_puts_the_tab_completion_where_bash_finds_it() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    assert_status 0 "$LAUNCHER_STATUS" "install should succeed"
+
+    local file="$LAUNCHER_XDG/bash-completion/completions/PoolSeqFlow"
+    assert_file "$file" "the completion should be installed under XDG_DATA_HOME"
+    assert_contains "$(cat "$file" 2>/dev/null)" "complete -F _poolseqflow" \
+        "and it should be the real completion, not an empty placeholder"
+    assert_contains "$LAUNCHER_OUTPUT" "bashcompinit" "the message should tell a zsh user what to add"
+}
+
+# UNINSTALLING THE LAST VERSION TAKES IT WITH IT. A completion left behind completes a command
+# that is gone, and it is the one file `install` writes outside its own prefix.
+test_uninstall_removes_the_tab_completion() {
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    local file="$LAUNCHER_XDG/bash-completion/completions/PoolSeqFlow"
+    assert_file "$file" "the completion should be there before the uninstall"
+
+    # The same sandbox, so the installation the first call made is what this one removes. The
+    # `<<< y` answers the confirmation, as the other uninstall cases do.
+    local sb; sb=$(dirname "$LAUNCHER_PREFIX")
+    local out; out=$( cd "$sb" && PATH="$sb/stub/bin:$PATH" \
+        POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" XDG_DATA_HOME="$LAUNCHER_XDG" \
+        ./PoolSeqFlow uninstall 2>&1 <<< y )
+    assert_count 0 "$(find "$LAUNCHER_PREFIX/opt" -maxdepth 1 -name 'PoolSeqFlow-*' | wc -l)" \
+        "the payload should be gone, or the completion is right to stay"
+    assert_eq "" "$(ls "$LAUNCHER_XDG/bash-completion/completions" 2>/dev/null)" \
+        "the completion should go with the last installation:"$'\n'"$out"
 }

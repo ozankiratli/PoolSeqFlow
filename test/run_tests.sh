@@ -296,6 +296,18 @@ fi
 TEST_TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/poolseqflow-test.XXXXXX")
 export TEST_TMPDIR
 
+# XDG_DATA_HOME FOR THE WHOLE RUN, so nothing a case installs reaches the operator's own home.
+# `PoolSeqFlow install` writes the tab completion under it and `uninstall` removes it again -
+# the one thing the wrapper puts outside its own prefix.
+#
+# Set here rather than in run_launcher_with_envs, which is where it was first put: 02_launcher
+# invokes the wrapper inline in several cases rather than through that helper, and those calls
+# went straight to ~/.local/share. Measured - the directory appeared there on the first run.
+# One export covers every invocation however a case makes it.
+XDG_DATA_HOME="$TEST_TMPDIR/xdg"
+export XDG_DATA_HOME
+mkdir -p "$XDG_DATA_HOME"
+
 # A second working area on a DIFFERENT filesystem, when the machine has one to offer. Moving an
 # artifact between two volumes is a different code path from moving it within one, and it is the
 # path both atomic_mv.sh data-loss defects lived in; TEST_TMPDIR alone cannot reach it.

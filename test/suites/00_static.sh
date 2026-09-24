@@ -1451,3 +1451,41 @@ PY
 )
     assert_eq "" "$out" "every declared manual anchor must exist:"$'\n'"$out"
 }
+
+# THE COMPLETION OFFERS EXACTLY WHAT THE WRAPPER DISPATCHES, and this is checked by running the
+# completion rather than by reading its source, so how the list is written cannot fool it.
+#
+# A hand-kept list beside a `case` is the shape that rots: the wrapper gains a verb, the
+# completion does not, and nothing says so. Strict equality both ways, with no exception list -
+# an exception list is the next thing to go stale.
+test_the_completion_offers_every_verb_the_wrapper_takes() {
+    local dispatched offered
+    dispatched=$(sed -n '/^case "\?\$COMMAND"\?/,/^esac/p' "$REPO_ROOT/PoolSeqFlow" \
+        | sed -n 's/^    \([a-z_|]*\))$/\1/p' | tr '|' '\n' | sort -u)
+    offered=$(bash -c '
+        . "$1/lib/poolseqflow-completion.bash"
+        COMP_WORDS=(PoolSeqFlow ""); COMP_CWORD=1
+        _poolseqflow
+        printf "%s\n" "${COMPREPLY[@]}"' _ "$REPO_ROOT" | sort -u)
+
+    [ -n "$dispatched" ] || { fail_case "no verbs were extracted from the wrapper's case"; return; }
+    [ -n "$offered" ] || { fail_case "the completion offered nothing at all"; return; }
+    assert_eq "$dispatched" "$offered" "the completion and the wrapper must agree on the verbs"
+}
+
+# The second level, for the two subcommands that have a fixed set. `analysis` also offers the
+# installed modules, which vary by machine, so only the fixed words are compared.
+test_the_completion_offers_the_subcommands_each_verb_takes() {
+    local out
+    out=$(bash -c '
+        . "$1/lib/poolseqflow-completion.bash"
+        reply() { COMP_WORDS=("${@:2}" ""); COMP_CWORD=$1; _poolseqflow; printf "%s\n" "${COMPREPLY[@]}"; }
+        printf "check: %s\n" "$(reply 2 PoolSeqFlow check | sort | tr "\n" " ")"
+        printf "modules: %s\n" "$(reply 3 PoolSeqFlow analysis modules | sort | tr "\n" " ")"
+        ' _ "$REPO_ROOT")
+
+    assert_contains "$out" "check: install project " \
+        "check takes the two targets its usage names"
+    assert_contains "$out" "modules: available install list uninstall " \
+        "analysis modules takes the four verbs its usage names"
+}
