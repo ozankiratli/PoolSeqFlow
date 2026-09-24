@@ -326,6 +326,32 @@ The paths are yours to choose; the structure inside them is not. A project ready
 
 The file names are examples. `readPattern` is what finds the reads — `*_R{1,2}.fq.gz` by default, which is what matches the pairs above — and `referenceFile` and `gffFile` name the two in `Reference/`.
 
+**The reads may sit in subfolders of `Data/` instead, or as well.** However your sequencing facility handed them over is how you can leave them — one folder per sample, one per run or lane, nested as deep as you like, or all together as above. All three of these are read the same way:
+
+```
+Data/                    Data/                      Data/
+├── Sample1_R1.fq.gz     ├── Sample1/               ├── run_A/
+├── Sample1_R2.fq.gz     │   ├── Sample1_R1.fq.gz   │   ├── Sample1_R1.fq.gz
+├── Sample2_R1.fq.gz     │   └── Sample1_R2.fq.gz   │   └── Sample1_R2.fq.gz
+└── Sample2_R2.fq.gz     └── Sample2/               └── run_B/
+                             ├── Sample2_R1.fq.gz       ├── Sample2_R1.fq.gz
+                             └── Sample2_R2.fq.gz       └── Sample2_R2.fq.gz
+```
+
+**A sample is named by its file, never by its folder.** `Sample1_R1.fq.gz` is sample `Sample1` wherever it lies, so `metadata.csv` does not change and neither does `readPattern` — the folders are yours to arrange and the pipeline does not read meaning into them. A pair whose mates are in two *different* folders is still that pair, and is taken as one.
+
+What step 0 checks is the pair itself: **every sample has exactly one of each mate.** Three ways to break it, all of which the reader would otherwise accept in silence:
+
+| in `Data/` | what it is |
+|---|---|
+| `Sample1_R1.fq.gz` with no `Sample1_R2.fq.gz` anywhere | a sample that would be left out of the run without a word |
+| `run_A/Sample1_R1.fq.gz` and `run_B/Sample1_R1.fq.gz` | the same mate twice, which would be aligned against itself |
+| a full pair under both `run_A/` and `run_B/` | one sample over again, each copy overwriting the other's results |
+
+If two folders really do hold two different samples, give them two names. If they are one sample sequenced twice, that is two rows in `metadata.csv` sharing an `RG_Sample` — see [What a unit is](#what-a-unit-is).
+
+**Hidden folders are skipped, and the run says so.** Anything beginning with a dot is not searched — `.snapshot` on NetApp storage holds a copy of every file per snapshot, and searching it would find every sample many times over. If one of them does hold reads, step 0 names it so you know what was left out.
+
 `init` never overwrites. Running it again in a project you have already filled in reports what is there and changes nothing.
 
 It copies `parameters.config` for you because that is a settings file you edit in place. It does **not** write `metadata.csv`, because that is a table describing your experiment — which FASTQ pairs are one pool, how many individuals each holds, and the order your result columns come out in — and a copied one would describe someone else's. Write it yourself, starting from `metadata.csv.example`, and read [Metadata](#metadata) before your first run rather than after it.

@@ -15,7 +15,7 @@ params {
     // `./PoolSeqFlow migrate_config` carries the old value over.
     storageDir      = "/path/to/permanent/storage"
     // The files you place, all relative to mainDir:
-    //   mainDir/Data/            the reads              (dataSource names it)
+    //   mainDir/Data/            the reads, in it or in subfolders of it (dataSource names it)
     //   mainDir/Reference/       reference + annotation (referenceFile, gffFile)
     //   mainDir/metadata.csv     what your samples ARE  (metadataFile)
     dataSource      = 'Data'
@@ -239,7 +239,10 @@ params {
     // The decompressed reference, written by step 1. There is no `gff` beside it: snpEff
     // builds its database from the file you placed, gzipped or not.
     reference       = "${params.dir.dictionaries}/${params.referenceFile.replace('.gz', '')}"
-    reads           = "${params.dir.data}/${params.readPattern}"
+    // The `**` is what lets the reads sit in subfolders of Data/ as well as directly in it -
+    // one folder per sample, one per sequencing run, or none at all. It matches across
+    // directories INCLUDING none, which `**/` does not: `**/` finds only the nested ones.
+    reads           = "${params.dir.data}/**${params.readPattern}"
 
 
     // How each tool is invoked. Replace a command with a full path to use a system binary

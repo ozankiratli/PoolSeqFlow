@@ -1341,3 +1341,93 @@ test_the_depth_table_costs_no_extra_task() {
     assert_eq "2" "$(task_count "$PIPELINE_SB" "VCF2Frequencies:CalculateFrequencies")" \
         "one task per split file, writing both its depth table and its frequency table"
 }
+
+# READS MAY SIT IN SUBFOLDERS OF Data/, or directly in it, or both at once.
+#
+# THIS RUNS STEP 2, NOT STEP 0, because step 0 cannot answer it. Step 0 finds reads with
+# `find -name`, which has always recursed, so a nested layout passed its sample match long
+# before the reads could actually be staged - the divergence this change closes. What had to
+# move is `params.reads`, which readPairChannel globs, and only a step that consumes that
+# channel exercises it. Written against step 0 first, where reverting the glob left the case
+# passing.
+test_reads_are_found_in_subfolders_of_data() {
+    have_tools || { skip_case "no conda environment"; return; }
+    [ "${TEST_FAST:-0}" = "1" ] && { skip_case "--fast"; return; }
+    local sb status s
+    sb=$(make_pipeline_sandbox "nested-reads")
+    write_sandbox_config "$sb"
+
+    # One sample in a folder of its own, one two levels down, the rest left flat.
+    mkdir -p "$sb/main/Data/TestSample1" "$sb/main/Data/batch2/TestSample2"
+    mv "$sb/main/Data/TestSample1_R"*.fq.gz "$sb/main/Data/TestSample1/"
+    mv "$sb/main/Data/TestSample2_R"*.fq.gz "$sb/main/Data/batch2/TestSample2/"
+
+    status=$(run_trim_only "$sb")
+    assert_status 0 "$status" "step 2 should complete over a mixed layout; see $sb/run.out"
+
+    # Every sample trimmed, wherever its reads were: the nested two are the point, and the
+    # flat ones prove `**` still matches at depth zero.
+    for n in 1 2 3 4 5 6; do
+        s="TestSample$n"
+        assert_count 2 "$(find "$sb/main/Utilized" -name "${s}_R[12]_clipped.fq.gz" 2>/dev/null | wc -l)" \
+            "$s should have been trimmed whatever folder its reads were in"
+    done
+}
+
+# HIDDEN FOLDERS ARE EXCLUDED FROM THE READ CHANNEL, not only from step 0's search.
+#
+# THIS RUNS STEP 2, because step 0 cannot answer it. The two prune independently - step 0 with
+# `find -prune`, the channel with a filter in readPairChannel - and a case that runs only step 0
+# passes with the channel's filter deleted outright. Measured: it did.
+#
+# `.snapshot` is NetApp's, exposed read-only inside every directory on much HPC storage and
+# holding a copy of every file per snapshot. Unfiltered, the channel emits the sample twice and
+# trims it twice, with both runs writing the outputs named after it.
+test_hidden_folders_are_excluded_from_the_read_channel() {
+    have_tools || { skip_case "no conda environment"; return; }
+    [ "${TEST_FAST:-0}" = "1" ] && { skip_case "--fast"; return; }
+    local sb status samples
+    sb=$(make_pipeline_sandbox "hidden-channel")
+    write_sandbox_config "$sb"
+    samples=$(find "$sb/main/Data" -name '*_R1.fq.gz' | wc -l)
+
+    mkdir -p "$sb/main/Data/.snapshot/nightly"
+    cp "$sb/main/Data/TestSample1_R1.fq.gz" "$sb/main/Data/.snapshot/nightly/"
+    cp "$sb/main/Data/TestSample1_R2.fq.gz" "$sb/main/Data/.snapshot/nightly/"
+
+    status=$(run_trim_only "$sb")
+    assert_status 0 "$status" "the snapshot copy must not disturb the run; see $sb/run.out"
+
+    # One trim per sample, and the count is what shows the copy was excluded: unfiltered, the
+    # channel emits TestSample1 twice and this reads one higher than the sample count.
+    assert_count "$samples" "$(task_count "$sb" TrimQcClip:TrimReads)" \
+        "each sample should be trimmed once, the hidden copy not at all"
+}
+
+# `reads` IN parameters.config IS NOT CONSULTED, and this pins that.
+#
+# deriveRunPaths() assigns p.reads directly - not through fill(), which is what respects a user
+# setting - so the value a run globs is always the one it computes, into each variant map. The
+# copy in parameters.config exists so a reader can see how the path is built.
+#
+# Worth a case because the asymmetry is invisible: the knobs beside it in the same file ARE
+# respected, since deriveInto() fills them only when absent. And because it cost real time -
+# the `**` was added to parameters.config.template first and nothing changed, which reads as
+# the feature not working rather than as the line not being read.
+test_the_reads_setting_in_the_config_is_not_consulted() {
+    have_tools || { skip_case "no conda environment"; return; }
+    [ "${TEST_FAST:-0}" = "1" ] && { skip_case "--fast"; return; }
+    local sb status samples
+    sb=$(make_pipeline_sandbox "reads-override")
+    samples=$(find "$sb/main/Data" -name '*_R1.fq.gz' | wc -l)
+    # A path that matches nothing anywhere. If it were read, the run would find no reads at all.
+    write_sandbox_config "$sb" \
+        's|^    reads .*|    reads           = "/nonexistent/nothing/**_R{1,2}.fq.gz"|'
+    assert_contains "$(cat "$sb/main/parameters.config")" "/nonexistent/nothing/" \
+        "the sandbox config should carry the bogus path, or this case proves nothing"
+
+    status=$(run_trim_only "$sb")
+    assert_status 0 "$status" "the derived value should be used regardless; see $sb/run.out"
+    assert_count "$samples" "$(task_count "$sb" TrimQcClip:TrimReads)" \
+        "every sample should still be trimmed, from the path the resolver computed"
+}

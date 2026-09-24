@@ -1489,3 +1489,4 @@ test_the_completion_offers_the_subcommands_each_verb_takes() {
     assert_contains "$out" "modules: available install list uninstall " \
         "analysis modules takes the four verbs its usage names"
 }
+
