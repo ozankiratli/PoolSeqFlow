@@ -1347,14 +1347,7 @@ case $COMMAND in
         bash "$(install_prefix)/opt/PoolSeqFlow-${VERSION}/bin/check_install.sh"
         echo "Installation complete."
         echo ""
-        echo "The analysis layer was copied with everything else, so 'PoolSeqFlow analysis'"
-        echo "answers now. THAT DOES NOT MEAN THE ANALYSIS LAYER IS INSTALLED. The scripts"
-        echo "weigh nothing and travel with the release so that they can never be a version out"
-        echo "of step with the pipeline; the weight is the environment, which carries R and"
-        echo "which nothing here creates. Until you create it, every module refuses and says so."
-        echo ""
-        echo "The pipeline is complete without it. Add the analysis layer whenever you want it,"
-        echo "or never:"
+        echo "To optionally install the analysis layer, run:"
         echo "    $(basename "$0") analysis install"
         ;;
 
