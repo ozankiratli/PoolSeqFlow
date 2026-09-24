@@ -73,6 +73,7 @@ One file per subject, not per source file — the reasoning crosses file boundar
 | `calibration.md` | what `dev/validation/` measured against a known truth: `n_eff` exact, the closed form calibrated, unit means required rather than a df adjustment, and the depth-phenotype correlation that breaks permuting |
 | `shell-and-nextflow-gotchas.md` | the traps that produced a confidently wrong answer once: zsh vs bash, `set -e`, awk, the strict parser, channels, config |
 | `gates-that-stopped-checking.md` | the failure this project is prone to: a change moves what a checker points at, and the checker keeps exiting 0 over nothing |
+| `tests-that-read-source.md` | cases that assert a string appears in a file rather than that anything happens; the twenty still outstanding, and the three ways to resolve one |
 | `host-glibc-floor.md` | v3.1.1's analysis environment installed only on the machine that froze it: virtual packages, the four guards, and why a solve cannot answer it |
 | `someone-elses-machine.md` | four defects a green suite could not see, because the suite runs where the assumption holds; and the second machine that found three of them in an hour |
 | `macos-support.md` | the sizing, after the manual was found claiming a platform the pinned environments cannot solve on: three blockers, and why exporting is what makes it single-platform |

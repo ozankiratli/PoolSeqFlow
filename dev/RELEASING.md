@@ -151,25 +151,25 @@ It rewrites the version in the wrapper (header comment and `VERSION=`) and in `n
 
 ## 7. Run the full suite
 
-**Install the new version first, and name both environments.** The suite is worthless without them and says so only in the skip count:
+**Install the new version first.** The suite is worthless without both environments and says so only in the skip count:
 
 ```
 ./PoolSeqFlow install
 ./PoolSeqFlow analysis install
 dev/scripts/check-host-floor.sh
 
-TEST_CONDA_ENV=$HOME/.local/opt/miniconda3/envs/PoolSeqFlow-<version> \
-TEST_ANALYSIS_ENV=$HOME/.local/opt/miniconda3/envs/PoolSeqFlow-<version>-analysis \
-    bash test/run_tests.sh
+bash test/run_tests.sh
 ```
 
 On `main`, at the new version, with the frozen environments. This is the run that matters — everything before it tested a version string that is no longer the one shipping. The install is also what proves the files frozen at step 2 actually describe an installable environment, which nothing else checks.
 
-**The environments are named after the version, so step 6's bump renames them out from under the suite.** Naming both explicitly, as above, is what makes that a non-event — and since 2026-09-23 discovery also handles it: `find_release_env()` takes the environment matching the wrapper's own `VERSION` and warns on stderr when it has to settle for another, so a tree at the new version can no longer measure the old environment in silence.
+**The environments are named after the version, so step 6's bump renames them out from under the suite.** Discovery handles that: `find_release_env()` takes the pair matching the wrapper's own `VERSION`, and warns on stderr when it has to settle for another — so a tree at the new version cannot measure the old environment in silence. The run prints both paths it resolved in its first two lines, which is how it states what it measured.
 
-That was found the hard way. Discovery globbed `$HOME/.conda/envs/PoolSeqFlow-*` only, which finds nothing when conda keeps its environments under its own `envs/` — as miniconda does — so a machine with all four environments installed produced a full run in which every module case skipped for "no conda environment" and the run still reported success. The glob also took whatever sorted first, which is the oldest environment present. Both are fixed in `test/run_tests.sh`; the explicit names stay here because a release run should state what it measured rather than discover it.
+**Do not name them by hand.** This step used to set `TEST_CONDA_ENV` and `TEST_ANALYSIS_ENV` to literal `$HOME/.local/opt/miniconda3/...` paths, which is a fact about one machine written into the release protocol. A path that does not resolve is not an error: `have_tools` goes false, every case needing an environment skips, and the run reports success. Measured — pointing both at a nonexistent directory prints `none found - suites needing the pipeline will skip` and exits 0. Discovery either finds the pair or says which one it fell back to.
 
-**A skip is a hole, not a pass.** `555 passed, 0 skipped` is the number. Read the skip list, never the count alone:
+That advice was the workaround for a discovery bug, kept after the bug was fixed. Discovery globbed `$HOME/.conda/envs/PoolSeqFlow-*` only, which finds nothing when conda keeps its environments under its own `envs/` — as miniconda does — so a machine with all four environments installed produced a full run in which every module case skipped for "no conda environment" and still reported success. The glob also took whatever sorted first, which is the oldest environment present. Both are fixed in `test/run_tests.sh`.
+
+**A skip is a hole, not a pass.** `0 skipped` is the number that matters; the pass count moves with every commit, so compare it against the previous release's rather than against anything written here. Read the skip list, never the count alone:
 
 ```
 bash test/run_tests.sh 2>&1 | grep SKIP

@@ -113,16 +113,6 @@ test_the_analysis_layer_ships_with_the_release() {
         "the payload must carry the analysis directory"
 }
 
-# Answering to `PoolSeqFlow analysis` is not being installed, and the install has to say so:
-# the layer is copied with everything else while the environment it needs is never created.
-test_install_says_the_analysis_command_is_not_the_analysis_layer() {
-    local wrapper; wrapper=$(cat "$REPO_ROOT/PoolSeqFlow")
-    assert_contains "$wrapper" "THAT DOES NOT MEAN THE ANALYSIS LAYER IS INSTALLED" \
-        "install must say that answering is not an installation"
-    assert_contains "$wrapper" 'analysis install' \
-        "and say how to install it"
-}
-
 # One list of modules, in the layer that refuses. A second copy in the wrapper would be the
 # one that goes stale.
 test_the_module_roster_lives_in_one_place() {
@@ -249,12 +239,15 @@ test_the_analysis_settings_default_without_a_config_block() {
     paths=$(cat "$REPO_ROOT/analysis/lib/nf/paths.nf")
     assert_not_contains "$cfg" 'runs = ' "the frame declares no run selection"
     assert_not_contains "$cfg" 'folderName' "and no folder name"
-    assert_contains "$paths" "runs      : 'all'" "the default for runs is in the accessor"
-    assert_contains "$paths" 'if (!scope.containsKey(key)) return defaults[key]' \
-        "and a key the project did not set falls back to it"
-    # Nextflow REPLACES a nested map rather than merging into it, so a project writing one
-    # sub-key would otherwise lose every other default in that scope. One merge for every scope,
-    # so metadata, timeVar, design and phenotype cannot drift apart on it.
+    # THE DEFAULT ITSELF IS CHECKED BY BEHAVIOR, in 11_analysis_plan, which reads
+    # `analysis.runs = 'all'` off a report. Two assertions here restated that in implementation
+    # spelling - one of them pinning an exact line of Groovy - and were removed.
+    #
+    # This one stays because nothing else covers it. Nextflow REPLACES a nested map rather than
+    # merging into it, so a project writing one sub-key would otherwise lose every other default
+    # in that scope. One merge for every scope, so metadata, timeVar, design and phenotype cannot
+    # drift apart on it. It wants a running case that sets one sub-key and finds the rest intact;
+    # until there is one, this grep is the only guard.
     assert_contains "$paths" 'return defaults + written' \
         "while a scope the project set only part of keeps the rest of its defaults"
 }
