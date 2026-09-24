@@ -1,11 +1,12 @@
 #!/bin/bash
-# The shared R library, called directly. No Nextflow, no conda, no fixture.
+# The shared R library, called directly against the release's own R. No Nextflow, no fixture.
 # cost: static
+# env: analysis
 # covers: modules/lib/ test/tools/r_lib_tests.R test/tools/split_counts.R test/tools/pool_sensitivity.R
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and re-proving it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and re-proving it here would
 # cost minutes a case.
 
 # BASE R, AND NOTHING ELSE. These functions are unit-tested against whatever R is on the

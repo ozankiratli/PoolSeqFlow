@@ -28,7 +28,23 @@ fi
 
 `rehash` is zsh's name for `hash -r`. The wrapper is `#!/usr/bin/env bash`, so wherever `ZSH_VERSION` reaches a bash script, conda picks a command bash does not have. Measured on the server: `bash -c 'echo $ZSH_VERSION'` printed `5.9`, so something there exports it - zsh does not, and the maintainer's machine does not, which is exactly why it had never appeared.
 
-**Fixed by defining it rather than by silencing conda.** `lib/wrapper_lib.sh` carries `rehash() { hash -r; }`; the backslash in `\rehash` suppresses aliases, not functions, so that is what runs. Suppressing conda's stderr was the first instinct and was wrong: it would hide conda's real failures, and refreshing the command table is what conda was asking for.
+**NOT FIXED, on purpose. Z's ruling, 2026-09-23.** Three fixes were written and all three were rejected, and the reason they were all wrong is the same: **the wrapper is not what is broken.**
+
+`eval "$(conda shell.bash hook)"` has been line 17 of `PoolSeqFlow` since **v1.0.0**, written by Z alone, and it is unchanged through every release to 3.1.2 - only its line number moved as the header grew. It works, and it is the only way a script gets `conda activate`: a shell function does not cross a process boundary, so a user who has run `conda init` gives their *interactive* shell the function and gives a script nothing. Measured - parent reports `conda is a function`, the child one process later reports `conda is a file` and `conda activate` fails with `CondaError: Run 'conda init' before 'conda activate'`.
+
+**And asking for the bash hook does not get a bash-only hook.** `conda shell.bash hook` emits `__conda_hashr` with the `ZSH_VERSION` branch still in it, at line 20 of its own output. That is conda's, not ours.
+
+So on a machine where something exports `ZSH_VERSION` into a bash process, conda believes a false claim the environment made about itself and calls a command bash does not have. **The correct response is to do nothing**, because correcting another machine's environment is not this tool's business. The noise is cosmetic: the consequence of the zsh branch is that `hash -r` does not run, and the wrapper invokes nothing before it activates, so there is no stale entry to refresh.
+
+The three rejected fixes, and what each got wrong:
+
+- **Suppressing conda's stderr.** Would hide conda's real failures, and the command-table refresh is what conda was actually asking for.
+- **`rehash() { hash -r; }` in `lib/wrapper_lib.sh`.** Made a bash script carry zsh's vocabulary to satisfy a claim that was not true. It was also in the wrong place - `wrapper_lib.sh` is sourced at line 96 and the hook is evaluated at line 44, so the function did not exist for the eval that first raised the error.
+- **`unset ZSH_VERSION POSH_VERSION` before the hook.** Z: *"You are still making assumptions about the shell. We don't deal with that."* Process-local or not, it is the tool reaching into variables it does not own to compensate for someone else's misconfiguration.
+
+**What this costs**: the `rehash: command not found` line comes back on that server. Z accepted that knowingly.
+
+**The general form is still worth keeping**, and it is why this one sits oddly beside the other three in this note. Each of them is a string standing in for a real question, and here the real question is *which shell is this*. The difference is that the other three were our strings, in our code, answering questions about our own behavior - and this one is conda asking a question we have no standing to answer.
 
 **It was visible in one arm and not another for a reason worth keeping.** `uninstall` called `conda deactivate` bare while `uninstall_all` had `2>/dev/null || true`, so the same noise was hidden in one place and shown in the other. That inconsistency is what made it findable - the user could say "during uninstall but not uninstall_all", which pointed straight at the difference. The `|| true` also closed a real hazard: under `set -e` a non-zero `conda deactivate` would have abandoned the uninstall with the environment half removed.
 

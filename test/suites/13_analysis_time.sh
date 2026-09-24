@@ -1,12 +1,13 @@
 #!/bin/bash
 # The time axis, and the date parsing behind it.
 # cost: jvm
+# env: analysis
 # covers: analysis/lib/nf/time.nf analysis/lib/nf/design.nf
 # covers: analysis.nf
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and re-proving it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and re-proving it here would
 # cost minutes a case.
 
 # Time is not guessed. 20240307 reads as a number as readily as a date, which keeps the order

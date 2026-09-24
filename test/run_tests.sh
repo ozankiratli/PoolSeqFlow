@@ -150,19 +150,6 @@ have_analysis_r() {
 }
 export -f have_analysis_r
 
-# Whether the environment a module runs in can build a compiled path: Rcpp AND the toolchain it
-# drives. Rcpp alone is not enough. Its compiler is conda's own -
-# x86_64-conda-linux-gnu-c++ - which lives in that environment's bin and nowhere else, so the
-# search has to happen with that bin on PATH or Rcpp reports "tools not found".
-have_analysis_rcpp() {
-    have_analysis_r_package Rcpp || return 1
-    local cxx
-    cxx=$("$TEST_ANALYSIS_ENV/bin/R" CMD config CXX 2>/dev/null | awk '{print $1}')
-    [ -n "$cxx" ] || return 1
-    PATH="$TEST_ANALYSIS_ENV/bin:$PATH" command -v "$cxx" > /dev/null 2>&1
-}
-export -f have_analysis_rcpp
-
 # The analysis environment, which is where a module actually runs. Found rather than assumed:
 # the wrapper creates it with `conda env create -n`, naming it and leaving the directory to
 # conda. TEST_ANALYSIS_ENV points it at another one.
@@ -177,22 +164,15 @@ fi
 TEST_ANALYSIS_ENV="${TEST_ANALYSIS_ENV:-}"
 export TEST_ANALYSIS_ENV
 
-# ONE ACTIVATION FOR THE WHOLE RUN, because that is how the tool runs a module.
+# THE conda SHELL FUNCTION, DEFINED BUT NOT USED YET. Sourcing the hook is what makes
+# `conda activate` exist in a script at all; the activation itself happens further down, around
+# the block of suites that declare `# env: analysis`, so nothing else in the run has an
+# environment on its PATH.
 #
-# `PoolSeqFlow analysis <module>` does `conda activate <analysis env>` before it starts, and a
-# case that only puts the environment's bin on PATH is testing something else. The difference is
-# not theoretical: conda's R compiles with conda's own x86_64-conda-linux-gnu-c++, which lives in
-# that environment and is on no other PATH, so every compiled-path case failed with
-#
-#     sh: x86_64-conda-linux-gnu-c++: command not found
-#     WARNING: The tools required to build C++ code for R were not found.
-#
-# until the suite was run against the environment's R rather than the machine's.
-#
-# The ANALYSIS environment is the one activated, not the pipeline's: only one can be, and
-# _run_entry puts the pipeline environment's bin at the front of PATH for every Nextflow run, so
-# that side is served explicitly while this side needs the activation scripts. Silent when conda
-# is not reachable - the cases that need it check have_analysis_r and skip.
+# It used to activate here, for the whole process. That put the analysis environment behind
+# every one of the 500-odd cases that do not want it, and made the pipeline suites unable to
+# notice a missing tool: both environments carry nextflow, samtools, bcftools and rsync, so
+# anything dropped from the pipeline environment was quietly answered by the analysis one.
 #
 # THE HOOK IS FOUND FROM THE ENVIRONMENT'S OWN PATH, NOT FROM `conda info --base`. That command
 # prints a plugin's load error onto stdout alongside the answer - anaconda-anon-usage does it on
@@ -201,11 +181,8 @@ export TEST_ANALYSIS_ENV
 # lives at <base>/envs/<name>, so the base is two directories up and needs nothing to say so.
 if [ -n "$TEST_ANALYSIS_ENV" ]; then
     _conda_hook="$(dirname "$(dirname "$TEST_ANALYSIS_ENV")")/etc/profile.d/conda.sh"
-    if [ -f "$_conda_hook" ]; then
-        # shellcheck disable=SC1091
-        . "$_conda_hook"
-        conda activate "$TEST_ANALYSIS_ENV" 2>/dev/null || true
-    fi
+    # shellcheck disable=SC1091
+    [ -f "$_conda_hook" ] && . "$_conda_hook"
     unset _conda_hook
 fi
 
@@ -238,14 +215,6 @@ pdf_text() {
 }
 export -f pdf_text
 
-# True when a named package is installed in the analysis environment.
-have_analysis_r_package() {
-    [ -n "$TEST_ANALYSIS_ENV" ] || return 1
-    "$TEST_ANALYSIS_ENV/bin/Rscript" --vanilla \
-        -e "quit(status = !requireNamespace('$1', quietly = TRUE))" > /dev/null 2>&1
-}
-export -f have_analysis_r_package
-
 # What a suite may cost, declared in its own header as `# cost: <class>`:
 #
 #   static    completes with nothing installed. A case wanting a tool skips rather than
@@ -264,6 +233,33 @@ suite_cost() {
     local declared
     declared=$(sed -n '1,12s/^# cost: *//p' "$1" | head -1)
     printf '%s' "${declared:-pipeline}"
+}
+
+# Which conda environment a suite's work happens inside, declared in its own header as
+# `# env: <name>`: `pipeline`, `analysis`, or absent for neither.
+#
+# THE TOOL RUNS IN AN ACTIVATED ENVIRONMENT, SO THE SUITE DOES TOO. `PoolSeqFlow run` activates
+# the pipeline environment and `PoolSeqFlow analysis <module>` activates the analysis one, and
+# a case that only puts a bin on PATH is testing something the release does not do. What that
+# cost, measured 2026-09-23: activation runs `etc/conda/activate.d/openjdk_activate.sh`, which
+# exports JAVA_HOME as $CONDA_PREFIX/lib/jvm and JAVA_LD_LIBRARY_PATH beside it, while
+# _run_entry had been setting JAVA_HOME to $CONDA_PREFIX - a directory with no lib/server in it,
+# so not a JAVA_HOME at all - and JAVA_LD_LIBRARY_PATH not at all. Every pipeline case had been
+# launching its JVM under an environment no user has.
+#
+# For the analysis side it is the compiler: Rcpp drives conda's own x86_64-conda-linux-gnu-c++,
+# which is on no PATH but that environment's, and without activation every compiled path fails
+# with `sh: x86_64-conda-linux-gnu-c++: command not found`.
+#
+# Absent means the suite genuinely runs outside both, and the four that declare nothing are the
+# static ones: 00_static, 01_migrate, 02_launcher and 03_helpers. They reach a tool by explicit
+# path where they need one at all - 00_static's lint case sets PATH per invocation, 03_helpers
+# calls bcftools through BCFTOOLS_BIN - and 02_launcher and 06_dryrun drive the wrapper against
+# a STUB conda on purpose, which has to stay ahead of anything real on PATH.
+suite_env() {
+    local declared
+    declared=$(sed -n '1,12s/^# env: *//p' "$1" | head -1)
+    printf '%s' "${declared:-none}"
 }
 
 # True when `name` contains any of the remaining arguments, or when there are none. No filters
@@ -350,6 +346,20 @@ for suite in "$REPO_ROOT"/modules/*/test/*.sh; do
     SUITES+=("$suite")
 done
 
+# THE SUITES THAT NEED AN ENVIRONMENT GO LAST, so they form one block and one activation covers
+# all of them. Ordering is the whole mechanism: without it 07_analysis_rlib sits in the middle of
+# the numbered suites and the run would have to activate and deactivate around it.
+_plain=(); _needs_env=()
+for suite in "${SUITES[@]}"; do
+    if [ "$(suite_env "$suite")" = "none" ]; then
+        _plain+=("$suite")
+    else
+        _needs_env+=("$suite")
+    fi
+done
+SUITES=("${_plain[@]+"${_plain[@]}"}" "${_needs_env[@]+"${_needs_env[@]}"}")
+unset _plain _needs_env
+
 if [ "$LIST_ONLY" -eq 1 ]; then
     echo "Suites:"
     for suite in "${SUITES[@]}"; do
@@ -402,11 +412,28 @@ fi
 
 SUITES_RUN=0
 CURRENT_SUITE=""
+ACTIVE_ENV="none"
 for suite in "${SUITES[@]}"; do
     name=$(basename "$suite" .sh)
     matches_any "$name" "${SUITE_FILTERS[@]+"${SUITE_FILTERS[@]}"}" || continue
     matches_any "$(suite_cost "$suite")" "${COST_FILTERS[@]+"${COST_FILTERS[@]}"}" || continue
     SUITES_RUN=$((SUITES_RUN + 1))
+
+    # ONE ACTIVATION, AT THE BOUNDARY. The suites are ordered so that everything needing an
+    # environment is contiguous, so this fires once on the way in and once on the way out.
+    # Silent when conda is not reachable: the cases inside check have_analysis_r and skip.
+    want=$(suite_env "$suite")
+    if [ "$want" != "$ACTIVE_ENV" ]; then
+        [ "$ACTIVE_ENV" = "none" ] || conda deactivate 2>/dev/null || true
+        case "$want" in
+            pipeline) [ -n "$TEST_CONDA_ENV" ] \
+                          && conda activate "$TEST_CONDA_ENV" 2>/dev/null || true ;;
+            analysis) [ -n "$TEST_ANALYSIS_ENV" ] \
+                          && conda activate "$TEST_ANALYSIS_ENV" 2>/dev/null || true ;;
+        esac
+        ACTIVE_ENV="$want"
+    fi
+
     # Suites marked slow read this to decide whether to skip themselves.
     export TEST_FAST="$FAST"
     CURRENT_SUITE="$name"

@@ -449,10 +449,43 @@ _run_entry() {
     local sb="$1" entry="$2"; shift 2
     local proj="${SANDBOX_PROJECT_DIR:-$sb/main}"
     local out="${SANDBOX_RUN_OUT:-$sb/run.out}"
+    # THE RUN INHERITS THE ACTIVATED ENVIRONMENT AND SETS NEITHER PATH NOR JAVA_HOME. The suite
+    # declares which environment its work happens in, run_tests.sh activates it once for the
+    # block, and `conda activate` is what the tool itself does before a run.
+    #
+    # WHAT THE HAND-ROLLED VERSION GOT WRONG. It exported JAVA_HOME as $TEST_CONDA_ENV, while
+    # openjdk's own activate.d script exports $CONDA_PREFIX/lib/jvm and JAVA_LD_LIBRARY_PATH
+    # beside it. $TEST_CONDA_ENV has no lib/server, so it is not a JAVA_HOME; the runs worked
+    # only because JAVA_CMD was given explicitly and Nextflow prefers it. It also pointed every
+    # analysis entry at the PIPELINE environment, which carries no Rscript, pandoc or typst -
+    # those runs worked only because the analysis environment was activated for the whole
+    # process and sat on the tail of PATH, which in turn meant a tool missing from the pipeline
+    # environment was quietly answered by the analysis one.
+    #
+    # A refusal rather than a fallback when the wrong environment is active: a run under the
+    # other one would be measuring software the release does not use for this entry.
+    local want="$TEST_CONDA_ENV"
+    case "$entry" in
+        analysis.nf|analysis/*) want="$TEST_ANALYSIS_ENV" ;;
+    esac
     (
         cd "$proj" || exit 1
-        export JAVA_HOME="$TEST_CONDA_ENV" JAVA_CMD="$TEST_CONDA_ENV/bin/java"
-        export PATH="$TEST_CONDA_ENV/bin:$PATH"
+        # THE ENTRY DECIDES, NOT THE SUITE. The suite's own block activation covers the common
+        # case and this costs nothing then; an entry needing the OTHER environment switches
+        # here. An analysis suite building its baseline is exactly that - analysis_ready calls
+        # run_verify_only, which is a pipeline entry - so the two cannot be split by suite.
+        #
+        # Inside the subshell, so the block's activation is untouched by it.
+        if [ -n "$want" ] && [ "${CONDA_PREFIX:-}" != "$want" ]; then
+            conda activate "$want" 2>/dev/null || true
+        fi
+        # A refusal, never a fallback: running under the other environment would measure
+        # software the release does not use for this entry, and would pass while doing it.
+        if [ -n "$want" ] && [ "${CONDA_PREFIX:-}" != "$want" ]; then
+            printf '%s needs %s activated, but CONDA_PREFIX is %s\n' \
+                   "$entry" "$want" "${CONDA_PREFIX:-<none>}" > "$out"
+            exit 91
+        fi
         export NXF_HOME="$sb/nxfhome" NXF_VER="${TEST_NXF_VER:-26.04.6}"
         # What the wrapper exports: a module is launched as its own entry script, so nothing
         # Nextflow computes points at the installation. SANDBOX_INSTALL_OVERRIDE is for the case
@@ -504,8 +537,8 @@ sandbox_config_flat() {
     local sb="$1"
     (
         cd "$sb/main" || exit 1
-        export JAVA_HOME="$TEST_CONDA_ENV" JAVA_CMD="$TEST_CONDA_ENV/bin/java"
-        export PATH="$TEST_CONDA_ENV/bin:$PATH"
+        # Inherits the activated environment, like _run_entry. Its one caller, 05_guards,
+        # declares `# env: pipeline`.
         export NXF_HOME="$sb/nxfhome" NXF_VER="${TEST_NXF_VER:-26.04.6}"
         export POOLSEQFLOW_HOME="$sb/install"
         nextflow config -flat "$sb/install" 2>/dev/null

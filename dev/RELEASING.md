@@ -242,6 +242,10 @@ It builds the tarball into `modules/repo/`, reads `kind`, `contract`, `frame`, `
 
 Sync `dev` with `main` so the version bump and the CHANGELOG come back, then carry on. The first commits after a release are usually the things this protocol found and deferred.
 
+```
+git merge --ff-only main
+```
+
 ---
 
 ## What to do when a step fails

@@ -1,6 +1,7 @@
 #!/bin/bash
 # The step 0 change guards: what invalidates existing outputs and what merely gets recorded.
 # cost: jvm
+# env: pipeline
 # covers: scripts/0_verify_environment.nf scripts/resolve_parameters.nf scripts/variants.nf
 # covers: scripts/metadata.nf bin/parse_metadata.py bin/parse_multirun.py
 # covers: bin/classify_manifest.sh

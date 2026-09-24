@@ -1,6 +1,7 @@
 #!/bin/bash
 # What a module writes: where it lands, what it carries, and completion.
 # cost: jvm
+# env: analysis
 # covers: analysis/lib/nf/results.nf analysis/lib/nf/outputs.nf analysis/complete.nf
 # covers: bin/write_citations.py
 # covers: analysis.nf
@@ -8,7 +9,7 @@
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and re-proving it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and re-proving it here would
 # cost minutes a case.
 
 # ---------------------------------------------------------------------------------------

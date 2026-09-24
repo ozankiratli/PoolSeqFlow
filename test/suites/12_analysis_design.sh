@@ -1,12 +1,13 @@
 #!/bin/bash
 # The experimental design, and the pools every frequency is read against.
 # cost: jvm
+# env: analysis
 # covers: analysis/lib/nf/design.nf analysis/lib/nf/pools.nf
 # covers: analysis.nf
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and re-proving it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and re-proving it here would
 # cost minutes a case.
 
 # EVERY analysis records the design the project was in, so a project whose design contradicts
@@ -744,7 +745,7 @@ test_the_report_says_when_there_is_no_phenotype() {
 #
 # The detection limits below are hand-computed from 1/(2*ploidy*poolSize), which is a third
 # copy of the equation - the Groovy one in resolve_parameters.nf and the awk one in
-# bin/filterFalsePositives.sh are tied together by 05_helpers, and these numbers tie this one
+# bin/filterFalsePositives.sh are tied together by 03_helpers, and these numbers tie this one
 # to both.
 test_the_verification_report_states_the_pool_sizes() {
     analysis_ready single || return

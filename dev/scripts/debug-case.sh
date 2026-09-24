@@ -4,7 +4,7 @@
 # machine and not another can be compared directly.
 #
 # Usage:  dev/scripts/debug-case.sh <suite> <case> [label]
-#           dev/scripts/debug-case.sh 04_guards unusable_multirun mine
+#           dev/scripts/debug-case.sh 05_guards unusable_multirun mine
 #           dev/scripts/debug-case.sh 15_analysis_results one_pdf yours
 #
 # WHY THIS EXISTS

@@ -1,13 +1,14 @@
 #!/bin/bash
 # basicstats, against the analytic corpus its own tools build.
 # cost: jvm
+# env: analysis
 # covers: modules/basicstats/ modules/lib/
 # covers: test/tools/freq_corpus.py
 # covers: analysis.nf modules/basicstats/main.nf
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and re-proving it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and re-proving it here would
 # cost minutes a case.
 
 # Run the module's R directly over the corpus, under one set of options, into $1.
@@ -281,7 +282,6 @@ test_a_merged_pool_reports_a_bound() {
 # setting is undiscoverable.
 test_a_depth_plot_is_drawn_only_for_named_sequences() {
     if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
-    if ! have_analysis_r_package ggplot2; then skip_case "no ggplot2"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-plots")
     rm -rf "$sb"; mkdir -p "$sb"
     python3 "$REPO_ROOT/test/tools/freq_corpus.py" "$sb" "$sb"
@@ -335,8 +335,6 @@ test_every_path_through_the_hot_loop_agrees() {
             "$name: nor a depth summary"
     done
 
-    # Rcpp needs a compiler, which is not shipped and is not on every machine.
-    if ! have_analysis_rcpp; then skip_case "no Rcpp and compiler in the analysis environment"; return; fi
     basicstats_direct "$sb/cpp" '{"minReads":2,"binSize":4,"workers":1,"usecpp":true}' "$sb"
     assert_eq "" "$(diff "$sb/ref/diversity.tsv" "$sb/cpp/diversity.tsv" 2>&1)" \
         "the compiled path must agree with the R it replaces: $(cat "$sb/cpp/out.txt" 2>/dev/null)"
@@ -352,7 +350,6 @@ test_every_path_through_the_hot_loop_agrees() {
 test_the_parallel_path_agrees_with_the_sequential_one() {
     local rscript; rscript=$(analysis_rscript)
     if [ -z "$rscript" ]; then skip_case "no analysis environment"; return; fi
-    if ! have_analysis_r_package doFuture; then skip_case "no doFuture"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-parallel")
     rm -rf "$sb"; mkdir -p "$sb"
     python3 "$REPO_ROOT/test/tools/freq_corpus.py" "$sb" "$sb"
@@ -377,8 +374,6 @@ test_the_parallel_path_agrees_with_the_sequential_one() {
 test_a_worker_compiles_the_hot_path_for_itself() {
     local rscript; rscript=$(analysis_rscript)
     if [ -z "$rscript" ]; then skip_case "no analysis environment"; return; fi
-    if ! have_analysis_r_package doFuture; then skip_case "no doFuture"; return; fi
-    if ! have_analysis_r_package Rcpp; then skip_case "no Rcpp in the analysis environment"; return; fi
     local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-parallel-cpp")
     rm -rf "$sb"; mkdir -p "$sb"
     python3 "$REPO_ROOT/test/tools/freq_corpus.py" "$sb" "$sb"

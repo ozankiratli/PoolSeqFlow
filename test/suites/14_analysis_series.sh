@@ -2,12 +2,13 @@
 # Series: which pools are one thing measured repeatedly, and what a time axis does to a unit.
 # The same units and conditions without a time axis are 12_analysis_design's.
 # cost: jvm
+# env: analysis
 # covers: analysis/lib/nf/design.nf analysis/lib/nf/time.nf
 # covers: analysis.nf
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and re-proving it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and re-proving it here would
 # cost minutes a case.
 
 # ---------------------------------------------------------------------------------------

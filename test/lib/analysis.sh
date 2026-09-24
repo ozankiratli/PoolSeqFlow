@@ -10,7 +10,7 @@
 # The analysis layer: what it ships as, which results an invocation covers, and what it
 # refuses before computing anything.
 #
-# THE PIPELINE IS ASSUMED TO WORK. That is 03_pipeline's business, and running it here would
+# THE PIPELINE IS ASSUMED TO WORK. That is 04_pipeline's business, and running it here would
 # cost minutes to produce files this suite only ever counts. Published artifacts are planted
 # instead; what cannot be planted is the identity record beside the results, because
 # .poolseqflow_params holds the manifest exactly as the pipeline resolves it and a hand-written
