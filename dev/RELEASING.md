@@ -177,13 +177,13 @@ bash test/run_tests.sh 2>&1 | grep SKIP
 
 **Check the counts against the previous run, not only the exit status** — cases passed *and* cases skipped. A filter that matches nothing also reports success, and a skip is how a case that should have run says so quietly.
 
-**Lint without `modules/`**, at zero errors and zero warnings:
+**The lint is part of that run and is not a separate step.** `00_static` lints the tree and, separately, every module in an assembled store layout — both at zero errors and zero warnings, or the suite is not green. To run just those two while working:
 
 ```
-nextflow lint analysis analysis.nf dryrun.nf poolseqflow.nf scripts
+bash test/run_tests.sh --suite 00_static --case lint
 ```
 
-`nextflow lint .` cannot pass: a module's `main.nf` imports the frame as `'../../lib/nf/plan.nf'`, which resolves from the store it is installed into and not from `modules/<name>/`. `00_static` lints the modules, in an assembled store layout.
+This step used to spell out a `nextflow lint ...` command of its own, which was wrong twice over. It could not run as written, because `nextflow` lives in the release's conda environment and a plain shell has no path to it — while the suite finds the environment itself. And the path list had drifted to a **subset** of the suite's, missing `lib`, `bin`, `install` and `nextflow.config`, so following this document linted less than the run above it already had.
 
 ## 8. Write the CHANGELOG
 

@@ -84,13 +84,15 @@ Not one line of code may change. Per file, diff the non-comment lines against `H
 
 Then lint and `bash test/run_tests.sh --fast`, which is under a minute. Check both counts — files linted, cases passed — against the run before it rather than only the exit status: a filter that matches nothing also reports success. Neither number is written down here, because both move with every file added.
 
-**Lint the tree without `modules/`**, and expect zero errors and zero warnings:
+**Lint through the suite, at zero errors and zero warnings.** Seven seconds:
 
 ```
-nextflow lint analysis analysis.nf dryrun.nf poolseqflow.nf scripts
+bash test/run_tests.sh --suite 00_static --case lint
 ```
 
-`nextflow lint .` **cannot pass and is not the command.** A module's `main.nf` imports the frame as `'../../lib/nf/plan.nf'` — correct from `analysis/modules/<name>/`, where it is installed, and unresolvable from `modules/<name>/`, where it is written. The path is right and the tree is wrong for it, so linting from the repository root reports one `Invalid include source` per import on every module. **`00_static` is what lints them**: it assembles a store layout in a sandbox and lints that, which is the only place those imports resolve.
+**Do not write the `nextflow lint ...` command out by hand.** It needs `nextflow`, which lives in the release's conda environment and nowhere a plain shell will find it — the suite locates the environment itself. And a hand-written path list drifts: the copy that used to be here had lost `lib`, `bin`, `install` and `nextflow.config`, so it linted a subset of what the suite does while reading as the authority.
+
+The two cases behind that filter are `nextflow lint is clean`, which lints the tree without `modules/`, and `every module lints in the store layout`. **`nextflow lint .` cannot pass and is not the command.** A module's `main.nf` imports the frame as `'../../lib/nf/plan.nf'` — correct from `analysis/modules/<name>/`, where it is installed, and unresolvable from `modules/<name>/`, where it is written. The path is right and the tree is wrong for it, so linting from the repository root reports one `Invalid include source` per import on every module. The second case is what lints them, by assembling a store layout in a sandbox, which is the only place those imports resolve.
 
 ## What to run while building
 
