@@ -390,7 +390,7 @@ test_the_points_can_carry_a_color_and_a_shape() {
 
     # A COLOR AND A SHAPE ARE PRESENTATION, so the numbers must not move. That is what the
     # keyed run is compared against here. The line this replaces compared distance.tsv with
-    # ITSELF and was labelled "self-comparison sanity", so it answered 0e+00 whatever the keys
+    # ITSELF and was labeled "self-comparison sanity", so it answered 0e+00 whatever the keys
     # had done - the only assertion in the case about the keys affecting anything.
     mds_direct "$sb/plain" "$MDS_OPTIONS"
     assert_tables_agree "$sb/run/distance.tsv" "$sb/plain/distance.tsv" \
