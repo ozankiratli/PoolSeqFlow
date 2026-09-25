@@ -1613,7 +1613,30 @@ test_install_puts_the_tab_completion_where_bash_finds_it() {
     assert_file "$file" "the completion should be installed under XDG_DATA_HOME"
     assert_contains "$(cat "$file" 2>/dev/null)" "complete -F _poolseqflow" \
         "and it should be the real completion, not an empty placeholder"
-    assert_contains "$LAUNCHER_OUTPUT" "bashcompinit" "the message should tell a zsh user what to add"
+}
+
+# WHAT TO DO NEXT DEPENDS ON THE SHELL, and the message says only the half that applies.
+#
+# Printing both cases buried the half with work in it: Z installed 3.2.0, read a message
+# explaining bash and zsh, and did not add the two zsh lines - so completion did not work for
+# the person who had just written it. $SHELL is set here rather than inherited, or the case
+# would assert whatever shell the operator happens to use.
+test_the_completion_advice_matches_the_users_shell() {
+    SHELL=/bin/zsh run_launcher_with_envs "base $VERSIONED_ENV" install
+    assert_status 0 "$LAUNCHER_STATUS" "install should succeed under zsh"
+    # The ACTIONABLE part, not the greeting: zsh cannot find a completion until its directory
+    # is on $fpath, so the line that puts it there is what the message owes a zsh user. The
+    # wording around it is free to change without failing this.
+    assert_contains "$LAUNCHER_OUTPUT" "fpath=(" "zsh needs the fpath line"
+    assert_contains "$LAUNCHER_OUTPUT" "zsh/site-functions" "naming the directory it just wrote"
+
+    SHELL=/bin/bash run_launcher_with_envs "base $VERSIONED_ENV" install
+    assert_status 0 "$LAUNCHER_STATUS" "install should succeed under bash"
+    # `fpath=(` and not `~/.zshrc`: the PATH advice names ~/.zshrc too, for a prefix that is
+    # not on PATH - which it never is in a sandbox - so that needle matches a message this case
+    # is not about.
+    assert_not_contains "$LAUNCHER_OUTPUT" "fpath=(" \
+        "and must not hand a bash user the zsh incantation"
 }
 
 # UNINSTALLING THE LAST VERSION TAKES IT WITH IT. A completion left behind completes a command

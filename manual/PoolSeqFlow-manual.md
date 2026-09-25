@@ -251,18 +251,26 @@ Once this is done the folder you downloaded has served its purpose. Everything f
 
 #### Tab completion { #tab-completion }
 
-Installing also writes a completion for `PoolSeqFlow` into `~/.local/share/bash-completion/completions/`, or wherever `XDG_DATA_HOME` points. **In bash it works in your next shell and there is nothing to do.**
+Installing writes a completion for each shell, under `XDG_DATA_HOME` or `~/.local/share`:
 
-**zsh does not read that directory**, so it needs two lines in `~/.zshrc` — the installer prints them with the right path filled in:
-
-```bash
-autoload -U +X bashcompinit && bashcompinit
-. ~/.local/share/bash-completion/completions/PoolSeqFlow
+```
+~/.local/share/bash-completion/completions/PoolSeqFlow    for bash
+~/.local/share/zsh/site-functions/_PoolSeqFlow            for zsh
 ```
 
-It completes every command, the two targets `check` takes, the analysis commands, and **the modules you actually have installed** — so `PoolSeqFlow analysis <TAB>` lists the modules in that installation's store rather than a fixed list. `analysis modules install <TAB>` deliberately offers nothing: those names come from the catalogue over the network, and a keystroke should not make a network request.
+**The installer then tells you what your own shell needs**, rather than explaining every shell to everybody — it reads `$SHELL` and prints only the part that applies to you.
 
-Uninstalling the last installed version removes the completion. Another version left installed keeps it, since the command it completes is still there.
+**In bash there is nothing to do**, as long as `bash-completion` is installed; that is what reads the directory, and without it bash needs the file sourced like any other shell. The installer checks and says which case you are in.
+
+**zsh needs one line**, because it looks for completions on `$fpath` and every directory on it by default belongs to root. Add yours in `~/.zshrc`, **before** the line that runs `compinit` or sources oh-my-zsh:
+
+```zsh
+fpath=(~/.local/share/zsh/site-functions $fpath)
+```
+
+Each completes every command, the two targets `check` takes, the analysis commands, and **the modules you actually have installed** — so `PoolSeqFlow analysis <TAB>` lists the modules in that installation's store rather than a fixed list. `analysis modules install <TAB>` deliberately offers nothing: those names come from the catalogue over the network, and a keystroke should not make a network request. The zsh one also shows what each command is for as you scroll the list.
+
+Uninstalling the last installed version removes both. Another version left installed keeps them, since the command they complete is still there.
 
 It never runs `PoolSeqFlow` itself. Starting the wrapper means starting conda, which takes long enough to be felt on a keypress, so the completion reads what it needs from the filesystem instead.
 

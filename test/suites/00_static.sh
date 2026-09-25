@@ -1469,8 +1469,19 @@ test_the_completion_offers_every_verb_the_wrapper_takes() {
         printf "%s\n" "${COMPREPLY[@]}"' _ "$REPO_ROOT" | sort -u)
 
     [ -n "$dispatched" ] || { fail_case "no verbs were extracted from the wrapper's case"; return; }
-    [ -n "$offered" ] || { fail_case "the completion offered nothing at all"; return; }
-    assert_eq "$dispatched" "$offered" "the completion and the wrapper must agree on the verbs"
+    [ -n "$offered" ] || { fail_case "the bash completion offered nothing at all"; return; }
+    assert_eq "$dispatched" "$offered" "the bash completion and the wrapper must agree"
+
+    # THE ZSH COMPLETION IS A SECOND LIST AND HAS TO AGREE TOO. It is native rather than a
+    # bash completion run through bashcompinit, because that emulates `compgen` and the
+    # emulation ignores the `--` prefix argument - so a shared file offers every candidate
+    # whatever has been typed. Two files is the cost of that, and this is what keeps them
+    # from drifting apart or from the wrapper.
+    local zsh_offered
+    zsh_offered=$(sed -n "/^    verbs=(/,/^    )/p" "$REPO_ROOT/lib/_PoolSeqFlow" \
+        | sed -n "s/^        '\([a-z_]*\):.*/\1/p" | sort -u)
+    [ -n "$zsh_offered" ] || { fail_case "the zsh completion offered nothing at all"; return; }
+    assert_eq "$dispatched" "$zsh_offered" "the zsh completion and the wrapper must agree"
 }
 
 # The second level, for the two subcommands that have a fixed set. `analysis` also offers the

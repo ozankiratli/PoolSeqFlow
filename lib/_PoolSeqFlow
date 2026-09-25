@@ -1,0 +1,139 @@
+#compdef PoolSeqFlow
+#
+# Tab completion for PoolSeqFlow, native to zsh.
+#
+# AUTOLOADED, never sourced. `PoolSeqFlow install` puts it in a site-functions directory and
+# prints the one line that adds that directory to $fpath. zsh reads the `#compdef` line above
+# and registers it for every command name given there.
+#
+# WHY THIS EXISTS BESIDE THE BASH ONE. zsh can run a bash completion through `bashcompinit`, and
+# that was the first attempt: one file, both shells. It does not hold up.
+#
+#   - `bashcompinit` emulates `compgen`, and the emulation IGNORES the `--` prefix argument.
+#     Measured: `compgen -W 'alpha beta' -- 'a'` answers `alpha beta`. A bash completion under
+#     zsh therefore offers every candidate whatever has been typed, and only zsh's own
+#     re-filtering in compadd hides it.
+#   - It has to be loaded after `compinit` and before anything that completes, which in an
+#     oh-my-zsh configuration is a placement question the user has to get right.
+#   - Descriptions are not available at all.
+#
+# 00_static checks the verbs below against the wrapper's own `case`, the same way it checks the
+# bash completion, so the two cannot drift from it or from each other.
+#
+# NOTHING HERE RUNS THE WRAPPER. Starting it means starting conda, about 0.4s, which a keystroke
+# cannot pay. Module names come from the filesystem.
+
+# The installation the command resolves to. $bindir/PoolSeqFlow is a symlink into
+# $prefix/opt/PoolSeqFlow-<version>/, so the resolved file's directory is the installation.
+# $1 is the command word as typed. It cannot be read from $words here: `_arguments '*::'`
+# re-slices that array for the sub-context, so inside it $words[1] is `analysis` rather than
+# the command - which is why module discovery found nothing until this was passed in.
+_poolseqflow_install_dir() {
+    local exe
+    exe=${commands[$1]:-$(whence -p "$1" 2>/dev/null)}
+    [[ -n $exe ]] || return 1
+    exe=${exe:A}
+    print -r -- "${exe:h}"
+}
+
+# The modules installed there. `lib` holds the shared libraries and is never named by a user.
+_poolseqflow_modules() {
+    local dir entry
+    dir=$(_poolseqflow_install_dir "$1") || return 0
+    [[ -d $dir/analysis/modules ]] || return 0
+    for entry in $dir/analysis/modules/*(/N); do
+        [[ ${entry:t} == lib ]] && continue
+        print -r -- "${entry:t}"
+    done
+}
+
+_PoolSeqFlow() {
+    local curcontext="$curcontext" state line ret=1
+    local -a verbs analysis_verbs module_verbs modules
+    # Before _arguments re-slices $words for the sub-context.
+    local cmdname=$words[1]
+
+    verbs=(
+        'install:create this release'\''s conda environment and install the pipeline'
+        'init:put a project'\''s starting files in the current directory'
+        'init_multi:the same, for a project running several datasets'
+        'check:verify an installation or a project'
+        'run:start, or resume, the pipeline'
+        'dryrun:show where the work would go without doing any of it'
+        'dryclean:remove what a dry run left behind'
+        'migrate_config:bring a parameters.config written for an earlier release up to date'
+        'clean:remove the Nextflow work directory'
+        'reset:remove the work directory and every output'
+        'analysis:the analysis layer, which reads finished results'
+        'version:print the version'
+        'cite:print how to cite this release'
+        'list:show the installed versions'
+        'uninstall:remove this version'
+        'uninstall_all:remove every installed version'
+    )
+
+    analysis_verbs=(
+        'install:build the analysis environment, which carries R'
+        'check:verify the analysis installation'
+        'modules:the module store'
+        'complete:move finished analyses to permanent storage'
+        'version:print the frame version'
+        'cite:print what to cite for the analysis layer'
+        'uninstall:remove this version'\''s analysis environment'
+    )
+
+    module_verbs=(
+        'list:what is installed here'
+        'available:what the catalogue offers'
+        'install:install a module by name'
+        'uninstall:remove an installed module'
+    )
+
+    _arguments -C '1: :->verb' '*:: :->rest' && ret=0
+
+    case $state in
+        verb)
+            _describe -t commands 'PoolSeqFlow command' verbs && ret=0
+            ;;
+        rest)
+            case $words[1] in
+                check)
+                    _describe -t targets 'check target' \
+                        '(install:the installation, every tool it is built to run
+                          project:this project, as it is configured)' && ret=0
+                    ;;
+                analysis)
+                    # $CURRENT is relative to the re-sliced $words that `*::` produces, where
+                    # $words[1] is `analysis` itself - so completing the word after it is 2.
+                    case $CURRENT in
+                        2)
+                            modules=(${(f)"$(_poolseqflow_modules "$cmdname")"})
+                            _describe -t commands 'analysis command' analysis_verbs && ret=0
+                            (( $#modules )) && { _describe -t modules 'installed module' modules && ret=0 }
+                            ;;
+                        3)
+                            if [[ $words[2] == modules ]]; then
+                                _describe -t commands 'modules command' module_verbs && ret=0
+                            else
+                                _describe -t options 'option' \
+                                    '(nocpp:run the plain-R path, which needs no compiler)' && ret=0
+                            fi
+                            ;;
+                        4)
+                            # `modules install <name>` offers nothing: those names come from the
+                            # catalogue, over the network, and a keystroke may not fetch it.
+                            if [[ $words[2] == modules && $words[3] == uninstall ]]; then
+                                modules=(${(f)"$(_poolseqflow_modules "$cmdname")"})
+                                (( $#modules )) && { _describe -t modules 'installed module' modules && ret=0 }
+                            fi
+                            ;;
+                    esac
+                    ;;
+            esac
+            ;;
+    esac
+
+    return ret
+}
+
+_PoolSeqFlow "$@"

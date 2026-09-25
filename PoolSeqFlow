@@ -416,38 +416,94 @@ completion_dir() {
 # into a directory that is gone. A failure here does not fail the install: completion is a
 # convenience and the tool works without it.
 install_completion() {
-    local src="$1/lib/poolseqflow-completion.bash" dir
-    [ -f "$src" ] || return 0
-    dir=$(completion_dir)
-    mkdir -p "$dir" 2>/dev/null || { echo "Could not create $dir; tab completion not installed."; return 0; }
-    if ! cp "$src" "$dir/PoolSeqFlow" 2>/dev/null; then
-        echo "Could not write $dir/PoolSeqFlow; tab completion not installed."
+    local bash_src="$1/lib/poolseqflow-completion.bash" zsh_src="$1/lib/_PoolSeqFlow"
+    local bash_dir zsh_dir wrote=""
+    bash_dir=$(completion_dir)
+    zsh_dir=$(zsh_completion_dir)
+
+    if [ -f "$bash_src" ] && mkdir -p "$bash_dir" 2>/dev/null &&
+       cp "$bash_src" "$bash_dir/PoolSeqFlow" 2>/dev/null; then
+        wrote="$wrote    $bash_dir/PoolSeqFlow"$'\n'
+    fi
+    if [ -f "$zsh_src" ] && mkdir -p "$zsh_dir" 2>/dev/null &&
+       cp "$zsh_src" "$zsh_dir/_PoolSeqFlow" 2>/dev/null; then
+        wrote="$wrote    $zsh_dir/_PoolSeqFlow"$'\n'
+    fi
+    if [ -z "$wrote" ]; then
+        echo "Could not write the tab completions; the tool works without them."
         return 0
     fi
+
     echo "Tab completion installed:"
-    echo "    $dir/PoolSeqFlow"
+    printf '%s' "$wrote"
     echo ""
-    echo "  bash picks it up in your next shell."
-    echo "  zsh does not read that directory. Add this to ~/.zshrc:"
+    completion_advice "$bash_dir/PoolSeqFlow" "$zsh_dir"
     echo ""
-    echo "      autoload -U +X bashcompinit && bashcompinit"
-    echo "      . $dir/PoolSeqFlow"
-    echo ""
+}
+
+# Where a user's own zsh completions live. Not on zsh's default fpath - every entry there needs
+# root - so the user adds it, which is the line completion_advice prints.
+zsh_completion_dir() {
+    printf '%s/zsh/site-functions' "${XDG_DATA_HOME:-$HOME/.local/share}"
+}
+
+# Where bash-completion itself lives, or empty. Without it nothing reads the directory above,
+# so bash needs the file sourced by hand like zsh does.
+bash_completion_present() {
+    local p
+    for p in /usr/share/bash-completion/bash_completion \
+             /etc/bash_completion \
+             /usr/local/share/bash-completion/bash_completion; do
+        [ -r "$p" ] && { printf '%s' "$p"; return 0; }
+    done
+    return 1
+}
+
+# WHAT TO DO NEXT, FOR THE SHELL YOU ACTUALLY USE. Printing both cases means the half that
+# applies to you arrives buried in the half that does not, and the half that gets skipped is
+# the one with work in it. $SHELL is the login shell, which is what your interactive sessions
+# will be, whatever this install happens to be running under.
+completion_advice() {
+    local file="$1" zdir="$2"
+    case "${SHELL##*/}" in
+        zsh)
+            echo "  Your shell is zsh. Add this to ~/.zshrc, BEFORE compinit or oh-my-zsh:"
+            echo ""
+            echo "      fpath=($zdir \$fpath)"
+            ;;
+        bash)
+            if bash_completion_present > /dev/null; then
+                echo "  bash-completion is installed."
+            else
+                echo "  bash-completion is not installed on your system."
+                echo "  Either install bash-completion or add this line to ~/.bashrc:"
+                echo ""
+                echo "      . $file"
+            fi
+            ;;
+        *)
+            echo "  bash reads its directory when bash-completion is installed."
+            echo "  zsh needs its own on \$fpath, in ~/.zshrc before compinit:"
+            echo ""
+            echo "      fpath=($zdir \$fpath)"
+            ;;
+    esac
 }
 
 # Remove the completion, but only when no other installed version still provides one.
 remove_completion() {
     local prefix file
     prefix=$(install_prefix)
-    file="$(completion_dir)/PoolSeqFlow"
-    [ -f "$file" ] || return 0
-    # Another version left installed keeps it: the file is the same for every version, and the
-    # command it completes still exists.
+    # Another version left installed keeps them: the files are the same for every version, and
+    # the command they complete still exists.
     if ls -d "$prefix"/opt/PoolSeqFlow-*/ > /dev/null 2>&1; then
         return 0
     fi
-    rm -f "$file" 2>/dev/null || true
-    echo "Removed $file"
+    for file in "$(completion_dir)/PoolSeqFlow" "$(zsh_completion_dir)/_PoolSeqFlow"; do
+        [ -f "$file" ] || continue
+        rm -f "$file" 2>/dev/null || true
+        echo "Removed $file"
+    done
 }
 
 # Every PoolSeqFlow environment except this version's own and the legacy unversioned one.
