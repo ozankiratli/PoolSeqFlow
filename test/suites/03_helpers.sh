@@ -833,6 +833,169 @@ A1,12
     assert_contains "$PM_ERR" "pt_wingspan" "and showing the shape of one"
 }
 
+# ------------------------------------------------- files a person actually saved --
+#
+# Every metadata and multi-run file in this suite until now was written BY this suite: ASCII,
+# LF, commas, exact spelling. None of them was ever the file a collaborator sends back after
+# opening it in Excel, so this whole class of defect was invisible by construction.
+#
+# FOUND ON A COLLABORATOR'S MACHINE, 2026-09-25. A correct metadata.csv was refused with
+# "line 1: no 'SampleID' column", on a file whose first word is plainly SampleID. Measured
+# afterwards: SEVEN different file shapes produce that identical message - a UTF-8 byte-order
+# mark, a semicolon delimiter, a tab delimiter, 'Sample ID', 'sampleid', a zero-width space, and
+# curly quotes - and `dos2unix` fixes exactly one of them.
+#
+# The mark had a second form that is worse than the refusal. With SampleID in any column but the
+# first, the file was ACCEPTED: the leading column's name carried the mark, so it matched
+# nothing, RG_Sample was then defaulted from SampleID, and every pool that should have merged
+# became its own pool. Exit 0, no message, different numbers.
+#
+# So the assertions below are not only that each shape is handled. Where a file is genuinely
+# unusable they assert the MESSAGE NAMES WHAT WAS READ, because the defect that cost a day was a
+# message that reported what we wanted and never what we found.
+
+# Write metadata.csv from a printf FORMAT rather than a literal, so a case can place bytes that
+# no editor displays. pm() takes a literal and cannot express one in an ASCII source file.
+pm_bytes() {
+    helpers_sandbox
+    # shellcheck disable=SC2059
+    printf "$1" > "$HELPERS_DIR/metadata.csv"
+    PM_STATUS=0
+    python3 "$REPO_ROOT/bin/parse_metadata.py" "$HELPERS_DIR/metadata.csv" \
+        > "$HELPERS_DIR/metadata.json" 2>"$HELPERS_DIR/pm.err" || PM_STATUS=$?
+    PM_ERR=$(cat "$HELPERS_DIR/pm.err")
+}
+
+test_metadata_accepts_a_byte_order_mark() {
+    pm_bytes '\xef\xbb\xbfSampleID,RG_Sample,param_poolSize\nA1,PoolA,50\n'
+    assert_status 0 "$PM_STATUS" "Excel's CSV UTF-8 is how a collaborator saves: $PM_ERR"
+    assert_contains "$(cat "$HELPERS_DIR/metadata.json")" '"SampleID": "A1"' \
+        "and the column should be SampleID, not a name carrying the mark"
+}
+
+# THE SILENT FORM, and the reason the fix is the codec in rows_of() rather than a check on the
+# header. Before it, this file was accepted with PoolA orphaned under a key nothing reads and
+# RG_Sample defaulted from SampleID - two lanes of one pool becoming two pools, in a run that
+# reported success and published a VCF with an extra column.
+test_metadata_does_not_lose_the_first_column_to_a_byte_order_mark() {
+    pm_bytes '\xef\xbb\xbfRG_Sample,SampleID\nPoolA,A1\nPoolA,A2\n'
+    assert_status 0 "$PM_STATUS" "the file is well formed: $PM_ERR"
+    local json; json=$(cat "$HELPERS_DIR/metadata.json")
+    assert_contains "$json" '"RG_Sample": "PoolA"' \
+        "both rows belong to PoolA; a mark on that column splits the pool"
+    assert_not_contains "$json" '"RG_Sample": "A1"' \
+        "RG_Sample must not be defaulted from SampleID when the user set it"
+}
+
+# A SEMICOLON FILE is what Excel writes wherever the comma is the decimal mark, and dos2unix does
+# nothing for it. The whole line arrives as one column, so listing what was read says "your
+# delimiter is wrong" where "no SampleID column" says something the user can see is false.
+test_metadata_names_the_columns_it_read_when_sampleid_is_missing() {
+    pm 'SampleID;RG_Sample;param_poolSize
+A1;PoolA;50
+'
+    assert_status 1 "$PM_STATUS" "a semicolon file has no SampleID column"
+    assert_contains "$PM_ERR" "names read from that line" "the message should say what it read"
+    assert_contains "$PM_ERR" "'SampleID;RG_Sample;param_poolSize'" \
+        "showing the whole line as the single column it parsed"
+}
+
+# A ZERO-WIDTH SPACE is not whitespace, so no strip() removes it. It is the shape where the
+# listing has to print an ESCAPE rather than the character, or the message shows 'SampleID'
+# spelled correctly and claims it is missing - which is where this started.
+test_metadata_shows_an_invisible_character_as_an_escape() {
+    pm_bytes '\xe2\x80\x8bSampleID,RG_Sample\nA1,PoolA\n'
+    assert_status 1 "$PM_STATUS" "a zero-width space is not stripped and does not match"
+    # The needle is assembled from a lone backslash on purpose. Written out as the escape
+    # sequence it stands for, it becomes the character itself in too many editors - which is
+    # exactly the confusion this case is about, and it would make the assertion pass on a
+    # message that printed the character invisibly.
+    local esc='\'
+    assert_contains "$PM_ERR" "${esc}u200b" "the listing must escape it, not print it invisibly"
+}
+
+# Excel's "Unicode Text" and a PowerShell redirect both write UTF-16. UnicodeDecodeError is a
+# ValueError, so it fell past the OSError and csv.Error handlers and reached the user as a raw
+# traceback, which names no file and suggests nothing.
+test_metadata_reports_a_utf16_file_rather_than_crashing() {
+    helpers_sandbox
+    python3 -c \
+        "import sys; open(sys.argv[1],'wb').write('SampleID,RG_Sample\nA1,PoolA\n'.encode('utf-16'))" \
+        "$HELPERS_DIR/metadata.csv"
+    PM_STATUS=0
+    python3 "$REPO_ROOT/bin/parse_metadata.py" "$HELPERS_DIR/metadata.csv" \
+        > "$HELPERS_DIR/metadata.json" 2>"$HELPERS_DIR/pm.err" || PM_STATUS=$?
+    PM_ERR=$(cat "$HELPERS_DIR/pm.err")
+    assert_status 1 "$PM_STATUS" "a UTF-16 file cannot be read as CSV"
+    assert_contains "$PM_ERR" "not UTF-8 text" "and the message should say why"
+    assert_contains "$PM_ERR" "CSV UTF-8" "and what to save it as instead"
+    assert_not_contains "$PM_ERR" "Traceback" "rather than a traceback"
+}
+
+# The multi-run table is edited in the same spreadsheet as the metadata and had the identical
+# line. Its two messages contradicted each other on screen, both blaming an invisible mark:
+# "'RunID' is not a parameter name" directly above "no 'RunID' column".
+mr_bytes() {
+    helpers_sandbox
+    # shellcheck disable=SC2059
+    printf "$1" > "$HELPERS_DIR/runs.csv"
+    MR_OUT=$(python3 "$REPO_ROOT/bin/parse_multirun.py" "$HELPERS_DIR/runs.csv" 2>"$HELPERS_DIR/stderr")
+    MR_STATUS=$?
+    MR_ERR=$(cat "$HELPERS_DIR/stderr")
+}
+
+test_multirun_accepts_a_byte_order_mark() {
+    mr_bytes '\xef\xbb\xbfRunID,referenceFile\nrefA,a.fasta.gz\n'
+    assert_status 0 "$MR_STATUS" "the multi-run table is written in Excel too: $MR_ERR"
+    assert_contains "$MR_OUT" '"RunID": "refA"' "and RunID should be RunID"
+}
+
+test_multirun_names_the_columns_it_read_when_runid_is_missing() {
+    mr 'RunID;referenceFile
+refA;a.fasta.gz
+'
+    assert_status 1 "$MR_STATUS" "a semicolon file has no RunID column"
+    assert_contains "$MR_ERR" "names read from that line" "the message should say what it read"
+    assert_contains "$MR_ERR" "'RunID;referenceFile'" "as the single column it parsed"
+}
+
+# A NOTE AND NOT A REFUSAL, and the note is about the FILE rather than any row: the parsers read
+# past a mark, so nothing computed from this table is wrong. It is said because the editor that
+# added one adds it to everything it saves, and in parameters.config a mark stops the run
+# outright - measured against this release. This is the cheap place to find that out.
+test_metadata_notes_a_byte_order_mark_it_read_past() {
+    pm_bytes '\xef\xbb\xbfSampleID,RG_Sample\nA1,PoolA\n'
+    assert_status 0 "$PM_STATUS" "the file is usable"
+    assert_contains "$PM_ERR" "usable, with notes" "and reported as usable"
+    assert_contains "$PM_ERR" "byte-order mark" "with the mark named"
+    assert_contains "$PM_ERR" "parameters.config" "and the file where it would be fatal"
+    assert_contains "$PM_ERR" "dos2unix" "and what removes it"
+}
+
+test_metadata_says_nothing_about_a_file_with_no_mark() {
+    pm 'SampleID,RG_Sample
+A1,PoolA
+'
+    assert_status 0 "$PM_STATUS" "an ordinary file is ordinary"
+    assert_not_contains "$PM_ERR" "byte-order mark" "and gets no note about one"
+}
+
+test_multirun_notes_a_byte_order_mark_it_read_past() {
+    mr_bytes '\xef\xbb\xbfRunID,referenceFile\nrefA,a.fasta.gz\n'
+    assert_status 0 "$MR_STATUS" "the file is usable"
+    assert_contains "$MR_ERR" "usable, with notes" "and reported as usable"
+    assert_contains "$MR_ERR" "byte-order mark" "with the mark named"
+    assert_contains "$MR_ERR" "dos2unix" "and what removes it"
+}
+
+test_multirun_says_nothing_about_a_file_with_no_mark() {
+    mr 'RunID,referenceFile
+refA,a.fasta.gz
+'
+    assert_status 0 "$MR_STATUS" "an ordinary file is ordinary"
+    assert_not_contains "$MR_ERR" "byte-order mark" "and gets no note about one"
+}
+
 # ---------------------------------------------------------------- citations --
 
 # Writes both citation files into a scratch directory and echoes it. Runs against the real

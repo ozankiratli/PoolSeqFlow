@@ -160,6 +160,56 @@ test_check_project_runs_in_the_project_with_the_environment_active() {
     assert_not_contains "$LAUNCHER_OUTPUT" "STUB check_install ran" "not the installation one"
 }
 
+# THE REAL bin/check_project.sh, not the stub the cases above use: what is under test here is the
+# script's own verdict rather than the wrapper's dispatch to it.
+#
+# PATH is cut back so that nextflow cannot be found, which keeps these cases free of a JVM and
+# asserts the property that makes them possible: the byte-order-mark verdict is printed BEFORE
+# the parse it protects, so it stands whether or not nextflow is there. A check that could only
+# speak after a successful parse would be silent in the one case it exists for.
+#
+# WHY IT EXISTS, measured 2026-09-26: a UTF-8 mark makes Nextflow refuse the config, and the
+# refusal it writes is `Unexpected character: ''` - the character rendered as nothing, against a
+# line the user can see is correct. Windows editors add the mark when they save as UTF-8.
+check_project_on() {
+    CP_OUT=$(cd "$1" && env PATH="/usr/bin:/bin" bash "$REPO_ROOT/bin/check_project.sh" 2>&1)
+    CP_STATUS=$?
+}
+
+test_check_project_passes_a_config_with_no_byte_order_mark() {
+    local proj; proj=$(guard_path "$TEST_TMPDIR/bom-clean")
+    rm -rf "$proj"; mkdir -p "$proj"
+    cp "$REPO_ROOT/parameters.config.template" "$proj/parameters.config"
+    check_project_on "$proj"
+    assert_contains "$CP_OUT" "NO BYTE-ORDER MARK" "a plain file should be said to be plain"
+    assert_not_contains "$CP_OUT" "dos2unix" "and no fix should be offered for it"
+}
+
+test_check_project_names_a_utf8_byte_order_mark_in_the_config() {
+    local proj; proj=$(guard_path "$TEST_TMPDIR/bom-utf8")
+    rm -rf "$proj"; mkdir -p "$proj"
+    { printf '\xef\xbb\xbf'; cat "$REPO_ROOT/parameters.config.template"; } > "$proj/parameters.config"
+    check_project_on "$proj"
+    assert_status 1 "$CP_STATUS" "a config Nextflow cannot parse is a failure, not a note"
+    assert_contains "$CP_OUT" "STARTS WITH A BYTE-ORDER MARK" "the verdict should name the cause"
+    assert_contains "$CP_OUT" "utf-8" "and which mark it is"
+    assert_contains "$CP_OUT" "dos2unix $proj/parameters.config" \
+        "and give a command that can be pasted, with the file in it"
+}
+
+# The utf-16 branch, so the check is not a test for one three-byte prefix. Excel's "Unicode Text"
+# and a PowerShell redirect both write this, and dos2unix converts it to UTF-8 - measured.
+test_check_project_names_a_utf16_byte_order_mark_in_the_config() {
+    local proj; proj=$(guard_path "$TEST_TMPDIR/bom-utf16")
+    rm -rf "$proj"; mkdir -p "$proj"
+    python3 -c "import sys; open(sys.argv[1],'wb').write(open(sys.argv[2],'rb').read().decode().encode('utf-16'))" \
+        "$proj/parameters.config" "$REPO_ROOT/parameters.config.template"
+    check_project_on "$proj"
+    assert_status 1 "$CP_STATUS" "a UTF-16 config cannot be parsed either"
+    assert_contains "$CP_OUT" "STARTS WITH A BYTE-ORDER MARK" "the verdict should name the cause"
+    assert_contains "$CP_OUT" "utf-16" "and say it is a UTF-16 one, not a UTF-8 one"
+}
+
 # `conda env create` takes its name from environment.yml unless -n overrides it. Without the
 # override every release lands in one environment again, which is the bug being fixed.
 test_install_creates_the_versioned_name_explicitly() {
