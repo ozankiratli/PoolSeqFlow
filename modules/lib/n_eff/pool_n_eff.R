@@ -2,7 +2,7 @@
 #
 #     1/n_eff = 1/n_chrom + (1 - 1/n_chrom) * 1/harmonic_depth
 #
-# The harmonic mean is what averages n_eff, because 1/n_eff is linear in 1/depth — so a pool
+# The harmonic mean is what averages n_eff, because 1/n_eff is linear in 1/depth -- so a pool
 # collapses to two numbers rather than one per site, exactly.
 #
 # `harmonic_depth` is harmonic_mean() over whatever set of positions is being summarized: the

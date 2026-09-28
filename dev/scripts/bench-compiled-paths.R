@@ -90,7 +90,7 @@ for (n in sizes) {
     #
     # ITS RATIO IS NOT THE PARSERS' RATIO AND SHOULD NOT BE AVERAGED WITH THEM. The two above
     # are string splits, memory-bandwidth bound, and land near ten. This one is k(k-1)/2
-    # separate rowsum() passes over the allele matrix — fifteen at six pools — so what the
+    # separate rowsum() passes over the allele matrix -- fifteen at six pools -- so what the
     # compiled form removes is interpreted call overhead that scales with the PAIR count, not
     # with the site count. Expect it to climb with more pools where the parsers' will not.
     parsed <- allele_frequencies_cpp(cells)

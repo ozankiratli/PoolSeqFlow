@@ -20,13 +20,13 @@
 #
 # `columns` is one column of the depth table per pool: one comma-separated count list per site,
 # REF first and then each ALT. A site holds any number of alleles, so the frequencies are one
-# long vector per pool rather than a rectangle, and `site` is the index that groups them —
+# long vector per pool rather than a rectangle, and `site` is the index that groups them --
 # `rowsum(x, site)` is a per-site total and `depth[site, ]` is a per-allele depth.
 #
 # THE ALT COLUMN IS ONE LIST FOR THE WHOLE COHORT, so every pool's cell at a site holds one
 # count per allele. A site where they differ is refused, naming the pool and the site.
 #
-# A pool with no reads at a site gets depth 0 and no frequency — there is nothing observed there
+# A pool with no reads at a site gets depth 0 and no frequency -- there is nothing observed there
 # to be a frequency of. bcftools' missing value takes that pool's whole site with it, as it does
 # in site_diversity().
 allele_frequencies <- function(columns) {

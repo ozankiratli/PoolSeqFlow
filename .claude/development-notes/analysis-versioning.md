@@ -19,7 +19,7 @@ last_change_day() {
 }
 ```
 
-Work sits uncommitted in this project for as long as it is under review — that is the whole point of the working tree being the review surface. So a frame change made on the 7th and bumped on the 7th went BEHIND again at midnight on the 8th, and again on the 9th, each time asking for a fresh stamp from a frame nobody had touched since. A new version for a new day, which is exactly what the rule forbids.
+Work sits uncommitted in this project for as long as it is under review -- that is the whole point of the working tree being the review surface. So a frame change made on the 7th and bumped on the 7th went BEHIND again at midnight on the 8th, and again on the 9th, each time asking for a fresh stamp from a frame nobody had touched since. A new version for a new day, which is exactly what the rule forbids.
 
 It now takes the newest mtime among the changed paths, falling back to today only when the change removed files and left no mtime to read.
 
@@ -34,7 +34,7 @@ The obvious repair is to drop dates from the frame check entirely and ask what t
 | moved it | `306dd26`, `c6544d7`, `2915346`, `a06c312` |
 | did not | `381541e`, `fabdb5c`, `4cb4ae7`, `e76774a` |
 
-Each of the four that did not landed on a day an earlier commit had already bumped — which is the property the day comparison exists to give: **one bump covers a day's frame changes.** `e76774a` is the clearest case for keeping it: a comment-only pass over `analysis/lib/`, which changes nothing a derivation produces and should not need a version of its own.
+Each of the four that did not landed on a day an earlier commit had already bumped -- which is the property the day comparison exists to give: **one bump covers a day's frame changes.** `e76774a` is the clearest case for keeping it: a comment-only pass over `analysis/lib/`, which changes nothing a derivation produces and should not need a version of its own.
 
 So the day comparison stays for committed history, and only the dirty answer changed.
 
@@ -42,7 +42,7 @@ So the day comparison stays for committed history, and only the dirty answer cha
 
 **A change confined to `analysis/modules/<name>/test/` does not move that module's manifest version.** Found the same day, by the check reporting `basicstats` as behind after two of its cases were edited.
 
-The reasoning is the rule above applied where it also holds. `analysis/modules/*/test/` carries `export-ignore`, so nothing in it reaches a published module tarball — a case cannot change what a user installs or what the module computes. The manifest version is what `modules install` sorts on and what every published result records the module *by*, so moving it for a test fix says the module changed when it did not.
+The reasoning is the rule above applied where it also holds. `analysis/modules/*/test/` carries `export-ignore`, so nothing in it reaches a published module tarball -- a case cannot change what a user installs or what the module computes. The manifest version is what `modules install` sorts on and what every published result records the module *by*, so moving it for a test fix says the module changed when it did not.
 
 `dirty "$dir" ":(exclude)${dir}test"` is the whole change. A change to `main.nf`, the module's R, its manifest, its `references.bib` or its `citations.json` still requires the bump.
 
@@ -50,7 +50,7 @@ The reasoning is the rule above applied where it also holds. `analysis/modules/*
 
 ## What guards it
 
-`test/suites/00_static.sh`, `test_the_frame_version_moves_with_a_change_and_not_with_the_calendar`. It builds a repository of its own under `TEST_TMPDIR` — a frame, a catalogue and a module with a case of its own — and runs the script against that, because the script takes its root from its own location and the answer depends on whether the tree it reads is dirty.
+`test/suites/00_static.sh`, `test_the_frame_version_moves_with_a_change_and_not_with_the_calendar`. It builds a repository of its own under `TEST_TMPDIR` -- a frame, a catalogue and a module with a case of its own -- and runs the script against that, because the script takes its root from its own location and the answer depends on whether the tree it reads is dirty.
 
 Two assertions carry it. A frame file whose mtime is in January, a version that says January, and a check that stays quiet although today is September. And a module whose `test/` changed staying quiet while the same module's `main.nf` changing does not.
 

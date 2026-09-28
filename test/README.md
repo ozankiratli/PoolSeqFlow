@@ -12,7 +12,7 @@ test/run_tests.sh --keep          leave the working directories behind for inspe
 ```
 
 **Run `--fast` constantly, and the full suite only for a release or the end of a major
-feature.** In between, run the suite that covers what you changed — `--suite <name>` takes a
+feature.** In between, run the suite that covers what you changed -- `--suite <name>` takes a
 substring and may be repeated, and the mapping from what you touched to which suite to run is
 the table in `CLAUDE.md` at the repository root.
 
@@ -34,7 +34,7 @@ the same arrangement `dev/` uses.
 | `lib/harness.sh` | Assertions and result accounting |
 | `lib/sandbox.sh` | Throwaway project directories, and the stub conda |
 | `lib/analysis.sh` | The analysis layer's shared fixtures: baselines, planted results, the corpus |
-| `tools/make_fixture.py` | Generates the fixture. A development tool — its output is committed |
+| `tools/make_fixture.py` | Generates the fixture. A development tool -- its output is committed |
 | `tools/freq_corpus.py` | The analytic corpus a planted result carries, and what a module must compute from it |
 | `data/base/` | The committed fixture: 6 samples, 20 kb genome, 3 genes, ~80x |
 | `suites/00_static.sh` | Syntax, release packaging, version consistency. No data needed |
@@ -45,12 +45,12 @@ the same arrangement `dev/` uses.
 | `suites/03_helpers.sh` | Unit coverage for `bin/`, called directly. No conda, no fixture |
 | `suites/06_dryrun.sh` | The layout preview, and what `dryclean` will and will not delete |
 
-The analysis layer is nine suites rather than one. It runs **no** pipeline — artifacts are planted — but most of it still starts a Nextflow run per case, which is what makes running only the seam you touched worth doing.
+The analysis layer is nine suites rather than one. It runs **no** pipeline -- artifacts are planted -- but most of it still starts a Nextflow run per case, which is what makes running only the seam you touched worth doing.
 
 | Path | What it is |
 |---|---|
 | `suites/08_analysis_frame.sh` | What the frame is, what it reads, and what keeps it optional |
-| `suites/07_analysis_rlib.sh` | The shared R library, called directly. **No Nextflow at all** — seconds, not minutes |
+| `suites/07_analysis_rlib.sh` | The shared R library, called directly. **No Nextflow at all** -- seconds, not minutes |
 | `suites/09_analysis_modules.sh` | The module store, and what a module gets from the frame: its library, settings and artifact classes |
 | `suites/10_analysis_verify.sh` | What the frame checks before a module reads anything |
 | `suites/11_analysis_plan.sh` | Which results an invocation covers, and where each lands |
@@ -59,7 +59,7 @@ The analysis layer is nine suites rather than one. It runs **no** pipeline — a
 | `suites/14_analysis_series.sh` | Series, units and conditions |
 | `suites/15_analysis_results.sh` | What a module writes, what it carries, and completion |
 
-**A module ships its own cases**, discovered from `analysis/modules/*/test/*.sh` and run under a suite named after the module. A module is a pipeline published on its own timetable, so what judges it travels with it — which is also what lets a module somebody else wrote be tested the way ours are. The harness, the fixtures and the assertions stay shared; only the cases are the module's. They are `export-ignore`d from a release for the same reason `test/` is.
+**A module ships its own cases**, discovered from `analysis/modules/*/test/*.sh` and run under a suite named after the module. A module is a pipeline published on its own timetable, so what judges it travels with it -- which is also what lets a module somebody else wrote be tested the way ours are. The harness, the fixtures and the assertions stay shared; only the cases are the module's. They are `export-ignore`d from a release for the same reason `test/` is.
 
 **Every suite declares its cost** in a `# cost:` line, one of three words, and `--cost` selects on it:
 
@@ -69,12 +69,12 @@ The analysis layer is nine suites rather than one. It runs **no** pipeline — a
 | `jvm` | starts Nextflow per case, against planted artifacts | `05_guards` `06_dryrun`, the other analysis suites, and a module's own |
 | `pipeline` | runs the pipeline itself against the fixture | `04_pipeline` |
 
-The line between `static` and `jvm` is whether a case **builds** something. Asking `have_tools` and skipping is static — that is how `00_static` holds its `nextflow lint` case. Calling for a baseline or a pipeline run is not, and `00_static` refuses a suite that does both.
+The line between `static` and `jvm` is whether a case **builds** something. Asking `have_tools` and skipping is static -- that is how `00_static` holds its `nextflow lint` case. Calling for a baseline or a pipeline run is not, and `00_static` refuses a suite that does both.
 
 An undeclared suite reads as `pipeline`, so it can never slip into a cheap run by accident, and a static one that reaches for a builder is refused by name.
 
 **`--changed` works it out for you.** `dev/scripts/select-tests.py` reads what each suite
-declares it *runs* — a `# covers:` line in its header — and expands that through the include
+declares it *runs* -- a `# covers:` line in its header -- and expands that through the include
 graph into what the suite therefore depends on. A change to a file in that set selects the
 suite. Run the script directly to see the reasoning before committing to it:
 
@@ -83,8 +83,8 @@ $ dev/scripts/select-tests.py analysis/lib/nf/plan.nf
 $ dev/scripts/select-tests.py bin/depth_cutoff.py     # 04_pipeline 05_guards 03_helpers
 ```
 
-**Two halves, and only one of them is maintained by hand.** The graph is derived — `include {}
-from`, a shell `source`, a bare call to a helper in `bin/` — so a new import needs no
+**Two halves, and only one of them is maintained by hand.** The graph is derived -- `include {}
+from`, a shell `source`, a bare call to a helper in `bin/` -- so a new import needs no
 bookkeeping. What a suite *runs* has to be declared, because no parser can see it, and
 `00_static` refuses a source file that no suite reaches as well as a claimed path that does not
 exist.
@@ -93,12 +93,12 @@ exist.
 direction that answers the question: reading upwards alone misses a suite that goes through the
 same entry script, and reading both ways connects the whole repository to itself through
 `bin/atomic_mv.sh`, which twelve `.nf` files name. A change to the harness, or to the selector
-itself, selects everything — a selection that is too big costs minutes, one that is too small
+itself, selects everything -- a selection that is too big costs minutes, one that is too small
 costs a bug nobody was looking for.
 
 ## What to run, and when
 
-Counts move with every stage, so read them off the run rather than from here —
+Counts move with every stage, so read them off the run rather than from here --
 `grep -hc '^test_' test/suites/*.sh analysis/modules/*/test/*.sh` is the check, and it has to
 name the module suites too or it undercounts. At the time of writing:
 
@@ -106,7 +106,7 @@ name the module suites too or it undercounts. At the time of writing:
 |---|---|---|---|
 | `--cost static` | 236 | ~40 s | Needs nothing installed. The first thing to reach for |
 | `--fast` | 274 of 493 | ~2 min | The above, plus every case elsewhere that builds nothing |
-| `--suite <seam>` | varies | 3 s – 5 min | What you changed. `analysis_rlib` is 9 cases in three seconds |
+| `--suite <seam>` | varies | 3 s - 5 min | What you changed. `analysis_rlib` is 9 cases in three seconds |
 | everything | 493 | ~50 min | A release, or the end of a major feature |
 
 The two slow suites are slow for one reason: a Nextflow run costs about **21 seconds of
@@ -115,12 +115,12 @@ suite runtime is essentially a count of `nextflow run` invocations. Two conseque
 knowing before adding a case:
 
 - Prefer a **unit test in `03_helpers.sh`** over an end-to-end one. `bin/classify_manifest.sh`
-  exists as a separate script for exactly this reason — its edge cases (a value containing
+  exists as a separate script for exactly this reason -- its edge cases (a value containing
   `=`, an empty value, no trailing newline, an unparseable line) are milliseconds there and a
   JVM start each through a pipeline run. When new guard logic is worth testing thoroughly,
   extract it to `bin/` first.
 - Never give a case its own setup run. `05_guards.sh` builds one verified project and each
-  case works on a copy — 22ms against 21s. Doing it per case was most of that suite's
+  case works on a copy -- 22ms against 21s. Doing it per case was most of that suite's
   runtime and tested nothing.
 
 ## Two rules the suite is built around
@@ -158,7 +158,7 @@ Two helpers in `lib/sandbox.sh` are worth knowing about before writing a new cas
 
 `task_count <sandbox> <Workflow:Process>` reads the Nextflow trace and returns how many
 tasks that process ran. Use it whenever a change touches channel wiring. Every singleton
-artifact here — the verify token, the reference, both indexes, the snpEff marker — rides a
+artifact here -- the verify token, the reference, both indexes, the snpEff marker -- rides a
 value channel, which is what lets one index broadcast against N samples. An operator
 inserted into such a path turns it into a queue channel, and the run then still reports
 SUCCESS while doing the work once instead of N times. `test_each_step_runs_once_per_sample`
@@ -166,8 +166,8 @@ is the standing guard; extend it rather than trusting an exit status.
 
 `run_dictionaries_only <sandbox>` and `run_verify_only <sandbox>` run step 1 and step 0 by
 themselves, for questions that would otherwise cost a full end-to-end run. `-entry` does not
-work under the strict parser, so each generates a small include file into the sandbox —
-generated rather than committed, because the include path has to be `./scripts/…` to resolve
+work under the strict parser, so each generates a small include file into the sandbox --
+generated rather than committed, because the include path has to be `./scripts/...` to resolve
 where it runs, and a committed copy carrying that path fails `nextflow lint .`.
 
 ## The fixture, and what it can and cannot tell you
@@ -181,7 +181,7 @@ python3 test/tools/make_fixture.py test/data/base
 ```
 
 `planted.tsv` records **what went in**. It is not an answer key, and asserting output
-values against it directly does not work — trimming, the FastQC-driven clip, the
+values against it directly does not work -- trimming, the FastQC-driven clip, the
 proper-pair filter and the caller all sit in between. An earlier version of the fixture
 tried to be exactly predictable by giving every fragment the same length; that left bwa
 with a zero-variance insert size distribution, so every indel-bearing pair was flagged
@@ -197,18 +197,18 @@ Two details worth knowing when writing assertions against the frequency tables:
 - `MajorAlleleToRef.py` re-polarizes every site to the cohort major allele, so a planted
   ALT routinely becomes the REF. Match rows on the allele **base**, never on "the row where
   REF differs from ALLELE".
-- Sites where no sample varies are absent by design — fixed-for-the-same-allele everywhere
+- Sites where no sample varies are absent by design -- fixed-for-the-same-allele everywhere
   is dropped by the false-positive filter, and never-varying sites are never called. Both
   are symmetric and intended; see the fixed-site matrix in the project notes.
 
 ## Known gaps
 
 - **`depth2freq.awk` and `MajorAlleleToRef.py` still have no unit coverage** and are exercised
-  end to end only. Most of this gap has closed since it was written — `03_helpers.sh` now covers
+  end to end only. Most of this gap has closed since it was written -- `03_helpers.sh` now covers
   `classify_manifest.sh`, `find_artifact.sh`, `depth_cutoff.py`, `filterFalsePositives.sh`, both
-  parsers and `atomic_mv.sh`, and `config_migrate.sh` has a suite of its own — but those two are
+  parsers and `atomic_mv.sh`, and `config_migrate.sh` has a suite of its own -- but those two are
   the ones left.
-- No fault injection: the failure paths hardened during the audit — a mid-pipe tool death,
-  an interrupted decompress, a failed database copy — have no cases.
+- No fault injection: the failure paths hardened during the audit -- a mid-pipe tool death,
+  an interrupted decompress, a failed database copy -- have no cases.
 - The `-m` parsing in `ClipReads` is only covered end to end. Finer cases would want that
   logic moved into a `bin/` helper where it can be called directly.

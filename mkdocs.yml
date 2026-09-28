@@ -174,8 +174,16 @@ nav:
       - Rationale: development/principles.md
       - Verification: development/verification.md
       - Claude Code: development/claude-code.md
+  - Troubleshooting:
+      - troubleshooting/index.md
+      - Installation: troubleshooting/installation.md
+      - Will not start: troubleshooting/startup.md
+      - During the run: troubleshooting/during-the-run.md
+      - Unexpected results: troubleshooting/results.md
+      - Resume: troubleshooting/resume.md
+      - Analysis modules: troubleshooting/modules.md
+      - Getting help: troubleshooting/help.md
   - Reference:
-      - Troubleshooting: reference/troubleshooting.md
       - Bibliography: reference/bibliography.md
       - Changelog: reference/changelog.md
       - Citation & License: reference/citation.md

@@ -29,7 +29,7 @@ scripted installs:
 
 **Upgrading an existing project?** Your `parameters.config` is not
 touched by a new version and can be missing parameters this release
-expects. Run `./PoolSeqFlow migrate_config` and read what it reports —
+expects. Run `./PoolSeqFlow migrate_config` and read what it reports --
 see [Upgrading](https://ozankiratli.github.io/PoolSeqFlow/getting-started/upgrading/).
 
 Full documentation: <https://ozankiratli.github.io/PoolSeqFlow/>

@@ -513,7 +513,10 @@ def format_entry(key: str, entry: dict[str, str], suffix: str = "") -> list[str]
     volume = entry.get("volume", "")
     if volume and entry.get("number"):
         volume += f"({entry['number']})"
-    locus = ", ".join(part for part in (volume, entry.get("pages", "").replace("--", "–")) if part)
+    # BibTeX writes a page range as `325--338`. Rendered as a plain hyphen, not an en dash: this
+    # line is written back into manual/PoolSeqFlow-manual.md, so what it produces is bytes in a
+    # tracked file and the repository is ASCII.
+    locus = ", ".join(part for part in (volume, entry.get("pages", "").replace("--", "-")) if part)
     year = f" ({entry['year']})." if entry.get("year") else "."
     head = f"**{format_authors(entry)}**{year} {detex(entry.get('title', ''))}."
     tail = " ".join(part for part in (where, locus) if part)
