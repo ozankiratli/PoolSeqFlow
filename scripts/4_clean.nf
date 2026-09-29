@@ -31,6 +31,14 @@ process SortCleanBam {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/4_SortCleanBam_${pair_id}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/4_SortCleanBam_${pair_id}_nextflow.log) 2>&1
 
     # BOTH files, on either volume, looked up independently. The skip branch links the index too
     # and `ln -s` does not check its target exists, so testing only the BAM leaves a dangling
@@ -109,12 +117,6 @@ process SortCleanBam {
         echo "SORT AND CLEAN BAM ${pair_id}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/4_SortCleanBam_${pair_id}_nextflow.log
     """
 }
 

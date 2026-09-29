@@ -85,16 +85,18 @@ process PromoteArtifacts {
         """
         echo "PROMOTING ${label}: finished; nothing is promoted for this stage yet"
 
-        mkdir -p ${dir_log}
-        {
-            echo ""
-            echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-            cat .command.log
-        } >> ${log_file}
         """
     else
         """
         set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${log_file}
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${log_file}) 2>&1
 
         echo "PROMOTING ${label}: ${src}"
         echo "PROMOTING ${label}:   -> ${dst}"
@@ -149,12 +151,6 @@ process PromoteArtifacts {
         # Only if it is genuinely empty.
         rmdir "${src}" 2>/dev/null || true
 
-        mkdir -p ${dir_log}
-        {
-            echo ""
-            echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-            cat .command.log
-        } >> ${log_file}
         """
 }
 

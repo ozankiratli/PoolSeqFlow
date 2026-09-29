@@ -19,6 +19,14 @@ process AlignmentReport {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/5_GenerateReports_s1_AlignmentReport_${pair_id}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/5_GenerateReports_s1_AlignmentReport_${pair_id}_nextflow.log) 2>&1
     if [ -f ${target_report} ]; then
         echo "ALIGNMENT REPORT ${ready_bam}: Found existing alignment report file"
         echo "ALIGNMENT REPORT ${ready_bam}: Found: ${target_report}"
@@ -43,12 +51,6 @@ process AlignmentReport {
         echo "ALIGNMENT REPORT ${ready_bam}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/5_GenerateReports_s1_AlignmentReport_${pair_id}_nextflow.log
     """
 }
 
@@ -70,6 +72,14 @@ process CoverageReport {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/5_GenerateReports_s2_CoverageReport_${pair_id}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/5_GenerateReports_s2_CoverageReport_${pair_id}_nextflow.log) 2>&1
     if [ -f ${target_report} ]; then
         echo "COVERAGE REPORT ${ready_bam}: Found existing coverage report file"
         echo "COVERAGE REPORT ${ready_bam}: Found: ${target_report}"
@@ -94,12 +104,6 @@ process CoverageReport {
         echo "COVERAGE REPORT ${ready_bam}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/5_GenerateReports_s2_CoverageReport_${pair_id}_nextflow.log
     """
 }
 
@@ -132,6 +136,14 @@ process DepthProfile {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/5_GenerateReports_s3_DepthProfile_${pair_id}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/5_GenerateReports_s3_DepthProfile_${pair_id}_nextflow.log) 2>&1
     if [ -f ${target_folder}/${decision_file} ] &&
        [ -f ${target_folder}/${histogram_file} ] &&
        [ -f ${target_folder}/${report_file} ]; then
@@ -199,12 +211,6 @@ process DepthProfile {
         echo "DEPTH PROFILE ${ready_bam}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/5_GenerateReports_s3_DepthProfile_${pair_id}_nextflow.log
     """
 }
 

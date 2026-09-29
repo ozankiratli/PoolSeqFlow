@@ -26,6 +26,14 @@ process AnnotateVariants {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/8_AnnotateVariants_${vcf.baseName}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/8_AnnotateVariants_${vcf.baseName}_nextflow.log) 2>&1
 
     export _JAVA_OPTIONS="${run.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
 
@@ -74,12 +82,6 @@ process AnnotateVariants {
         echo "ANNOTATING VCF ${vcf}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/8_AnnotateVariants_${vcf.baseName}_nextflow.log
     """
 }
 

@@ -25,6 +25,14 @@ process CapBAM {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/6_VariantCalling_s1_CapBAM_${pair_id}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/6_VariantCalling_s1_CapBAM_${pair_id}_nextflow.log) 2>&1
 
     # Nothing to do if the VCF this feeds already exists. A header-only BAM satisfies the output
     # declaration; VariantCall finds the VCF and never opens it.
@@ -42,12 +50,6 @@ process CapBAM {
         echo "CAP BAM ${pair_id}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/6_VariantCalling_s1_CapBAM_${pair_id}_nextflow.log
     """
 }
 
@@ -74,18 +76,14 @@ process VariantCall {
 
     """
     set -eo pipefail
-
-    # The log has to leave the task directory, and the refusal below exits before the end of
-    # this script is reached. Called on both paths, as step 0's archive_logs does, so a run
-    # that was stopped is archived rather than leaving Logs/ with nothing for this step.
-    archive_log() {
-        mkdir -p ${dir_log}
-        {
-            echo ""
-            echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-            cat .command.log
-        } >> ${dir_log}/6_VariantCall_${run.vcf.fileName}_nextflow.log
-    }
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/6_VariantCall_${run.vcf.fileName}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/6_VariantCall_${run.vcf.fileName}_nextflow.log) 2>&1
 
     # Either volume: still here while step 7 or 8 may read it, promoted once both are done.
     vcf_at=\$(find_artifact.sh "${rel_vcf}/${vcf_file}" ${search_roots} || true)
@@ -117,7 +115,6 @@ process VariantCall {
             echo "VARIANT CALL ${vcf_file}: rejects it, and mpileup emits nothing without failing."
             echo "VARIANT CALL ${vcf_file}: The pileup ran as: ${run.variantCall.mpileupOptions}"
             echo "VARIANT CALL ${vcf_file}: Nothing was published, so this costs nothing already made."
-            archive_log
             exit 1
         fi
 
@@ -133,7 +130,6 @@ process VariantCall {
         echo "VARIANT CALL ${vcf_file}: COMPLETED"
     fi
 
-    archive_log
     """
 }
 

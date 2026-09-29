@@ -85,6 +85,14 @@ process TrimReads {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/2_TrimQcClip_s1_TrimReads_${pair_id}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/2_TrimQcClip_s1_TrimReads_${pair_id}_nextflow.log) 2>&1
 
     # Either volume, permanent-first. An absent artifact is find_artifact.sh's ordinary answer,
     # so emptiness is what the branch tests.
@@ -154,12 +162,6 @@ process TrimReads {
         echo "TRIMMING READS ${pair_id}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/2_TrimQcClip_s1_TrimReads_${pair_id}_nextflow.log
     """
 }
 
@@ -198,6 +200,14 @@ process ClipReads {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/2_TrimQcClip_s2_ClipReads_${pair_id}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/2_TrimQcClip_s2_ClipReads_${pair_id}_nextflow.log) 2>&1
 
     # FastQC is a JVM program; give it the cores this task reserved.
     export _JAVA_OPTIONS="${run.java.heapSize} -XX:ParallelGCThreads=${task.cpus}"
@@ -373,12 +383,6 @@ process ClipReads {
     fi
     echo "Clipping completed for ${pair_id}!"
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/2_TrimQcClip_s2_ClipReads_${pair_id}_nextflow.log
     """
 }
 

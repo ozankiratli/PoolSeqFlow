@@ -54,6 +54,14 @@ process SortRefAltByFrequency {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/7_s1_SortRefAltByFrequency_${vcf.baseName}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/7_s1_SortRefAltByFrequency_${vcf.baseName}_nextflow.log) 2>&1
 
     echo "SORT ALLELES BY FREQ ${vcf}: Sorting alleles by frequency..."
     if [ -f ${target_snp_freq_tsv} ] || [ -f ${target_indel_freq_tsv} ]; then
@@ -97,12 +105,6 @@ process SortRefAltByFrequency {
         echo "SORT ALLELES BY FREQ ${vcf}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/7_s1_SortRefAltByFrequency_${vcf.baseName}_nextflow.log
     """
 }
 
@@ -144,7 +146,6 @@ process FilterPotentialFalsePositives {
     indel_freq_tsv = "${indel_freq_base}.tsv"
     target_indel_freq_tsv = "${target_folder_freq}/${indel_freq_tsv}"
 
-
     sensitivity = run.filterFalsePositives.sensitivity
     threshold = run.filterFalsePositives.sampleThreshold
 
@@ -156,18 +157,14 @@ process FilterPotentialFalsePositives {
 
     """
     set -eo pipefail
-
-    # The log has to leave the task directory, and the refusal below exits before the end of
-    # this script is reached. Called on both paths, as step 0's archive_logs does, so a run
-    # that was stopped is archived rather than leaving Logs/ with nothing for this step.
-    archive_log() {
-        mkdir -p ${dir_log}
-        {
-            echo ""
-            echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-            cat .command.log
-        } >> ${dir_log}/7_s2_FilterFalsePositives_${vcf.baseName}_nextflow.log
-    }
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/7_s2_FilterFalsePositives_${vcf.baseName}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/7_s2_FilterFalsePositives_${vcf.baseName}_nextflow.log) 2>&1
 
     echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Filtering possible false positives..."
     if [ -f ${target_snp_freq_tsv} ] || [ -f ${target_indel_freq_tsv} ]; then
@@ -218,7 +215,6 @@ process FilterPotentialFalsePositives {
             echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: samples at a frequency above ${sensitivity}."
             echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: filterFalsePositives.sampleThreshold and poolSize"
             echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: are what move those. Nothing was published."
-            archive_log
             exit 1
         fi
 
@@ -234,7 +230,6 @@ process FilterPotentialFalsePositives {
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: COMPLETED"
     fi
 
-    archive_log
     """
 }
 
@@ -288,18 +283,14 @@ process DepthAndQualityFilter {
 
     """
     set -eo pipefail
-
-    # The log has to leave the task directory, and the refusal below exits before the end of
-    # this script is reached. Called on both paths, as step 0's archive_logs does, so a run
-    # that was stopped is archived rather than leaving Logs/ with nothing for this step.
-    archive_log() {
-        mkdir -p ${dir_log}
-        {
-            echo ""
-            echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-            cat .command.log
-        } >> ${dir_log}/7_s3_DepthAndQualityFilter_${vcf.baseName}_nextflow.log
-    }
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/7_s3_DepthAndQualityFilter_${vcf.baseName}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/7_s3_DepthAndQualityFilter_${vcf.baseName}_nextflow.log) 2>&1
 
     echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Filtering VCF for depth and quality ${vcf.baseName}..."
     if [ -f ${target_snp_freq_tsv} ] || [ -f ${target_indel_freq_tsv} ]; then
@@ -341,7 +332,6 @@ process DepthAndQualityFilter {
             echo "DEPTH AND QUALITY FILTER VCF ${vcf}: dropZeroDepth ${run.vcffilter.dropZeroDepth}. Check the weakest sample in"
             echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Output/Reports/Coverage before raising any of them."
             echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Nothing was published, so this costs nothing already made."
-            archive_log
             exit 1
         fi
 
@@ -357,7 +347,6 @@ process DepthAndQualityFilter {
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: COMPLETED"
     fi
 
-    archive_log
     """
 }
 
@@ -398,6 +387,14 @@ process SplitSNPsAndINDELs {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/7_s4_SplitSNPsAndINDELs_${vcf.baseName}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/7_s4_SplitSNPsAndINDELs_${vcf.baseName}_nextflow.log) 2>&1
     echo "SPLIT SNPS AND INDELS ${vcf}: Splitting ${vcf.baseName} to SNP and INDEL VCFs..."
     # AND, where the three processes above use OR: this one has TWO outputs, and calculating a
     # missing table needs a real split VCF, not the dummy this branch emits.
@@ -460,12 +457,6 @@ process SplitSNPsAndINDELs {
         rm \$(realpath ${vcf})
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/7_s4_SplitSNPsAndINDELs_${vcf.baseName}_nextflow.log
     """
 }
 
@@ -491,6 +482,14 @@ process CalculateFrequencies {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/7_s5_CalculateFrequencies_${vcf.baseName}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/7_s5_CalculateFrequencies_${vcf.baseName}_nextflow.log) 2>&1
 
     echo "CALCULATE FREQUENCIES ${vcf}: Calculating Frequencies"
     if [ -f ${target_freq_file} ] && [ -f ${target_depth_file} ]; then
@@ -517,12 +516,6 @@ process CalculateFrequencies {
         echo "CALCULATE FREQUENCIES ${vcf}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/7_s5_CalculateFrequencies_${vcf.baseName}_nextflow.log
     """
 }
 
