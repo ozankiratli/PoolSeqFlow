@@ -216,22 +216,30 @@ for (name in pool_names) {
     stats <- column_stats(snp[[name]])
     segregating <- is_segregating(snp[[name]], stats$depth, figures$sensitivity, OPTS$minReads)
 
+    # Every depth summary below is over the sites this pool was READ at, and `unmeasured`
+    # counts the rest. A called site holds no reads for a pool only where
+    # vcffilter.dropZeroDepth is off, which is what makes any of these differ from `sites`.
+    read_at <- !is.na(stats$depth) & stats$depth > 0
+
     for (chrom in intersect(chrom_levels, unique(snp$CHROM))) {
         here <- snp$CHROM == chrom
+        seen <- stats$depth[here & read_at]
         depth_rows[[length(depth_rows) + 1]] <- data.frame(
             pool = name, chrom = chrom, sites = sum(here),
-            depth_mean = mean(stats$depth[here], na.rm = TRUE),
-            depth_median = median(stats$depth[here], na.rm = TRUE),
-            depth_harmonic = harmonic_mean(stats$depth[here]),
+            unmeasured = sum(here & !read_at),
+            depth_mean = if (length(seen) > 0) mean(seen) else NA_real_,
+            depth_median = if (length(seen) > 0) median(seen) else NA_real_,
+            depth_harmonic = harmonic_mean(seen),
             stringsAsFactors = FALSE)
     }
 
     size <- n_eff(figures$nChrom, stats$depth)
     corrected <- stats$h * size / (size - 1)
-    harmonic_depth <- harmonic_mean(stats$depth)
+    harmonic_depth <- harmonic_mean(stats$depth[read_at])
     diversity_rows[[length(diversity_rows) + 1]] <- data.frame(
         pool = name, n_chrom = figures$nChrom,
         sites = length(stats$depth),
+        unmeasured = sum(!read_at),
         segregating = sum(segregating, na.rm = TRUE),
         depth_harmonic = harmonic_depth,
         n_eff_harmonic = pool_n_eff(figures$nChrom, harmonic_depth),
@@ -302,7 +310,7 @@ for (entry in design$pools) {
 for (row in diversity_rows) {
     neff_rows[[length(neff_rows) + 1]] <- data.frame(
         level = "pool", id = row$pool, pool = row$pool, source = "called",
-        positions = row$sites, depth_harmonic = row$depth_harmonic,
+        positions = row$sites - row$unmeasured, depth_harmonic = row$depth_harmonic,
         n_chrom = row$n_chrom, n_eff = row$n_eff_harmonic,
         estimate = "exact", stringsAsFactors = FALSE)
 }

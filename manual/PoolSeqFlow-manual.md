@@ -1295,7 +1295,7 @@ vcftools --vcf <name>_dp.vcf --minQ 30 --recode --recode-INFO-all --out <name>_d
 : Removes a site if **any** sample falls below the depth. A site survives only when every sample meets the floor, so **the weakest library sets the threshold for the whole cohort**. One under-sequenced pool removes sites for all of them.
 
 `|| FMT/DP==0` (`vcffilter.dropZeroDepth`, on by default)
-: Removes a site where any sample has no reads, whatever `minDP` says. **A zero-depth cell would publish as the frequency 0**, which reads as "the allele is absent in this pool" rather than "this pool was not measured here", and every module takes it at face value. Above `minDP` 1 it changes nothing; it exists for when you lower `minDP` to keep shallow sites.
+: Removes a site where any sample has no reads, whatever `minDP` says. Above `minDP` 1 it changes nothing; it exists for when you lower `minDP` to keep shallow sites. Turn it off and a pool with no reads at a site publishes [`NA` rather than a frequency](#unmeasured-cells), so what you are keeping is a table with holes in it rather than a table of zeros.
 
 `vcftools --minQ 30` (`vcffilter.minQUAL`)
 : Removes sites whose `QUAL` falls below 30.
@@ -1365,7 +1365,7 @@ CHROM   POS   REF   ALLELE   TOTAL_AD   <sample 1>   <sample 2>   ...
 | `REF` | The reference allele **for the site**, repeated on every row of that site |
 | `ALLELE` | The allele this row reports on |
 | `TOTAL_AD` | Frequency of `ALLELE` across **all samples combined** |
-| *sample columns* | Frequency of `ALLELE` in that sample |
+| *sample columns* | Frequency of `ALLELE` in that sample, or [`NA`](#unmeasured-cells) where that sample has no reads at the site |
 
 Sample columns appear in `metadata.csv` row order. See [Row order decides column order](#row-order-decides-column-order).
 
@@ -1398,6 +1398,23 @@ chr1   1000  A    T       0.05      0        0.1
 ```
 
 Every column within one site sums to 1. A zero means the allele was not observed in that sample, not that the site was missing there.
+
+#### A cell that was never measured reads `NA` { #unmeasured-cells }
+
+A pool with no reads at all at a site has no frequency to report, and the table says `NA` on every allele of that site rather than a number:
+
+```text
+CHROM  POS   REF  ALLELE  TOTAL_AD  sample1  sample2
+chr1   1000  A    A       0.8       0.8      NA
+chr1   1000  A    G       0.15      0.2      NA
+chr1   1000  A    T       0.05      0        NA
+```
+
+**`0` and `NA` are different answers and the difference matters.** `sample1`'s `0` on the `T` row says the pool was read 500 times and none of those reads carried `T`. `sample2`'s `NA` says the pool was not read here, so nothing is known about `T` either way. Averaging the second in as a zero drags a frequency toward the reference by however many pools happened to be thin.
+
+The depth table is where the distinction comes from and it is unambiguous there: the cell holds `0,0,0`. `NA` is what that becomes once you divide by a total of zero.
+
+**By default no such cell reaches a published table.** `vcffilter.minDP` removes a site where any sample falls below the depth floor, and `vcffilter.dropZeroDepth` removes one where any sample has no reads even if you set `minDP` to zero. You see `NA` only after turning both off, which is a deliberate choice to keep sites that some pools missed. R reads `NA` natively; in Python, `pandas.read_table` gives `NaN`; in awk, test the string.
 
 #### The depth tables { #depth-tables }
 
@@ -4106,8 +4123,11 @@ One row per pool per sequence, over the **SNP** table.
 |---|---|
 | `pool`, `chrom` | which pool, which sequence |
 | `sites` | SNP sites on that sequence |
+| `unmeasured` | how many of them this pool has no reads at, and the three columns below therefore leave out. Zero unless you turned [`vcffilter.dropZeroDepth`](#unmeasured-cells) off |
 | `depth_mean`, `depth_median` | the ordinary summaries of that pool's depth |
 | `depth_harmonic` | the harmonic mean, which is the one every effective sample size below is computed from |
+
+**The three depth columns are taken over `sites - unmeasured`, not over `sites`.** A site this pool has no reads at tells you nothing about how deep it was read, so averaging it in as a zero would report a depth nobody measured -- and the harmonic mean of any set containing a zero is zero, which would take the pool's effective sample size to `NA` on one missed site out of millions. `unmeasured` is published so the denominator is readable rather than assumed.
 
 **A pool's depth at a site is the sum of its cell in the depth table**: the reads supporting any allele there, after step 7's depth, quality and false-positive filters. It is not coverage, and it is not what `Output/Reports/Depth` measured: the sites here are the ones that survived calling, every one of them carries at least `vcffilter.minDP` reads in **every** sample by construction, and mapping and base quality minima applied to the pileup that they did not. The two numbers are not one quantity measured twice, and this one is always the larger.
 
@@ -4120,11 +4140,12 @@ One row per pool, over the called SNP sites of the whole project.
 | `pool` | the `RG_Sample` |
 | `n_chrom` | `ploidy x pool_size`, as in [`design.tsv`](#basicstats-design) |
 | `sites` | the called SNP sites |
+| `unmeasured` | how many of them this pool has no reads at. Zero unless you turned [`vcffilter.dropZeroDepth`](#unmeasured-cells) off |
 | `segregating` | how many of them are segregating **for this pool**, by the rule below |
-| `depth_harmonic` | the harmonic mean of this pool's depth over those sites |
+| `depth_harmonic` | the harmonic mean of this pool's depth over `sites - unmeasured` |
 | `n_eff_harmonic` | the pool's effective sample size over them, from `depth_harmonic` |
 | `h_sum` | the **numerator**: the sum over sites of the corrected gene diversity |
-| `pi_per_called_site` | `h_sum` divided by the sites that contributed a value to it. That is `sites`, unless a cell of the depth table was missing (which a published table cannot hold: `vcffilter.minDP` removes a site where any sample falls short, and `vcffilter.dropZeroDepth` removes one where a sample has no reads even if you lower `minDP` to zero) |
+| `pi_per_called_site` | `h_sum` divided by the sites that contributed a value to it, which is `sites - unmeasured`. A site one pool missed is dropped for that pool and kept for the others, so two pools in one run can rest on different counts |
 
 **The diversity is Nei's, over every allele at a site**, corrected for the pool's effective sample size at that site:
 

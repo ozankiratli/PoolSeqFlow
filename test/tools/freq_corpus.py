@@ -62,9 +62,11 @@ And five more for the association module, each documented where it is defined:
 THE INDEL TABLE is separate because the site counts report SNPs and indels separately, and
 because diversity is computed over the SNP table alone - a gate the module states.
 
-NO CELL IS ZERO-DEPTH. vcffilter.minDP removes a site where ANY sample falls below the depth,
-so a published table cannot hold one; the NA path in n_eff() is exercised by the library's own
-unit tests instead.
+NO CELL IS ZERO-DEPTH. Reaching one takes both vcffilter.minDP at zero and
+vcffilter.dropZeroDepth off, which is two deliberate edits away from any default, so this
+corpus does not carry one and the NA paths in n_eff(), site_diversity() and
+allele_frequencies() are exercised by the libraries' own unit tests instead. What a published
+table does with such a cell is bin/depth2freq.awk's answer and is covered in 03_helpers.
 """
 
 import itertools

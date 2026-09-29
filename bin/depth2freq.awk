@@ -12,8 +12,8 @@
 # EVERY COLUMN FROM 5 ON IS CONVERTED THE SAME WAY, TOTAL_AD included.
 #
 # Frequencies print through awk's default CONVFMT, so each is a six-significant-digit rendering
-# of a ratio the input holds exactly, and a sample with no reads at a site prints 0 rather than
-# a blank. Anything computing from these numbers reads the DEPTH table instead.
+# of a ratio the input holds exactly. A sample with no reads at a site prints NA on every allele
+# of that site. Anything computing from these numbers reads the DEPTH table instead.
 
 BEGIN {
     FS = OFS = "\t";
@@ -27,6 +27,9 @@ NR == 1 {
     chrom = $1;
     pos = $2;
     ref = $3;
+    # Cleared per row: a cell holding fewer counts than ALT declares alleles would otherwise
+    # print the entry an earlier row left at that index.
+    delete parsed_vals;
 
     # Process each sample column (from column 5 onwards)
     for (i = 5; i <= NF; i++) {
@@ -39,9 +42,9 @@ NR == 1 {
             total += counts[j];
         }
 
-        # Calculate frequencies
+        # Calculate frequencies, or NA on every allele where the sample has no reads at all.
         for (j = 1; j <= length(counts); j++) {
-            freqs[j] = (total > 0) ? counts[j] / total : 0;
+            freqs[j] = (total > 0) ? counts[j] / total : "NA";
         }
 
         for (j in freqs) {

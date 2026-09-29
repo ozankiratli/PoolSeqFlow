@@ -1577,3 +1577,104 @@ test_atomic_mv_leaves_nothing_behind_when_it_fails() {
     assert_no_file "$HELPERS_DIR/dst/x" "and write nothing"
     assert_count 0 "$(find "$HELPERS_DIR/dst" -name '.atomic_mv.*' | wc -l)" "and stage nothing"
 }
+
+# depth2freq.awk: the depth table's counts as one row per allele.
+#
+# THE ZERO-DEPTH CELL IS WHAT THESE EXIST FOR. Until vcffilter.dropZeroDepth was added, a
+# published table could not hold one - vcffilter.minDP removes a site where any sample falls
+# short, and the smallest useful minDP is 1 - so the converter's total == 0 branch was
+# unreachable from a real run and wrote 0. With dropZeroDepth = false and minDP = 0 it is
+# reachable, and a 0 there is the same character a pool fixed for the other allele publishes.
+#
+# The input shapes below are real bcftools output, measured rather than assumed: a sample with
+# no reads gets GT ./. and AD 0,0, so the cell is zeros and not a missing value.
+
+# Convert a depth table written inline, and leave the result in D2F_OUT.
+d2f() {
+    printf '%s' "$1" > "$HELPERS_DIR/depth.tsv"
+    D2F_OUT=$(awk -f "$REPO_ROOT/bin/depth2freq.awk" < "$HELPERS_DIR/depth.tsv")
+}
+
+# One cell of that result, by data row and by column, both 1-based.
+d2f_cell() {   # row column
+    printf '%s' "$D2F_OUT" | awk -F'\t' -v r="$2" 'NR == '"$(( $1 + 1 ))"' { print $r }'
+}
+
+test_depth2freq_writes_na_for_a_sample_with_no_reads() {
+    helpers_sandbox
+    # SampleB saw nothing here; SampleA is fixed for the alternate.
+    d2f 'CHROM	POS	REF	ALT	TOTAL_AD	SampleA	SampleB
+chrT	30	A	C	0,20	0,20	0,0
+'
+    assert_eq "NA" "$(d2f_cell 1 7)" "a pool with no reads has no frequency on the REF row"
+    assert_eq "NA" "$(d2f_cell 2 7)" "nor on any other allele of that site"
+}
+
+# THE DISCRIMINATION THE CHANGE IS FOR. A pool that was measured and carries none of an allele
+# publishes 0, and that is a real observation. If this case and the one above ever agree, the
+# table has stopped saying which of the two a reader is looking at.
+#
+# It is the control and it passes on both sides of the NA change, which is its job: the pair
+# is what has meaning, and a zero turning into NA here would be the regression.
+test_depth2freq_keeps_zero_for_an_allele_a_sample_was_measured_without() {
+    helpers_sandbox
+    d2f 'CHROM	POS	REF	ALT	TOTAL_AD	SampleA	SampleB
+chrT	30	A	C	0,20	0,20	0,0
+'
+    assert_eq "0" "$(d2f_cell 1 6)" "20 reads and none of them REF is a frequency of 0"
+    assert_eq "1" "$(d2f_cell 2 6)" "and the allele they all carry is 1"
+}
+
+# NA is per cell, not per column: the pools that did see reads are published as they were.
+test_depth2freq_leaves_the_other_pools_of_the_site_alone() {
+    helpers_sandbox
+    d2f 'CHROM	POS	REF	ALT	TOTAL_AD	S1	S2	S3
+chr1	100	A	G	60,40	30,10	0,0	20,20
+'
+    assert_eq "0.75" "$(d2f_cell 1 6)" "the first pool is untouched"
+    assert_eq "NA"   "$(d2f_cell 1 7)" "the empty one between them is NA"
+    assert_eq "0.5"  "$(d2f_cell 1 8)" "and so is the third"
+}
+
+# And per site, not per pool: a pool empty at one site still publishes the sites it was read at.
+test_depth2freq_na_does_not_spread_down_a_column() {
+    helpers_sandbox
+    d2f 'CHROM	POS	REF	ALT	TOTAL_AD	S1	S2
+chr1	100	A	G	60,40	30,10	0,0
+chr1	200	A	G	60,40	30,10	30,10
+'
+    assert_eq "NA"   "$(d2f_cell 1 7)" "empty at the first site"
+    assert_eq "0.75" "$(d2f_cell 3 7)" "and read at the second"
+}
+
+# TOTAL_AD is converted by the same loop as the sample columns and takes the same rule.
+test_depth2freq_applies_the_rule_to_total_ad() {
+    helpers_sandbox
+    d2f 'CHROM	POS	REF	ALT	TOTAL_AD	S1
+chr1	100	A	G	0,0	0,0
+'
+    assert_eq "NA" "$(d2f_cell 1 5)" "a cohort total of no reads is NA as well"
+}
+
+# parsed_vals is global and indexed by column and allele, and the write loop runs over the
+# CELL's counts while the print loop runs over the ALT column's alleles. Where a cell holds
+# fewer counts than its row declares alleles, the print loop reads whatever an earlier row
+# left at that index - and publishes a frequency measured at a different site.
+#
+# It cannot reach here from a run: AD is Number=R, so bcftools writes one count per allele,
+# and MajorAlleleToRef.py stops on a ragged cell before this ever sees it. The case is written
+# against the converter's own contract rather than against what currently feeds it. Measured:
+# with the clear removed, chr1:200's third allele publishes 0.25, carried from chr1:100.
+#
+# The row is still ragged afterwards and the cell comes out empty. Refusing it outright is a
+# different question and is not what this asserts.
+test_depth2freq_does_not_carry_a_count_from_an_earlier_row() {
+    helpers_sandbox
+    d2f 'CHROM	POS	REF	ALT	TOTAL_AD	S1
+chr1	100	A	G,T	2,1,1	2,1,1
+chr1	200	A	G,T	1,1	1,1
+'
+    assert_eq "0.25" "$(d2f_cell 3 6)" "the complete row is converted as it always was"
+    assert_not_contains "$(d2f_cell 6 6)" "0.25" \
+        "and the short cell below it must not republish that number"
+}

@@ -256,6 +256,83 @@ test_the_effective_size_is_reported_at_both_levels() {
         "there is no per-library row from the called sites: the tables are per pool"
 }
 
+# A POOL WITH NO READS AT A CALLED SITE, which every depth summary here must leave out rather
+# than average in as a zero.
+#
+# Reaching one takes vcffilter.dropZeroDepth off AND vcffilter.minDP at zero, two deliberate
+# edits from any default, so the corpus does not carry one and this case makes it: one cell of
+# one pool emptied at one site, every other cell of that site left alone.
+#
+# What it guards, measured before the change on a four-site pool at depth 100: depth_mean fell
+# to 75 and read as an ordinary number, and depth_harmonic fell to exactly 0 - harmonic_mean()
+# answers 0 to any zero among its values, deliberately and correctly for one position, which
+# over a genome says the pool carries no information anywhere. n_eff_harmonic followed it to NA.
+#
+# The expectations are computed from the table by awk here, not from expected.tsv, because
+# freq_corpus.py's arithmetic runs over the corpus as written and this case has changed it.
+test_a_pool_that_missed_a_site_is_summarized_over_the_sites_it_saw() {
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
+    local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-unmeasured")
+    rm -rf "$sb"; mkdir -p "$sb"
+    CORPUS_DIR="$sb"
+    python3 "$REPO_ROOT/test/tools/freq_corpus.py" "$sb" "$sb"
+
+    # TestSample1 is the first sample column, which is column 6. chr1:100 is a biallelic site
+    # it holds reads at; the zeros are built to the site's own arity rather than assumed.
+    local table="$sb/Frequencies/Test_snp_depth.tsv"
+    awk -F'\t' -v OFS='\t' '
+        NR > 1 && $1 == "chr1" && $2 == 100 {
+            n = split($6, counts, ",")
+            $6 = "0"
+            for (i = 2; i <= n; i++) $6 = $6 ",0"
+        }
+        { print }' "$table" > "$table.zeroed"
+    mv "$table.zeroed" "$table"
+    assert_contains "$(awk -F'\t' '$1=="chr1" && $2==100 { print $6 }' "$table")" "0,0" \
+        "the fixture should now hold a pool with no reads at chr1:100"
+
+    basicstats_direct "$sb/run" '{"minReads":2,"binSize":100000,"workers":1,"usecpp":false}' "$sb"
+    assert_file "$sb/run/depth.tsv" "the module should run: $(cat "$sb/run/out.txt" 2>/dev/null)"
+
+    # The mean and the count over TestSample1's chr1 cells that still carry reads.
+    local want_mean want_seen
+    want_mean=$(awk -F'\t' 'NR > 1 && $1 == "chr1" {
+        n = split($6, c, ","); t = 0; for (i = 1; i <= n; i++) t += c[i]
+        if (t > 0) { sum += t; kept++ } } END { print sum / kept }' "$table")
+    want_seen=$(awk -F'\t' 'NR > 1 {
+        n = split($6, c, ","); t = 0; for (i = 1; i <= n; i++) t += c[i]
+        if (t > 0) kept++ } END { print kept }' "$table")
+
+    assert_eq "1" "$(published_cell2 "$sb/run/depth.tsv" TestSample1 chr1 unmeasured)" \
+        "the site it missed is counted and named"
+    assert_eq "0" "$(published_cell2 "$sb/run/depth.tsv" TestSample2 chr1 unmeasured)" \
+        "and no other pool is charged for it"
+    assert_close "$(published_cell2 "$sb/run/depth.tsv" TestSample1 chr1 depth_mean)" "$want_mean" \
+        "the mean is over the sites the pool was read at"
+
+    # THE ONE THAT USED TO COLLAPSE. A single missed site took this to 0 and n_eff with it.
+    local harmonic
+    harmonic=$(published_cell2 "$sb/run/depth.tsv" TestSample1 chr1 depth_harmonic)
+    awk -v h="$harmonic" 'BEGIN { exit !(h > 0) }' \
+        || fail_case "one missed site must not take the harmonic depth to $harmonic"
+    assert_close "$(published_cell "$sb/run/diversity.tsv" TestSample1 unmeasured)" "1" \
+        "diversity.tsv counts it too"
+    # Tested as a string first: awk -v takes NA as a string, and "NA" > 0 compares "NA" with
+    # "0" character by character and is true, so a numeric test alone passes on the NA this
+    # case exists to catch.
+    local neff
+    neff=$(published_cell "$sb/run/diversity.tsv" TestSample1 n_eff_harmonic)
+    assert_not_contains "$neff" "NA" "and the effective size must survive it"
+    awk -v n="$neff" 'BEGIN { exit !(n + 0 > 0) }' \
+        || fail_case "and be a positive number, got '$neff'"
+
+    # neff.tsv repeats the called-site figure, so its `positions` is what the figure was taken
+    # over and not the site count.
+    assert_eq "$want_seen" \
+        "$(awk -F'\t' '$1=="pool" && $2=="TestSample1" && $4=="called" { print $5 }' "$sb/run/neff.tsv")" \
+        "the called row counts the positions its depth came from"
+}
+
 # A MERGED POOL, where the two levels are genuinely different and the pool figure is a bound.
 # The corpus's --merged layout is three pools of two libraries: the depth table is named by
 # RG_Sample and the histograms by SampleID, which is the only shape that separates them.
