@@ -86,8 +86,8 @@ params {
         mapq            = 30
     }
 
-    // Depth ceiling, applied at step 6. -1 measures one per sample, a positive number caps
-    // every sample there, 0 caps nothing.
+    // Depth ceiling, applied at step 6. -1 measures one per sample, a positive number caps every sample there,
+    // 0 caps nothing.
     capBAM {
         maxDepth        = -1
         // How deep step 5's histogram looks. Raising it never changes a result, never costs a reset.
@@ -101,8 +101,7 @@ params {
         varQualMin      = 30
         // mpileup's own ceiling, on top of capBAM's. 0 is no limit; only capBAM.maxDepth takes -1.
         maxDepth        = 0
-        // Built from the four values above; uncomment to take full control. -q is mapping
-        // quality, -Q is base quality.
+        // Built from the values above; uncomment below to change it. -q is mapping quality, -Q is base quality.
         // mpileupOptions = "-B -C ${params.variantCall.scaleMapQ} -q ${params.variantCall.varQualMin} -Q ${params.variantCall.baseQualMin} -d ${params.variantCall.maxDepth} -a AD,DP,SP,INFO/AD -Ou"
 
         callOptions         = "-m -A -v -Ov"
