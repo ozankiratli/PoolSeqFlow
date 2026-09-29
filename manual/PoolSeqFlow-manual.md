@@ -1030,7 +1030,7 @@ If you are trying to work out why a variant you expected is missing, read this p
 | 4 | Variant calling | Sites | Non-variant sites | `variantCall.callOptions` |
 | 5 | Major-allele normalization | Allele order | Nothing: it rewrites | none |
 | 6 | False-positive filter | Alternate alleles | Alleles without cross-sample support | `poolSize` or `param_poolSize`, `ploidy`, `filterFalsePositives.sampleThreshold` |
-| 7 | Depth & quality filter | Sites | Sites where any sample is under-covered, and low-QUAL sites | `vcffilter.minDP`, `vcffilter.minQUAL` |
+| 7 | Depth & quality filter | Sites | Sites where any sample is under-covered or has no reads at all, and low-QUAL sites | `vcffilter.minDP`, `vcffilter.minQUAL`, `vcffilter.dropZeroDepth` |
 | 8 | SNP/INDEL split | Sites | Splits into two files; nothing is lost | none |
 | 9 | Frequency conversion | none | Nothing | none |
 
@@ -1252,6 +1252,9 @@ vcftools --vcf <name>_dp.vcf --minQ 30 --recode --recode-INFO-all --out <name>_d
 
 `bcftools view -e "FMT/DP<20"` (`vcffilter.minDP`)
 : Removes a site if **any** sample falls below the depth. A site survives only when every sample meets the floor, so **the weakest library sets the threshold for the whole cohort**. One under-sequenced pool removes sites for all of them.
+
+`|| FMT/DP==0` (`vcffilter.dropZeroDepth`, on by default)
+: Removes a site where any sample has no reads, whatever `minDP` says. **A zero-depth cell would publish as the frequency 0**, which reads as "the allele is absent in this pool" rather than "this pool was not measured here", and every module takes it at face value. Above `minDP` 1 it changes nothing; it exists for when you lower `minDP` to keep shallow sites.
 
 `vcftools --minQ 30` (`vcffilter.minQUAL`)
 : Removes sites whose `QUAL` falls below 30.
@@ -3034,6 +3037,7 @@ The order is fixed (stages 5 to 9 of [The Filter Chain](#the-chain-at-a-glance))
 | `poolSize`, `ploidy` | Set the smallest allele frequency worth believing, which is what the false-positive filter tests against. Both can be set per sample or per run |
 | `filterFalsePositives.sampleThreshold` | Removes alternate alleles without support across enough samples. The filter that makes the pipeline pool-aware, and the one most worth understanding before changing anything |
 | `vcffilter.minDP`, `vcffilter.minQUAL` | Remove whole sites that are too shallow in any one sample, or too poorly called |
+| `vcffilter.dropZeroDepth` | Removes a site where any sample has no reads at all, independently of `minDP`. On by default, and what keeps a published table free of cells that were never measured |
 | `vcf.fileName` | Removes nothing; it names the files this step writes |
 
 `filterFalsePositives.sensitivity` is **computed** from `poolSize` and `ploidy` rather than set, and can be overridden per sample in `metadata.csv`; see [Metadata](#metadata) for the per-sample form.
@@ -4079,7 +4083,7 @@ One row per pool, over the called SNP sites of the whole project.
 | `depth_harmonic` | the harmonic mean of this pool's depth over those sites |
 | `n_eff_harmonic` | the pool's effective sample size over them, from `depth_harmonic` |
 | `h_sum` | the **numerator**: the sum over sites of the corrected gene diversity |
-| `pi_per_called_site` | `h_sum` divided by the sites that contributed a value to it. That is `sites`, unless a cell of the depth table was missing (which a published table cannot hold, since `vcffilter.minDP` removes a site where any sample falls short) |
+| `pi_per_called_site` | `h_sum` divided by the sites that contributed a value to it. That is `sites`, unless a cell of the depth table was missing (which a published table cannot hold: `vcffilter.minDP` removes a site where any sample falls short, and `vcffilter.dropZeroDepth` removes one where a sample has no reads even if you lower `minDP` to zero) |
 
 **The diversity is Nei's, over every allele at a site**, corrected for the pool's effective sample size at that site:
 

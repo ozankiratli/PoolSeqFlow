@@ -233,6 +233,13 @@ process DepthAndQualityFilter {
     // "*_dq.vcf" output glob cannot pick it up.
     filterdp_vcf = "${vcf.baseName}_dp.vcf"
 
+    // bcftools excludes the whole SITE when the expression holds for any one sample, so this
+    // is an intersection across samples: every published site has every sample at or above
+    // minDP. The zero term is redundant whenever minDP is 1 or more.
+    depth_exclude = run.vcffilter.dropZeroDepth
+        ? "FMT/DP<${run.vcffilter.minDP} || FMT/DP==0"
+        : "FMT/DP<${run.vcffilter.minDP}"
+
     filterdq_base = "${vcf.baseName}_dq"
     filterdq_vcf = "${filterdq_base}.vcf"
     filterdq_recode_vcf = "${filterdq_base}.recode.vcf"
@@ -279,7 +286,7 @@ process DepthAndQualityFilter {
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: COMPLETED"
     else
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Depth Filtering VCF..."
-        ${run.software.bcftools} view -e "FMT/DP<${run.vcffilter.minDP}" -Ov -o ${filterdp_vcf} ${vcf}
+        ${run.software.bcftools} view -e "${depth_exclude}" -Ov -o ${filterdp_vcf} ${vcf}
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Quality Filtering VCF..."
         ${run.software.vcftools} --vcf ${filterdp_vcf} \
             --minQ ${run.vcffilter.minQUAL} \

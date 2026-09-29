@@ -79,6 +79,7 @@ One file per subject, not per source file -- the reasoning crosses file boundari
 | `macos-support.md` | the sizing, after the manual was found claiming a platform the pinned environments cannot solve on: three blockers, and why exporting is what makes it single-platform |
 | `data-folder-walk.md` | step 0 prunes hidden folders and the read channel only filters them: what 3.2.0's CHANGELOG claimed, the symlink divergence beside it, and why a remote out-of-memory failure was not this |
 | `mapq-downgrade.md` | SHELVED, measured: `-C 50` deletes a site outright past about 6% divergence, which in a pool is the signal rather than a misalignment. What it is not, and the default decision left open |
+| `cap-bam-cost.md` | SHELVED, measured: capping is the pipeline's second most expensive step and runs on one core of four. Where the time goes, why chromosomes are already independent, and why mpileup cannot take the cap instead |
 | `brainstorming.md` | ideas for later releases: what each would buy, what it would break, and where it sits |
 | `module-queue.md` | the plan from v3.1.1: thirteen modules at one a week, published without a release, and the two shape questions the roster raised |
 
