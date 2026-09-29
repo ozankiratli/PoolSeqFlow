@@ -96,7 +96,8 @@ params {
 
     // Step 6: how bcftools calls variants.
     variantCall {
-        scaleMapQ       = 50
+        // -C. Below 11 it does nothing; 11 to about 20 discards every read. See the manual.
+        scaleMapQ       = 100
         baseQualMin     = 30
         varQualMin      = 30
         // mpileup's own ceiling, on top of capBAM's. 0 is no limit; only capBAM.maxDepth takes -1.

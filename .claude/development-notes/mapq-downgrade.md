@@ -1,69 +1,122 @@
-# What `-C 50` removes, and why a pool is the wrong place for it
+# What `-C` does to a pool, measured on real data
 
-**Written 2026-09-28, against the tree at `c5bacb4` plus uncommitted work. SHELVED: measured, not fixed.** Raised by a collaborator's run of an installed 3.2.0 on a cluster, 2026-09-27. Nothing in the pipeline changed as a result of this note; the decision it sets up belongs to Z, because it moves every number the tool publishes.
+**Written 2026-09-28, rewritten 2026-09-29 against the tree at `c5bacb4` plus uncommitted work.** Raised by a collaborator's 3.2.0 run on a cluster and then measured properly against Z's own *D. melanogaster* project: three pools, whole genome, the release's own option string. The first version of this note was synthetic and said so; everything below replaces it.
 
-## The report, in the order it arrived
+`scaleMapQ` reaches every call as `-C`, composed at `scripts/resolve_parameters.nf:85`.
 
-Three symptoms from one run:
+## The parameter has three regimes and the name suggests none of them
 
-- the depths in the VCF were far below the aligned BAM, by orders of magnitude rather than by a fraction
-- the frequency tables came out **empty**
-- *"the VCF was not what I intended to recover"*
+Mean pileup depth, Sample1, `2L:5000000-5050000`, every option but `-C` as the release composes it:
 
-## The measurement
-
-`scaleMapQ` defaults to 50 and reaches every call as `-C 50`, composed at `scripts/resolve_parameters.nf:85`. Measured with the release's own bcftools, the release's own option string, and 2000 synthetic reads over one 50 bp window, every read at MAPQ 60 with flat Q40 bases:
-
-| mismatches per 50 bp read | ours, `-C 50` | `-C 0` |
+| `-C` | mean DP | positions |
 |---|---|---|
-| 0 | 2000 | 2000 |
-| 1 (2% divergence) | 2000 | 2000 |
-| 2 (4%) | 2000 | 2000 |
-| **3 (6%)** | **site absent** | 2000 |
-| 5 (10%) | site absent | 2000 |
-| 10 (20%) | site absent | 2000 |
+| 0 | 9.43 | 50,057 |
+| 10 | 9.43 | 50,057 |
+| **11** | **no output** | **0** |
+| **15** | **no output** | **0** |
+| **20** | **no output** | **0** |
+| 30 | 6.49 | 47,947 |
+| 40 | 8.10 | 49,209 |
+| 50 | 8.76 | 49,898 |
+| 70 | 9.17 | 49,957 |
+| 100 | 9.27 | 50,007 |
 
-**It does not reduce depth. Past the threshold the site leaves the VCF altogether.**
+**At or below 10 it does nothing at all.** Not "less" - nothing. Whole-genome cohort runs at 0, 5 and 10 are byte-identical: 1,854,369 sites each, md5 `5c089144d201c0c9`, zero differing lines. Three independent thirteen-minute runs.
 
-Isolated at 10% divergence, the same 2000 reads:
+**Between 11 and about 20 every read is discarded.** mpileup emits no records, exits 0, and prints no error. A whole-genome `-C 20` run produced 0 sites in 24 seconds against the usual thirteen minutes, with clean stderr at all three stages.
 
-```
--C 50 -q 30  ->  site absent
--C 50 -q 0   ->  site absent     the mapping-quality floor plays no part
--C 0  -q 30  ->  DP 2000
--C 0  -q 0   ->  DP 2000
--C 20 -q 30  ->  site absent     any nonzero -C, not the value 50
-```
+**From 30 up it is usable and INVERTED**: a higher number is milder. 30 costs 31% of depth, the shipped default of 50 costs about 7% here, 100 costs almost nothing.
 
-So `scaleMapQ` alone decides it, and `variantCall.varQualMin` is not involved.
+So it reads like a scale and behaves like a threshold, with a dead zone below it and a destructive band just above.
 
-## The mechanism, and why a pool is different
+## Which value is right, measured
 
-`-C` downgrades a read's mapping quality in proportion to how many mismatches it carries, and 50 is what samtools recommends for BWA. That recommendation is for **single-sample resequencing against a matched reference**, where a read full of mismatches is probably in the wrong place, and downgrading it is how a caller avoids believing it.
+Six whole-genome cohort call sets, all three ready BAMs in one mpileup because that is what step 6 does:
 
-A pool inverts the premise. Excess mismatches in a pooled library are **diversity**, which is the quantity being measured, and they concentrate in exactly the regions a study is about. Mapping a pool to a reference drawn from another population raises every read's mismatch count at once. The reads `-C` discards are therefore the informative ones, and what survives is the reference-like fraction: a pull toward the reference that is strongest where the data is most variable.
+| `-C` | sites called |
+|---|---|
+| 0, 5, 10 | 1,854,369 |
+| 50 | 1,191,066 |
+| 100 | 1,723,859 |
 
-That accounts for all three symptoms without needing a second cause. Depth collapses; sites vanish, so the tables downstream have nothing to convert; and the call set that does survive is biased rather than merely thin.
+**Every site below is scored from the `-C 0` rows**, so both groups are measured under identical pileup settings. This matters: `-C` downgrades any read carrying a mismatch, and an ALT read carries one by construction, so `-C` manufactures the very mapping-quality difference a naive across-setting comparison would read as evidence. `MQBZ` sits at -2.9 to -4.9 on ordinary sites under `-C 50` for exactly this reason, which is why it is not used here.
 
-## What this is not, each ruled out by measurement rather than by argument
+Grouping every called site by which settings kept it:
 
-- **Not the depth cap.** `capBAM.maxDepth` was 0 on that run, which routes every sample to the uncapped branch at `scripts/6_variant_call.nf:124-133`. No BAM was truncated.
-- **Not mpileup's own ceiling.** `-d 0` is genuinely unlimited: 2000 reads gave DP 2000. The bcftools default and an explicit `-d 250` both truncate to 250, so the risk is real but the value we pass is right. This is worth keeping because a shallow fixture cannot tell unlimited from 250 from broken, and the suite's end-to-end case is shallow.
-- **Not the mapping-quality floor.** Measured above.
-- **Not base quality.** `-Q 30` costs something like 10-30% of bases on real Illumina data. It cannot produce two orders of magnitude.
+| group | n | Ti/Tv | \|SCBZ\| | QUAL |
+|---|---|---|---|---|
+| kept by both 50 and 100 | 1,178,812 | **1.168** | 0.32 | 212.7 |
+| dropped by 50, kept by 100 | 537,942 | **1.015** | 0.49 | 133.1 |
+| dropped by both | 137,615 | **0.847** | 1.31 | 81.1 |
 
-## What was not shown, and would have to be
+A clean gradient, and it decides the question. **The 537,942 sites that `-C 50` discards and `-C 100` keeps look like variants, not artifacts**: Ti/Tv 1.015 against the kept group's 1.168 and the junk group's 0.847, and a clip bias of 0.49 against 0.32 and 1.31. Alignment noise cannot manufacture a transition bias, because eight of the twelve possible substitutions are transversions.
 
-The reads are synthetic: one position, uniform MAPQ 60, flat Q40 bases, no pairs and no indels. `-C` weights mismatches by base quality, so the cliff on real 150 bp reads at real quality sits somewhere other than three-in-fifty. **The mechanism and its totality are established; the threshold is not**, and nothing here was reproduced on the collaborator's own data at this note's date.
+Ti/Tv here is low in absolute terms because this is the RAW step-6 call set, before step 7's depth and quality filters and before the false-positive filter. The bar is not a literature value but the pipeline's own accepted output.
 
-The measurement that would settle it on real data needs no pipeline run: `bcftools mpileup` over one ready BAM and one region, `-C 50` against `-C 0`, comparing mean DP.
+## And `-C 50` biases the frequencies of the sites it keeps
 
-## The decision, which is deliberately not made here
+At the 1.18M sites both settings call, the alternate frequency is systematically lower under `-C 50`, across 3.4M sample-cells and all three pools:
 
-`scaleMapQ` is a parameter, so no project is stuck: setting it to 0 today disables the downgrade. The open question is the **default**, and it is a scientific one rather than a mechanical one. Changing it changes every frequency the tool publishes, which moves the version and invalidates existing results directories. See [[false-positive-filter]] and [[depth-cutoff]] for the two other places a stage-3 decision reaches a published number.
+| `-C 0` frequency | cells | mean shift | relative | down:up |
+|---|---|---|---|---|
+| 0.00-0.05 | 455,309 | +0.0099 | +39.8% | 0.01:1 |
+| 0.05-0.10 | 32,267 | +0.0014 | +1.9% | 0.47:1 |
+| 0.10-0.25 | 510,945 | -0.0012 | -0.7% | 0.70:1 |
+| 0.25-0.50 | 854,152 | -0.0302 | -8.1% | 2.00:1 |
+| **0.50-0.75** | **741,897** | **-0.0808** | **-12.9%** | **4.05:1** |
+| 0.75-1.01 | 831,971 | -0.0470 | -5.3% | 5.88:1 |
 
-The manual's filter chain currently describes stage 3 as removing "low mapping quality, low base quality". That is true and it is not enough: it gives no hint that the stage can delete a site outright at moderate divergence, which is the part a person interpreting an empty table needs.
+**Rare alleles are untouched** - below 0.10 essentially nothing moves down, so the detection limit the false-positive filter rests on is safe. **The damage is where the pool is most non-reference**, peaking at a 12.9% relative compression around 0.5-0.75. A true frequency of 0.60 publishes as about 0.52.
 
-## A gate that is missing whatever the answer turns out to be
+That is mechanistically what `-C` must do: it penalizes reads carrying mismatches, so the more alternate-allele reads a site has, the more reads are downgraded and the harder the frequency is pulled toward the reference. **It is not a flat offset. It scales with the quantity being measured**, and those frequencies feed `basicstats`, `fst`, `association` and `mds`.
 
-**Nothing in step 7 refuses an empty VCF or an empty frequency table.** The run published empty tables and reported success. That is the failure family in [[gates-that-stopped-checking]] and the same shape as the missing-mate drop 3.2.0 fixed: silence where a refusal belongs. It should be built regardless of what happens to `scaleMapQ`, because it is what turns this class of problem from a wrong number into a stopped run.
+Whole-genome, `-C 100` shifts by -0.0076 at 1.73:1 against `-C 50`'s -0.0353 at 2.33:1: **4.6 times less bias**.
+
+## Where this leaves the default
+
+The whole curve, every statistic read from the `-C 0` rows:
+
+| `-C` | sites kept | kept Ti/Tv | dropped Ti/Tv | dropped \|SCBZ\| | freq shift | down:up |
+|---|---|---|---|---|---|---|
+| 30 | 94,681 | **0.608** | **1.090** | 0.45 | +0.0612 | 0.52:1 |
+| 40 | 738,393 | 1.190 | 1.036 | 0.54 | -0.0479 | 2.19:1 |
+| 50 | 1,178,812 | 1.168 | 0.978 | 0.67 | -0.0353 | 2.33:1 |
+| 70 | 1,568,464 | 1.134 | 0.890 | 0.99 | -0.0154 | 1.97:1 |
+| 100 | 1,716,020 | 1.113 | **0.848** | **1.34** | **-0.0076** | 1.73:1 |
+
+**`-C 30` is inverted and actively harmful**: the set it KEEPS has Ti/Tv 0.608 while the set it DROPS has 1.090. A setting this harsh only passes a site where nearly every read matches the reference, so what survives is dominated by sequencing error rather than by polymorphism. Anything near the bottom of the usable range is worse than useless.
+
+Above 30 the trend is monotonic and **100 is the best value tested, on every axis**. The set it drops is the most clearly artifactual (Ti/Tv 0.848 and a clip bias of 1.34 against its own kept set's 0.36), it retains the most real sites, and its frequency bias is a twentieth of a percentage point where the shipped 50 costs three and a half.
+
+**100 also beats turning the adjustment off.** It still removes 138,349 sites that are genuinely bad by every statistic here, and `-C 0` keeps all of them. The objection that motivated this measurement is correct; the shipped value is simply set far too harsh.
+
+`-C 0` is not right either: the 137,615 sites both settings reject are genuinely bad, and turning the adjustment off keeps them.
+
+**DECIDED 2026-09-29, Z: the default becomes 100.** `parameters.config.template` carries it, and the analysis above is published in the manual under the filter chain at `#scalemapq-measured`, with the variant-calling settings section pointing at it. The manual's own account is the authoritative one; this note is how it was arrived at.
+
+Two consequences to carry:
+
+- **It moves every published number**, so it moves the version and invalidates existing results directories. A project that has already run will be stopped by step 0's change guard naming `variantCall.mpileupOptions`, which is correct: `scaleMapQ` feeds it and that string is in step 6's artifact identity, so the guard was never going to miss this.
+- **Nothing was changed about the dead zone or the destructive band.** A user can still write `scaleMapQ = 15` and get an empty run that reports success. The manual now warns, which is documentation rather than a gate, and the emptiness guard below is still the fix.
+
+## The landmine, and the gate that would catch it
+
+`scaleMapQ = 15` is a plausible edit by someone who thinks they are being gentler than 50. It produces an **empty VCF, empty frequency tables, and a run that reports success**.
+
+Nothing in step 7 refuses an empty VCF or an empty frequency table - grepped, there is no such check. So this is not a hypothetical: a one-character configuration change silently destroys every result, and the pipeline says it worked. See [[gates-that-stopped-checking]]; it is the same family as the missing-mate drop 3.2.0 fixed, and the emptiness guard should be built whatever happens to the default.
+
+## How the measurement was got wrong, three times
+
+Recorded because the failure mode is instructive and cost an hour.
+
+`-C 20` returning zero sites was read as a resource failure on three separate occasions. It was the parameter working at its most severe setting. **The tell was in the first event and ignored: 24 seconds against thirteen minutes.** A crash is slow; an empty stream is fast.
+
+Three command-construction errors produced a table of `-C` values that was non-monotonic and entirely spurious, and it was nearly believed:
+
+- `-r` placed after the positional BAM arguments. bcftools stops option parsing at the first positional, so `-r` and the region became input filenames.
+- `"$B"` quoted, collapsing three BAM paths into one argument.
+- `2>/dev/null` on all of it, so neither error was visible.
+
+The region spot-checks were discarded entirely and every number in this note comes from complete whole-genome runs.
+
+Two process traps hit in the same hour, both already recorded elsewhere in this project: editing a running bash script (survivable only because `sed -i` renames rather than writing in place, so the running shell keeps the old inode), and `pgrep -f` / `pkill -f` patterns matching their own command line. The second killed the wrapper that was waiting to launch `-C 20`.

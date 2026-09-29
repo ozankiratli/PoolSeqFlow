@@ -78,7 +78,7 @@ One file per subject, not per source file -- the reasoning crosses file boundari
 | `someone-elses-machine.md` | four defects a green suite could not see, because the suite runs where the assumption holds; and the second machine that found three of them in an hour |
 | `macos-support.md` | the sizing, after the manual was found claiming a platform the pinned environments cannot solve on: three blockers, and why exporting is what makes it single-platform |
 | `data-folder-walk.md` | step 0 prunes hidden folders and the read channel only filters them: what 3.2.0's CHANGELOG claimed, the symlink divergence beside it, and why a remote out-of-memory failure was not this |
-| `mapq-downgrade.md` | SHELVED, measured: `-C 50` deletes a site outright past about 6% divergence, which in a pool is the signal rather than a misalignment. What it is not, and the default decision left open |
+| `mapq-downgrade.md` | `scaleMapQ` measured whole-genome on real pools: three regimes (dead at 10 and below, total data loss from 11 to about 20, inverted above 30), why 100 dominates the shipped 50, and the frequency compression that scales with the frequency |
 | `cap-bam-cost.md` | SHELVED, measured: capping is the pipeline's second most expensive step and runs on one core of four. Where the time goes, why chromosomes are already independent, and why mpileup cannot take the cap instead |
 | `brainstorming.md` | ideas for later releases: what each would buy, what it would break, and where it sits |
 | `module-queue.md` | the plan from v3.1.1: thirteen modules at one a week, published without a release, and the two shape questions the roster raised |

@@ -1103,14 +1103,14 @@ Four fifths of the covered genome is at 20000x and one fifth at 200x. Which of t
 ### 3. Pileup filter (step 6)
 
 ```bash
-bcftools mpileup -B -C 50 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou
+bcftools mpileup -B -C 100 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou
 ```
 
 | Flag | Parameter | Effect |
 |---|---|---|
 | `-q 30` | `variantCall.varQualMin` | Minimum **mapping** quality for a read to be counted |
 | `-Q 30` | `variantCall.baseQualMin` | Minimum **base** quality for a base to be counted |
-| `-C 50` | `variantCall.scaleMapQ` | Downgrades mapping quality for reads with excessive mismatches |
+| `-C 100` | `variantCall.scaleMapQ` | Downgrades mapping quality for reads with excessive mismatches. [What this costs you ->](#scalemapq-measured) |
 | `-d 0` | `variantCall.maxDepth` | A second, flat cap on reads per file per position. `0` is **no limit** |
 | `-B` | fixed | Disables BAQ (base alignment quality) recalculation |
 | `-a AD,DP,SP,INFO/AD` | fixed | Emits the allelic-depth fields everything downstream depends on |
@@ -1120,6 +1120,47 @@ bcftools mpileup -B -C 50 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou
 It ships as `0` because a flat number applied to every sample is what stage 2 exists to replace. Setting it to a positive value restores a backstop under the measured ceiling (one number for every sample of every run, applied after capping). If you set it, compare it against your step 5 coverage reports first: a cap that bites truncates the read counts frequencies are computed from, and nothing downstream flags it. See [maxDepth](#maxdepth).
 
 `-B` is a deliberate choice for pooled data. BAQ downweights bases near indels to suppress false positives that arise from misalignment in a single diploid genome. In a pool, the same signal may be a genuine low-frequency indel, and BAQ's correction assumes a genotype model that does not apply. Disabling it keeps the raw evidence and leaves the decision to the cross-sample filter at stage 6.
+
+#### What `-C` costs, measured { #scalemapq-measured }
+
+`-C` exists because a read carrying many mismatches may be in the wrong place, and a misplaced read puts its bases at the wrong position. In a pool that reasoning is only half right: excess mismatches are also what **diversity** looks like, and the reads carrying them are the ones a frequency estimate is made of. So the setting was measured rather than inherited.
+
+Three pools of *Drosophila melanogaster*, whole genome, called as a cohort exactly as step 6 does, with every option but `-C` as this release composes it. Each candidate value is compared against `-C 0`, and **every statistic is read from the `-C 0` call set**, so both groups are scored under identical settings.
+
+| `-C` | sites called | Ti/Tv of the sites it keeps | Ti/Tv of the sites it drops | frequency shift |
+|---|---|---|---|---|
+| 30 | 94,681 | **0.608** | **1.090** | +0.0612 |
+| 40 | 738,393 | 1.190 | 1.036 | -0.0479 |
+| 50 | 1,178,812 | 1.168 | 0.978 | -0.0353 |
+| 70 | 1,568,464 | 1.134 | 0.890 | -0.0154 |
+| **100** | **1,716,020** | 1.113 | **0.848** | **-0.0076** |
+| 0 | 1,854,369 | 1.113 | n/a | 0 |
+
+**Ti/Tv is the test.** Transitions outnumber transversions in real polymorphism; alignment artefacts approach the 0.5 that random substitution would give, because eight of the twelve possible base changes are transversions. A well-aimed filter therefore drops a set with a *low* Ti/Tv and keeps one with a high one. The ratios here are low in absolute terms because this is the raw call set, before stages 5 to 7.
+
+**`-C 100` aims best.** The 138,349 sites it removes have Ti/Tv 0.848 and nearly four times the soft-clip bias of the sites it keeps: they are artefacts, and leaving `-C` off entirely would keep them. At 50 the discarded set is five times larger and diluted with real variants (Ti/Tv 0.978), and the 537,942 sites that 50 drops but 100 keeps score 1.015, which places them with the variants.
+
+**`-C 30` is inverted**, and it is a warning about reaching for a harsher setting. The set it keeps scores 0.608 while the set it discards scores 1.090: a value that severe only passes a site where nearly every read matches the reference, so what survives is dominated by sequencing error rather than by polymorphism.
+
+##### The bias it leaves behind
+
+At the sites a setting keeps, `-C` still shifts the frequencies, because it penalises reads carrying the alternate allele more often than reads carrying the reference. Under the previous default of 50, measured across 3.4 million sample-cells:
+
+| frequency | mean shift | relative | pushed down : up |
+|---|---|---|---|
+| 0.00-0.10 | +0.010 | - | 0.01:1 |
+| 0.10-0.25 | -0.001 | -0.7% | 0.70:1 |
+| 0.25-0.50 | -0.030 | -8.1% | 2.00:1 |
+| **0.50-0.75** | **-0.081** | **-12.9%** | **4.05:1** |
+| 0.75-1.00 | -0.047 | -5.3% | 5.88:1 |
+
+**Rare alleles are untouched**, so the detection limit that [the false-positive filter](#6-false-positive-filter-step-7) rests on is unaffected. The compression lands where a pool is most non-reference, and it **scales with the quantity being measured** rather than being a flat offset. At `-C 100` the same figure is -0.0076 against 50's -0.0353.
+
+##### Two values that will silently produce nothing
+
+**At or below 10, `-C` does nothing at all** - output is byte-identical to `-C 0`.
+
+**Between 11 and about 20 it discards every read.** `bcftools mpileup` then emits no records, exits successfully and prints no error, so the run completes with an empty VCF and empty frequency tables. If you are tempted to set something "gentler than 100", note that the number runs the other way: **lower is harsher**, and just above the dead zone is where it is most severe.
 
 ### 4. Variant calling (step 6)
 
@@ -1684,7 +1725,7 @@ Reading the depth report on every run is the habit worth forming. The capped BAM
 `scripts/6_variant_call.nf`
 
 ```bash
-bcftools mpileup -B -C 50 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou -f reference <all BAMs> \
+bcftools mpileup -B -C 100 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou -f reference <all BAMs> \
   | bcftools call -m -A -v -Ov -o <name>.vcf
 ```
 
@@ -2977,15 +3018,15 @@ grep -H 'ceiling applied' Output/Reports/Depth/*_depth_report.txt
 
 ```groovy
 variantCall {
-    scaleMapQ   = 50     // -C  downgrade coefficient for mismatch-heavy reads
+    scaleMapQ   = 100    // -C  downgrade coefficient for mismatch-heavy reads
     varQualMin  = 30     // -q  minimum mapping quality
     baseQualMin = 30     // -Q  minimum base quality
     maxDepth    = 0      // -d  a flat depth cap on top of capBAM; 0 is no limit
 }
 ```
 
-`-C 50` (`scaleMapQ`)
-: Downgrades mapping quality for reads carrying excessive mismatches. Reads that align poorly are more likely to be misplaced, and a misplaced read contributes its bases to the wrong position, which in a frequency estimate is a direct error, not just noise.
+`-C 100` (`scaleMapQ`)
+: Downgrades mapping quality for reads carrying excessive mismatches. Reads that align poorly are more likely to be misplaced, and a misplaced read contributes its bases to the wrong position, which in a frequency estimate is a direct error, not just noise. **The number runs the other way from what it looks like: lower is harsher, below 11 it does nothing, and between 11 and about 20 it discards every read.** The value was chosen by measurement on pooled data rather than inherited; what each setting costs is in [What `-C` costs, measured](#scalemapq-measured).
 
 `-B` (fixed, not configurable)
 : Disables BAQ recalculation. BAQ downweights bases near indels to suppress misalignment artefacts under a single-genome model. In a pool, the same signal may be a genuine low-frequency indel, so the raw evidence is kept and the decision is left to the cross-sample filter.
