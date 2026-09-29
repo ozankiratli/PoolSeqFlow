@@ -205,8 +205,9 @@ Two details worth knowing when writing assertions against the frequency tables:
 
 - **`MajorAlleleToRef.py` still has no unit coverage** and is exercised end to end only. Most of
   this gap has closed since it was written -- `03_helpers.sh` now covers `classify_manifest.sh`,
-  `find_artifact.sh`, `depth_cutoff.py`, `filterFalsePositives.sh`, both parsers and
-  `atomic_mv.sh`, and `config_migrate.sh` has a suite of its own. `depth2freq.awk` now has cases
+  `find_artifact.sh`, `depth_cutoff.py`, `filterFalsePositives.sh`, both parsers,
+  `atomic_mv.sh` and `cap_depth.awk`, and `config_migrate.sh` has a suite of its own.
+  `depth2freq.awk` now has cases
   there too, but only for what a zero-depth cell publishes and for the row it must not carry
   forward: its shape -- one row per allele, `ALT` becoming `ALLELE`, the column count held --
   is still asserted only by `04_pipeline`, through a whole run.

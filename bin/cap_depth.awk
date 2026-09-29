@@ -11,7 +11,10 @@
 # A read is kept only if every position it covers is still below the cap. Reads are dropped
 # individually, so a pair may lose one mate.
 #
-# THE INPUT MUST BE COORDINATE-SORTED.
+# THE INPUT MUST BE COORDINATE-SORTED. Every read already kept therefore starts at or before
+# this one, so it covers a position only if its end reaches that far: the depth over this
+# read's span is non-increasing and its first position carries the maximum. Coverage is held
+# as a difference array and read off a running total at that one position.
 
 function reflen(cigar,   i, c, num, len) {
     # Only M, D, N, = and X consume the reference; I, S, H and P do not.
@@ -34,28 +37,30 @@ BEGIN {
     }
     chrom = ""
     low = 0
+    cur = 0
 }
 
 /^@/ { print; next }
 
 {
     # A new reference sequence shares no positions with the last one.
-    if ($3 != chrom) { delete depth; chrom = $3; low = $4 + 0 }
+    if ($3 != chrom) { delete diff; chrom = $3; low = $4 + 0; cur = 0 }
 
     pos = $4 + 0
     span = reflen($6)
     # Unmapped, or a CIGAR that consumes no reference: nothing to count, and nothing to cap.
     if (pos == 0 || span <= 0) { kept++; print; next }
 
-    # Trimmed from behind: the stream is sorted, so nothing can add to a position it has passed.
-    # This is what keeps the array to one read's span instead of a chromosome's.
-    while (low < pos) { delete depth[low]; low++ }
+    # Carry the running depth forward to this read's first position, consuming each entry as
+    # it is passed. `in` rather than a plain read: referencing diff[low] would create it, and
+    # most positions hold nothing.
+    while (low < pos) { low++; if (low in diff) { cur += diff[low]; delete diff[low] } }
 
-    end = pos + span - 1
-    for (p = pos; p <= end; p++) {
-        if (depth[p] + 0 >= cap) { dropped++; next }
-    }
-    for (p = pos; p <= end; p++) depth[p]++
+    # cur is the depth at pos, which is the largest over this read's span.
+    if (cur >= cap) { dropped++; next }
+
+    cur++                   # this read covers pos
+    diff[pos + span]--      # and stops one past its last position
     kept++
     print
 }

@@ -1678,3 +1678,169 @@ chr1	200	A	G,T	1,1	1,1
     assert_not_contains "$(d2f_cell 6 6)" "0.25" \
         "and the short cell below it must not republish that number"
 }
+
+# cap_depth.awk: truncate a coordinate-sorted SAM so no reference position is covered more
+# than `cap` times.
+#
+# THE CONTRACT, NOT THE IMPLEMENTATION. The first case below recomputes per-position depth
+# from the OUTPUT and asserts no position exceeds the cap. That is what the helper promises
+# and it holds whatever the inside looks like -- which matters here, because the inside was a
+# per-position array scanned twice per read and is now a difference array read once, and the
+# case had to survive that without being rewritten.
+#
+# Written after the fact: this helper shipped from 1.0 with no unit coverage at all, and the
+# rewrite was verified against three real BAMs before any of these existed.
+
+# The fixture is APPENDED TO A FILE rather than composed in a variable. `$(...)` strips
+# trailing newlines, so building the SAM by concatenating command substitutions silently glues
+# the last record of one stack onto the first of the next -- which produced a malformed
+# fixture that one of the cases below passed against anyway.
+cap_begin() {   # reference-sequence names
+    : > "$HELPERS_DIR/in.sam"
+    printf '@HD\tVN:1.6\tSO:coordinate\n' >> "$HELPERS_DIR/in.sam"
+    local c
+    for c in "$@"; do printf '@SQ\tSN:%s\tLN:100000\n' "$c" >> "$HELPERS_DIR/in.sam"; done
+}
+
+# A stack of identical reads at one position. SEQ and QUAL are `*`: nothing here reads them.
+cap_stack() {   # chrom start count cigar
+    local i
+    for i in $(seq 1 "$3"); do
+        printf 'r%s_%s_%s\t0\t%s\t%s\t60\t%s\t*\t0\t0\t*\t*\n' \
+               "$1" "$2" "$i" "$1" "$2" "$4" >> "$HELPERS_DIR/in.sam"
+    done
+}
+
+cap_record() { printf '%s\n' "$1" >> "$HELPERS_DIR/in.sam"; }
+
+cap_run() {   # cap-value
+    CAP_OUT=$(awk -f "$REPO_ROOT/bin/cap_depth.awk" -v cap="$1" < "$HELPERS_DIR/in.sam" \
+              2> "$HELPERS_DIR/cap.err")
+    CAP_STATUS=$?
+    CAP_ERR=$(cat "$HELPERS_DIR/cap.err")
+}
+
+# The deepest any reference position is covered in a SAM stream, computed here rather than
+# taken from the helper: walk each record's CIGAR, count the positions it consumes, take the
+# maximum over all of them.
+deepest() {
+    printf '%s\n' "$1" | awk '
+        !/^@/ && $4 > 0 {
+            n = ""; span = 0
+            for (i = 1; i <= length($6); i++) {
+                c = substr($6, i, 1)
+                if (c >= "0" && c <= "9") { n = n c; continue }
+                if (c ~ /[MDN=X]/) span += n + 0
+                n = ""
+            }
+            for (p = $4; p < $4 + span; p++) d[$3 "\t" p]++
+        }
+        END { m = 0; for (k in d) if (d[k] > m) m = d[k]; print m }'
+}
+
+test_cap_depth_never_leaves_a_position_over_the_cap() {
+    helpers_sandbox
+    local c
+    for c in 1 5 17 30 61 200; do
+        # Overlapping stacks at 1, 40 and 80: a read starting at 40 spans into the one at 80,
+        # so what it must be judged against is not the depth at its own start alone.
+        cap_begin chr1
+        cap_stack chr1 1 30 100M
+        cap_stack chr1 40 30 100M
+        cap_stack chr1 80 30 100M
+        cap_run "$c"
+        assert_status 0 "$CAP_STATUS" "capping at $c should succeed"
+        local got; got=$(deepest "$CAP_OUT")
+        [ "$got" -le "$c" ] \
+            || fail_case "cap $c: a position is covered $got times in the output"
+    done
+}
+
+# Nothing is dropped that did not have to be: at a cap at or above the deepest position the
+# stream passes through untouched.
+test_cap_depth_keeps_everything_under_the_cap() {
+    helpers_sandbox
+    cap_begin chr1
+    cap_stack chr1 1 12 100M
+    cap_run 12
+    assert_eq "12" "$(printf '%s' "$CAP_OUT" | grep -c '^r')" \
+        "a cap equal to the depth should drop nothing"
+    assert_contains "$CAP_ERR" "dropped 0" "and say so"
+}
+
+# THE HEADER IS NOT A RECORD. It passes through ahead of everything and is not counted.
+test_cap_depth_passes_the_header_through() {
+    helpers_sandbox
+    cap_begin chr1
+    cap_stack chr1 1 5 100M
+    cap_run 2
+    assert_eq "@HD	VN:1.6	SO:coordinate" "$(printf '%s' "$CAP_OUT" | sed -n '1p')" \
+        "the header leads the output"
+    assert_contains "$CAP_ERR" "kept 2, dropped 3" "and is not in the tally"
+}
+
+# A NEW REFERENCE SEQUENCE STARTS FROM NOTHING. Carrying state across would cap the second one
+# against depth accumulated on the first, and positions repeat between them.
+test_cap_depth_resets_at_a_new_reference_sequence() {
+    helpers_sandbox
+    cap_begin chr1 chr2
+    cap_stack chr1 1 10 100M
+    cap_stack chr2 1 10 100M
+    cap_run 10
+    assert_eq "10" "$(printf '%s' "$CAP_OUT" | grep -c '	chr1	')" "chr1 keeps its ten"
+    assert_eq "10" "$(printf '%s' "$CAP_OUT" | grep -c '	chr2	')" "and chr2 its own ten"
+    assert_contains "$CAP_ERR" "dropped 0" "neither counted against the other"
+}
+
+# A RECORD THAT CONSUMES NO REFERENCE IS NOT CAPPED. A CIGAR of only soft clips covers no
+# position, so there is nothing to count it against and it survives however deep the stack at
+# its own coordinate is.
+#
+# ORDER IS THE WHOLE CASE. The soft-clipped read sits DIRECTLY after the stack, on the same
+# reference sequence, at a coordinate already at the cap -- that is the only arrangement in
+# which the guard does anything. Written first with an unmapped record in between, where the
+# `*` RNAME forces a new-sequence reset that clears the depth before the soft-clipped read is
+# judged: the case passed with the guard deleted outright. The unmapped record is now last,
+# where a sorted BAM puts it anyway.
+test_cap_depth_keeps_records_that_cover_no_position() {
+    helpers_sandbox
+    cap_begin chr1
+    cap_stack chr1 1 4 100M
+    cap_record 's1	0	chr1	1	60	100S	*	0	0	*	*'
+    cap_record 'u1	4	*	0	0	*	*	0	0	*	*'
+    cap_run 1
+    assert_contains "$CAP_OUT" "s1	0" "a read consuming no reference survives a capped position"
+    assert_contains "$CAP_OUT" "u1	4" "and so does an unmapped one"
+    assert_eq "1" "$(printf '%s' "$CAP_OUT" | grep -c '	100M	')" "while the stack is still capped"
+    assert_contains "$CAP_ERR" "kept 3" "all three counted as kept, with the one capped read"
+}
+
+# ONLY M, D, N, = AND X CONSUME THE REFERENCE. A deletion makes a read reach FURTHER than its
+# sequence length, and a read counted short would leave the positions past its sequence
+# uncapped. 50M20D50M spans 120 where a plain 100M spans 100, so the stack at 110 sits inside
+# the first read's reach and outside the second's -- which is what makes this discriminating
+# rather than merely passing.
+test_cap_depth_measures_the_span_from_the_cigar() {
+    helpers_sandbox
+    cap_begin chr1
+    cap_stack chr1 1 3 50M20D50M
+    cap_stack chr1 110 3 10M
+    cap_run 3
+    assert_contains "$CAP_ERR" "dropped 3" \
+        "the stack at 110 is already at the cap, reached by the deletion-spanning reads"
+    local got; got=$(deepest "$CAP_OUT")
+    [ "$got" -le 3 ] || fail_case "a position is covered $got times at cap 3"
+}
+
+test_cap_depth_refuses_a_cap_that_is_not_a_positive_depth() {
+    helpers_sandbox
+    local v
+    for v in 0 -1 abc ''; do
+        cap_begin chr1
+        cap_stack chr1 1 2 100M
+        cap_run "$v"
+        assert_status 2 "$CAP_STATUS" "a cap of '$v' should be refused"
+        assert_contains "$CAP_ERR" "must be a positive depth" "saying what a cap is"
+        assert_not_contains "$CAP_ERR" "kept" "and no tally after a usage error"
+    done
+}
