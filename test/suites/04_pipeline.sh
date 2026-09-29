@@ -1300,6 +1300,84 @@ test_a_truncated_depth_histogram_names_the_parameter() {
         "and never send the user into the installation"
 }
 
+# AN EMPTY RESULT USED TO BE A SUCCESSFUL RUN. Every stage from bcftools call to the published
+# table exits 0 over no records -- measured, all seven of them, including `vcftools --recode`,
+# which was the one link nobody had checked. bcftools writes a well-formed header and no rows;
+# depth2freq.awk rewrites the header and its body loop never runs. What the user got was a
+# frequency table holding column names and nothing else, from a run that reported success.
+#
+# THE THREE CASES BELOW ENTER THAT STATE BY THE THREE DIFFERENT DOORS, because the guards are
+# three separate checks and one case would only prove one of them. Each asserts the parameter
+# that caused it is named, which is the whole point of refusing rather than publishing.
+#
+# A fresh sandbox each time, never the shared run: every stage of step 7 skips when a later
+# artifact already exists, so a project that has published tables never re-enters the chain.
+
+# scaleMapQ above 10 and below varQualMin caps every read's mapping quality under the minimum
+# that then rejects it, and mpileup emits nothing without failing. This is the door the whole
+# guard was built for.
+test_a_call_set_with_no_records_stops_the_run() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status out
+    sb=$(make_pipeline_sandbox "empty-callset")
+    write_sandbox_config "$sb" 's|^        scaleMapQ .*|        scaleMapQ       = 15|'
+    status=$(run_pipeline "$sb")
+    assert_status 1 "$status" "an empty call set must stop the run; see $sb/run.out"
+    out=$(cat "$sb/run.out")
+    assert_contains "$out" "produced no records" "the refusal should say what happened"
+    assert_contains "$out" "variantCall.scaleMapQ" "and name the parameter that did it"
+    assert_not_contains "$out" "in scripts/6_variant_call.nf" \
+        "and never send the user into the installation"
+    # NOTHING PUBLISHED. The point of refusing here is that a later run with a sane value finds
+    # no empty artifact to skip past.
+    assert_no_file "$sb/store/Output/Frequencies/Test_snp_freq.tsv" \
+        "no frequency table should have been written"
+    # AND IT REACHES Logs/. The refusal exits before the end of the process script, where the
+    # log is normally copied out of the task directory, so without archive_log the one run that
+    # most needs explaining is the one that leaves Logs/ empty for that step.
+    assert_contains "$(cat "$sb/store/Logs/6_variant_call/"*VariantCall*.log 2>/dev/null)" \
+        "produced no records" "the refusal must reach Logs/, not only the terminal"
+}
+
+# The depth and quality filter is applied to the whole SITE, so one sample under the floor
+# removes it for every sample. A minDP above every sample's depth removes all of them.
+test_a_depth_filter_that_removes_every_site_stops_the_run() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status out
+    sb=$(make_pipeline_sandbox "empty-after-depth")
+    write_sandbox_config "$sb" 's|^        minDP .*|        minDP           = 100000|'
+    status=$(run_pipeline "$sb")
+    assert_status 1 "$status" "a total depth wipeout must stop the run; see $sb/run.out"
+    out=$(cat "$sb/run.out")
+    assert_contains "$out" "no site survived the depth and quality filter" "saying what happened"
+    assert_contains "$out" "minDP 100000" "and reporting the value it used"
+    assert_no_file "$sb/store/Output/Frequencies/Test_snp_freq.tsv" \
+        "no frequency table should have been written"
+    assert_contains "$(cat "$sb/store/Logs/7_vcf2freq/"*DepthAndQuality*.log 2>/dev/null)" \
+        "no site survived" "the refusal must reach Logs/, not only the terminal"
+}
+
+# The cross-sample filter requires an allele in a fraction of the samples. Above 1 that is more
+# samples than exist, so every site goes -- measured at 1.5 against the real fixture VCF.
+test_a_cross_sample_filter_that_removes_every_site_stops_the_run() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status out
+    sb=$(make_pipeline_sandbox "empty-after-fp")
+    write_sandbox_config "$sb" 's|^        sampleThreshold .*|        sampleThreshold = 1.5|'
+    status=$(run_pipeline "$sb")
+    assert_status 1 "$status" "a total cross-sample wipeout must stop the run; see $sb/run.out"
+    out=$(cat "$sb/run.out")
+    assert_contains "$out" "no site survived the cross-sample filter" "saying what happened"
+    assert_contains "$out" "filterFalsePositives.sampleThreshold" "and naming the parameter"
+    assert_no_file "$sb/store/Output/Frequencies/Test_snp_freq.tsv" \
+        "no frequency table should have been written"
+    assert_contains "$(cat "$sb/store/Logs/7_vcf2freq/"*FilterFalsePositives*.log 2>/dev/null)" \
+        "no site survived" "the refusal must reach Logs/, not only the terminal"
+}
+
 # THE COUNTS BEHIND EVERY PUBLISHED FREQUENCY. Until E4a the depth table existed only inside a
 # pipe and was thrown away, so nothing anywhere said how many reads a frequency was computed
 # from. The analysis layer needs it for n_eff, and a reader needs it to judge a frequency at all.

@@ -156,6 +156,19 @@ process FilterPotentialFalsePositives {
 
     """
     set -eo pipefail
+
+    # The log has to leave the task directory, and the refusal below exits before the end of
+    # this script is reached. Called on both paths, as step 0's archive_logs does, so a run
+    # that was stopped is archived rather than leaving Logs/ with nothing for this step.
+    archive_log() {
+        mkdir -p ${dir_log}
+        {
+            echo ""
+            echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+            cat .command.log
+        } >> ${dir_log}/7_s2_FilterFalsePositives_${vcf.baseName}_nextflow.log
+    }
+
     echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Filtering possible false positives..."
     if [ -f ${target_snp_freq_tsv} ] || [ -f ${target_indel_freq_tsv} ]; then
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Found at least one of the existing freq files"
@@ -194,6 +207,21 @@ process FilterPotentialFalsePositives {
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Order might change after filtering, reordering alleles again..."
         MajorAlleleToRef.py "\$TMP_FILE" "${filterfp_vcf}"
 
+        # In the else branch only: the skip branches above write a zero-byte placeholder on
+        # purpose, and a size test would refuse those instead.
+        surviving=\$(grep -vc '^#' ${filterfp_vcf} || true)
+        if [ "\$surviving" -eq 0 ]; then
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: ERROR: no site survived the cross-sample filter."
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Every called site was removed, so there is"
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: nothing left to publish a frequency for."
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: This run required an allele in ${threshold} of the"
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: samples at a frequency above ${sensitivity}."
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: filterFalsePositives.sampleThreshold and poolSize"
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: are what move those. Nothing was published."
+            archive_log
+            exit 1
+        fi
+
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Moving ${filterfp_vcf} to ${target_folder_vcf}..."
         atomic_mv.sh ${filterfp_vcf} ${target_filterfp_vcf}
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Creating symbolic link..."
@@ -206,12 +234,7 @@ process FilterPotentialFalsePositives {
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/7_s2_FilterFalsePositives_${vcf.baseName}_nextflow.log
+    archive_log
     """
 }
 
@@ -265,6 +288,19 @@ process DepthAndQualityFilter {
 
     """
     set -eo pipefail
+
+    # The log has to leave the task directory, and the refusal below exits before the end of
+    # this script is reached. Called on both paths, as step 0's archive_logs does, so a run
+    # that was stopped is archived rather than leaving Logs/ with nothing for this step.
+    archive_log() {
+        mkdir -p ${dir_log}
+        {
+            echo ""
+            echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+            cat .command.log
+        } >> ${dir_log}/7_s3_DepthAndQualityFilter_${vcf.baseName}_nextflow.log
+    }
+
     echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Filtering VCF for depth and quality ${vcf.baseName}..."
     if [ -f ${target_snp_freq_tsv} ] || [ -f ${target_indel_freq_tsv} ]; then
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Found at least one of the existing freq files"
@@ -293,6 +329,22 @@ process DepthAndQualityFilter {
             --recode --recode-INFO-all \
             --out ${filterdq_base}
 
+        # In the else branch only: the skip branches above write a zero-byte placeholder on
+        # purpose, and a size test would refuse those instead.
+        surviving=\$(grep -vc '^#' ${filterdq_recode_vcf} || true)
+        if [ "\$surviving" -eq 0 ]; then
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: ERROR: no site survived the depth and quality filter."
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Both are applied to the whole SITE: one sample under"
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: the depth removes it for every sample, so the"
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: shallowest library sets the threshold for the cohort."
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: This run used minDP ${run.vcffilter.minDP}, minQUAL ${run.vcffilter.minQUAL},"
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: dropZeroDepth ${run.vcffilter.dropZeroDepth}. Check the weakest sample in"
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Output/Reports/Coverage before raising any of them."
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Nothing was published, so this costs nothing already made."
+            archive_log
+            exit 1
+        fi
+
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Renaming ${filterdq_recode_vcf} as ${filterdq_vcf} and moving to ${target_folder_vcf}"
         atomic_mv.sh ${filterdq_recode_vcf} ${target_filterdq_vcf}
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Creating symbolic link..."
@@ -305,12 +357,7 @@ process DepthAndQualityFilter {
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/7_s3_DepthAndQualityFilter_${vcf.baseName}_nextflow.log
+    archive_log
     """
 }
 

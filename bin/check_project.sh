@@ -227,6 +227,43 @@ else
     fi
 fi
 
+# -C AND -q DECIDE BETWEEN THEM WHETHER THE PILEUP EMITS ANYTHING. -C caps every read's
+# adjusted mapping quality near its own value and -q then rejects anything below the minimum,
+# so a -C under -q leaves nothing for bcftools call and it writes a header and no records.
+# Measured on real pools at six different -q values: -C one below -q gives zero sites every
+# time, -C equal to -q gives output every time.
+#
+# Read off the COMPOSED option string rather than the two settings, so a project that pinned
+# mpileupOptions by hand is judged on what will actually run.
+if [ "$PARSED" -eq 1 ]; then
+    checked=$((checked + 1))
+    mpileup=$(cd "$PROJECT_DIR" && nf_config_value "params.variantCall.mpileupOptions")
+    scale=$(printf '%s\n' "$mpileup" | grep -o -- '-C [0-9][0-9]*' | head -1 | awk '{print $2}')
+    minq=$(printf '%s\n' "$mpileup" | grep -o -- '-q [0-9][0-9]*' | head -1 | awk '{print $2}')
+    if [ -z "$scale" ] || [ -z "$minq" ]; then
+        note "variantCall.scaleMapQ" "not checked - no -C or -q in mpileupOptions"
+    elif [ "$scale" -eq 0 ]; then
+        pass "variantCall.scaleMapQ" "OFF" "no mapping-quality adjustment"
+    elif [ "$scale" -le 10 ]; then
+        warn "variantCall.scaleMapQ" "INERT AT $scale" "10 and below changes nothing"
+        printf '    %sbcftools applies no adjustment at all below 11, so this run is the same\n' "$DIM"
+        printf '    as scaleMapQ 0. Write 0 if that is what you meant.%s\n' "$RESET"
+    elif [ "$scale" -lt "$minq" ]; then
+        fail "variantCall.scaleMapQ" "DISCARDS EVERY READ" "$scale is below varQualMin $minq"
+        printf '    %s-C caps every read'"'"'s mapping quality near %s and -q then rejects\n' "$DIM" "$scale"
+        printf '    anything under %s, so the pileup reaches bcftools call empty and the\n' "$minq"
+        printf '    run produces no variants at all. Raise scaleMapQ above varQualMin,\n'
+        printf '    or lower varQualMin below scaleMapQ.%s\n' "$RESET"
+    elif [ "$scale" -lt $(( minq * 2 )) ]; then
+        warn "variantCall.scaleMapQ" "SEVERE AT $scale" "close to varQualMin $minq"
+        printf '    %sIt emits records, but only the best-placed reads clear -q. Measured on\n' "$DIM"
+        printf '    real pools: scaleMapQ equal to varQualMin kept 6%% of the sites an\n'
+        printf '    unadjusted run called. Recovery is gradual and the manual has the curve.%s\n' "$RESET"
+    else
+        pass "variantCall.scaleMapQ" "ABOVE varQualMin" "$scale against $minq"
+    fi
+fi
+
 echo
 
 # ----------------------------------------------------------------- 2. tools --

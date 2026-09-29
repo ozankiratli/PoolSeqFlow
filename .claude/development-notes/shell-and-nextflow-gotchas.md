@@ -173,6 +173,10 @@ That escape is written out in words above for the same reason: the first draft o
 
 **`.unique()` on a Map's `values()` throws `UnsupportedOperationException`** -- `values()` is an unmodifiable view and `unique()` sorts in place. Use `map.values().toList().unique()`. Cost one pipeline run, because the throw surfaced as the same contentless "Unexpected error" as every other DAG-build-time exception.
 
+**A process script that exits early loses its own log, and the terminal hides it.** Every step here ends by appending `.command.log` to `Logs/`, at the bottom of the script. An `exit 1` above that -- a refusal, a guard -- never reaches it, so `Logs/<step>/` holds nothing for the one run that most needed explaining. Nextflow still prints the text to the terminal and `.nextflow.log`, which is what makes it look fine and is no use to anyone reading `Logs/` on a cluster afterwards. Verified 2026-09-29 by asserting on the log file: with the copy skipped the message is absent, with it present it is there. `0_verify_environment.nf` has had the fix since it was written -- an `archive_logs` function called on both paths, with a comment saying why. **Steps 2, 5 and 9 still have the hole for their own refusals.**
+
+**`.command.log` is the COMBINED stream, so `>&2` is not what keeps a message out of it.** Measured the same day, by restoring the redirect and re-running: a guard's text reaches `Logs/` identically whether it went to stdout or stderr. The choice between them is about which section Nextflow files it under in the terminal -- "Command output:" or "Command error:" -- and nothing else.
+
 ---
 
 ## What the tools actually do

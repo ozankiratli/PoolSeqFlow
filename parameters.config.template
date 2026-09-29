@@ -96,7 +96,7 @@ params {
 
     // Step 6: how bcftools calls variants.
     variantCall {
-        // -C. Below 11 it does nothing; 11 to about 20 discards every read. See the manual.
+        // -C. At 10 or below it does nothing; below varQualMin it discards every read.
         scaleMapQ       = 100
         baseQualMin     = 30
         varQualMin      = 30

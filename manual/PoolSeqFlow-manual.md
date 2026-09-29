@@ -1156,11 +1156,38 @@ At the sites a setting keeps, `-C` still shifts the frequencies, because it pena
 
 **Rare alleles are untouched**, so the detection limit that [the false-positive filter](#6-false-positive-filter-step-7) rests on is unaffected. The compression lands where a pool is most non-reference, and it **scales with the quantity being measured** rather than being a flat offset. At `-C 100` the same figure is -0.0076 against 50's -0.0353.
 
-##### Two values that will silently produce nothing
+##### `scaleMapQ` below `varQualMin` produces nothing at all { #scalemapq-and-varqualmin }
 
-**At or below 10, `-C` does nothing at all** - output is byte-identical to `-C 0`.
+**At or below 10, `-C` does nothing** - output is byte-identical to `-C 0`. A small number does not mean a gentle adjustment; it means no adjustment.
 
-**Between 11 and about 20 it discards every read.** `bcftools mpileup` then emits no records, exits successfully and prints no error, so the run completes with an empty VCF and empty frequency tables. If you are tempted to set something "gentler than 100", note that the number runs the other way: **lower is harsher**, and just above the dead zone is where it is most severe.
+**Above 10 and below `varQualMin`, it discards every read.** This is not a fixed range. `-C` caps each read's adjusted mapping quality near its own value, and `-q` (`variantCall.varQualMin`) then rejects anything below the minimum - so whenever `scaleMapQ` is under `varQualMin`, nothing survives the pileup.
+
+Measured on three pools over `2L:5000000-5050000`, calling exactly as step 6 does. Sites called, against 695 with the adjustment off:
+
+| `scaleMapQ` | `varQualMin` 10 | 20 | 30 (default) | 40 |
+|---|---|---|---|---|
+| off, 0, 5, 10 | 695 | 695 | 695 | 695 |
+| 11 | 17 | **0** | **0** | **0** |
+| 15 | 65 | **0** | **0** | **0** |
+| 20 | 112 | 32 | **0** | **0** |
+| 25 | 205 | 163 | **0** | **0** |
+| 29 | 279 | 203 | **0** | **0** |
+| 30 | 297 | 217 | 44 | **0** |
+| 35 | 374 | 368 | 251 | **0** |
+| 40 | 460 | 441 | 305 | 52 |
+| 50 | 545 | 545 | 490 | 316 |
+| 70 | 620 | 617 | 612 | 573 |
+| 100 | 648 | 644 | 644 | 641 |
+
+**The first column is the proof.** At `varQualMin` 10 there is no dead band at all, because 11 already clears the minimum. The band is not a property of `-C`; it is the relationship between the two settings.
+
+Checked directly at six thresholds - `varQualMin` 12, 15, 20, 30, 40 and 50. In every case `scaleMapQ` one below returned **zero** sites and `scaleMapQ` equal to it returned sites. The boundary is exact.
+
+**Clearing the minimum is not the same as being safe.** At the default `varQualMin` 30, a `scaleMapQ` of 30 returns 44 sites out of 695 - **6%** - because only the best-placed reads clear `-q` once their quality has been capped. Recovery is gradual: 36% at 35, 44% at 40, 70% at 50, 88% at 70, 93% at 100. This is the same shape as the whole-genome measurement above, where `-C 30` kept 94,681 sites against `-C 100`'s 1,716,020.
+
+So if you are tempted by something "gentler than 100", the number runs the other way - **lower is harsher** - and the region just above `varQualMin` is where it is most severe, not least.
+
+**Nothing silently succeeds any more.** A run that calls no variants is [refused at step 6](#empty-result-refusals), and one whose filters remove every site is refused in step 7. `PoolSeqFlow check project` reports the `scaleMapQ` / `varQualMin` relationship before you start.
 
 ### 4. Variant calling (step 6)
 
@@ -3043,7 +3070,7 @@ variantCall {
 ```
 
 `-C 100` (`scaleMapQ`)
-: Downgrades mapping quality for reads carrying excessive mismatches. Reads that align poorly are more likely to be misplaced, and a misplaced read contributes its bases to the wrong position, which in a frequency estimate is a direct error, not just noise. **The number runs the other way from what it looks like: lower is harsher, below 11 it does nothing, and between 11 and about 20 it discards every read.** The value was chosen by measurement on pooled data rather than inherited; what each setting costs is in [What `-C` costs, measured](#scalemapq-measured).
+: Downgrades mapping quality for reads carrying excessive mismatches. Reads that align poorly are more likely to be misplaced, and a misplaced read contributes its bases to the wrong position, which in a frequency estimate is a direct error, not just noise. **The number runs the other way from what it looks like: lower is harsher, at or below 10 it does nothing, and anywhere below `varQualMin` it discards every read.** That last one is a relationship between two settings rather than a fixed range, and it is [measured at six different thresholds](#scalemapq-and-varqualmin). The value was chosen by measurement on pooled data rather than inherited; what each setting costs is in [What `-C` costs, measured](#scalemapq-measured).
 
 `-B` (fixed, not configurable)
 : Disables BAQ recalculation. BAQ downweights bases near indels to suppress misalignment artefacts under a single-genome model. In a pool, the same signal may be a genuine low-frequency indel, so the raw evidence is kept and the decision is left to the cross-sample filter.
@@ -4992,6 +5019,20 @@ Two usual causes, in order of likelihood:
 Something capped it, and the depth report says what. `grep -H 'ceiling applied' Output/Reports/Depth/*_depth_report.txt`.
 
 If the plateau is in **one sample** at an unround number, that is its measured ceiling and it is working as intended. The report gives the reason, and `param_capMaxDepth` overrules it for that sample. If **every sample** plateaus at the same number, the cap is flat rather than measured: either `capBAM.maxDepth` is set to a fixed depth, or `variantCall.maxDepth` is non-zero. [Depth capping ->](#depth-capping)
+
+### The run stopped saying nothing survived a filter { #empty-result-refusals }
+
+A run that would have produced an empty result is stopped rather than allowed to publish one. There are three of these, each naming the setting responsible, and each stops before anything is written - so no results directory is left holding an empty table for a later run to skip past.
+
+| What it says | What emptied it | What to look at |
+|---|---|---|
+| `variant calling produced no records at all` | the pileup reached `bcftools call` with nothing in it | `variantCall.scaleMapQ` against `variantCall.varQualMin` - [below the minimum discards every read](#scalemapq-and-varqualmin) |
+| `no site survived the cross-sample filter` | every allele was seen in too few pools | `filterFalsePositives.sampleThreshold`, `poolSize` |
+| `no site survived the depth and quality filter` | every site had a sample under the floor, or too low a QUAL | `vcffilter.minDP`, `vcffilter.minQUAL`, `vcffilter.dropZeroDepth` |
+
+**Why this is a refusal and not a warning.** Every stage downstream succeeds over no records: `bcftools` writes a well-formed header with no rows, `vcftools --recode` exits 0, and the conversion rewrites the header and never enters its body. Before these checks existed, the result of a run that found nothing was a frequency table holding column names and nothing else, from a run that reported success. Measured through all seven stages.
+
+The depth and quality filter is the most common of the three, and it catches people out because **it is applied to the whole site**: one sample below `minDP` removes that site for every sample, so the shallowest library sets the threshold for the entire cohort. Check `Output/Reports/Coverage/` for your weakest sample before raising it.
 
 ### Genotype-based tools find nothing in my VCFs
 
