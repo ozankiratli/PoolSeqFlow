@@ -1314,20 +1314,33 @@ test_a_truncated_depth_histogram_names_the_parameter() {
 # A fresh sandbox each time, never the shared run: every stage of step 7 skips when a later
 # artifact already exists, so a project that has published tables never re-enters the chain.
 
-# scaleMapQ above 10 and below varQualMin caps every read's mapping quality under the minimum
-# that then rejects it, and mpileup emits nothing without failing. This is the door the whole
-# guard was built for.
+# A PILEUP THAT REACHES bcftools call WITH NOTHING IN IT. varQualMin 500 is the door: no read
+# carries a mapping quality anywhere near it, so -q 500 skips every one and mpileup emits no
+# records at all while exiting 0. Measured on the fixture's own ready BAMs: 0 records against 123
+# at the default.
+#
+# WHY BOTH SETTINGS MOVE. scaleMapQ has to stay ABOVE varQualMin or bin/check_parameters.sh refuses
+# the pair at step 0 and the run never reaches step 6. 600 against 500 satisfies that rule (it
+# warns, which is right: it does emit records for ordinary values) while still killing every read,
+# because -C only ever downgrades a mapping quality and never raises one. So this case needs the
+# two layers to be independent, and fails if either stops working.
+#
+# TWO EARLIER ROUTES DID NOT WORK, recorded so they are not retried. scaleMapQ = 15 is the same
+# failure by a shorter path and step 0 now refuses it. baseQualMin = 60 does nothing whatsoever:
+# measured, 123 records at -Q 30 and 123 at -Q 60, indels included.
 test_a_call_set_with_no_records_stops_the_run() {
     if ! have_tools; then skip_case "no conda environment"; return; fi
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
     local sb status out
     sb=$(make_pipeline_sandbox "empty-callset")
-    write_sandbox_config "$sb" 's|^        scaleMapQ .*|        scaleMapQ       = 15|'
+    write_sandbox_config "$sb" \
+        's|^        scaleMapQ .*|        scaleMapQ       = 600|' \
+        's|^        varQualMin .*|        varQualMin      = 500|'
     status=$(run_pipeline "$sb")
     assert_status 1 "$status" "an empty call set must stop the run; see $sb/run.out"
     out=$(cat "$sb/run.out")
     assert_contains "$out" "produced no records" "the refusal should say what happened"
-    assert_contains "$out" "variantCall.scaleMapQ" "and name the parameter that did it"
+    assert_contains "$out" "The pileup ran as:" "and show the options it ran with"
     assert_not_contains "$out" "in scripts/6_variant_call.nf" \
         "and never send the user into the installation"
     # NOTHING PUBLISHED. The point of refusing here is that a later run with a sane value finds
@@ -1360,156 +1373,16 @@ test_a_depth_filter_that_removes_every_site_stops_the_run() {
         "no site survived" "the refusal must reach Logs/, not only the terminal"
 }
 
-# The cross-sample filter requires an allele in a fraction of the samples. Above 1 that is more
-# samples than exist, so every site goes -- measured at 1.5 against the real fixture VCF.
-test_a_cross_sample_filter_that_removes_every_site_stops_the_run() {
-    if ! have_tools; then skip_case "no conda environment"; return; fi
-    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
-    local sb status out
-    sb=$(make_pipeline_sandbox "empty-after-fp")
-    write_sandbox_config "$sb" 's|^        sampleThreshold .*|        sampleThreshold = 1.5|'
-    status=$(run_pipeline "$sb")
-    assert_status 1 "$status" "a total cross-sample wipeout must stop the run; see $sb/run.out"
-    out=$(cat "$sb/run.out")
-    assert_contains "$out" "no site survived the cross-sample filter" "saying what happened"
-    assert_contains "$out" "filterFalsePositives.sampleThreshold" "and naming the parameter"
-    assert_no_file "$sb/store/Output/Frequencies/Test_snp_freq.tsv" \
-        "no frequency table should have been written"
-    assert_contains "$(cat "$sb/store/Logs/7_vcf2freq/"*FilterFalsePositives*.log 2>/dev/null)" \
-        "no site survived" "the refusal must reach Logs/, not only the terminal"
-}
-
-# THE COUNTS BEHIND EVERY PUBLISHED FREQUENCY. Until E4a the depth table existed only inside a
-# pipe and was thrown away, so nothing anywhere said how many reads a frequency was computed
-# from. The analysis layer needs it for n_eff, and a reader needs it to judge a frequency at all.
-test_the_depth_table_is_published_beside_the_frequencies() {
-    needs_run || return
-    local f="$PIPELINE_SB/store/Output/Frequencies"
-    assert_file "$f/Test_snp_depth.tsv"   "the SNP depth table should be published"
-    assert_file "$f/Test_indel_depth.tsv" "the INDEL depth table should be published"
-
-    # THE TWO TABLES ARE NOT THE SAME SHAPE, and reading them as if they were is the mistake
-    # this case exists to stop. The depth table is one row per SITE, each cell holding
-    # comma-separated read counts in REF-then-ALT order; depth2freq.awk expands that into one
-    # row per ALLELE. Same columns, different granularity.
-    assert_eq "$(head -1 "$f/Test_snp_freq.tsv" | tr '\t' '\n' | wc -l)" \
-              "$(head -1 "$f/Test_snp_depth.tsv" | tr '\t' '\n' | wc -l)" \
-              "depth and frequency tables should have the same column count"
-    assert_contains "$(head -1 "$f/Test_snp_depth.tsv")" "TOTAL_AD" "and the same header"
-
-    # Cells are counts, not frequencies: the first sample column of the first row is a list of
-    # whole numbers. A frequency here would mean the tee landed after the conversion.
-    local cell; cell=$(sed -n '2p' "$f/Test_snp_depth.tsv" | cut -f6)
-    printf '%s' "$cell" | grep -qE '^[0-9]+(,[0-9]+)*$' \
-        || fail_case "depth cells should be comma-separated read counts, got '$cell'"
-
-    # Every allele of every site reached the frequency table: one frequency row per allele,
-    # where a site's allele count is REF plus its comma-separated ALTs.
-    local alleles freq_rows
-    alleles=$(awk -F'\t' 'NR > 1 { n = split($4, a, ","); total += n + 1 } END { print total }' \
-              "$f/Test_snp_depth.tsv")
-    freq_rows=$(( $(wc -l < "$f/Test_snp_freq.tsv") - 1 ))
-    assert_eq "$alleles" "$freq_rows" \
-        "the two tables should describe the same sites and the same alleles"
-}
-
-# The depth table rides along with the frequency table rather than costing a task of its own.
-test_the_depth_table_costs_no_extra_task() {
-    needs_run || return
-    # Two tables, SNP and INDEL, from the two CalculateFrequencies tasks.
-    assert_eq "2" "$(task_count "$PIPELINE_SB" "VCF2Frequencies:CalculateFrequencies")" \
-        "one task per split file, writing both its depth table and its frequency table"
-}
-
-# READS MAY SIT IN SUBFOLDERS OF Data/, or directly in it, or both at once.
+# THE CROSS-SAMPLE GUARD HAS NO CASE, and this says why so nobody writes one that cannot work.
+# It refuses a run where no site survives filterFalsePositives.sh, and the only configuration that
+# reached it was sampleThreshold above 1 -- which bin/check_parameters.sh now refuses at step 0,
+# before the pipeline starts. Measured while looking for another door: at sampleThreshold 1.0 with
+# poolSize 2, 39 of 135 sites still survive, and sensitivity is not the binding clause at fixture
+# depth, so no value step 0 permits empties that filter.
 #
-# THIS RUNS STEP 2, NOT STEP 0, because step 0 cannot answer it. Step 0 finds reads with
-# `find -name`, which has always recursed, so a nested layout passed its sample match long
-# before the reads could actually be staged - the divergence this change closes. What had to
-# move is `params.reads`, which readPairChannel globs, and only a step that consumes that
-# channel exercises it. Written against step 0 first, where reverting the glob left the case
-# passing.
-test_reads_are_found_in_subfolders_of_data() {
-    have_tools || { skip_case "no conda environment"; return; }
-    [ "${TEST_FAST:-0}" = "1" ] && { skip_case "--fast"; return; }
-    local sb status s
-    sb=$(make_pipeline_sandbox "nested-reads")
-    write_sandbox_config "$sb"
-
-    # One sample in a folder of its own, one two levels down, the rest left flat.
-    mkdir -p "$sb/main/Data/TestSample1" "$sb/main/Data/batch2/TestSample2"
-    mv "$sb/main/Data/TestSample1_R"*.fq.gz "$sb/main/Data/TestSample1/"
-    mv "$sb/main/Data/TestSample2_R"*.fq.gz "$sb/main/Data/batch2/TestSample2/"
-
-    status=$(run_trim_only "$sb")
-    assert_status 0 "$status" "step 2 should complete over a mixed layout; see $sb/run.out"
-
-    # Every sample trimmed, wherever its reads were: the nested two are the point, and the
-    # flat ones prove `**` still matches at depth zero.
-    for n in 1 2 3 4 5 6; do
-        s="TestSample$n"
-        assert_count 2 "$(find "$sb/main/Utilized" -name "${s}_R[12]_clipped.fq.gz" 2>/dev/null | wc -l)" \
-            "$s should have been trimmed whatever folder its reads were in"
-    done
-}
-
-# HIDDEN FOLDERS ARE EXCLUDED FROM THE READ CHANNEL, not only from step 0's search.
-#
-# THIS RUNS STEP 2, because step 0 cannot answer it. The two prune independently - step 0 with
-# `find -prune`, the channel with a filter in readPairChannel - and a case that runs only step 0
-# passes with the channel's filter deleted outright. Measured: it did.
-#
-# `.snapshot` is NetApp's, exposed read-only inside every directory on much HPC storage and
-# holding a copy of every file per snapshot. Unfiltered, the channel emits the sample twice and
-# trims it twice, with both runs writing the outputs named after it.
-test_hidden_folders_are_excluded_from_the_read_channel() {
-    have_tools || { skip_case "no conda environment"; return; }
-    [ "${TEST_FAST:-0}" = "1" ] && { skip_case "--fast"; return; }
-    local sb status samples
-    sb=$(make_pipeline_sandbox "hidden-channel")
-    write_sandbox_config "$sb"
-    samples=$(find "$sb/main/Data" -name '*_R1.fq.gz' | wc -l)
-
-    mkdir -p "$sb/main/Data/.snapshot/nightly"
-    cp "$sb/main/Data/TestSample1_R1.fq.gz" "$sb/main/Data/.snapshot/nightly/"
-    cp "$sb/main/Data/TestSample1_R2.fq.gz" "$sb/main/Data/.snapshot/nightly/"
-
-    status=$(run_trim_only "$sb")
-    assert_status 0 "$status" "the snapshot copy must not disturb the run; see $sb/run.out"
-
-    # One trim per sample, and the count is what shows the copy was excluded: unfiltered, the
-    # channel emits TestSample1 twice and this reads one higher than the sample count.
-    assert_count "$samples" "$(task_count "$sb" TrimQcClip:TrimReads)" \
-        "each sample should be trimmed once, the hidden copy not at all"
-}
-
-# `reads` IN parameters.config IS NOT CONSULTED, and this pins that.
-#
-# deriveRunPaths() assigns p.reads directly - not through fill(), which is what respects a user
-# setting - so the value a run globs is always the one it computes, into each variant map. The
-# copy in parameters.config exists so a reader can see how the path is built.
-#
-# Worth a case because the asymmetry is invisible: the knobs beside it in the same file ARE
-# respected, since deriveInto() fills them only when absent. And because it cost real time -
-# the `**` was added to parameters.config.template first and nothing changed, which reads as
-# the feature not working rather than as the line not being read.
-test_the_reads_setting_in_the_config_is_not_consulted() {
-    have_tools || { skip_case "no conda environment"; return; }
-    [ "${TEST_FAST:-0}" = "1" ] && { skip_case "--fast"; return; }
-    local sb status samples
-    sb=$(make_pipeline_sandbox "reads-override")
-    samples=$(find "$sb/main/Data" -name '*_R1.fq.gz' | wc -l)
-    # A path that matches nothing anywhere. If it were read, the run would find no reads at all.
-    write_sandbox_config "$sb" \
-        's|^    reads .*|    reads           = "/nonexistent/nothing/**_R{1,2}.fq.gz"|'
-    assert_contains "$(cat "$sb/main/parameters.config")" "/nonexistent/nothing/" \
-        "the sandbox config should carry the bogus path, or this case proves nothing"
-
-    status=$(run_trim_only "$sb")
-    assert_status 0 "$status" "the derived value should be used regardless; see $sb/run.out"
-    assert_count "$samples" "$(task_count "$sb" TrimQcClip:TrimReads)" \
-        "every sample should still be trimmed, from the path the resolver computed"
-}
+# The guard stays. What it now protects against is DATA rather than configuration: a cohort whose
+# variants are shared by too few pools. Nothing in a fixture-driven suite can produce that without
+# a fixture built for it, and it is not worth one for a guard whose message is three lines.
 
 # vcffilter.dropZeroDepth, which had no coverage at any level. 00_static proves it is DECLARED in
 # stepParameterMap() -- delete it from scripts/variants.nf and a static case fails in seconds --

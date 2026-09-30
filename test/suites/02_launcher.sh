@@ -2,7 +2,7 @@
 # The ./PoolSeqFlow wrapper's environment handling, against a stub conda.
 # cost: static
 # covers: PoolSeqFlow lib/wrapper_lib.sh lib/tool_version.sh bin/check_install.sh
-# covers: bin/check_analysis_install.sh bin/check_project.sh
+# covers: bin/check_analysis_install.sh bin/check_project.sh bin/check_parameters.sh
 # covers: parameters.config.template metadata.csv.template
 #
 # These run entirely against the fake conda in lib/sandbox.sh. Nothing here creates,
@@ -211,23 +211,15 @@ test_check_project_names_a_utf16_byte_order_mark_in_the_config() {
     assert_contains "$CP_OUT" "utf-16" "and say it is a UTF-16 one, not a UTF-8 one"
 }
 
-# -C AND -q TOGETHER DECIDE WHETHER THE PILEUP EMITS ANYTHING, and neither is a problem alone.
-# bcftools caps every read's adjusted mapping quality near -C and then -q rejects anything under
-# the minimum, so a -C below -q leaves bcftools call nothing to do and it writes a header and no
-# records. Every later step succeeds over that, and what the user gets is a frequency table of
-# column names from a run that reported success.
-#
-# Measured on real pools at six different -q values (12, 15, 20, 30, 40, 50): -C one below -q
-# returned zero sites every time, -C equal to -q returned sites every time. The boundary is the
-# relationship, not a fixed range -- which is why this reads both numbers rather than testing
-# -C against a constant.
+# THE PARAMETER RULES ARE bin/check_parameters.sh's, and its own cases are in 03_helpers where
+# they cost nothing. What these assert is the WIRING: that check_project.sh calls it, renders each
+# level the way this script renders everything else, folds the explanation, and lets a FAIL decide
+# its own exit status. One rule is used as the vehicle and it does not matter which.
 #
 # A STUBBED nextflow, so these stay in a suite that starts no JVM. It answers the two forms the
-# script uses: a bare `config` for the parse verdict, and `config -flat` for the values read
-# after it. What is under test is the verdict drawn from the flat output.
-#
-# STATUS IS NOT ASSERTED. PATH is cut back so no tool resolves, so the tools section fails in
-# every one of these and the script's exit status says so whatever the pileup verdict was.
+# script uses: a bare `config` for the parse verdict, and `config -flat` for the values read after
+# it. STATUS IS NOT ASSERTED except where noted: PATH is cut back so no tool resolves, so the
+# tools section fails in every one of these.
 check_project_with_pileup() {   # mpileup-option-string
     local opts="$1" proj stub
     proj=$(guard_path "$TEST_TMPDIR/pileup-check")
@@ -243,6 +235,14 @@ cat <<'FLAT'
 params.metadataFile = 'metadata.csv'
 params.multiRunFile = 'runs.csv'
 params.multiRun = false
+params.ploidy = 2
+params.poolSize = 100
+params.vcffilter.minDP = 20
+params.vcffilter.dropZeroDepth = true
+params.filterFalsePositives.sampleThreshold = 0.2
+params.capBAM.maxDepth = -1
+params.variantCall.maxDepth = 0
+params.fastqc.memory = 2048
 FLAT
 echo "params.variantCall.mpileupOptions = '$opts'"
 STUB
@@ -251,62 +251,54 @@ STUB
     CP_STATUS=$?
 }
 
-test_check_project_refuses_a_scale_below_the_quality_minimum() {
-    check_project_with_pileup "-B -C 15 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
-    assert_contains "$CP_OUT" "DISCARDS EVERY READ" "the verdict should say what happens"
-    assert_contains "$CP_OUT" "15 is below varQualMin 30" "and name both numbers"
-    assert_contains "$CP_OUT" "Raise scaleMapQ above varQualMin" "and say how to fix it"
+# SILENCE IS THE ANSWER FOR A SOUND PARAMETER SET. The helper prints a finding per rule that has
+# something to say and nothing otherwise, so a healthy project gets one line rather than nine.
+test_check_project_says_nothing_to_flag_for_the_shipped_defaults() {
+    check_project_with_pileup "-B -C 100 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
+    assert_contains "$CP_OUT" "NOTHING TO FLAG" "the template's own values should raise nothing"
+    assert_not_contains "$CP_OUT" "DISCARDS EVERY READ" "and certainly not a failure"
 }
 
-# THE BOUNDARY MOVES WITH varQualMin. The same -C 15 that is fatal above is fine here, because
-# the minimum it has to clear is lower. A check testing -C against a constant would call this
-# broken, and the template comment used to say exactly that constant.
+test_check_project_renders_a_parameter_failure() {
+    check_project_with_pileup "-B -C 15 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
+    assert_contains "$CP_OUT" "DISCARDS EVERY READ" "the verdict should be rendered"
+    assert_contains "$CP_OUT" "variantCall.scaleMapQ" "against the parameter it belongs to"
+    assert_contains "$CP_OUT" "15 is below varQualMin 30" "with the detail beside it"
+    # The explanation is folded under the row rather than run off the terminal.
+    assert_contains "$CP_OUT" "Raise scaleMapQ above varQualMin" "and the explanation printed"
+    assert_status 1 "$CP_STATUS" "and a parameter failure should fail the check"
+}
+
+# THE BOUNDARY MOVES WITH varQualMin, so a check written against a constant would be wrong. The
+# same -C 15 that fails above is sound here.
 test_check_project_accepts_a_scale_that_clears_a_lower_minimum() {
     check_project_with_pileup "-B -C 15 -q 5 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
-    assert_not_contains "$CP_OUT" "DISCARDS EVERY READ" \
-        "15 clears a minimum of 5 and must not be refused"
-    assert_contains "$CP_OUT" "ABOVE varQualMin" "it should pass on its own terms"
+    assert_contains "$CP_OUT" "NOTHING TO FLAG" "15 clears a minimum of 5"
+    assert_not_contains "$CP_OUT" "DISCARDS EVERY READ" "and must not be refused"
 }
 
-# At or below 10 bcftools applies no adjustment at all, so a user who wrote a small number
-# meaning "gentle" got nothing rather than a little.
-test_check_project_reports_a_scale_that_does_nothing() {
-    check_project_with_pileup "-B -C 5 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
-    assert_contains "$CP_OUT" "INERT AT 5" "a value below 11 should be called inert"
-    assert_contains "$CP_OUT" "Write 0 if that is what you meant" "and say what to write instead"
-    assert_not_contains "$CP_OUT" "DISCARDS EVERY READ" "it is not the destructive case"
-}
-
-test_check_project_accepts_the_adjustment_turned_off() {
-    check_project_with_pileup "-B -C 0 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
-    assert_contains "$CP_OUT" "OFF" "zero is a deliberate off, not a mistake"
-    assert_not_contains "$CP_OUT" "INERT" "and should not be reported as an accident"
-}
-
-# Clearing the minimum is not the same as being safe: at -C equal to -q only the best-placed
-# reads survive, measured at 6% of the sites an unadjusted run called.
-test_check_project_warns_when_the_scale_barely_clears_the_minimum() {
-    check_project_with_pileup "-B -C 35 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
-    assert_contains "$CP_OUT" "SEVERE AT 35" "just above the minimum is still severe"
-    assert_not_contains "$CP_OUT" "DISCARDS EVERY READ" "but it is not the empty case"
-}
-
-# THE SHIPPED DEFAULTS MUST NOT TRIP THEIR OWN CHECK. scaleMapQ 100 against varQualMin 30.
-test_check_project_passes_the_shipped_defaults() {
-    check_project_with_pileup "-B -C 100 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
-    assert_contains "$CP_OUT" "ABOVE varQualMin" "the template's own values should pass"
-    assert_not_contains "$CP_OUT" "SEVERE" "and not be called severe"
-    assert_not_contains "$CP_OUT" "DISCARDS EVERY READ" "or refused"
-}
-
-# A project that pinned mpileupOptions by hand and left no -C in it cannot be judged, and
-# saying nothing is the answer rather than guessing from the settings it was not built from.
-test_check_project_says_nothing_when_the_options_carry_no_scale() {
+# A NOTE IS NOT A WARNING AND NOT A FAILURE, and the three are rendered differently. An option
+# string pinned by hand with no -C in it cannot be judged, and saying so is the answer.
+test_check_project_reports_an_unjudgeable_option_string() {
     check_project_with_pileup "-B -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
-    assert_contains "$CP_OUT" "not checked - no -C or -q in mpileupOptions" \
-        "an option string without -C should be reported as unjudged"
-    assert_not_contains "$CP_OUT" "DISCARDS EVERY READ" "and never guessed at"
+    assert_contains "$CP_OUT" "NOT CHECKED" "an option string without -C is unjudged"
+    assert_contains "$CP_OUT" "no -C or -q in mpileupOptions" "and says why"
+    assert_not_contains "$CP_OUT" "DISCARDS EVERY READ" "never guessed at"
 }
+
+# The helper is part of the installation, so its absence is an incomplete install rather than a
+# clean bill of health. Reported, not passed over.
+test_check_project_reports_a_missing_parameter_checker() {
+    local saved
+    saved=$(guard_path "$TEST_TMPDIR/checker-saved")
+    cp "$REPO_ROOT/bin/check_parameters.sh" "$saved"
+    chmod -x "$REPO_ROOT/bin/check_parameters.sh"
+    check_project_with_pileup "-B -C 100 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
+    chmod +x "$REPO_ROOT/bin/check_parameters.sh"
+    assert_contains "$CP_OUT" "NOT CHECKED" "a missing checker should be reported"
+    assert_contains "$CP_OUT" "check_parameters.sh is missing" "and named"
+}
+
 
 # `conda env create` takes its name from environment.yml unless -n overrides it. Without the
 # override every release lands in one environment again, which is the bug being fixed.

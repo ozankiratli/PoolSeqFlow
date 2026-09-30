@@ -1356,3 +1356,68 @@ test_a_read_pattern_matching_nothing_is_refused() {
     assert_contains "$out" "No FASTQ files found" "saying nothing matched"
     assert_contains "$out" "Expected pattern" "and what it was looking for"
 }
+
+# THE PARAMETER RULES RUN IN STEP 0, not only in `PoolSeqFlow check project`. They are
+# bin/check_parameters.sh's, with their own cases in 03_helpers; what these two assert is that step
+# 0 calls it, renders what it says, and lets the LEVEL decide whether the run continues.
+#
+# A FRESH sandbox, never the baseline one: changing a parameter in the baseline would also trip the
+# change guard, and then there would be two reasons for one failure and no way to tell them apart.
+# On a first run there is nothing recorded yet, so the parameter rules speak alone.
+verify_fresh_config() {   # name sed-expression
+    local sb
+    sb=$(make_pipeline_sandbox "$1")
+    write_sandbox_config "$sb" "$2"
+    VF_STATUS=$(run_verify_only "$sb")
+    VF_REPORT=$(cat "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)
+    VF_SB="$sb"
+}
+
+# scaleMapQ under varQualMin makes the pileup emit nothing. Caught here, it costs a step-0 run;
+# uncaught, it costs alignment and calling first and then fails in step 6.
+test_a_parameter_that_would_produce_nothing_stops_the_run() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    verify_fresh_config "params-fail" 's|^        scaleMapQ .*|        scaleMapQ       = 15|'
+    assert_status 1 "$VF_STATUS" "a parameter that produces nothing must stop the run; see $VF_SB/run.out"
+    assert_contains "$VF_REPORT" "DISCARDS EVERY READ" "the report should carry the verdict"
+    assert_contains "$VF_REPORT" "variantCall.scaleMapQ" "against the parameter responsible"
+    assert_contains "$VF_REPORT" "15 is below varQualMin 30" "with both numbers"
+    # THE EXPLANATION IS ASSERTED BY ITS INDENT, not by its words. It is wrapped with `fold -s`,
+    # so no multi-word phrase survives reliably: the first attempt looked for "Raise scaleMapQ
+    # above varQualMin" and the fold landed between "Raise" and "scaleMapQ". The deeper indent is
+    # what says a wrapped explanation was printed at all, and it holds however the prose changes.
+    assert_contains "$VF_REPORT" "RUN PARAMETERS:            " \
+        "the explanation should be folded in under the verdict"
+    assert_contains "$VF_REPORT" "rather than after the compute it would waste" \
+        "and say why it stopped here"
+    # NOTHING ALIGNED. The point of catching it at step 0 is that no compute is spent.
+    assert_no_file "$VF_SB/store/Output/VCF/Test.vcf" "no VCF should have been produced"
+}
+
+# A WARNING IS NOT A FAILURE, and the difference has to survive the trip through step 0. scaleMapQ
+# 35 against varQualMin 30 is severe and measured at 6% of the sites, but it does produce records,
+# so the run is the user's to make.
+test_a_parameter_warning_does_not_stop_the_run() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    verify_fresh_config "params-warn" 's|^        scaleMapQ .*|        scaleMapQ       = 35|'
+    assert_status 0 "$VF_STATUS" "a warning must not stop the run; see $VF_SB/run.out"
+    assert_contains "$VF_REPORT" "SEVERE AT 35" "but it should still be said"
+    assert_not_contains "$VF_REPORT" "DISCARDS EVERY READ" "and not reported as the other thing"
+}
+
+# SILENCE FOR THE SHIPPED DEFAULTS. The case most likely to rot: a rule added with a wrong
+# threshold makes every ordinary run noisy, and a user who sees a warning on a default stops
+# reading warnings at all.
+test_the_shipped_defaults_raise_no_parameter_finding() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    verify_fresh_config "params-clean" 's|^    poolSize .*|    poolSize        = 100|'
+    assert_status 0 "$VF_STATUS" "the defaults should verify; see $VF_SB/run.out"
+    local level
+    for level in FAIL WARN NOTE; do
+        assert_not_contains "$VF_REPORT" "RUN PARAMETERS:        $level" \
+            "the template's own values should raise no $level"
+    done
+}

@@ -1040,6 +1040,27 @@ CURRENT_PARAMS
 
     STATUS="PASS"
 
+    # The parameter rules, from the same helper `PoolSeqFlow check project` runs, over the same
+    # resolved set recorded above. One implementation and two callers, so a project cannot be told
+    # one thing before a run and another during it. Silence means nothing to flag; a FAIL stops the
+    # run here rather than hours in.
+    PARAM_RULES=0
+    check_parameters.sh < current_params.txt > param_findings.txt || PARAM_RULES=1
+    if [ -s param_findings.txt ]; then
+        while IFS="\$(printf '\\t')" read -r level label headline detail why; do
+            [ -n "\$level" ] || continue
+            log_message "RUN PARAMETERS:        \$level \$label: \$headline\${detail:+ (\$detail)}"
+            [ -n "\$why" ] && printf '%s' "\$why" | fold -s -w 62 | while IFS= read -r wrapped; do
+                log_message "RUN PARAMETERS:            \$wrapped"
+            done
+        done < param_findings.txt
+        if [ "\$PARAM_RULES" -ne 0 ]; then
+            log_message "RUN PARAMETERS:        A setting above would make this run produce nothing."
+            log_message "RUN PARAMETERS:        Stopped here rather than after the compute it would waste."
+            STATUS="FAIL"
+        fi
+    fi
+
     # A dry run makes every comparison below and writes none of the files that answer it.
     DRY_RUN="${params.dryRun}"
     RECORD="Recording"

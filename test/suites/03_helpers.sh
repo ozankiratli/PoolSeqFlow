@@ -2014,3 +2014,219 @@ test_major_allele_to_ref_refuses_a_vcf_without_format_ad() {
     assert_status 1 "$M2R_STATUS" "a VCF with no FORMAT/AD should be refused"
     assert_contains "$M2R_LOG" "No FORMAT/AD field" "saying what is missing"
 }
+
+# check_parameters.sh: judge a resolved parameter set, one finding per line.
+#
+# THE RULES LIVE HERE AND NOWHERE ELSE. Both bin/check_project.sh and step 0 call this, so a
+# project cannot be told one thing before a run and another during it. 02_launcher asserts the
+# wiring through check_project.sh; these are the rules themselves, at static cost.
+#
+# WHAT BELONGS IN IT: a setting that makes the run produce NOTHING, or that silently changes what
+# a published number means. minDP 20 against minDP 5 is a scientific choice and is not its
+# business. Every threshold below was measured, not chosen.
+
+# The shipped defaults, which every case starts from and mutates.
+cp_defaults() {
+    cat <<'FLAT'
+params.variantCall.mpileupOptions = '-B -C 100 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou'
+params.filterFalsePositives.sampleThreshold = 0.2
+params.vcffilter.minDP = 20
+params.vcffilter.dropZeroDepth = true
+params.ploidy = 2
+params.poolSize = 100
+params.capBAM.maxDepth = -1
+params.variantCall.maxDepth = 0
+params.fastqc.memory = 2048
+FLAT
+}
+
+# Run the helper over the defaults with the given assignments replacing theirs.
+CP_FIND=""
+CP_RC=0
+cp_check() {   # params.key=value ...
+    local a k
+    cp_defaults > "$HELPERS_DIR/flat.txt"
+    for a in "$@"; do
+        k=${a%%=*}
+        grep -v "^${k} = " "$HELPERS_DIR/flat.txt" > "$HELPERS_DIR/flat.tmp" || true
+        mv "$HELPERS_DIR/flat.tmp" "$HELPERS_DIR/flat.txt"
+        printf '%s = %s\n' "${a%%=*}" "${a#*=}" >> "$HELPERS_DIR/flat.txt"
+    done
+    CP_FIND=$(bash "$REPO_ROOT/bin/check_parameters.sh" < "$HELPERS_DIR/flat.txt")
+    CP_RC=$?
+}
+
+# The level and verdict for one parameter, or empty when it said nothing.
+cp_verdict() { printf '%s\n' "$CP_FIND" | awk -F'\t' -v k="$1" '$2 == k { print $1, $3 }'; }
+
+# SILENCE IS THE ANSWER FOR A SOUND SET, and it is the case most likely to rot: a rule added with
+# a wrong threshold makes the shipped template noisy, and a user who sees a warning on a default
+# stops reading warnings.
+test_check_parameters_says_nothing_about_the_shipped_defaults() {
+    helpers_sandbox
+    cp_check
+    assert_eq "" "$CP_FIND" "the template's own values should produce no finding at all"
+    assert_status 0 "$CP_RC" "and exit clean"
+}
+
+# -C caps every read's mapping quality near its own value and -q rejects anything below the
+# minimum, so a -C under -q leaves the pileup empty. Measured on real pools at six values of -q
+# (12, 15, 20, 30, 40, 50): one below returned zero sites every time.
+test_check_parameters_refuses_a_scale_below_the_quality_minimum() {
+    helpers_sandbox
+    cp_check "params.variantCall.mpileupOptions='-B -C 15 -q 30 -Q 30'"
+    assert_eq "FAIL DISCARDS EVERY READ" "$(cp_verdict variantCall.scaleMapQ)" \
+        "a scale under the minimum should be refused"
+    assert_status 1 "$CP_RC" "and set a failing status"
+}
+
+# THE BOUNDARY IS THE RELATIONSHIP, NOT A RANGE. The same 15 is sound against a lower minimum,
+# and a rule written against a constant would call this broken.
+test_check_parameters_accepts_a_scale_that_clears_a_lower_minimum() {
+    helpers_sandbox
+    cp_check "params.variantCall.mpileupOptions='-B -C 15 -q 5 -Q 30'"
+    assert_eq "" "$(cp_verdict variantCall.scaleMapQ)" "15 clears a minimum of 5"
+    assert_status 0 "$CP_RC" "and is not a failure"
+}
+
+test_check_parameters_separates_an_inert_scale_from_a_deliberate_zero() {
+    helpers_sandbox
+    cp_check "params.variantCall.mpileupOptions='-B -C 5 -q 30 -Q 30'"
+    assert_eq "WARN INERT AT 5" "$(cp_verdict variantCall.scaleMapQ)" \
+        "below 11 the adjustment does nothing, whatever was written"
+    cp_check "params.variantCall.mpileupOptions='-B -C 0 -q 30 -Q 30'"
+    assert_eq "NOTE OFF" "$(cp_verdict variantCall.scaleMapQ)" \
+        "zero is a deliberate off, not an accident"
+}
+
+# Clearing the minimum is not being safe: at -C equal to -q only the best-placed reads survive,
+# measured at 6% of the sites an unadjusted run called.
+test_check_parameters_warns_when_the_scale_barely_clears_the_minimum() {
+    helpers_sandbox
+    cp_check "params.variantCall.mpileupOptions='-B -C 35 -q 30 -Q 30'"
+    assert_eq "WARN SEVERE AT 35" "$(cp_verdict variantCall.scaleMapQ)" \
+        "just above the minimum is still severe"
+    assert_status 0 "$CP_RC" "but not a failure: it does produce records"
+}
+
+# An option string pinned by hand may carry neither flag. Saying so beats guessing from settings
+# it was not built from, which is the trap the whole composed-value approach exists to avoid.
+test_check_parameters_declines_to_judge_an_option_string_without_the_pair() {
+    helpers_sandbox
+    cp_check "params.variantCall.mpileupOptions='-B -q 30 -Q 30'"
+    assert_eq "NOTE NOT CHECKED" "$(cp_verdict variantCall.scaleMapQ)" "unjudged, and said so"
+    assert_status 0 "$CP_RC" "and never a failure"
+}
+
+# sampleThreshold is a fraction of the samples. Above 1 it asks for more samples than exist:
+# measured at 1.5 against the fixture VCF, 0 of 135 sites survived.
+test_check_parameters_refuses_a_sample_threshold_above_one() {
+    helpers_sandbox
+    cp_check "params.filterFalsePositives.sampleThreshold=1.5"
+    assert_eq "FAIL REMOVES EVERY SITE" "$(cp_verdict filterFalsePositives.sampleThreshold)" \
+        "a fraction above 1 cannot be satisfied"
+    cp_check "params.filterFalsePositives.sampleThreshold=0"
+    assert_eq "WARN INERT AT 0" "$(cp_verdict filterFalsePositives.sampleThreshold)" \
+        "and at 0 it asks for nothing"
+}
+
+# The one combination that lets an unmeasured cell reach a published table. A legitimate choice,
+# so it is told rather than refused.
+test_check_parameters_notes_when_unmeasured_cells_can_be_published() {
+    helpers_sandbox
+    cp_check "params.vcffilter.minDP=0" "params.vcffilter.dropZeroDepth=false"
+    assert_eq "NOTE UNMEASURED CELLS WILL BE PUBLISHED" "$(cp_verdict vcffilter.minDP)" \
+        "minDP 0 with dropZeroDepth off publishes NA cells"
+    assert_status 0 "$CP_RC" "which is a choice, not an error"
+    # EITHER ALONE IS FINE, which is what makes this a pair rather than two rules.
+    cp_check "params.vcffilter.dropZeroDepth=false"
+    assert_eq "" "$(cp_verdict vcffilter.minDP)" "dropZeroDepth off is redundant above minDP 1"
+}
+
+# AN ABSENT BOOLEAN IS FALSE, NOT UNKNOWN. dropZeroDepth is read in a Groovy ternary, so a config
+# written before it existed leaves it null, null is falsy, and the run behaves exactly as `false`
+# while nothing says so. A config from before 3.2 with minDP 0 therefore publishes NA cells, and it
+# is the one case that cannot tell it is in trouble.
+#
+# The first draft of the rule tested `= false` and said nothing at all here. Measured: with the key
+# removed and minDP 0, the helper emitted no finding of any kind.
+test_check_parameters_treats_an_absent_dropzerodepth_as_false() {
+    helpers_sandbox
+    # cp_check replaces assignments; this removes one, which is what a stale config looks like.
+    cp_defaults | grep -v '^params.vcffilter.dropZeroDepth ' > "$HELPERS_DIR/flat.txt"
+    printf 'params.vcffilter.minDP = 0\n' >> "$HELPERS_DIR/flat.txt"
+    grep -v '^params.vcffilter.minDP = 20' "$HELPERS_DIR/flat.txt" > "$HELPERS_DIR/f2" && mv "$HELPERS_DIR/f2" "$HELPERS_DIR/flat.txt"
+    CP_FIND=$(bash "$REPO_ROOT/bin/check_parameters.sh" < "$HELPERS_DIR/flat.txt")
+    assert_eq "NOTE UNMEASURED CELLS WILL BE PUBLISHED" "$(cp_verdict vcffilter.minDP)" \
+        "an absent dropZeroDepth is the same as false and must be reported as such"
+}
+
+# A MISSING KEY MUST NOT CRASH AND MUST NOT INVENT A FINDING. Every rule but the boolean above
+# declines to judge a value it does not have, because after resolution an absent key means the
+# project's config never defined it and there is nothing to compare. The one thing that is never
+# acceptable is a spurious verdict about a parameter nobody set.
+test_check_parameters_survives_a_config_with_nothing_in_it() {
+    helpers_sandbox
+    printf 'params.mainDir = /somewhere\n' > "$HELPERS_DIR/flat.txt"
+    CP_FIND=$(bash "$REPO_ROOT/bin/check_parameters.sh" < "$HELPERS_DIR/flat.txt")
+    CP_RC=$?
+    assert_status 0 "$CP_RC" "an empty parameter set is unjudgeable, not a failure"
+    # The pileup pair is the only rule that speaks, and it speaks to say it cannot judge.
+    assert_eq "NOTE NOT CHECKED" "$(cp_verdict variantCall.scaleMapQ)" "and says so"
+    assert_eq "" "$(cp_verdict poolSize)" "no verdict on a poolSize nobody set"
+    assert_eq "" "$(cp_verdict ploidy)" "nor on ploidy"
+    assert_eq "" "$(cp_verdict fastqc.memory)" "nor on fastqc.memory"
+    assert_eq "" "$(cp_verdict filterFalsePositives.sampleThreshold)" "nor on the threshold"
+}
+
+# n_chrom is ploidy times poolSize. At 1 the unbiased diversity correction n_eff/(n_eff - 1) is
+# infinite -- measured, n_eff(1, 50) is exactly 1 -- so any diversity computed over such a pool is
+# meaningless. A WARNING and not a failure, because the PIPELINE is unaffected: it publishes
+# frequencies perfectly well and only an analysis degrades. Refusing a run here would be stricter
+# than the thing being protected.
+test_check_parameters_warns_about_a_pool_of_one_chromosome() {
+    helpers_sandbox
+    cp_check "params.poolSize=1" "params.ploidy=1"
+    assert_eq "WARN ONE CHROMOSOME" "$(cp_verdict poolSize)" "one chromosome cannot carry diversity"
+    assert_status 0 "$CP_RC" "but the pipeline runs, so it must not fail the check"
+    cp_check "params.ploidy=0"
+    assert_eq "FAIL NOT A PLOIDY" "$(cp_verdict ploidy)" "and a ploidy below 1 is not a ploidy"
+    # A haploid pool of two is legitimate and must not be caught by the same rule.
+    cp_check "params.poolSize=2" "params.ploidy=1"
+    assert_eq "" "$(cp_verdict poolSize)" "two haploid individuals are a pool"
+}
+
+# capBAM.maxDepth -1 asks step 5 to measure a ceiling per sample. A positive variantCall.maxDepth
+# then caps every sample flat at pileup time as well, so the smaller wins and the measured
+# ceilings stop deciding.
+test_check_parameters_notes_a_flat_ceiling_over_measured_ones() {
+    helpers_sandbox
+    cp_check "params.variantCall.maxDepth=500"
+    assert_eq "NOTE OVERRIDES THE MEASURED CEILINGS" "$(cp_verdict variantCall.maxDepth)" \
+        "a flat ceiling undercuts the per-sample ones"
+    # Not a conflict when nothing is being measured.
+    cp_check "params.variantCall.maxDepth=500" "params.capBAM.maxDepth=0"
+    assert_eq "" "$(cp_verdict variantCall.maxDepth)" \
+        "with capBAM off there is no measured ceiling to override"
+}
+
+test_check_parameters_refuses_a_memory_size_carrying_a_unit() {
+    helpers_sandbox
+    cp_check "params.fastqc.memory=2G"
+    assert_eq "FAIL NOT A PLAIN NUMBER" "$(cp_verdict fastqc.memory)" "FastQC rejects a unit"
+    assert_status 1 "$CP_RC" "so the run would fail later; better here"
+}
+
+# A FINDING IS ONE LINE OF FIVE TAB-SEPARATED FIELDS, because both callers read it with `read`.
+# An explanation running onto a second line, or a stray tab inside one, would silently shift every
+# field after it.
+test_check_parameters_emits_one_line_of_five_fields_per_finding() {
+    helpers_sandbox
+    cp_check "params.variantCall.mpileupOptions='-B -C 15 -q 30 -Q 30'" \
+             "params.filterFalsePositives.sampleThreshold=1.5" "params.fastqc.memory=2G"
+    assert_eq "3" "$(printf '%s\n' "$CP_FIND" | wc -l)" "three findings, three lines"
+    assert_eq "" "$(printf '%s\n' "$CP_FIND" | awk -F'\t' 'NF != 5 { print NR }')" \
+        "every line should hold exactly five fields"
+    assert_eq "" "$(printf '%s\n' "$CP_FIND" | awk -F'\t' '$1 !~ /^(FAIL|WARN|NOTE)$/ { print NR }')" \
+        "and every level should be one of the three"
+}

@@ -407,6 +407,7 @@ Configuration
   parameters.config            PARSES
   metadata.csv                 PARSES
   runs.csv                     not in use
+  parameters                   NOTHING TO FLAG
 
 Tools, as this project configures them
 
@@ -419,6 +420,8 @@ Tools, as this project configures them
 ```
 
 **Your files parse**: `parameters.config` through Nextflow itself, and `metadata.csv` and the run table through the same parsers step 0 uses, so what you are told here is what a run would tell you. It also says whether the config was written for this release, which is the one thing that stops a run before anything else is read.
+
+**And your settings are checked**, by the same rules step 0 applies, so a project is never told one thing here and another during the run. [What is checked](#parameter-checks) lists them. `NOTHING TO FLAG` is the healthy answer and the common one: a finding appears only when a setting would make the run produce nothing, or would quietly change what a published number means.
 
 **Every command, as *you* configured it.** The list comes from `params.software`, so a command [repointed at a system binary](#using-system-tools) is checked the way the run will call it, and the second column shows what will actually be invoked. That override is the setting most likely to be wrong and least likely to announce itself.
 
@@ -2248,6 +2251,40 @@ One parameter changes only what a published *report* contains, and nothing that 
 | `fastqc.options` | What FastQC reports on the clipped reads | [Trimming & Clipping](#trimming-clipping) |
 
 Step 0 does not refuse a change to these, because your results do not depend on them. It *does* refuse two runs of a table that **share a step and disagree** about one: only one of the values can have produced the single report sitting in the shared directory, so the run stops rather than publishing an ambiguous file.
+
+#### What is checked, and what it will not check { #parameter-checks }
+
+Some settings are wrong in a way that costs you a run and says nothing. `PoolSeqFlow check project` and step 0 both apply the same rules, from one implementation, so a project cannot be told one thing before a run and another during it. Silence is the healthy answer; a finding carries one of three levels:
+
+| Level | What happens |
+|---|---|
+| **FAIL** | The run stops at step 0. The setting would make it produce nothing at all |
+| **WARN** | The run continues. The setting works and costs you far more than it looks like it does |
+| **NOTE** | The run continues. The setting changes what a published number means, and you should know which |
+
+What is checked today:
+
+| Setting | Level | Why |
+|---|---|---|
+| `scaleMapQ` below `varQualMin` | FAIL | Every read is discarded and the call set is empty. [Measured at six thresholds](#scalemapq-and-varqualmin) |
+| `filterFalsePositives.sampleThreshold` above 1 | FAIL | It is a fraction of your samples, so no site can satisfy it |
+| `ploidy` or `poolSize` below 1 | FAIL | Every detection limit is computed from their product |
+| `fastqc.memory` carrying a unit | FAIL | FastQC takes megabytes as a bare number and refuses `2G` |
+| `scaleMapQ` at or below 10 | WARN | No adjustment is applied at all, whatever you wrote |
+| `scaleMapQ` under twice `varQualMin` | WARN | It works, and at the boundary keeps 6% of the sites an unadjusted run called |
+| `sampleThreshold` at or below 0 | WARN | The cross-sample requirement asks for nothing |
+| `ploidy` times `poolSize` equal to 1 | WARN | The pipeline runs, but no diversity computed over that pool means anything |
+| `minDP 0` with `dropZeroDepth` off | NOTE | [Unmeasured cells reach your tables as `NA`](#unmeasured-cells) |
+| `variantCall.maxDepth` above 0 with `capBAM.maxDepth` at `-1` | NOTE | Two ceilings, and the smaller one decides |
+
+**A setting that merely gives you fewer sites is never flagged.** `minDP 20` against `minDP 5` is your scientific judgment and the pipeline has no opinion on it. The line is whether a setting produces *nothing*, or silently changes what a number *means*.
+
+**An older config is judged on what it will actually do.** A parameter your `parameters.config` does not mention resolves as unset, and for a true-or-false setting that is the same as `false`. So a config written before `vcffilter.dropZeroDepth` existed behaves as though it were off, and with `minDP` at 0 it will publish `NA` cells. The check tells you, because that combination is the one that cannot announce itself. Running `PoolSeqFlow migrate_config` is what brings a config forward; see [Upgrading](#upgrading).
+
+**Two things it cannot check**, both because the answer is not in your configuration:
+
+- `cutadapt.min_length` above the read length clipping computes will discard every read and exit successfully. That length is measured per sample at run time, so no check of a config can see it.
+- A pinned `variantCall.mpileupOptions` with no `-C` or `-q` in it is reported as unjudged rather than guessed at. Pinning the string is allowed, and it makes the two settings it was built from inert.
 
 #### Do not edit: derived values
 
@@ -4948,6 +4985,22 @@ Process requirement exceeds available CPUs -- req: 12; avail: 8
 ```
 
 `threads` is larger than the machine. Tasks reserve what they really use, so an oversized request fails at submission rather than quietly oversubscribing. Set `threads` to the cores you have. [Resources ->](#resources)
+
+### `RUN PARAMETERS` names a setting that would produce nothing { #parameter-refusal }
+
+```text
+RUN PARAMETERS:        FAIL variantCall.scaleMapQ: DISCARDS EVERY READ (15 is below varQualMin 30)
+RUN PARAMETERS:            -C caps every read's mapping quality near 15 and -q then
+RUN PARAMETERS:            rejects anything under 30, so the pileup reaches bcftools
+RUN PARAMETERS:            call empty and the run produces no variants at all.
+RUN PARAMETERS:        A setting above would make this run produce nothing.
+```
+
+Not the change guard: nothing about your existing results is wrong. A setting in `parameters.config` would make the run produce no output at all, and it is being stopped now rather than after the hours of alignment and calling it would waste. The message names the parameter, both values where two interact, and what to change.
+
+**`WARN` and `NOTE` lines in the same section do not stop anything.** A warning means the setting works and costs more than it looks like it does; a note means it changes what a published number means. Only `FAIL` stops a run. [Every rule, and what each level means ->](#parameter-checks)
+
+`PoolSeqFlow check project` applies the same rules from the same implementation, so you can see all of this before starting.
 
 ### `RUN PARAMETER CHECK` or `METADATA CHANGE CHECK` fails
 

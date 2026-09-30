@@ -227,40 +227,40 @@ else
     fi
 fi
 
-# -C AND -q DECIDE BETWEEN THEM WHETHER THE PILEUP EMITS ANYTHING. -C caps every read's
-# adjusted mapping quality near its own value and -q then rejects anything below the minimum,
-# so a -C under -q leaves nothing for bcftools call and it writes a header and no records.
-# Measured on real pools at six different -q values: -C one below -q gives zero sites every
-# time, -C equal to -q gives output every time.
+# THE PARAMETER RULES LIVE IN bin/check_parameters.sh, which step 0 runs as well. A project told
+# one thing here and another during the run would be worse than either alone, so there is one
+# implementation and two callers.
 #
-# Read off the COMPOSED option string rather than the two settings, so a project that pinned
-# mpileupOptions by hand is judged on what will actually run.
+# It reads the COMPOSED config, so a project that pinned an option string by hand is judged on
+# what will actually run. Silence means nothing to flag.
 if [ "$PARSED" -eq 1 ]; then
     checked=$((checked + 1))
-    mpileup=$(cd "$PROJECT_DIR" && nf_config_value "params.variantCall.mpileupOptions")
-    scale=$(printf '%s\n' "$mpileup" | grep -o -- '-C [0-9][0-9]*' | head -1 | awk '{print $2}')
-    minq=$(printf '%s\n' "$mpileup" | grep -o -- '-q [0-9][0-9]*' | head -1 | awk '{print $2}')
-    if [ -z "$scale" ] || [ -z "$minq" ]; then
-        note "variantCall.scaleMapQ" "not checked - no -C or -q in mpileupOptions"
-    elif [ "$scale" -eq 0 ]; then
-        pass "variantCall.scaleMapQ" "OFF" "no mapping-quality adjustment"
-    elif [ "$scale" -le 10 ]; then
-        warn "variantCall.scaleMapQ" "INERT AT $scale" "10 and below changes nothing"
-        printf '    %sbcftools applies no adjustment at all below 11, so this run is the same\n' "$DIM"
-        printf '    as scaleMapQ 0. Write 0 if that is what you meant.%s\n' "$RESET"
-    elif [ "$scale" -lt "$minq" ]; then
-        fail "variantCall.scaleMapQ" "DISCARDS EVERY READ" "$scale is below varQualMin $minq"
-        printf '    %s-C caps every read'"'"'s mapping quality near %s and -q then rejects\n' "$DIM" "$scale"
-        printf '    anything under %s, so the pileup reaches bcftools call empty and the\n' "$minq"
-        printf '    run produces no variants at all. Raise scaleMapQ above varQualMin,\n'
-        printf '    or lower varQualMin below scaleMapQ.%s\n' "$RESET"
-    elif [ "$scale" -lt $(( minq * 2 )) ]; then
-        warn "variantCall.scaleMapQ" "SEVERE AT $scale" "close to varQualMin $minq"
-        printf '    %sIt emits records, but only the best-placed reads clear -q. Measured on\n' "$DIM"
-        printf '    real pools: scaleMapQ equal to varQualMin kept 6%% of the sites an\n'
-        printf '    unadjusted run called. Recovery is gradual and the manual has the curve.%s\n' "$RESET"
+    if [ ! -x "$INSTALL_DIR/bin/check_parameters.sh" ]; then
+        warn "parameters" "NOT CHECKED" "bin/check_parameters.sh is missing"
     else
-        pass "variantCall.scaleMapQ" "ABOVE varQualMin" "$scale against $minq"
+        findings=$(cd "$PROJECT_DIR" && nextflow config -flat "$INSTALL_DIR" 2>/dev/null \
+                   | "$INSTALL_DIR/bin/check_parameters.sh") || true
+        if [ -z "$findings" ]; then
+            pass "parameters" "NOTHING TO FLAG"
+        else
+            printf '%s\n' "$findings" | while IFS=$'\t' read -r level label headline detail why; do
+                [ -n "$level" ] || continue
+                case $level in
+                    FAIL) fail "$label" "$headline" "$detail" ;;
+                    WARN) warn "$label" "$headline" "$detail" ;;
+                    *)    note "$label" "$headline${detail:+: $detail}" ;;
+                esac
+                # Folded here rather than in the helper: the helper emits one line per finding so
+                # a caller can read it with `read`, and step 0 wraps to its own width.
+                [ -n "$why" ] && printf '%s' "$why" | fold -s -w 72 \
+                    | sed "s|^|    ${DIM}|;s|$|${RESET}|"
+            done
+            # The pipeline above runs in a subshell, so `missing` did not survive it. Ask the
+            # helper again for the status alone, which is what decides this script's own.
+            if printf '%s\n' "$findings" | grep -q '^FAIL'; then
+                missing=$((missing + 1))
+            fi
+        fi
     fi
 fi
 
