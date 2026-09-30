@@ -30,7 +30,7 @@ set -euo pipefail
 
 NEW="${1-}"
 if [[ ! "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Usage: $0 <new-version> [--from <env>] [--from-analysis <env>]   (e.g. 2.3.0)" >&2
+    echo "Usage: $0 <new-version> [--from <env>] [--from-analysis <env>] [--no-cleanup]   (e.g. 2.3.0)" >&2
     exit 1
 fi
 shift
@@ -43,14 +43,50 @@ CURRENT="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' PoolSeqFlow | head -1)"
 
 SOURCE_ENV=""
 SOURCE_ANALYSIS_ENV=""
+NO_CLEANUP=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --from) SOURCE_ENV="${2-}"; shift ;;
         --from-analysis) SOURCE_ANALYSIS_ENV="${2-}"; shift ;;
+        --no-cleanup) NO_CLEANUP=1 ;;
         *) echo "unknown option: $1" >&2; exit 1 ;;
     esac
     shift
 done
+
+# The scratch environments this run created, and only those. A conda environment outlives the
+# process, so every exit path has to remove them or the next run finds them and refuses.
+CREATED=""
+
+cleanup() {
+    local status=$? e log
+    trap - EXIT
+    [ -n "$CREATED" ] || exit "$status"
+    if [ "$NO_CLEANUP" -eq 1 ]; then
+        printf 'Scratch environments kept, --no-cleanup:\n' >&2
+        if [ -n "${ENV_PREFIX:-}" ] && [ -n "${ANALYSIS_PREFIX:-}" ]; then
+            printf '    TEST_CONDA_ENV=%s \\\n' "$ENV_PREFIX" >&2
+            printf '    TEST_ANALYSIS_ENV=%s \\\n' "$ANALYSIS_PREFIX" >&2
+            printf '        ./test/run_tests.sh --suite <name>\n' >&2
+            printf '\n' >&2
+        fi
+        printf 'Remove them when you are done:\n' >&2
+        for e in $CREATED; do printf '    conda env remove -n %s\n' "$e" >&2; done
+        exit "$status"
+    fi
+    log=/dev/null
+    [ -n "${LOGDIR:-}" ] && [ -d "${LOGDIR:-}" ] && log="$LOGDIR/cleanup.log"
+    for e in $CREATED; do
+        conda env remove --name "$e" --yes >> "$log" 2>&1 \
+            || printf "WARNING: could not remove scratch environment '%s'\n" "$e" >&2
+    done
+    exit "$status"
+}
+# INT and TERM route through EXIT rather than removing anything themselves, so there is one
+# removal path whatever ends the run.
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 env_exists() {
     conda env list | awk '{print $1}' | grep -qxF "$1"
@@ -70,7 +106,7 @@ done
 if [ -n "$LEFTOVER" ]; then
     echo "ERROR: already present:$LEFTOVER" >&2
     echo "" >&2
-    echo "Left over from an earlier preparation run, most likely one whose tests failed." >&2
+    echo "Left from an earlier run that used --no-cleanup, or one that was killed outright." >&2
     echo "Investigate or discard before starting again:" >&2
     for e in $LEFTOVER; do echo "    conda env remove -n $e" >&2; done
     exit 1
@@ -173,7 +209,7 @@ say "PoolSeqFlow release preparation"
 say "  target version : $NEW"
 say "  pipeline env   : $SOURCE_ENV  ->  $UPDATE_ENV"
 say "  analysis env   : $SOURCE_ANALYSIS_ENV  ->  $UPDATE_ANALYSIS_ENV"
-say "  scratch envs   : removed once both exports succeed"
+say "  scratch envs   : removed on every exit, unless --no-cleanup"
 say "  logs           : $LOGDIR"
 say ""
 
@@ -182,6 +218,9 @@ say ""
 # so its file names are unchanged.
 prepare_env() {
     local source="$1" scratch="$2" tag="$3" changed prefix floor
+    # Recorded before the status is judged: a clone that fails part way leaves an environment
+    # behind, and the trap has to know about it either way.
+    CREATED="$CREATED $scratch"
     conda create --name "$scratch" --clone "$source" --yes > "$LOGDIR/clone$tag.log" 2>&1 \
         || { say "      FAILED to clone '$source' - see $LOGDIR/clone$tag.log"; exit 1; }
 
@@ -374,21 +413,13 @@ if [ "$TEST_STATUS" -ne 0 ]; then
     [ -n "$KEPT_XDEV" ] && say "          $KEPT_XDEV"
     say "      Delete them when you are done - they are not small."
     say ""
-    say "      Both scratch environments have been kept so the failure can be reproduced:"
-    say "          TEST_CONDA_ENV=$ENV_PREFIX \\"
-    say "          TEST_ANALYSIS_ENV=$ANALYSIS_PREFIX \\"
-    say "              ./test/run_tests.sh --suite <name>"
-    say ""
+    say "      $LOGDIR/tests.log is the run, and"
     say "      $LOGDIR/packages-changed.tsv and"
     say "      $LOGDIR/packages-changed-analysis.tsv say what moved, compared on"
-    say "      version AND build. A package is one candidate among several: the same"
-    say "      suite passing by hand against these very environments means the cause is"
-    say "      the surroundings, not the packages, and the artifacts above are where"
-    say "      that shows."
+    say "      version AND build."
     say ""
-    say "      Discard the attempt with:"
-    say "          conda env remove -n $UPDATE_ENV"
-    say "          conda env remove -n $UPDATE_ANALYSIS_ENV"
+    say "      To reproduce against the environments themselves, run this again with"
+    say "      --no-cleanup and use the TEST_CONDA_ENV / TEST_ANALYSIS_ENV it prints."
     exit 1
 fi
 
@@ -432,12 +463,8 @@ for e in "$UPDATE_ENV" "$UPDATE_ANALYSIS_ENV"; do
         || { say "      FAILED to export '$e' - see $LOGDIR/summary.txt"; exit 1; }
 done
 
-# Removed only after both exports have succeeded, so a failure there does not lose the solve.
+# The removal itself is the exit trap's, which runs on every path out of here.
 say "[5/5] Removing the scratch environments..."
-for e in "$UPDATE_ENV" "$UPDATE_ANALYSIS_ENV"; do
-    conda env remove --name "$e" --yes >> "$LOGDIR/cleanup.log" 2>&1 \
-        || say "      WARNING: could not remove '$e' - see $LOGDIR/cleanup.log"
-done
 
 say ""
 say "Done. The release steps are in dev/RELEASING.md."

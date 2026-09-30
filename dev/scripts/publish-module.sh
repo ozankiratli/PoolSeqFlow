@@ -36,6 +36,7 @@ NAME="${1-}"
 REF="${2:-HEAD}"
 if [ -z "$NAME" ]; then
     echo "Usage: $0 <name> [ref]" >&2
+    echo "       $0 --list        what is in the tree and not yet in the catalogue" >&2
     exit 1
 fi
 
@@ -50,6 +51,56 @@ REPO_DIR="modules/repo"
 PUBLISHED_PATH="modules-repo"
 INDEX="$REPO_DIR/index.tsv"
 [ -f "$INDEX" ] || { echo "ERROR: $INDEX not found" >&2; exit 1; }
+
+# Is this name and version already a catalogue row? Prints DUPLICATE, BADHEADER, or nothing.
+#
+# THE COLUMNS ARE MATCHED BY NAME, from the header row, as module_index_rows() in
+# lib/wrapper_lib.sh does. Read by position this compared the version against `kind`, which holds
+# "module" or "library", so it never matched and the check passed over everything.
+#
+# The outcome is printed rather than carried in the exit status: a header naming neither column
+# has to be told apart from a row that is simply absent, and both are non-zero.
+catalogue_has() {   # name version
+    awk -F'\t' -v n="$1" -v v="$2" '
+        /^[[:space:]]*(#|$)/ { next }
+        !header {
+            header = 1
+            for (i = 1; i <= NF; i++) at[$i] = i
+            if (!("name" in at) || !("version" in at)) { print "BADHEADER"; exit }
+            next
+        }
+        $(at["name"]) == n && $(at["version"]) == v { print "DUPLICATE"; exit }
+    ' "$INDEX"
+}
+
+# Every module and library in the tree against the catalogue. Reads the working tree rather than a
+# ref, because this answers what is left to publish; publishing itself refuses an uncommitted
+# source and says so.
+if [ "$NAME" = "--list" ]; then
+    LEFT=0
+    for dir in modules/*/ modules/lib/*/; do
+        [ -f "$dir/manifest.json" ] || continue
+        read -r m_name m_version <<EOF
+$(python3 -c "import json;m=json.load(open('$dir/manifest.json'));print(m.get('name',''), m.get('version',''))")
+EOF
+        [ -n "$m_name" ] && [ -n "$m_version" ] || {
+            printf '  %-14s %s\n' "NO MANIFEST" "$dir"; continue; }
+        case "$(catalogue_has "$m_name" "$m_version")" in
+            BADHEADER) echo "ERROR: $INDEX has no header row naming 'name' and 'version'" >&2
+                       exit 1 ;;
+            DUPLICATE) printf '  %-14s %s %s\n' "published" "$m_name" "$m_version" ;;
+            *)         printf '  %-14s %s %s\n' "UNPUBLISHED" "$m_name" "$m_version"
+                       LEFT=$((LEFT + 1)) ;;
+        esac
+    done
+    echo ""
+    if [ "$LEFT" -eq 0 ]; then
+        echo "Everything in the tree is in the catalogue."
+    else
+        echo "$LEFT to publish, each with:  $0 <name>"
+    fi
+    exit 0
+fi
 
 # A module or a library: both are a folder with a manifest, published the same way, and the
 # manifest's own `kind` says which. Looked for in both places rather than taking a flag, so the
@@ -99,11 +150,14 @@ if [ -e "$TARBALL" ]; then
     exit 1
 fi
 
-if awk -F'\t' -v n="$NAME" -v v="$VERSION" \
-       '!/^#/ && NF > 1 && $1 == n && $2 == v { found = 1 } END { exit !found }' "$INDEX"; then
-    echo "ERROR: $INDEX already has a row for $NAME $VERSION" >&2
-    exit 1
-fi
+case "$(catalogue_has "$NAME" "$VERSION")" in
+    BADHEADER)
+        echo "ERROR: $INDEX has no header row naming 'name' and 'version'" >&2
+        exit 1 ;;
+    DUPLICATE)
+        echo "ERROR: $INDEX already has a row for $NAME $VERSION" >&2
+        exit 1 ;;
+esac
 
 # The commit that last touched the module at this ref, for a timestamp that follows the content
 # rather than the clock.

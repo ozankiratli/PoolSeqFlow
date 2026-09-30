@@ -14,6 +14,7 @@ CASE_FAILED=0
 CASE_SKIPPED=0
 CASE_MESSAGES=()
 FAILED_CASES=()
+SKIPPED_CASES=()
 
 if [ -t 1 ]; then
     C_PASS=$'\033[32m'; C_FAIL=$'\033[31m'; C_SKIP=$'\033[33m'
@@ -92,9 +93,14 @@ run_case() {
     "$fn"
 
     if [ "$CASE_SKIPPED" -eq 1 ]; then
+        local why=""
         TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
+        if [ ${#CASE_MESSAGES[@]} -gt 0 ]; then
+            why=" (${CASE_MESSAGES[0]})"
+        fi
+        SKIPPED_CASES+=("$CURRENT_SUITE / $label$why")
         printf '  %sSKIP%s %s' "$C_SKIP" "$C_OFF" "$label"
-        [ ${#CASE_MESSAGES[@]} -gt 0 ] && printf ' %s(%s)%s' "$C_DIM" "${CASE_MESSAGES[0]}" "$C_OFF"
+        [ -n "$why" ] && printf ' %s%s%s' "$C_DIM" "${why# }" "$C_OFF"
         printf '\n'
         return 0
     fi
@@ -123,10 +129,18 @@ print_summary() {
     fi
     [ "$TESTS_SKIPPED" -gt 0 ] && printf ', %d skipped' "$TESTS_SKIPPED"
     printf '\n'
+    local c
     if [ "$TESTS_FAILED" -gt 0 ]; then
         printf '\nFailed:\n'
-        local c
         for c in "${FAILED_CASES[@]}"; do
+            printf '  %s\n' "$c"
+        done
+    fi
+    # Listed for the same reason failures are: a skip is a case that did not run, and the count
+    # alone does not say which.
+    if [ "$TESTS_SKIPPED" -gt 0 ]; then
+        printf '\nSkipped:\n'
+        for c in "${SKIPPED_CASES[@]}"; do
             printf '  %s\n' "$c"
         done
     fi
