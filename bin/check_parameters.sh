@@ -103,24 +103,6 @@ if is_num "$threshold"; then
     fi
 fi
 
-# ------------------------------------------------------------ the depth floor --
-#
-# minDP 0 with dropZeroDepth off is the one combination that lets an unmeasured cell reach a
-# published table. It is a legitimate choice and the manual documents what it publishes, so this
-# says what will happen rather than refusing.
-#
-# ABSENT IS FALSE, NOT UNKNOWN, and that is why the test is `!= true` rather than `= false`. The
-# setting is read in a Groovy ternary, so a config written before it existed leaves it null, null
-# is falsy, and the run behaves exactly as `false` while saying nothing. A config from before 3.2
-# with minDP 0 therefore publishes NA cells, and treating the key as unjudgeable would miss the
-# one case that cannot tell it is in trouble. Any later boolean read the same way inherits this.
-mindp=$(get vcffilter.minDP)
-dropzero=$(get vcffilter.dropZeroDepth)
-if is_int "$mindp" && [ "$mindp" -eq 0 ] && [ "$dropzero" != "true" ]; then
-    say NOTE "vcffilter.minDP" "UNMEASURED CELLS WILL BE PUBLISHED" "minDP 0 with dropZeroDepth off" \
-        "A site no sample was required to have reads at can now be kept, and a pool with none publishes NA rather than a frequency. basicstats counts those in its unmeasured column and leaves them out of every depth summary."
-fi
-
 # ------------------------------------------------------------------- the pool --
 #
 # n_chrom is ploidy * poolSize and is what every effective size is computed from. Below 1 the

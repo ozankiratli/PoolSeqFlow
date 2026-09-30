@@ -133,7 +133,7 @@ nav:
   - Home: index.md
   - Getting Started:
       - getting-started/index.md
-      - Install: getting-started/install.md
+      - Install and Update: getting-started/install.md
       - Quick Start: getting-started/quick-start.md
       - Upgrading: getting-started/upgrading.md
   - Concepts:

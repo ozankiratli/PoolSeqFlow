@@ -356,4 +356,16 @@ if [ -n "$RGFILE" ]; then
     echo
 fi
 
+# Read back from the report, so this fires exactly when the migration added the parameter: a
+# config that already sets it has chosen its own value and is told nothing.
+NEW_DROPZERO=$(awk -F'\t' '$1 == "NEW" && $2 == "vcffilter.dropZeroDepth" { print $3 }' "$REPORT")
+if [ -n "$NEW_DROPZERO" ]; then
+    note_heading
+    echo "  vcffilter.dropZeroDepth IS NEW, and your config now has its default."
+    echo
+    echo "  The default is $NEW_DROPZERO: a site where any pool has no reads at all is dropped."
+    echo "  To keep those sites, with the unread pool published as NA, set it to false."
+    echo
+fi
+
 echo "Review $OUT before running the pipeline."

@@ -6,7 +6,7 @@
 # covers: scripts/metadata.nf bin/parse_metadata.py bin/parse_multirun.py
 # covers: bin/classify_manifest.sh
 # covers: poolseqflow.nf
-# covers: parameters.config.template
+# covers: parameters.config.template nextflow.config
 #
 # These run step 0 alone rather than the whole pipeline, so they are cheap. What they are
 # about is the distinction the parameter check draws between a value the user changed and a
@@ -174,6 +174,33 @@ OVERRIDE
         "workDir must stay under mainDir"
     assert_not_contains "$flat" "somewhere-the-project-picked" \
         "a project must not be able to move the work directory out of mainDir"
+}
+
+# A DEFAULT HAS TO SURVIVE THE PARAMETER BEING ABSENT, or it is not a default. Step 7 reads
+# vcffilter.dropZeroDepth in a ternary and Nextflow resolves an absent key to null, which a
+# ternary reads as false -- so a config written before the parameter existed ran as `false`
+# where the template ships `true`, with nothing saying so. Measured through the real engine
+# before nextflow.config resolved it: RAW=[null], and the expression came out without the zero
+# term.
+#
+# The second half is what keeps the fix from being worse than the hole: the resolution sits
+# below the include and tests containsKey, so a project that says false still gets false. A
+# plain assignment there would win silently over every project on the machine.
+test_an_absent_parameter_resolves_to_its_default() {
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb flat
+    sb=$(make_pipeline_sandbox "absent-default")
+
+    write_sandbox_config "$sb" '/dropZeroDepth/d'
+    flat=$(sandbox_config_flat "$sb")
+    [ -n "$flat" ] || { fail_case "nextflow config produced nothing for $sb"; return; }
+    assert_contains "$flat" "params.vcffilter.dropZeroDepth = true" \
+        "a config that never sets it must resolve to the shipped default"
+
+    write_sandbox_config "$sb" 's|^        dropZeroDepth .*|        dropZeroDepth   = false|'
+    flat=$(sandbox_config_flat "$sb")
+    assert_contains "$flat" "params.vcffilter.dropZeroDepth = false" \
+        "and a project that sets it must still win"
 }
 
 # THE HELPERS' OWN DEPENDENCIES ARE VERIFIED LIKE ANY OTHER TOOL. bin/atomic_mv.sh copies an

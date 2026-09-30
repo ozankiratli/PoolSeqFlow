@@ -173,8 +173,8 @@ Two pages. [Install](#install) gets the tool onto your machine and verifies it, 
 
 Already have it installed and upgrading from an earlier version? Read [Upgrading](#upgrading) first. Your `parameters.config` is never touched by an update and can be missing parameters the new code expects.
 
-## Install
-<!--@ page: install -->
+## Install and Update { #install }
+<!--@ page: install | nav: Install and Update -->
 
 Check the [requirements](#getting-started) first if you have not, in particular that you are on Linux, and that conda is available.
 
@@ -253,6 +253,20 @@ Uninstalling the last installed version removes both. Another version left insta
 
 It never runs `PoolSeqFlow` itself. Starting the wrapper means starting conda, which takes long enough to be felt on a keypress, so the completion reads what it needs from the filesystem instead.
 
+### Updating to a new release { #update }
+
+A release installs **alongside** the ones already on the machine rather than over them, so updating is the same two steps as a first install: get the new release, then `./PoolSeqFlow install`. Every earlier version keeps working under its own name, and plain `PoolSeqFlow` starts meaning the new one.
+
+**Then run `migrate_config` in each project directory, before the first run under the new release:**
+
+```bash
+PoolSeqFlow migrate_config
+```
+
+`parameters.config` belongs to you and an update never touches it, which is deliberate: an update must not silently change your analysis settings. The consequence is that after a new release your file can be missing parameters the newer code expects, and a missing parameter does not announce itself. It is not an error, it is unset, and for a true-or-false setting unset behaves exactly as `false`, so the run can complete under a setting you never chose. `migrate_config` rebuilds the file from the current template, keeps your values, and reports every parameter that changed.
+
+Two more things an update does not carry across. **The new installation's module store starts empty**, because no module ships inside a release, so install the ones you use again. And **a project belongs to one release for as long as it exists**: rather than mixing results from two versions, the pipeline refuses to continue a project under a version other than the one that produced them. [Upgrading](#upgrading) covers both, and what each line of the `migrate_config` report means.
+
 
 ---
 
@@ -272,7 +286,7 @@ It never runs `PoolSeqFlow` itself. Starting the wrapper means starting conda, w
 
     ---
 
-    Your existing `parameters.config` will be missing parameters the new code expects, and nothing detects that automatically.
+    Your existing `parameters.config` can be missing parameters the new code expects, and a project belongs to the release that produced its results.
 
     [Upgrading ->](#upgrading)
 
@@ -2274,12 +2288,11 @@ What is checked today:
 | `scaleMapQ` under twice `varQualMin` | WARN | It works, and at the boundary keeps 6% of the sites an unadjusted run called |
 | `sampleThreshold` at or below 0 | WARN | The cross-sample requirement asks for nothing |
 | `ploidy` times `poolSize` equal to 1 | WARN | The pipeline runs, but no diversity computed over that pool means anything |
-| `minDP 0` with `dropZeroDepth` off | NOTE | [Unmeasured cells reach your tables as `NA`](#unmeasured-cells) |
 | `variantCall.maxDepth` above 0 with `capBAM.maxDepth` at `-1` | NOTE | Two ceilings, and the smaller one decides |
 
 **A setting that merely gives you fewer sites is never flagged.** `minDP 20` against `minDP 5` is your scientific judgment and the pipeline has no opinion on it. The line is whether a setting produces *nothing*, or silently changes what a number *means*.
 
-**An older config is judged on what it will actually do.** A parameter your `parameters.config` does not mention resolves as unset, and for a true-or-false setting that is the same as `false`. So a config written before `vcffilter.dropZeroDepth` existed behaves as though it were off, and with `minDP` at 0 it will publish `NA` cells. The check tells you, because that combination is the one that cannot announce itself. Running `PoolSeqFlow migrate_config` is what brings a config forward; see [Upgrading](#upgrading).
+**An older config is judged on what it will actually do.** A parameter your `parameters.config` does not mention falls back to the pipeline's own default rather than to whatever an unset value happens to mean: `nextflow.config` resolves it below the point your file is read, so a config that never mentions `vcffilter.dropZeroDepth` runs at the shipped `true`, and one that does set it still wins. Running `PoolSeqFlow migrate_config` is what brings a config forward, and it reports every parameter that is new; see [Upgrading](#upgrading) and [Updating to a new release](#update).
 
 **Two things it cannot check**, both because the answer is not in your configuration:
 

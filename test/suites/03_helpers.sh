@@ -2130,41 +2130,10 @@ test_check_parameters_refuses_a_sample_threshold_above_one() {
         "and at 0 it asks for nothing"
 }
 
-# The one combination that lets an unmeasured cell reach a published table. A legitimate choice,
-# so it is told rather than refused.
-test_check_parameters_notes_when_unmeasured_cells_can_be_published() {
-    helpers_sandbox
-    cp_check "params.vcffilter.minDP=0" "params.vcffilter.dropZeroDepth=false"
-    assert_eq "NOTE UNMEASURED CELLS WILL BE PUBLISHED" "$(cp_verdict vcffilter.minDP)" \
-        "minDP 0 with dropZeroDepth off publishes NA cells"
-    assert_status 0 "$CP_RC" "which is a choice, not an error"
-    # EITHER ALONE IS FINE, which is what makes this a pair rather than two rules.
-    cp_check "params.vcffilter.dropZeroDepth=false"
-    assert_eq "" "$(cp_verdict vcffilter.minDP)" "dropZeroDepth off is redundant above minDP 1"
-}
-
-# AN ABSENT BOOLEAN IS FALSE, NOT UNKNOWN. dropZeroDepth is read in a Groovy ternary, so a config
-# written before it existed leaves it null, null is falsy, and the run behaves exactly as `false`
-# while nothing says so. A config from before 3.2 with minDP 0 therefore publishes NA cells, and it
-# is the one case that cannot tell it is in trouble.
-#
-# The first draft of the rule tested `= false` and said nothing at all here. Measured: with the key
-# removed and minDP 0, the helper emitted no finding of any kind.
-test_check_parameters_treats_an_absent_dropzerodepth_as_false() {
-    helpers_sandbox
-    # cp_check replaces assignments; this removes one, which is what a stale config looks like.
-    cp_defaults | grep -v '^params.vcffilter.dropZeroDepth ' > "$HELPERS_DIR/flat.txt"
-    printf 'params.vcffilter.minDP = 0\n' >> "$HELPERS_DIR/flat.txt"
-    grep -v '^params.vcffilter.minDP = 20' "$HELPERS_DIR/flat.txt" > "$HELPERS_DIR/f2" && mv "$HELPERS_DIR/f2" "$HELPERS_DIR/flat.txt"
-    CP_FIND=$(bash "$REPO_ROOT/bin/check_parameters.sh" < "$HELPERS_DIR/flat.txt")
-    assert_eq "NOTE UNMEASURED CELLS WILL BE PUBLISHED" "$(cp_verdict vcffilter.minDP)" \
-        "an absent dropZeroDepth is the same as false and must be reported as such"
-}
-
-# A MISSING KEY MUST NOT CRASH AND MUST NOT INVENT A FINDING. Every rule but the boolean above
-# declines to judge a value it does not have, because after resolution an absent key means the
-# project's config never defined it and there is nothing to compare. The one thing that is never
-# acceptable is a spurious verdict about a parameter nobody set.
+# A MISSING KEY MUST NOT CRASH AND MUST NOT INVENT A FINDING. Every rule declines to judge a value
+# it does not have, because after resolution an absent key means the project's config never defined
+# it and there is nothing to compare. The one thing that is never acceptable is a spurious verdict
+# about a parameter nobody set.
 test_check_parameters_survives_a_config_with_nothing_in_it() {
     helpers_sandbox
     printf 'params.mainDir = /somewhere\n' > "$HELPERS_DIR/flat.txt"
