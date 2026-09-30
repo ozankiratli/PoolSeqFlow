@@ -1844,3 +1844,173 @@ test_cap_depth_refuses_a_cap_that_is_not_a_positive_depth() {
         assert_not_contains "$CAP_ERR" "kept" "and no tally after a usage error"
     done
 }
+
+# MajorAlleleToRef.py: re-polarize a VCF so REF is the allele the whole cohort read most.
+#
+# It runs TWICE in step 7 -- once before the false-positive filter and again after it, because
+# removing alleles can change which one is major -- so anything it gets wrong is applied to every
+# published frequency, twice.
+#
+# THE INVARIANTS RUN OVER THE REAL VCF. test/data/vcf/called.vcf is genuine bcftools output and
+# its README says anything testing this script should start there. What it does NOT contain is a
+# multiallelic record or a spanning deletion, so the ordering cases below are hand-written: the
+# point of those is an exact permutation, which needs exact input.
+#
+# Written after the fact. This was the last bin/ helper with no unit coverage.
+
+M2R_OUT=""
+M2R_STATUS=0
+M2R_LOG=""
+
+# Run the script over an inline VCF body, with a two-sample header unless one is given.
+m2r() {   # body [format] [sample-columns]
+    local body="$1" fmt="${2:-GT:DP:AD}" cols="${3:-S1	S2}"
+    {
+        printf '##fileformat=VCFv4.2\n'
+        printf '##INFO=<ID=AD,Number=R,Type=Integer,Description="allelic depth">\n'
+        printf '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t%s\n' "$cols"
+        printf '%s\n' "$body"
+    } > "$HELPERS_DIR/in.vcf"
+    python3 "$REPO_ROOT/bin/MajorAlleleToRef.py" \
+        "$HELPERS_DIR/in.vcf" "$HELPERS_DIR/out.vcf" > "$HELPERS_DIR/m2r.log" 2>&1
+    M2R_STATUS=$?
+    M2R_LOG=$(cat "$HELPERS_DIR/m2r.log")
+    M2R_OUT=$(grep -v '^#' "$HELPERS_DIR/out.vcf" 2>/dev/null || true)
+}
+
+# One field of one data row of the result, both 1-based.
+m2r_field() { printf '%s\n' "$M2R_OUT" | sed -n "${1}p" | cut -f"$2"; }
+
+test_major_allele_to_ref_flips_when_the_alternate_is_more_read() {
+    helpers_sandbox
+    # Cohort AD is 15,135: the alternate is read nine times as often, so it becomes REF.
+    m2r 'chr1	100	.	A	G	50	.	DP=150;AD=15,135	GT:DP:AD	0/1:100:10,90	0/1:50:5,45'
+    assert_status 0 "$M2R_STATUS" "the script should succeed"
+    assert_eq "G" "$(m2r_field 1 4)" "the most-read allele becomes REF"
+    assert_eq "A" "$(m2r_field 1 5)" "and the former reference becomes the alternate"
+    assert_contains "$(m2r_field 1 8)" "AD=135,15" "INFO/AD follows the same order"
+}
+
+test_major_allele_to_ref_leaves_an_already_major_reference_alone() {
+    helpers_sandbox
+    m2r 'chr1	100	.	A	G	50	.	DP=150;AD=135,15	GT:DP:AD	0/1:100:90,10	0/1:50:45,5'
+    assert_eq "A" "$(m2r_field 1 4)" "a reference already most-read stays"
+    assert_eq "G" "$(m2r_field 1 5)" "and so does the alternate"
+    assert_contains "$(m2r_field 1 8)" "AD=135,15" "with the counts untouched"
+}
+
+# AN EXACT TIE KEEPS THE REFERENCE, which rests on Python's sort being stable rather than on
+# anything the script says. If that ever changes, REF flips on every tied site in a run and
+# nothing else would report it.
+test_major_allele_to_ref_keeps_the_reference_on_an_exact_tie() {
+    helpers_sandbox
+    m2r 'chr1	100	.	A	G	50	.	DP=100;AD=50,50	GT:DP:AD	0/1:100:50,50'  'GT:DP:AD' 'S1'
+    assert_eq "A" "$(m2r_field 1 4)" "a tie must not flip the reference"
+    assert_eq "G" "$(m2r_field 1 5)" "nor reorder the alternate"
+}
+
+# ONE ORDERING FOR THE WHOLE SITE. The permutation comes from INFO/AD and no sample chooses its
+# own, so a sample whose own counts disagree with the cohort is still reordered the cohort's way.
+# Getting this wrong would mis-assign every frequency at the site while looking entirely normal.
+test_major_allele_to_ref_reorders_every_sample_by_the_same_permutation() {
+    helpers_sandbox
+    # S2's own majority is the REFERENCE (30 against 10), against the cohort's alternate (80
+    # against 60). It must still be reordered the cohort's way.
+    m2r 'chr1	100	.	A	G	50	.	DP=140;AD=60,80	GT:DP:AD	0/1:100:10,90	0/1:40:30,10'
+    assert_eq "G" "$(m2r_field 1 4)" "the cohort decides REF"
+    assert_eq "90,10" "$(printf '%s' "$(m2r_field 1 10)" | cut -d: -f3)" \
+        "the sample agreeing with the cohort is reordered"
+    assert_eq "10,30" "$(printf '%s' "$(m2r_field 1 11)" | cut -d: -f3)" \
+        "and so is the sample that disagrees, the same way"
+}
+
+# DEPTH IS REDEFINED AS THE SUM OF THE REORDERED COUNTS, in INFO and in every sample. The rest of
+# the chain depends on it: vcffilter.minDP filters on FORMAT/DP, and the depth table sums the same
+# AD.
+#
+# THE TWO HALVES CATCH DIFFERENT THINGS, measured by removing each recompute in turn.
+#
+# INFO: the real VCF is enough. mpileup's INFO/DP is raw depth including reads assigned to no
+# allele, so it already disagrees with sum(INFO/AD) on 35 of the 135 records, and removing that
+# recompute fails the sweep below by exactly that count.
+#
+# FORMAT: the real VCF proves nothing. bcftools writes each sample's DP equal to sum(AD) already,
+# so the invariant holds whether or not this script touches it -- measured: deleting the
+# FORMAT/DP assignment left the sweep passing. What makes that recompute load-bearing is the
+# SECOND invocation, after filterFalsePositives.sh has removed alleles and left DP larger than the
+# counts that remain, so the record below is shaped like that one.
+test_major_allele_to_ref_rewrites_depth_as_the_sum_of_the_counts() {
+    helpers_sandbox
+    # DP says 200 and 200 while the counts total 150 and 100: what an allele removal leaves behind.
+    m2r 'chr1	100	.	A	G	50	.	DP=200;AD=15,135	GT:DP:AD	0/1:200:10,90	0/1:80:5,45'
+    assert_contains "$(m2r_field 1 8)" "DP=150" "INFO/DP is recomputed from the counts that remain"
+    assert_eq "100" "$(printf '%s' "$(m2r_field 1 10)" | cut -d: -f2)" \
+        "and so is each sample's own DP"
+    assert_eq "50" "$(printf '%s' "$(m2r_field 1 11)" | cut -d: -f2)" "for every sample"
+
+    python3 "$REPO_ROOT/bin/MajorAlleleToRef.py" \
+        "$REPO_ROOT/test/data/vcf/called.vcf" "$HELPERS_DIR/real.vcf" > /dev/null 2>&1
+    assert_status 0 "$?" "the real VCF should convert"
+    local bad
+    bad=$(grep -v '^#' "$HELPERS_DIR/real.vcf" | awk -F'\t' '
+        { split($9, f, ":"); for (i in f) if (f[i] == "AD") ad = i; else if (f[i] == "DP") dp = i
+          for (s = 10; s <= NF; s++) {
+              split($s, g, ":"); n = split(g[ad], c, ","); t = 0
+              for (j = 1; j <= n; j++) t += c[j]
+              if (t != g[dp] + 0) bad++
+          }
+          split($8, info, ";"); isum = 0
+          for (i in info) if (info[i] ~ /^AD=/) { n = split(substr(info[i], 4), a, ","); for (j = 1; j <= n; j++) isum += a[j] }
+          for (i in info) if (info[i] ~ /^DP=/) if (substr(info[i], 4) + 0 != isum) bad++
+        } END { print bad + 0 }')
+    assert_eq "0" "$bad" "every DP should equal the sum of its own AD, in INFO and every sample"
+}
+
+# EVERY GENOTYPE IS BLANKED. Re-polarizing invalidates the caller's calls and a pool has no
+# genotype to replace them with, so leaving them would invite a tool to read one.
+test_major_allele_to_ref_blanks_every_genotype() {
+    helpers_sandbox
+    python3 "$REPO_ROOT/bin/MajorAlleleToRef.py" \
+        "$REPO_ROOT/test/data/vcf/called.vcf" "$HELPERS_DIR/real.vcf" > /dev/null 2>&1
+    local called
+    called=$(grep -v '^#' "$HELPERS_DIR/real.vcf" | awk -F'\t' '
+        { split($9, f, ":"); for (i in f) if (f[i] == "GT") gt = i
+          for (s = 10; s <= NF; s++) { split($s, g, ":"); if (g[gt] != "./.") n++ } } END { print n + 0 }')
+    assert_eq "0" "$called" "no sample should keep a genotype"
+}
+
+test_major_allele_to_ref_orders_a_multiallelic_site_by_count() {
+    helpers_sandbox
+    # Counts 10 / 50 / 30 for A / G / T, so the order becomes G, T, A.
+    m2r 'chr1	100	.	A	G,T	50	.	DP=90;AD=10,50,30	GT:DP:AD	0/1:90:10,50,30'  'GT:DP:AD' 'S1'
+    assert_eq "G"   "$(m2r_field 1 4)" "the most-read allele leads"
+    assert_eq "T,A" "$(m2r_field 1 5)" "and the rest follow in count order"
+    assert_contains "$(m2r_field 1 8)" "AD=50,30,10" "INFO/AD takes the same order"
+    assert_eq "50,30,10" "$(printf '%s' "$(m2r_field 1 10)" | cut -d: -f3)" "and so does the sample"
+}
+
+# A SPANNING DELETION IS AN ALLELE LIKE ANY OTHER. It carries reads, and the analysis layer
+# declares that it reaches the SNP table as one, so it must order by count and not be special.
+test_major_allele_to_ref_treats_a_spanning_deletion_as_an_allele() {
+    helpers_sandbox
+    m2r 'chr1	100	.	A	G,*	50	.	DP=90;AD=10,50,30	GT:DP:AD	0/1:90:10,50,30'  'GT:DP:AD' 'S1'
+    assert_eq "G"   "$(m2r_field 1 4)" "the most-read allele still leads"
+    assert_eq "*,A" "$(m2r_field 1 5)" "and the star sorts on its count like the rest"
+}
+
+test_major_allele_to_ref_copies_the_header_through() {
+    helpers_sandbox
+    m2r 'chr1	100	.	A	G	50	.	DP=150;AD=15,135	GT:DP:AD	0/1:100:10,90	0/1:50:5,45'
+    assert_eq "$(grep -c '^#' "$HELPERS_DIR/in.vcf")" "$(grep -c '^#' "$HELPERS_DIR/out.vcf")" \
+        "every header line should survive"
+    assert_contains "$(head -1 "$HELPERS_DIR/out.vcf")" "##fileformat=VCFv4.2" "in order"
+}
+
+# The one guard it has. Without FORMAT/AD there is nothing to reorder, and carrying on would
+# publish frequencies from counts it never read.
+test_major_allele_to_ref_refuses_a_vcf_without_format_ad() {
+    helpers_sandbox
+    m2r 'chr1	100	.	A	G	50	.	DP=150;AD=15,135	GT:DP	0/1:100	0/1:50'  'GT:DP' 'S1	S2'
+    assert_status 1 "$M2R_STATUS" "a VCF with no FORMAT/AD should be refused"
+    assert_contains "$M2R_LOG" "No FORMAT/AD field" "saying what is missing"
+}

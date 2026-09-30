@@ -16,7 +16,7 @@ Before writing anything I assumed a single "is the parameter tracked" property. 
 
 What DOES break the guard case is an edit to the exclusion list -- `vcffilter.` added to `skipPrefix`, or the key added to `skipKey`. Verified by adding it: all five assertions fail. That is a plausible mistake rather than a theoretical one, because `capBAM.histogramMax` is already excluded there on deliberate and correct reasoning.
 
-## The behaviour case is not achievable in this fixture
+## The behavior case is not achievable in this fixture
 
 The thing worth asserting is a site dropped at `true` and surviving as `NA` at `false`. It needs a cell where one sample has no reads, and **the fixture cannot hold one.**
 

@@ -203,15 +203,14 @@ Two details worth knowing when writing assertions against the frequency tables:
 
 ## Known gaps
 
-- **`MajorAlleleToRef.py` still has no unit coverage** and is exercised end to end only. Most of
-  this gap has closed since it was written -- `03_helpers.sh` now covers `classify_manifest.sh`,
-  `find_artifact.sh`, `depth_cutoff.py`, `filterFalsePositives.sh`, both parsers,
-  `atomic_mv.sh` and `cap_depth.awk`, and `config_migrate.sh` has a suite of its own.
-  `depth2freq.awk` now has cases
+- **Every `bin/` helper now has unit coverage.** `03_helpers.sh` covers `classify_manifest.sh`,
+  `find_artifact.sh`, `depth_cutoff.py`, `filterFalsePositives.sh`, both parsers, `atomic_mv.sh`,
+  `cap_depth.awk` and `MajorAlleleToRef.py`, and `config_migrate.sh` has a suite of its own.
+  `depth2freq.awk` has cases
   there too, but only for what a zero-depth cell publishes and for the row it must not carry
   forward: its shape -- one row per allele, `ALT` becoming `ALLELE`, the column count held --
   is still asserted only by `04_pipeline`, through a whole run.
-- **The fixture cannot hold a zero-depth cell**, so `vcffilter.dropZeroDepth` has no behaviour case
+- **The fixture cannot hold a zero-depth cell**, so `vcffilter.dropZeroDepth` has no behavior case
   and the two settings are compared by the expression each builds instead. Every sample carries
   ~75x across the whole reference and the called VCF has no `DP=0` anywhere. Thinning one sample
   was measured and does not work: at 250 pairs bwa logs `skip orientation FR as there are not

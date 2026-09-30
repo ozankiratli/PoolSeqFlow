@@ -1516,7 +1516,7 @@ test_the_reads_setting_in_the_config_is_not_consulted() {
 # and 05_guards proves flipping it invalidates a finished project. Neither watches the expression
 # it actually builds, and that ternary in scripts/7_vcf2freq.nf is the thing that can invert.
 #
-# WHY THIS IS NOT A BEHAVIOUR CASE, measured rather than assumed. Observing the toggle needs a
+# WHY THIS IS NOT A BEHAVIOR CASE, measured rather than assumed. Observing the toggle needs a
 # site where one sample has no reads, and this fixture cannot hold one: every sample carries ~75x
 # over the whole reference, and test/data/vcf/README.md says the same of the called VCF. Thinning
 # one sample to 250 pairs was tried and produces NO coverage at all, not low coverage --
