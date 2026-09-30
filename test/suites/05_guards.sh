@@ -6,6 +6,7 @@
 # covers: scripts/metadata.nf bin/parse_metadata.py bin/parse_multirun.py
 # covers: bin/classify_manifest.sh
 # covers: poolseqflow.nf
+# covers: parameters.config.template
 #
 # These run step 0 alone rather than the whole pipeline, so they are cheap. What they are
 # about is the distinction the parameter check draws between a value the user changed and a
@@ -96,6 +97,34 @@ test_a_changed_parameter_value_fails_the_run() {
     assert_contains "$report" "was  100" "should show the recorded value"
     assert_contains "$report" "now  40" "should show the new value"
     assert_contains "$report" "STATUS=FAIL" "the stage should record a failure"
+}
+
+# vcffilter.dropZeroDepth is the FIRST parameter added since v3.0.0, so it is the first whose
+# tracking had never been exercised. What this asserts is that it is ANALYSIS-AFFECTING: it
+# reaches the recorded manifest and the comparison names it, so a project that flips it is
+# stopped rather than quietly mixing results produced under the other answer.
+#
+# WHAT IT DOES NOT ASSERT, checked rather than assumed: this says nothing about step 7's artifact
+# identity. analysisParams() in 0_verify_environment.nf is an EXCLUSION list -- anything not named
+# in skipKey or skipPrefix counts -- so the guard fires whether or not the parameter appears in
+# stepParameterMap(). Measured: deleting it from scripts/variants.nf:44 leaves this case passing.
+# The declaration is 00_static's business; what the toggle DOES is the expression case in
+# 04_pipeline.
+#
+# So the thing that would break this is an edit to that exclusion list -- `vcffilter.` added to
+# skipPrefix, or this key added to skipKey. capBAM.histogramMax is already excluded on exactly
+# that reasoning, which is why the list is a plausible place for a wrong entry.
+test_flipping_dropzerodepth_fails_the_run() {
+    guards_ready || return
+    write_sandbox_config "$GUARD_SB" 's|^        dropZeroDepth .*|        dropZeroDepth   = false|'
+    local status report
+    status=$(run_verify_only "$GUARD_SB")
+    report=$(guard_report)
+    assert_status 1 "$status" "flipping dropZeroDepth should fail the run"
+    assert_contains "$report" "parameters.config has CHANGED" "should name the file that moved"
+    assert_contains "$report" "dropZeroDepth" "should name the parameter"
+    assert_contains "$report" "was  true" "should show the recorded value"
+    assert_contains "$report" "now  false" "should show the new value"
 }
 
 # THE EXECUTION DEFAULTS A PROJECT MAY REPLACE, and until E6g it could replace none of them.
@@ -696,7 +725,11 @@ TABLE
     assert_contains "$out" "RUN trim trim_galore.quality=30"    "the row's own value"
     assert_contains "$out" "RUN trim trim_galore.options=--fastqc --paired --retain_unpaired -q 30 " \
         "trim_galore.quality must re-derive options"
-    assert_contains "$out" "RUN depth variantCall.mpileupOptions=-B -C 50 -q 30 -Q 30 -d 4000 -a AD,DP,SP,INFO/AD -Ou" \
+    # -C is the TEMPLATE'S scaleMapQ, which this row does not set: it moved from 50 to 100 when
+    # the default was measured, and this expectation did not, so the case failed from then until
+    # the suite was next run in full. The `pinned` row below keeps 50 deliberately, as a value
+    # that differs from the default and so cannot pass by coincidence.
+    assert_contains "$out" "RUN depth variantCall.mpileupOptions=-B -C 100 -q 30 -Q 30 -d 4000 -a AD,DP,SP,INFO/AD -Ou" \
         "variantCall.maxDepth must re-derive mpileupOptions"
 
     # A row setting a DERIVED value directly wins, even against its own input in the same row.

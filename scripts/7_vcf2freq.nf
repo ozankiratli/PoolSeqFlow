@@ -312,7 +312,7 @@ process DepthAndQualityFilter {
         ln -s ${target_filterdq_vcf} .
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: COMPLETED"
     else
-        echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Depth Filtering VCF..."
+        echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Depth Filtering VCF, excluding ${depth_exclude}"
         ${run.software.bcftools} view -e "${depth_exclude}" -Ov -o ${filterdp_vcf} ${vcf}
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Quality Filtering VCF..."
         ${run.software.vcftools} --vcf ${filterdp_vcf} \

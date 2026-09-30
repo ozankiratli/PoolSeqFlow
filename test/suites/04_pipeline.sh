@@ -3,6 +3,7 @@
 # cost: pipeline
 # env: pipeline
 # covers: poolseqflow.nf scripts/ nextflow.config bin/
+# covers: parameters.config.template
 #
 # One full run is shared by the cases that only inspect its results, because a run costs
 # about a minute and there is no reason to pay for it more than once. Cases that need a
@@ -880,10 +881,10 @@ multirun_run() {
     # guard. Its own sandbox, never a copy of the shared one.
     write_sandbox_config "$MULTIRUN_SB" "s|^    multiRun .*|    multiRun        = true|"
     cat > "$MULTIRUN_SB/main/runs.csv" <<'CSV'
-RunID,vcffilter.minQUAL,poolSize,annotate
-inherit,,,
-filter,1000,,
-plain,,25,false
+RunID,vcffilter.minQUAL,poolSize,annotate,vcffilter.dropZeroDepth
+inherit,,,,
+filter,1000,,,
+plain,,25,false,false
 CSV
     MULTIRUN_STATUS=$(run_pipeline "$MULTIRUN_SB")
     [ "$MULTIRUN_STATUS" = "0" ]
@@ -1508,4 +1509,40 @@ test_the_reads_setting_in_the_config_is_not_consulted() {
     assert_status 0 "$status" "the derived value should be used regardless; see $sb/run.out"
     assert_count "$samples" "$(task_count "$sb" TrimQcClip:TrimReads)" \
         "every sample should still be trimmed, from the path the resolver computed"
+}
+
+# vcffilter.dropZeroDepth, which had no coverage at any level. 00_static proves it is DECLARED in
+# stepParameterMap() -- delete it from scripts/variants.nf and a static case fails in seconds --
+# and 05_guards proves flipping it invalidates a finished project. Neither watches the expression
+# it actually builds, and that ternary in scripts/7_vcf2freq.nf is the thing that can invert.
+#
+# WHY THIS IS NOT A BEHAVIOUR CASE, measured rather than assumed. Observing the toggle needs a
+# site where one sample has no reads, and this fixture cannot hold one: every sample carries ~75x
+# over the whole reference, and test/data/vcf/README.md says the same of the called VCF. Thinning
+# one sample to 250 pairs was tried and produces NO coverage at all, not low coverage --
+# `[M::mem_pestat] skip orientation FR as there are not enough pairs`, so bwa estimates no insert
+# size, nothing is flagged properly paired, and step 4's 0x2 filter discards the lot. That is the
+# trap make_fixture.py's own docstring warns about. The two requirements are in direct conflict:
+# bwa needs thousands of pairs to pair-estimate, and a zero-depth cell needs almost none locally.
+# A regional-gap sample satisfies both and is new committed fixture data; see test/README.md.
+#
+# So this rides the multi-run instead, where `plain` already diverges at step 7, and asserts the
+# expression each run was handed. It costs no extra pipeline run.
+test_dropzerodepth_decides_the_depth_expression() {
+    needs_multirun || return
+    local on off
+    on=$(cat "$MULTIRUN_SB/store/Logs/inherit/7_vcf2freq/7_s3_DepthAndQualityFilter_"*.log)
+    off=$(cat "$MULTIRUN_SB/store/Logs/plain/7_vcf2freq/7_s3_DepthAndQualityFilter_"*.log)
+
+    assert_contains "$on" "FMT/DP<20" "the inheriting run filters on the configured depth"
+    assert_contains "$on" "FMT/DP==0" "and dropZeroDepth=true adds the zero term"
+    assert_contains "$off" "FMT/DP<20" "the diverging run keeps the same depth floor"
+    assert_not_contains "$off" "FMT/DP==0" "and dropZeroDepth=false must not add the zero term"
+
+    # Redundant above minDP 1, which is why this is safe to set on a run whose numbers other
+    # cases assert: the site sets are identical and only the expression differs.
+    local on_rows off_rows
+    on_rows=$(awk 'END{print NR}' "$MULTIRUN_SB/store/Output/inherit/Frequencies/Test_snp_freq.tsv")
+    off_rows=$(awk 'END{print NR}' "$MULTIRUN_SB/store/Output/plain/Frequencies/Test_snp_freq.tsv")
+    [ "$on_rows" -gt 1 ] && [ "$off_rows" -gt 1 ] || fail_case         "both runs should publish sites (got $on_rows and $off_rows rows)"
 }
