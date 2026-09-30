@@ -478,7 +478,7 @@ Details and the full ladder: [Resources](#resources).
 
 ### 5. Write `metadata.csv`
 
-One row per FASTQ pair. `SampleID` must match the sample name `readPattern` takes from your filenames: with `*_R{1,2}.fq.gz`, the file `Sample1T1Rep1_R1.fq.gz` gives `Sample1T1Rep1`.
+One row per FASTQ pair. `SampleID` is **the whole name before the read tag, exactly as your sequencer delivered it**: with `*_R{1,2}.fq.gz`, the file `Sample1T1_S19_L001_R1.fq.gz` gives `Sample1T1_S19_L001`. Do not shorten it, because it is what finds your files. The name you want your *results* under goes in `RG_Sample`, and [you should always write that one out](#the-read-group-tags).
 
 ```csv
 SampleID,RG_Sample,RG_Library,RG_Platform,param_poolSize,exp_population,exp_time,pt_resistance,cov_temperature
@@ -1993,7 +1993,7 @@ There are three directories, and keeping them apart is most of understanding the
 │   ├── analysis.config.template
 │   ├── citations.json
 │   ├── references.bib
-│   └── modules/                  # THE MODULE STORE — created empty, and yours to fill
+│   └── modules/                  # THE MODULE STORE, created empty and yours to fill
 ├── manual/                       # This manual
 ├── nextflow.config
 ├── parameters.config.template
@@ -2369,7 +2369,7 @@ The **name** of a column is what decides how it is treated. There is no second s
 
 | Column | What it is |
 |---|---|
-| `SampleID` | **Required and unique.** Matched against the sample name `readPattern` takes from your FASTQ filenames, and becomes the read group's `ID` in the BAM |
+| `SampleID` | **Required and unique.** The whole name before the read tag, as delivered: any `_S<n>` or `_L00<n>` your sequencer added is part of it. Matched against the sample name `readPattern` takes from your filenames, and becomes the read group's `ID` in the BAM |
 | `RG_*` | A read-group tag. Eight are known, listed below. A blank cell omits that tag rather than writing an empty one |
 | `param_*` | A setting from `parameters.config`, overridden for these samples only. Four are known: `param_poolSize`, `param_capMaxDepth`, `param_adapter1`, `param_adapter2`. A blank cell means "use the global value" |
 | `exp_*` | An experimental variable: something you **set**. Read by [analysis modules](#the-experimental-design) and by no pipeline step. Any name you like after the prefix |
@@ -2412,7 +2412,20 @@ The refusal is a hard one, and it stops **every** analysis rather than only the 
 | `RG_Date` | `DT` | Run date, ISO 8601, e.g. `2024-03-07` |
 | `RG_FlowOrder` | `FO` | Flow order |
 
-You never write the two-letter tags yourself; the prefix is what marks a column as one. `RG_Sample` is optional and defaults to `SampleID`, which makes every row its own pool. That is what you want when each sample was sequenced once.
+You never write the two-letter tags yourself; the prefix is what marks a column as one.
+
+**Fill `RG_Sample` in on every row, even when it repeats `SampleID`.** The two columns answer different questions and it is worth being deliberate about both:
+
+| | answers | comes from |
+|---|---|---|
+| `SampleID` | *which pair of files is this row?* | your sequencer. Whatever it wrote, in full |
+| `RG_Sample` | *what name do I want this under in my results?* | you |
+
+`RG_Sample` is what names the VCF column, every frequency table header, and everything an analysis keys on.
+
+The column is optional. However, if **left out, it is filled from `SampleID`.** Every such row becomes its own pool, named exactly what its files were named.
+
+Filling it in with the value it was already defaulting to changes nothing and invalidates nothing: the run records the rows as resolved, so a project that adds the column and repeats `SampleID` in it passes [the consistency guards](#the-consistency-guards) untouched. Only a change that really does move the pooling stops a run, which is the point of them.
 
 **Every `SampleID` must appear exactly once.** A row is looked up by it and only the first match would be read, so a repeat would quietly give a sample the wrong tags and produce a perfectly valid BAM that nothing downstream could flag. The run stops and lists the offending values, along with every other problem in the file, reported together with line numbers rather than one at a time.
 
@@ -2431,7 +2444,9 @@ A08781_S58,A08781
 
 The suffix stops at the join. `RG_Sample` is what names the VCF column and what every result is keyed on, so `_S58` never reaches a number you publish.
 
-This is the same mechanism that makes lanes work. A sample split across two lanes arrives as `A08781_S58_L001` and `A08781_S58_L002`, which are two rows sharing one `RG_Sample` and merging into one pool. A rule that stripped the suffix from `SampleID` would give both rows the same identifier and lose one of the pairs.
+This is the same mechanism that makes lanes work. A sample split across two lanes arrives as `A08781_S58_L001` and `A08781_S58_L002`, which are two rows sharing one `RG_Sample` and merging into one pool. A rule that stripped the suffix from `SampleID` would give both rows the same identifier and lose one of the pairs. That is why nothing here strips anything, and why carrying the suffix into `SampleID` is yours to do.
+
+Both ways of getting this wrong are in Troubleshooting: [a sample with reads but no row](#reads-but-no-row) when `SampleID` is too short, and [a pool named after your files](#pool-named-after-files) when `RG_Sample` is blank.
 
 To save typing the identifiers, list them from the files themselves rather than from the sample sheet:
 
@@ -3888,7 +3903,7 @@ If a covariate turns out to explain your result, the answer is usually a better 
 ```groovy
 params {
     analysis {
-        runs = 'all'                         // every run in the project — the default
+        runs = 'all'                         // every run in the project, the default
         // runs = 'lenient'                  // one, by the RunID you gave it
         // runs = ['lenient', 'strict']      // several
     }
@@ -4003,7 +4018,7 @@ Building it needs `pandoc` and `typst`, both pinned in the analysis environment.
 ```groovy
 params {
     analysis {
-        folderName = ''                  // the module's own name — mds writes to Results/mds
+        folderName = ''                  // the module's own name; mds writes to Results/mds
         // folderName = 'sweep_strict'   // a name of your own
         // folderName = 'MDS/SummerPops' // a path, so related analyses group together
     }
@@ -4154,7 +4169,7 @@ One row per pool per sequence, over the **SNP** table.
 | `depth_mean`, `depth_median` | the ordinary summaries of that pool's depth |
 | `depth_harmonic` | the harmonic mean, which is the one every effective sample size below is computed from |
 
-**The three depth columns are taken over `sites - unmeasured`, not over `sites`.** A site this pool has no reads at tells you nothing about how deep it was read, so averaging it in as a zero would report a depth nobody measured -- and the harmonic mean of any set containing a zero is zero, which would take the pool's effective sample size to `NA` on one missed site out of millions. `unmeasured` is published so the denominator is readable rather than assumed.
+**The three depth columns are taken over `sites - unmeasured`, not over `sites`.** A site this pool has no reads at tells you nothing about how deep it was read, so averaging it in as a zero would report a depth nobody measured. The harmonic mean of any set containing a zero is zero, which would take the pool's effective sample size to `NA` on one missed site out of millions. `unmeasured` is published so the denominator is readable rather than assumed.
 
 **A pool's depth at a site is the sum of its cell in the depth table**: the reads supporting any allele there, after step 7's depth, quality and false-positive filters. It is not coverage, and it is not what `Output/Reports/Depth` measured: the sites here are the ones that survived calling, every one of them carries at least `vcffilter.minDP` reads in **every** sample by construction, and mapping and base quality minima applied to the pileup that they did not. The two numbers are not one quantity measured twice, and this one is always the larger.
 
@@ -4948,6 +4963,30 @@ These results were produced by a different release. A project belongs to one rel
 
 A `SampleID` appears more than once. A row is looked up by it and only the first match is read, so the duplicate would have silently given a sample the wrong read-group tags, producing a valid BAM that nothing downstream could flag. Every problem in the file is reported at once, with line numbers, so fix the whole list before rerunning.
 
+### A sample `has reads but no row`, and a row has no reads { #reads-but-no-row }
+
+```text
+Sample 'A08781_S58' has reads but no row in metadata.csv
+NOTE: metadata.csv has a row for 'A08781', which has no reads in Data/
+```
+
+**These two lines are one problem, and the answer is the difference between them.** One name has files and no row, the other has a row and no files, and they differ by a suffix your sequencer added. Illumina's demultiplexing appends `_S<n>`, the sample's row number in the sample sheet, so the sample you call `A08781` arrives as `A08781_S58_R1.fq.gz`.
+
+`SampleID` is what joins a row to its files, so it has to carry the whole delivered name. **Lengthen `SampleID`, and never rename the files.** Then put the name you want your results under in `RG_Sample`:
+
+```csv
+SampleID,RG_Sample
+A08781_S58,A08781
+```
+
+With sixty samples you get sixty of each line. Listing the identifiers from the files themselves is faster than reading them off a sample sheet:
+
+```bash
+find Data -name '*_R1.fq.gz' | sed 's|.*/||; s|_R1\.fq\.gz$||' | sort
+```
+
+[Sequencer suffixes ->](#when-your-file-names-carry-a-sequencer-suffix)
+
 ### `DIRECTORY CHECK` fails
 
 `mainDir` and `storageDir` are the same path, or one of them is the installation. They are two storage tiers and an output moving from one to the other is what marks it finished, which cannot mean anything if they are one place. The installation is a tool that is replaced wholesale on upgrade, so a project inside it would not survive one. [Why →](#symbolic-links-instead-of-copies)
@@ -4984,6 +5023,20 @@ For a reproducible failure, set `threads = 1`. That removes concurrency as a var
 ### Fewer sample columns than samples
 
 Rows in `metadata.csv` sharing an `RG_Sample` are merged into one VCF column and their depths add together. Eight FASTQ pairs with four distinct `RG_Sample` values give four columns (usually intentional, occasionally not). The pooling is printed at the start of every run, before any compute. [Metadata ->](#rg_sample-decides-what-counts-as-a-sample)
+
+### A pool is named after my files, or one sample became two pools { #pool-named-after-files }
+
+`RG_Sample` is blank, so it was filled from `SampleID`, and `SampleID` carries whatever your sequencer put in the file name. Nothing failed: the run completed and the name simply traveled. `A08781_S58` is now the VCF column, the frequency table header, and the key every analysis result is filed under, with a sample sheet's row number inside it.
+
+The more expensive version of the same cause is a sample sequenced across two lanes. It arrives as `A08781_S58_L001` and `A08781_S58_L002`, and with `RG_Sample` blank those are two different pools rather than one: each carries half the depth it should, and the [cross-sample filter](#6-false-positive-filter-step-7) sees twice as many pools as you have, which changes which alleles survive it.
+
+**Step 0 prints the pooling it resolved before any compute is spent**, and that line is where to catch this:
+
+```text
+METADATA CHECK:        A08781 is one column, pooling A08781_S58_L001, A08781_S58_L002
+```
+
+If it names your files rather than your samples, fill in `RG_Sample` and rerun. Doing that changes the pooling, so the run will ask you to clear the outputs produced under the old one, which is correct: those numbers really were computed over the wrong pools. [Sequencer suffixes ->](#when-your-file-names-carry-a-sequencer-suffix)
 
 ### Sample columns in an unexpected order
 

@@ -42,6 +42,7 @@ One file per subject, not per source file -- the reasoning crosses file boundari
 
 | File | Subject |
 |---|---|
+| `sequencer-suffix.md` | why `_S<n>` must stay in `SampleID` and must not reach `RG_Sample`: the two unconnected messages a short name produces, the silent pool split a blank `RG_Sample` produces, and why stripping the suffix would lose a lane |
 | `metadata-file.md` | the sample metadata CSV, its prefixes, pooling and pool sizes |
 | `variant-model.md` | how work is shared between runs; the divergence tree |
 | `parameter-resolution.md` | what is computed vs set, and how a run's parameters are built |

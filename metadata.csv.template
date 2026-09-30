@@ -2,8 +2,9 @@
 # The manual explains every column: https://ozankiratli.github.io/PoolSeqFlow/
 #
 # COLUMN KINDS, told apart by the prefix:
-#   SampleID   required, unique. Must match the sample name readPattern takes from your FASTQ
-#              names: with '*_R{1,2}.fq.gz', Sample1T1Rep1_R1.fq.gz gives Sample1T1Rep1.
+#   SampleID   required, unique. THE WHOLE NAME BEFORE THE READ TAG, exactly as your sequencer
+#              delivered it: with '*_R{1,2}.fq.gz', Sample1T1_S19_L001_R1.fq.gz gives
+#              Sample1T1_S19_L001. Never shorten it; it is what finds your files.
 #   RG_*       a read group tag: RG_Sample, RG_Library, RG_Platform, RG_PlatformUnit,
 #              RG_Description, RG_Center, RG_Date, RG_FlowOrder. Closed list.
 #   param_*    overrides a parameters.config setting for these rows: param_poolSize,
@@ -14,21 +15,24 @@
 #   anything   your own. Recorded, never interpreted.
 #
 # THE TWO THAT CHANGE A RESULT:
-#   RG_Sample       the pool a row belongs to, and one column in the VCF. Rows sharing one are
-#                   MERGED, reads pooled and depths added. Blank or absent: the row is its own
-#                   pool. Step 0 prints the pooling before any compute is spent.
+#   RG_Sample       ALWAYS FILL THIS IN. It is the name you want your results under: it names the
+#                   VCF column and every table keyed on it. Rows sharing one are MERGED, reads
+#                   pooled and depths added. Left blank it copies SampleID, sequencer suffix and
+#                   all. Step 0 prints the pooling before any compute is spent.
 #   param_poolSize  individuals in the pool; sets its detection limit. Rows of one pool must
 #                   give the SAME value. Absent: every pool uses the global poolSize.
 #
 # A value containing a comma must be quoted: "Pop1, coastal".
 #
-# The table below is an example: eight pairs, four pools, each sequenced twice. Replace it.
+# The table below is an example: eight pairs, four pools, each sequenced on two lanes. Note what
+# the two name columns do - SampleID carries the sequencer's own suffix and finds the files,
+# RG_Sample is the name the results come out under. Replace it.
 SampleID,RG_Sample,RG_Library,RG_Platform,RG_PlatformUnit,param_poolSize,exp_population,exp_time,pt_resistance,cov_temperature,sequencing_run
-Sample1T1Rep1,Sample1T1,Lib1,ILLUMINA,Unit1,50,Pop1,T1,susceptible,21.5,Run1
-Sample1T1Rep2,Sample1T1,Lib1,ILLUMINA,Unit2,50,Pop1,T1,susceptible,21.5,Run2
-Sample1T2Rep1,Sample1T2,Lib1,ILLUMINA,Unit1,50,Pop1,T2,resistant,22.1,Run1
-Sample1T2Rep2,Sample1T2,Lib1,ILLUMINA,Unit2,50,Pop1,T2,resistant,22.1,Run2
-Sample2T1Rep1,Sample2T1,Lib1,ILLUMINA,Unit1,40,Pop2,T1,susceptible,18.0,Run1
-Sample2T1Rep2,Sample2T1,Lib1,ILLUMINA,Unit2,40,Pop2,T1,susceptible,18.0,Run2
-Sample2T2Rep1,Sample2T2,Lib1,ILLUMINA,Unit1,40,Pop2,T2,resistant,19.4,Run1
-Sample2T2Rep2,Sample2T2,Lib1,ILLUMINA,Unit2,40,Pop2,T2,resistant,19.4,Run2
+Sample1T1_S1_L001,Sample1T1,Lib1,ILLUMINA,Unit1,50,Pop1,T1,susceptible,21.5,Run1
+Sample1T1_S1_L002,Sample1T1,Lib1,ILLUMINA,Unit2,50,Pop1,T1,susceptible,21.5,Run2
+Sample1T2_S2_L001,Sample1T2,Lib1,ILLUMINA,Unit1,50,Pop1,T2,resistant,22.1,Run1
+Sample1T2_S2_L002,Sample1T2,Lib1,ILLUMINA,Unit2,50,Pop1,T2,resistant,22.1,Run2
+Sample2T1_S3_L001,Sample2T1,Lib1,ILLUMINA,Unit1,40,Pop2,T1,susceptible,18.0,Run1
+Sample2T1_S3_L002,Sample2T1,Lib1,ILLUMINA,Unit2,40,Pop2,T1,susceptible,18.0,Run2
+Sample2T2_S4_L001,Sample2T2,Lib1,ILLUMINA,Unit1,40,Pop2,T2,resistant,19.4,Run1
+Sample2T2_S4_L002,Sample2T2,Lib1,ILLUMINA,Unit2,40,Pop2,T2,resistant,19.4,Run2

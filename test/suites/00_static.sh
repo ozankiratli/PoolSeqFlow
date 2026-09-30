@@ -4,6 +4,7 @@
 # covers: PoolSeqFlow install/ dev/scripts/ modules/repo/index.tsv .gitattributes
 # covers: analysis/citations.json citations/citations.json citations/references.bib
 # covers: analysis/references.bib manual/references.bib
+# covers: parameters.config.template metadata.csv.template multi-run.csv.example
 
 # `nextflow lint` was brought to zero warnings during the post-2.2.0 audit. Held there
 # deliberately: once the count is zero a new warning is a signal rather than noise.

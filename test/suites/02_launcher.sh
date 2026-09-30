@@ -3,6 +3,7 @@
 # cost: static
 # covers: PoolSeqFlow lib/wrapper_lib.sh lib/tool_version.sh bin/check_install.sh
 # covers: bin/check_analysis_install.sh bin/check_project.sh
+# covers: parameters.config.template metadata.csv.template
 #
 # These run entirely against the fake conda in lib/sandbox.sh. Nothing here creates,
 # activates or removes a real environment: a test suite that could delete an operator's
