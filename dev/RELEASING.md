@@ -20,30 +20,13 @@ Live preview while you work:
 dev/scripts/serve_docs.sh        # http://127.0.0.1:8055/PoolSeqFlow/ , regenerates on save
 ```
 
-Delete on sight:
-
-| | |
-|---|---|
-| a count that moves with every commit | cases, files, running totals. Remove the number, do not correct it. A count tied to a tag or to a closed list is fine. |
-| a warning about a bug that is fixed | nothing else prompts you to delete it |
-| developer shorthand | "the pipeline refuses", not "step 0 refuses" |
-| a capability written as the only path | "each pool can be set to get its own", not "each pool gets its own" |
-
-Every settable parameter must be named, with what it is, what it does, and how to set it. Nothing checks this, so run it:
+Every settable parameter must be named, with what it is, what it does, and how to set it:
 
 ```
-for k in $(grep -hoE '^[[:space:]]*(//[[:space:]]*)?[A-Za-z_][A-Za-z0-9_.]*[[:space:]]*=' \
-             parameters.config.template nextflow.config \
-           | sed -E 's|//[[:space:]]*||; s|[[:space:]]*=||; s|^[[:space:]]*||; s|^params\.||' \
-           | sort -u); do
-  case $k in homePage|mainScript|nextflowVersion) continue ;; esac
-  grep -qiF "$k" manual/PoolSeqFlow-manual.md \
-    || grep -qiF "${k##*.}" manual/PoolSeqFlow-manual.md \
-    || echo "undocumented: $k"
-done
+dev/scripts/check-manual-parameters.sh
 ```
 
-Both files, because a key defined in `nextflow.config` is invisible to a template-only audit. Silence means every key is named.
+Silence means every key is named. It cannot tell you whether the manual says what each one *does*, which is the part you are reading for.
 
 Version-dependent prose is stale here: the bump is step 7. Note those passages and re-read them after it.
 
