@@ -70,8 +70,8 @@ _poolseqflow() {
     cur=${COMP_WORDS[COMP_CWORD]}
     cmd=${COMP_WORDS[0]}
     # Every verb the wrapper dispatches, which 00_static checks against its `case`.
-    top="install init init_multi check run dryrun dryclean migrate_config clean reset"
-    top="$top analysis version cite list uninstall uninstall_all"
+    top="install init check run dryrun dryclean migrate_config clean reset"
+    top="$top analysis version cite list uninstall"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
         _poolseqflow_reply "$top" "$cur"
@@ -81,6 +81,12 @@ _poolseqflow() {
     case ${COMP_WORDS[1]} in
         check)
             [ "$COMP_CWORD" -eq 2 ] && _poolseqflow_reply "install project" "$cur"
+            ;;
+        init)
+            [ "$COMP_CWORD" -eq 2 ] && _poolseqflow_reply "multi" "$cur"
+            ;;
+        uninstall)
+            [ "$COMP_CWORD" -eq 2 ] && _poolseqflow_reply "all" "$cur"
             ;;
         analysis)
             modules=$(_poolseqflow_modules "$cmd" | tr '\n' ' ')

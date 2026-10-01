@@ -56,7 +56,6 @@ _PoolSeqFlow() {
     verbs=(
         'install:create this release'\''s conda environment and install the pipeline'
         'init:put a project'\''s starting files in the current directory'
-        'init_multi:the same, for a project running several datasets'
         'check:verify an installation or a project'
         'run:start, or resume, the pipeline'
         'dryrun:show where the work would go without doing any of it'
@@ -69,7 +68,6 @@ _PoolSeqFlow() {
         'cite:print how to cite this release'
         'list:show the installed versions'
         'uninstall:remove this version'
-        'uninstall_all:remove every installed version'
     )
 
     analysis_verbs=(
@@ -101,6 +99,14 @@ _PoolSeqFlow() {
                     _describe -t targets 'check target' \
                         '(install:the installation, every tool it is built to run
                           project:this project, as it is configured)' && ret=0
+                    ;;
+                init)
+                    _describe -t modes 'init mode' \
+                        '(multi:for a project running several datasets)' && ret=0
+                    ;;
+                uninstall)
+                    _describe -t scopes 'uninstall scope' \
+                        '(all:every installed version on this machine)' && ret=0
                     ;;
                 analysis)
                     # $CURRENT is relative to the re-sliced $words that `*::` produces, where

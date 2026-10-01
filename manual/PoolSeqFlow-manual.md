@@ -361,7 +361,7 @@ Finished results do not go here. They go to `storageDir`, which has to be a diff
 
 Then edit `parameters.config`: `mainDir`, `storageDir`, `readPattern`, `referenceFile`, `poolSize` and `ploidy` at minimum. The reference and the annotation may be gzipped or plain; the pipeline takes either and unpacks what it needs into `Reference/Dictionaries/`.
 
-Analyzing one set of reads under several parameter sets (two reference genomes, say)? Run `PoolSeqFlow init_multi` instead. It does everything `init` does, switches `multiRun` on, and copies `multi-run.csv.example` into the project. It does not write the run table itself, for the same reason it does not write `metadata.csv`.
+Analyzing one set of reads under several parameter sets (two reference genomes, say)? Run `PoolSeqFlow init multi` instead. It does everything `init` does, switches `multiRun` on, and copies `multi-run.csv.example` into the project. It does not write the run table itself, for the same reason it does not write `metadata.csv`.
 
 ### 2. Verify it any time { #check }
 
@@ -575,7 +575,7 @@ How to read the tables: [Interpreting Results](#interpreting-results).
 |---|---|
 | `PoolSeqFlow install` | Create this release's conda environment, install the pipeline, then verify both |
 | `PoolSeqFlow init` | Populate the current directory as a project ([what it writes](#make-your-project)) |
-| `PoolSeqFlow init_multi` | The same, for a project running several parameter sets over one set of reads |
+| `PoolSeqFlow init multi` | The same, for a project running several parameter sets over one set of reads |
 | `PoolSeqFlow check install` | Verify an installation: the tools and helpers it is built to run ([what it covers](#check-install)) |
 | `PoolSeqFlow check project` | Verify a project: its configuration, and the commands it names ([what it covers](#check-project)) |
 | `PoolSeqFlow run` | Start (or resume) the pipeline |
@@ -589,7 +589,7 @@ How to read the tables: [Interpreting Results](#interpreting-results).
 | `PoolSeqFlow cite` | Print how to cite this copy, and which DOI to use ([why it matters](#which-doi-to-use)) |
 | `PoolSeqFlow list` | List the pipelines and conda environments installed on this machine |
 | `PoolSeqFlow uninstall` | Remove one installed version, environment and pipeline together, after confirmation |
-| `PoolSeqFlow uninstall_all` | Remove every PoolSeqFlow environment and installation, after confirmation |
+| `PoolSeqFlow uninstall all` | Remove every PoolSeqFlow environment and installation, after confirmation |
 
 Before anything is installed there is no `PoolSeqFlow` on your `PATH`, so the first command is `./PoolSeqFlow install`, run from the folder you downloaded. Everything after that uses the installed command.
 
@@ -608,7 +608,7 @@ Installed under /home/you/.local:
 
 Choosing 3 removes `PoolSeqFlow-<version>` and `PoolSeqFlow-<version>-analysis`. To remove only an analysis layer and keep the pipeline that produced your results, use `PoolSeqFlow analysis uninstall`, which never touches anything else.
 
-**Both then list exactly what will go and ask before removing any of it**, every time (including when there is only one installation and nothing to choose between). Choosing *which* is not the same as agreeing to the removal. Answering anything but `y` removes nothing, and with no terminal attached to ask (a script, a CI job), the command refuses rather than proceeding unasked. That is the same rule `uninstall_all` has always followed.
+**Both then list exactly what will go and ask before removing any of it**, every time (including when there is only one installation and nothing to choose between). Choosing *which* is not the same as agreeing to the removal. Answering anything but `y` removes nothing, and with no terminal attached to ask (a script, a CI job), the command refuses rather than proceeding unasked. That is the same rule `uninstall all` has always followed.
 
 `PoolSeqFlow resume` still works as a deprecated alias for `run` and prints a notice.
 
@@ -2616,7 +2616,7 @@ The reason to do it this way rather than copying the project is that the runs ha
 ### Turning it on
 
 ```bash
-PoolSeqFlow init_multi
+PoolSeqFlow init multi
 ```
 
 in a new project, or in an existing one set it yourself:
@@ -2626,7 +2626,7 @@ multiRun     = true
 multiRunFile = 'runs.csv'
 ```
 
-`init_multi` also copies `multi-run.csv.example` into the project. It does not write the table: the runs, and the parameters that differ between them, are the whole content of that file, and only you know them.
+`init multi` also copies `multi-run.csv.example` into the project. It does not write the table: the runs, and the parameters that differ between them, are the whole content of that file, and only you know them.
 
 ### The run table
 

@@ -1494,11 +1494,15 @@ test_the_completion_offers_the_subcommands_each_verb_takes() {
         reply() { COMP_WORDS=("${@:2}" ""); COMP_CWORD=$1; _poolseqflow; printf "%s\n" "${COMPREPLY[@]}"; }
         printf "check: %s\n" "$(reply 2 PoolSeqFlow check | sort | tr "\n" " ")"
         printf "modules: %s\n" "$(reply 3 PoolSeqFlow analysis modules | sort | tr "\n" " ")"
+        printf "init: %s\n" "$(reply 2 PoolSeqFlow init | sort | tr "\n" " ")"
+        printf "uninstall: %s\n" "$(reply 2 PoolSeqFlow uninstall | sort | tr "\n" " ")"
         ' _ "$REPO_ROOT")
 
     assert_contains "$out" "check: install project " \
         "check takes the two targets its usage names"
     assert_contains "$out" "modules: available install list uninstall " \
         "analysis modules takes the four verbs its usage names"
+    assert_contains "$out" "init: multi " "init takes the one word its usage names"
+    assert_contains "$out" "uninstall: all " "uninstall takes the one word its usage names"
 }
 

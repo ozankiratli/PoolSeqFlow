@@ -90,7 +90,7 @@ Full walkthrough: [Install](https://ozankiratli.github.io/PoolSeqFlow/getting-st
 |---|---|
 | `PoolSeqFlow install` | Create the conda environment, install the pipeline, then verify both |
 | `PoolSeqFlow init` | Populate the current directory as a project |
-| `PoolSeqFlow init_multi` | The same, for a project running several parameter sets over one set of reads |
+| `PoolSeqFlow init multi` | The same, for a project running several parameter sets over one set of reads |
 | `PoolSeqFlow check install` | Verify an installation -- the tools and helpers it is built to run |
 | `PoolSeqFlow check project` | Verify a project -- its configuration, and the commands it names |
 | `PoolSeqFlow run` | Start -- or resume -- the pipeline |
@@ -104,7 +104,7 @@ Full walkthrough: [Install](https://ozankiratli.github.io/PoolSeqFlow/getting-st
 | `PoolSeqFlow cite` | Print how to cite this copy, and which DOI to use |
 | `PoolSeqFlow list` | List the pipelines and conda environments installed on this machine |
 | `PoolSeqFlow uninstall` | Remove one installed version -- environment and pipeline together, after confirmation |
-| `PoolSeqFlow uninstall_all` | Remove every PoolSeqFlow environment and installation, after confirmation |
+| `PoolSeqFlow uninstall all` | Remove every PoolSeqFlow environment and installation, after confirmation |
 
 **`./PoolSeqFlow install` is the only command you type with a `./`.** Until it has run there is no `PoolSeqFlow` on your `PATH`, so that first one is called from inside the folder you extracted. It installs the command, and everything after it -- including `init`, which you run from your own project directory -- is called by name from wherever you are.
 

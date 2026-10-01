@@ -5,10 +5,10 @@
 # email  : ozankiratli@protonmail.com
 #
 # Wrapper script for PoolSeqFlow
-# Usage: PoolSeqFlow {install|init|init_multi|check <target>|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}
+# Usage: PoolSeqFlow {install|init [multi]|check <target>|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall [all]}
 #  install        - creates this release's conda environment and installs the pipeline
 #  init           - populates the current directory as a project
-#  init_multi     - the same, plus multiRun on
+#  init multi     - the same, plus multiRun on
 #  check          - verifies the installation
 #  run            - runs the pipeline; also resumes one
 #  dryrun         - creates the directory tree a run would write, empty
@@ -30,7 +30,7 @@
 #  list           - lists what is installed on this machine
 #  uninstall      - removes one installed version, asking which when several exist, and
 #                   always confirming before anything goes
-#  uninstall_all  - removes every PoolSeqFlow environment and installation
+#  uninstall all  - removes every PoolSeqFlow environment and installation
 #
 # Each top-level subcommand takes no arguments. `analysis` takes one word of its own; a module
 # name takes an optional `nocpp` after it, and `analysis modules` takes a verb plus whatever
@@ -46,7 +46,7 @@ eval "$(conda shell.bash hook)"
 VERSION="3.2.0"
 
 usage() {
-    echo "Usage: $0 {install|init|init_multi|check <target>|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall|uninstall_all}"
+    echo "Usage: $0 {install|init [multi]|check <target>|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall [all]}"
     exit 1
 }
 
@@ -1145,7 +1145,7 @@ report_other_envs() {
     echo "None of them is used by this copy. Keep the ones whose results you still need to"
     echo "reproduce; remove the rest:"
     printf '    %-32s %s\n' "conda env remove -n <name>" "one environment"
-    printf '    %-32s %s\n' "./$(basename "$0") uninstall_all" "every PoolSeqFlow environment"
+    printf '    %-32s %s\n' "./$(basename "$0") uninstall all" "every PoolSeqFlow environment"
     echo ""
 }
 
@@ -1261,14 +1261,24 @@ fi
 
 COMMAND=$1
 
-# Two subcommands carry a word of their own. `analysis` takes an analysis command or the module
+# Renamed to two words. Named here rather than as a case arm below, so the arm list and the usage
+# line stay the same set - which is what `usage and implementation agree` compares.
+if [ "$COMMAND" = "init_multi" ] || [ "$COMMAND" = "uninstall_all" ]; then
+    echo "ERROR: '$COMMAND' is now two words: '${COMMAND/_/ }'." >&2
+    exit 1
+fi
+
+# Four subcommands carry a word of their own. `analysis` takes an analysis command or the module
 # to run, and how many words follow that is each arm's own business, enforced there. `check`
 # takes exactly one, saying which check; an absent or unknown one is reported by its own arm,
-# which can name the two by name, so anything at all is passed through from here. Every other
-# subcommand takes none.
+# which can name the two by name, so anything at all is passed through from here. `init` and
+# `uninstall` each take one optional word, and only one value is a word at all, so a wrong one is
+# a usage error here. Every other subcommand takes none.
 ANALYSIS_COMMAND=""
 ANALYSIS_ARGS=()
 CHECK_TARGET=""
+INIT_MODE=""
+UNINSTALL_SCOPE=""
 if [ "$COMMAND" = "analysis" ]; then
     [ "$#" -ge 2 ] || usage_analysis
     ANALYSIS_COMMAND=$2
@@ -1277,12 +1287,20 @@ if [ "$COMMAND" = "analysis" ]; then
 elif [ "$COMMAND" = "check" ]; then
     [ "$#" -le 2 ] || usage
     CHECK_TARGET="${2:-}"
+elif [ "$COMMAND" = "init" ]; then
+    [ "$#" -le 2 ] || usage
+    INIT_MODE="${2:-}"
+    [ -z "$INIT_MODE" ] || [ "$INIT_MODE" = "multi" ] || usage
+elif [ "$COMMAND" = "uninstall" ]; then
+    [ "$#" -le 2 ] || usage
+    UNINSTALL_SCOPE="${2:-}"
+    [ -z "$UNINSTALL_SCOPE" ] || [ "$UNINSTALL_SCOPE" = "all" ] || usage
 elif [ "$#" -ne 1 ]; then
     usage
 fi
 
 # What the user typed, for the messages that tell them to type it again somewhere else.
-INVOCATION="$COMMAND${ANALYSIS_COMMAND:+ $ANALYSIS_COMMAND}${CHECK_TARGET:+ $CHECK_TARGET}"
+INVOCATION="$COMMAND${ANALYSIS_COMMAND:+ $ANALYSIS_COMMAND}${CHECK_TARGET:+ $CHECK_TARGET}${INIT_MODE:+ $INIT_MODE}${UNINSTALL_SCOPE:+ $UNINSTALL_SCOPE}"
 
 # One environment per release, named from VERSION above so a bump carries it.
 ENV_NAME="PoolSeqFlow-${VERSION}"
@@ -1385,6 +1403,65 @@ populate_project() {
     echo "     into one pool."
 }
 
+# Every PoolSeqFlow environment and installation on the machine. A function rather than an arm
+# of its own: `uninstall all` is one command with a word after it, and the arm list has to stay
+# the same set as the usage line.
+uninstall_every_version() {
+    INSTALLED=$(poolseqflow_envs)
+    if [ -z "$INSTALLED" ]; then
+        echo "No PoolSeqFlow conda environments are installed. Nothing to do."
+        exit 0
+    fi
+    PREFIX=$(install_prefix)
+    PAYLOADS=$(installed_payload_versions "$PREFIX")
+    echo ""
+    echo "This removes every PoolSeqFlow conda environment on this machine:"
+    echo "$INSTALLED" | sed 's/^/    /'
+    if [ -n "$PAYLOADS" ]; then
+        echo ""
+        echo "and every installed pipeline under $PREFIX/opt:"
+        for v in $PAYLOADS; do echo "    v$v"; done
+        echo ""
+        echo "including the symlinks in $PREFIX/bin."
+    fi
+    echo ""
+    echo "Only the software goes. Your project directories - parameters.config, Data/,"
+    echo "Reference/ - and everything in storageDir are untouched: none of them live"
+    echo "inside an installation."
+    echo "Reinstall this version afterwards with:"
+    echo "    ./$(basename "$0") install"
+    echo ""
+    echo "Removing an environment means results produced with that version can no"
+    echo "longer be reproduced without reinstalling it."
+    echo ""
+    printf 'Remove them? [y/N]: '
+    if ! read -r CONFIRM; then
+        echo ""
+        echo "Aborted - no confirmation received. Nothing was removed."
+        exit 1
+    fi
+    case "$CONFIRM" in
+        y|Y|yes|YES|Yes) ;;
+        *) echo "Aborted - nothing was removed."; exit 1 ;;
+    esac
+    # An active environment has to be stepped out of first; there may be none.
+    conda deactivate 2>/dev/null || true
+    # A plain `for`, not `... | while read`: a piped loop is a subshell, where `set -e`
+    # would not stop the script. Environment names cannot contain whitespace.
+    for env in $INSTALLED; do
+        echo "Removing $env..."
+        conda env remove -n "$env" -y
+    done
+    # remove_payload re-points the plain wrapper each time and removes it with the last
+    # version, so nothing is left on PATH pointing at a directory that has gone.
+    for v in $PAYLOADS; do
+        remove_payload "$v" || true
+    done
+    remove_completion
+    echo ""
+    echo "All PoolSeqFlow environments and installations removed."
+}
+
 case $COMMAND in
     install)
         require_install
@@ -1409,12 +1486,11 @@ case $COMMAND in
 
     init)
         require_install
-        populate_project single
-        ;;
-
-    init_multi)
-        require_install
-        populate_project multi
+        if [ "$INIT_MODE" = "multi" ]; then
+            populate_project multi
+        else
+            populate_project single
+        fi
         ;;
 
     check)
@@ -2021,7 +2097,7 @@ EOF
             echo ""
         fi
         echo "Remove one environment:   conda env remove -n <name>"
-        echo "Remove all of them:       ./$(basename "$0") uninstall_all"
+        echo "Remove all of them:       ./$(basename "$0") uninstall all"
         ;;
 
     version)
@@ -2033,6 +2109,11 @@ EOF
         poolseqflow_citation "$VERSION"
         ;;
     uninstall)
+        # `uninstall all` takes the machine; `uninstall` alone asks which installation.
+        if [ "$UNINSTALL_SCOPE" = "all" ]; then
+            uninstall_every_version
+            exit 0
+        fi
         PREFIX=$(install_prefix)
         # Decided first, and may be an installation other than this wrapper's. Canceling,
         # or having no way to ask, stops here.
@@ -2127,61 +2208,6 @@ EOF
         fi
         ;;
 
-    uninstall_all)
-        INSTALLED=$(poolseqflow_envs)
-        if [ -z "$INSTALLED" ]; then
-            echo "No PoolSeqFlow conda environments are installed. Nothing to do."
-            exit 0
-        fi
-        PREFIX=$(install_prefix)
-        PAYLOADS=$(installed_payload_versions "$PREFIX")
-        echo ""
-        echo "This removes every PoolSeqFlow conda environment on this machine:"
-        echo "$INSTALLED" | sed 's/^/    /'
-        if [ -n "$PAYLOADS" ]; then
-            echo ""
-            echo "and every installed pipeline under $PREFIX/opt:"
-            for v in $PAYLOADS; do echo "    v$v"; done
-            echo ""
-            echo "including the symlinks in $PREFIX/bin."
-        fi
-        echo ""
-        echo "Only the software goes. Your project directories - parameters.config, Data/,"
-        echo "Reference/ - and everything in storageDir are untouched: none of them live"
-        echo "inside an installation."
-        echo "Reinstall this version afterwards with:"
-        echo "    ./$(basename "$0") install"
-        echo ""
-        echo "Removing an environment means results produced with that version can no"
-        echo "longer be reproduced without reinstalling it."
-        echo ""
-        printf 'Remove them? [y/N]: '
-        if ! read -r CONFIRM; then
-            echo ""
-            echo "Aborted - no confirmation received. Nothing was removed."
-            exit 1
-        fi
-        case "$CONFIRM" in
-            y|Y|yes|YES|Yes) ;;
-            *) echo "Aborted - nothing was removed."; exit 1 ;;
-        esac
-        # An active environment has to be stepped out of first; there may be none.
-        conda deactivate 2>/dev/null || true
-        # A plain `for`, not `... | while read`: a piped loop is a subshell, where `set -e`
-        # would not stop the script. Environment names cannot contain whitespace.
-        for env in $INSTALLED; do
-            echo "Removing $env..."
-            conda env remove -n "$env" -y
-        done
-        # remove_payload re-points the plain wrapper each time and removes it with the last
-        # version, so nothing is left on PATH pointing at a directory that has gone.
-        for v in $PAYLOADS; do
-            remove_payload "$v" || true
-        done
-        remove_completion
-        echo ""
-        echo "All PoolSeqFlow environments and installations removed."
-        ;;
     *)
         usage
         ;;

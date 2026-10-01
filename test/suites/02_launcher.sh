@@ -461,7 +461,7 @@ test_install_reports_environments_left_from_other_versions() {
     run_launcher_with_envs "base PoolSeqFlow PoolSeqFlow-0.1.0" install
     assert_contains "$LAUNCHER_OUTPUT" "Other PoolSeqFlow environments" "should report what else is installed"
     assert_contains "$LAUNCHER_OUTPUT" "unversioned" "the legacy env should be labeled, not called a version"
-    assert_contains "$LAUNCHER_OUTPUT" "uninstall_all" "should offer the bulk removal command"
+    assert_contains "$LAUNCHER_OUTPUT" "uninstall all" "should offer the bulk removal command"
 }
 
 test_list_marks_the_current_version() {
@@ -490,7 +490,7 @@ test_uninstall_explains_itself_when_the_environment_is_absent() {
 
 test_uninstall_all_removes_every_poolseqflow_environment() {
     local log
-    run_launcher_with_envs "base PoolSeqFlow PoolSeqFlow-0.1.0 $VERSIONED_ENV" uninstall_all <<< "y"
+    run_launcher_with_envs "base PoolSeqFlow PoolSeqFlow-0.1.0 $VERSIONED_ENV" uninstall all <<< "y"
     log=$(cat "$LAUNCHER_CONDA_LOG")
     assert_contains "$log" "env remove -n PoolSeqFlow " "should remove the legacy environment"
     assert_contains "$log" "env remove -n PoolSeqFlow-0.1.0" "should remove other versions"
@@ -498,7 +498,7 @@ test_uninstall_all_removes_every_poolseqflow_environment() {
 }
 
 test_uninstall_all_aborts_on_a_negative_answer() {
-    run_launcher_with_envs "base PoolSeqFlow PoolSeqFlow-0.1.0" uninstall_all <<< "n"
+    run_launcher_with_envs "base PoolSeqFlow PoolSeqFlow-0.1.0" uninstall all <<< "n"
     assert_status 1 "$LAUNCHER_STATUS" "declining should exit non-zero"
     assert_contains "$LAUNCHER_OUTPUT" "Aborted" "should say it aborted"
     assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env remove" "must remove nothing"
@@ -507,20 +507,38 @@ test_uninstall_all_aborts_on_a_negative_answer() {
 # Piped into a script or run from CI there is no one to answer, and silence must not be
 # taken for consent.
 test_uninstall_all_aborts_without_a_terminal() {
-    run_launcher_with_envs "base PoolSeqFlow" uninstall_all < /dev/null
+    run_launcher_with_envs "base PoolSeqFlow" uninstall all < /dev/null
     assert_status 1 "$LAUNCHER_STATUS" "no confirmation should exit non-zero"
     assert_contains "$LAUNCHER_OUTPUT" "no confirmation received" "should say why it stopped"
     assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env remove" "must remove nothing"
 }
 
-# The wrapper takes exactly one subcommand; parameters.config.template documents that.
+# Four subcommands take a word of their own -- `analysis`, `check`, `init multi`, `uninstall all`.
+# Every other takes none, and the ones that do take exactly the words they name.
 test_wrapper_rejects_extra_arguments() {
-    run_launcher_with_envs "base" uninstall all
-    assert_status 1 "$LAUNCHER_STATUS" "two arguments should be refused"
+    run_launcher_with_envs "base" list extra
+    assert_status 1 "$LAUNCHER_STATUS" "a verb that takes no word should refuse one"
+    run_launcher_with_envs "base" init bogus
+    assert_status 1 "$LAUNCHER_STATUS" "init should refuse a word that is not multi"
+    run_launcher_with_envs "base" uninstall bogus
+    assert_status 1 "$LAUNCHER_STATUS" "uninstall should refuse a word that is not all"
+    run_launcher_with_envs "base" init multi extra
+    assert_status 1 "$LAUNCHER_STATUS" "init should refuse a second word"
     run_launcher_with_envs "base"
     assert_status 1 "$LAUNCHER_STATUS" "no argument should be refused"
     run_launcher_with_envs "base" nonsense_command
     assert_status 1 "$LAUNCHER_STATUS" "an unknown subcommand should be refused"
+}
+
+# The old single-token names shipped in 3.2.0, so they say where they went rather than reading as
+# an unknown subcommand.
+test_the_renamed_subcommands_say_what_they_are_now() {
+    run_launcher_with_envs "base" init_multi
+    assert_status 1 "$LAUNCHER_STATUS" "init_multi should be refused"
+    assert_contains "$LAUNCHER_OUTPUT" "'init multi'" "and should name what replaced it"
+    run_launcher_with_envs "base" uninstall_all
+    assert_status 1 "$LAUNCHER_STATUS" "uninstall_all should be refused"
+    assert_contains "$LAUNCHER_OUTPUT" "'uninstall all'" "and should name what replaced it"
 }
 
 # Everything `init` writes is something you then edit, so a second run must leave it alone.
@@ -553,13 +571,13 @@ test_init_multi_switches_multirun_on_without_inventing_a_table() {
     proj=$(guard_path "$TEST_TMPDIR/init-multi-project")
     rm -rf "$proj"; mkdir -p "$proj"
 
-    out=$(cd "$proj" && POOLSEQFLOW_HOME="$REPO_ROOT" bash "$REPO_ROOT/PoolSeqFlow" init_multi 2>&1)
+    out=$(cd "$proj" && POOLSEQFLOW_HOME="$REPO_ROOT" bash "$REPO_ROOT/PoolSeqFlow" init multi 2>&1)
     assert_contains "$(grep -E '^[[:space:]]*multiRun[[:space:]]*=' "$proj/parameters.config")" \
-        "true" "init_multi should switch multiRun on"
+        "true" "init multi should switch multiRun on"
     assert_contains "$out" "multi-run.csv.example" "should point at the rules for writing a table"
-    [ -f "$proj/multi-run.csv.example" ] || fail_case "init_multi should leave the example beside you"
+    [ -f "$proj/multi-run.csv.example" ] || fail_case "init multi should leave the example beside you"
     if [ -e "$proj/runs.csv" ]; then
-        fail_case "init_multi must not invent a run table"
+        fail_case "init multi must not invent a run table"
     fi
 }
 
@@ -1675,7 +1693,7 @@ test_uninstall_aborts_on_a_negative_answer() {
     assert_dir "$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION" "and leave the pipeline in place"
 }
 
-# The same shape as uninstall_all: no terminal means no consent, so nothing goes.
+# The same shape as `uninstall all`: no terminal means no consent, so nothing goes.
 test_uninstall_aborts_without_a_terminal() {
     run_launcher_with_envs "base $VERSIONED_ENV" install
     local sb; sb=$(dirname "$LAUNCHER_PREFIX")
