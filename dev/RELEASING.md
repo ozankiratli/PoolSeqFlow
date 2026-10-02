@@ -1,12 +1,6 @@
 # Releasing PoolSeqFlow
 
-The order to do a release in, what each step must show, and what bites.
-
-**This is a living procedure, not a record.** Correct it when a release teaches you something; it is not dated and it does not describe a particular version. `.claude/development-notes/` is where the dated records go.
-
 Everything happens on `dev` until step 6. Steps 6 to 11 happen on `main`. Step 12 brings `main` back.
-
-**Two things are not written down here and are checked by the suite instead**: the release archive (`verify-archive.sh`), the docs and citation gates (`build_docs.py --check`, `bib2citations.py --check`), the analysis versions (`check-analysis-versions.sh`) and the version-consistency case all run inside `00_static`. If the suite is green they passed. What follows is only the work the suite cannot do for you.
 
 ---
 
@@ -20,13 +14,19 @@ Live preview while you work:
 dev/scripts/serve_docs.sh        # http://127.0.0.1:8055/PoolSeqFlow/ , regenerates on save
 ```
 
-Every settable parameter must be named, with what it is, what it does, and how to set it:
-
 ```
 dev/scripts/check-manual-parameters.sh
 ```
 
-Silence means every key is named. It cannot tell you whether the manual says what each one *does*, which is the part you are reading for.
+Writes two scratch files into `.tmp/release-review/` and audits the parameters:
+
+ - `commits.md` -- every commit since the last tag, in the form `bump-version.sh` will prepend to the CHANGELOG
+ - `manual.diff` -- the manual as published with that tag against the manual now, which is what has never been read in a release pass
+ - `parameters.txt` -- every settable key, whether the manual names it, and which file declares it
+
+Every settable parameter must be named, with what it is, what it does, and how to set it. Silence on stdout means every key is named, which is not the same as documented: `parameters.txt` is the list to read the manual against.
+
+Remove `.tmp/release-review/` when the read is done.
 
 Version-dependent prose is stale here: the bump is step 7. Note those passages and re-read them after it.
 

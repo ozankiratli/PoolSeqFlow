@@ -69,6 +69,8 @@ Z, 2026-09-08: *"We keep everything but abandoned ideas. They carry a different 
 
 ## Other standing rules
 
+- **`dev/RELEASING.md` is a living procedure, not a record.** Correct it when a release teaches you something; it carries no date and describes no particular version. It holds only what a person does: a command, what it must show, and what to do when it does not. Everything else belongs in `.claude/development-notes/` or in the script's own header, and a step must never point into a dated note -- that is how it came to promise an audit that did not exist.
+- **Several release gates live in the suite rather than in that document**: the release archive (`verify-archive.sh`), the docs and citation gates (`build_docs.py --check`, `bib2citations.py --check`), the analysis versions (`check-analysis-versions.sh`) and the version-consistency case all run inside `00_static`. A green suite is how they report. Do not add a step for one.
 - **Never `git push`.** Z publishes; nothing else does, for any reason.
 - **Never `git commit` unless asked**, and a commit instruction covers only the work that existed when it was given. Do the work, leave it uncommitted, say what changed in prose, stop. The uncommitted tree is the review surface -- never build a diff artifact or a summary page as a substitute.
 - **Use the `Edit` tool for file changes, never a script that rewrites a file.** Z reviews side by side in the IDE diff view as it lands. Announced mechanical renames via `sed` are the one exception.
