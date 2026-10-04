@@ -1,7 +1,7 @@
 #!/bin/bash
 # Checks that need no data: syntax, release packaging, version consistency.
 # cost: static
-# covers: PoolSeqFlow install/ dev/scripts/ modules/repo/index.tsv .gitattributes
+# covers: PoolSeqFlow install/ lib/ dev/scripts/ modules/repo/index.tsv .gitattributes
 # covers: analysis/citations.json citations/citations.json citations/references.bib
 # covers: analysis/references.bib manual/references.bib
 # covers: parameters.config.template metadata.csv.template multi-run.csv.example
@@ -683,6 +683,52 @@ test_check_install_hint_uses_the_versioned_environment() {
 
 # A malformed version has to be refused before anything is cloned, updated or exported.
 # This runs no conda commands - the check is ahead of them.
+# prep-version.sh sources lib/wrapper_lib.sh and calls into it at its step 2, which sits on the
+# far side of an hour of solving and updating. It names what it needs in WRAPPER_LIB_NEEDS and
+# refuses at once when one of them is absent, so a function that moves costs a second instead of
+# an hour. That guard is only worth having while the list matches the calls under it, which is
+# what this checks - in both directions, because a list that has drifted is a guard covering
+# nothing while reading as one that covers everything.
+#
+# The malformed-version case below cannot catch this: it exits at the version regex, which is
+# twenty lines before the source.
+test_prep_version_declares_what_it_takes_from_wrapper_lib() {
+    local out
+    out=$(cd "$REPO_ROOT" && python3 - <<'PY'
+import pathlib, re
+
+DEF = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\(\) \{", re.M)
+script = pathlib.Path("dev/scripts/prep-version.sh").read_text(encoding="utf-8")
+lib = pathlib.Path("lib/wrapper_lib.sh").read_text(encoding="utf-8")
+
+defined = set(DEF.findall(lib))
+own = set(DEF.findall(script))
+
+found = re.search(r'^WRAPPER_LIB_NEEDS="([^"]*)"', script, re.M)
+if not found:
+    print("prep-version.sh declares no WRAPPER_LIB_NEEDS, so nothing holds the list honest")
+    raise SystemExit
+declared = found.group(1).split()
+
+for name in declared:
+    if name not in defined:
+        print("declares %s(), which lib/wrapper_lib.sh does not define" % name)
+
+# Comments go, and the declaration itself with them: the names in it are a list, not calls. Only
+# names that ARE functions in wrapper_lib are looked for, so a bare word cannot cry wolf.
+body = re.sub(r"^\s*#.*$", "", script, flags=re.M)
+body = re.sub(r"^WRAPPER_LIB_NEEDS=.*$", "", body, flags=re.M)
+for name in sorted(defined):
+    if name in own or name in declared:
+        continue
+    if re.search(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(name), body):
+        print("calls %s() from lib/wrapper_lib.sh without declaring it" % name)
+PY
+)
+    assert_eq "" "$out" \
+        "prep-version.sh must declare what it takes from wrapper_lib:"$'\n'"$out"
+}
+
 test_prep_version_rejects_a_malformed_version() {
     local out status
     for bad in "" "2.3" "v2.3.0" "2.3.0-rc1"; do

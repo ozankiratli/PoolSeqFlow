@@ -20,6 +20,10 @@ returning "nothing to run" for a file everybody forgot.
 IT ERRS WIDE. A file it cannot classify selects everything, and so does a change to the
 harness or to this script. A selection that is too big costs minutes; one that is too small
 costs a bug nobody was looking for.
+
+ERRING WIDE IS FOR A FILE IT CANNOT CLASSIFY, not for a request it cannot read. A named path
+that does not exist, and an argument that looks like an option it does not have, both exit 2
+rather than selecting anything: "nothing to run" has to mean the graph was asked and answered.
 """
 
 import os
@@ -137,6 +141,27 @@ def main():
         del args[i:i + 2]
 
     if args:
+        # A MALFORMED REQUEST IS AN ERROR, NOT AN EMPTY ANSWER. Both of these used to fall
+        # through to "nothing to run", which reads as "no suite covers this change" and is the
+        # one answer this script must never give by accident: an argument starting with - is a
+        # mistyped option rather than a path, and a path that does not exist matches no suite's
+        # footprint. `--changed` is run_tests.sh's flag and was read here as a filename.
+        unknown = [a for a in args if a.startswith("-")]
+        if unknown:
+            print("select-tests.py: unknown option %s" % unknown[0], file=sys.stderr)
+            print("  Arguments are paths. The options are --command and --ref <ref>, and with",
+                  file=sys.stderr)
+            print("  no arguments it reads whatever git reports as changed.", file=sys.stderr)
+            return 2
+        absent = [a for a in args
+                  if not (os.path.exists(a) or os.path.exists(os.path.join(ROOT, a)))]
+        if absent:
+            print("select-tests.py: no such file: %s" % absent[0], file=sys.stderr)
+            print("  Paths are read from the repository root. One that does not exist is in no",
+                  file=sys.stderr)
+            print("  suite's footprint, so the answer would be 'nothing to run'.",
+                  file=sys.stderr)
+            return 2
         changed = args
     else:
         cmd = ["git", "diff", "--name-only"] + ([ref] if ref else ["HEAD"])

@@ -3,34 +3,50 @@
 # Prepare the tool set for a release: update every package, prove the pipeline still works,
 # then record what was proven.
 #
-# Usage:  dev/scripts/prep-version.sh <new-version>          e.g. 2.3.0
-#         dev/scripts/prep-version.sh <new-version> --from <env> --from-analysis <env>
+# Usage:  dev/scripts/prep-version.sh <new-version> [--no-cleanup]       e.g. 2.3.0
 #
 # A release ships two environments and both are prepared here: the one the pipeline runs in,
 # and the one an analysis module runs in.
 #
+# BUILT FROM THE SHIPPED FILES, NOT CLONED FROM AN INSTALLATION. install/environment.yml and
+# install/environment-analysis.yml are what a user installs from, so they are what this starts
+# from. An installed environment was the wrong baseline twice over, and this script carried a
+# guard against each: an installed module puts its own packages into the shared analysis
+# environment, and an environment built before a line was added to the file does not hold that
+# package, so cloning carried the gap into the export and the package left the release with
+# nothing saying so. Neither can arise from a fresh solve of the file itself.
+#
 # What it does, in order:
 #
-#   1. Clones both environments for the version this working copy currently declares into
-#      scratch environments, PoolSeqFlow-update and PoolSeqFlow-update-analysis.
-#   2. Runs `conda update --all` in each, so the tools move as one mutually consistent set
-#      rather than one package at a time.
+#   1. Solves both shipped files into scratch environments, PoolSeqFlow-update and
+#      PoolSeqFlow-update-analysis, recording what each file resolves to today, then runs
+#      `conda update --all` in each, so the tools move as one mutually consistent set rather
+#      than one package at a time.
+#   2. Checks the modules' own package pins against the updated baseline. Free, and it fails
+#      before the suite rather than after it.
 #   3. Runs the full test suite against both at once.
-#   4. Only if that passes: exports them to install/environment.yml and
-#      install/environment-analysis.yml, then removes them.
+#   4. Only if that passes: reads what each environment requires of its host, then exports them
+#      to install/environment.yml and install/environment-analysis.yml.
+#   5. Proves the two files it just wrote, which is a different question from the environments
+#      above: check-exported-floor.sh solves each from nothing and reads its floor, and
+#      check-module-packages.sh puts the modules' pins through a baseline built from the new file.
+#   6. Removes the scratch environments.
 #
-# Nothing is exported when the tests fail, and the scratch environments are left in place.
-# Output lands in dev/logs/prep-<version>-<timestamp>/, including a table per environment of
-# which packages moved.
+# Nothing is exported when the tests fail. Output lands in dev/logs/prep-<version>-<timestamp>/,
+# including a table per environment of which packages moved.
+#
+# The conda package cache is left alone. `conda clean` reaches the packages every other
+# environment on this machine shares, which is a decision about the whole machine.
 #
 # This does not bump the version or touch the CHANGELOG - run dev/scripts/bump-version.sh
-# afterwards. It does not commit anything.
+# afterwards. It does not commit anything, and it does not move a module pin: that changes an
+# input to a published module and takes a version bump with it.
 
 set -euo pipefail
 
 NEW="${1-}"
 if [[ ! "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Usage: $0 <new-version> [--from <env>] [--from-analysis <env>] [--no-cleanup]   (e.g. 2.3.0)" >&2
+    echo "Usage: $0 <new-version> [--no-cleanup]   (e.g. 2.3.0)" >&2
     exit 1
 fi
 shift
@@ -38,16 +54,32 @@ shift
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-CURRENT="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' PoolSeqFlow | head -1)"
-[ -n "$CURRENT" ] || { echo "ERROR: no VERSION= line in ./PoolSeqFlow" >&2; exit 1; }
+PIPELINE_FILE="install/environment.yml"
+ANALYSIS_FILE="install/environment-analysis.yml"
+for f in "$PIPELINE_FILE" "$ANALYSIS_FILE"; do
+    [ -f "$f" ] || { echo "ERROR: $f is missing, so there is nothing to prepare from" >&2; exit 1; }
+done
 
-SOURCE_ENV=""
-SOURCE_ANALYSIS_ENV=""
+# env_exists, store_packages and conda_conflicting_packages. INSTALL is what wrapper_lib
+# resolves its own paths from; nothing here runs the wrapper.
+INSTALL="$ROOT"
+POOLSEQFLOW_INSTALLED_HOME="${POOLSEQFLOW_INSTALLED_HOME:-}"
+# shellcheck source=../../lib/wrapper_lib.sh
+. "$ROOT/lib/wrapper_lib.sh"
+
+# WHAT THIS SCRIPT NEEDS FROM THERE, NAMED, so a function that moves stops the run in its first
+# second. conda_conflicting_packages is called at [2/6], on the far side of the solve and the
+# update, so otherwise a rename would surface an hour in.
+WRAPPER_LIB_NEEDS="env_exists store_packages conda_conflicting_packages"
+for fn in $WRAPPER_LIB_NEEDS; do
+    declare -F "$fn" > /dev/null \
+        || { echo "ERROR: lib/wrapper_lib.sh defines no $fn(), which this script calls." >&2
+             exit 1; }
+done
+
 NO_CLEANUP=0
 while [ $# -gt 0 ]; do
     case "$1" in
-        --from) SOURCE_ENV="${2-}"; shift ;;
-        --from-analysis) SOURCE_ANALYSIS_ENV="${2-}"; shift ;;
         --no-cleanup) NO_CLEANUP=1 ;;
         *) echo "unknown option: $1" >&2; exit 1 ;;
     esac
@@ -88,10 +120,6 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-env_exists() {
-    conda env list | awk '{print $1}' | grep -qxF "$1"
-}
-
 # One fixed name each, not PoolSeqFlow-<new>. Neither outlives the run that made it. The
 # analysis one ends in -analysis, which is what export-environment.sh reads to decide which
 # file an environment belongs in.
@@ -112,93 +140,6 @@ if [ -n "$LEFTOVER" ]; then
     exit 1
 fi
 
-# Which environment to start from: the version this copy declares, unless told otherwise. An
-# unversioned environment from an older release is accepted with a note.
-if [ -z "$SOURCE_ENV" ]; then
-    if env_exists "PoolSeqFlow-$CURRENT"; then
-        SOURCE_ENV="PoolSeqFlow-$CURRENT"
-    elif env_exists "PoolSeqFlow"; then
-        SOURCE_ENV="PoolSeqFlow"
-        echo "Note: starting from the unversioned 'PoolSeqFlow' environment."
-        echo "      That is an install from before environments were named per version."
-        echo ""
-    else
-        echo "ERROR: no environment to start from." >&2
-        echo "Looked for 'PoolSeqFlow-$CURRENT' and 'PoolSeqFlow'." >&2
-        echo "Install one first:  ./PoolSeqFlow install" >&2
-        exit 1
-    fi
-fi
-env_exists "$SOURCE_ENV" || { echo "ERROR: no environment named '$SOURCE_ENV'" >&2; exit 1; }
-
-# The analysis environment is named per version too. It arrived with the analysis layer, so
-# there is no unversioned form to fall back to the way the pipeline one has.
-SOURCE_ANALYSIS_ENV="${SOURCE_ANALYSIS_ENV:-PoolSeqFlow-$CURRENT-analysis}"
-if ! env_exists "$SOURCE_ANALYSIS_ENV"; then
-    echo "ERROR: no analysis environment named '$SOURCE_ANALYSIS_ENV'." >&2
-    echo "" >&2
-    echo "A release ships install/environment-analysis.yml as well, and it has to describe a" >&2
-    echo "solve the suite passed against. Build one first:" >&2
-    echo "    ./PoolSeqFlow analysis install" >&2
-    echo "or name an existing one with --from-analysis <env>." >&2
-    exit 1
-fi
-
-# Whether the analysis export would be accepted at all. An installed module puts its own
-# packages into the shared analysis environment, and export-environment.sh refuses to fold
-# those into the baseline every project installs from. Asked now: the clone inherits them, so
-# the export below reaches the same answer, an hour of solving and testing later.
-if ! CHECK_OUT=$(bash dev/scripts/export-environment.sh --check "$SOURCE_ANALYSIS_ENV" 2>&1); then
-    if [ -n "$CHECK_OUT" ]; then
-        printf '%s\n' "$CHECK_OUT" >&2
-    else
-        # It reads conda through a pipeline that discards conda's stderr, so a conda that
-        # fails outright ends the script with a status and nothing to read.
-        echo "ERROR: export-environment.sh --check '$SOURCE_ANALYSIS_ENV' failed silently." >&2
-        echo "Run it by hand to see what conda says." >&2
-    fi
-    exit 1
-fi
-
-# Every package a shipped environment file names, as bare names. Only the dependencies: block,
-# so the channel list is not read as packages, and only up to the first `=`, because a version
-# is what the update is about to move.
-spec_packages() {
-    awk '/^dependencies:/ { d = 1; next }
-         /^[a-z]/         { d = 0 }
-         d && /^ *- / { sub(/^ *- */, ""); sub(/[=<> ].*/, ""); if ($0 != "") print }' "$1" | sort -u
-}
-
-# What an environment holds that its own shipped file does not name is fine - that is what the
-# solver added. What the file names and the environment does NOT hold means the environment was
-# built before that line existed. Cloning it then carries the gap into the export, and the
-# package leaves the release without anything saying so.
-missing_from_env() {
-    local file="$1" env="$2" held pkg
-    held=$(conda list -n "$env" --export 2>/dev/null | sed -n 's/^\([^#=][^=]*\)=.*/\1/p')
-    while read -r pkg; do
-        [ -n "$pkg" ] || continue
-        printf '%s\n' "$held" | grep -qxF "$pkg" || printf '%s\n' "$pkg"
-    done < <(spec_packages "$file")
-}
-
-STALE=""
-for pair in "install/environment.yml:$SOURCE_ENV" \
-            "install/environment-analysis.yml:$SOURCE_ANALYSIS_ENV"; do
-    f="${pair%%:*}"; e="${pair#*:}"
-    gone=$(missing_from_env "$f" "$e")
-    [ -n "$gone" ] && STALE="$STALE$e is missing, of what $f names:"$'\n'"$(printf '%s' "$gone" | sed 's/^/    /')"$'\n'
-done
-if [ -n "$STALE" ]; then
-    printf 'ERROR: a source environment is older than the file it was built from.\n\n' >&2
-    printf '%s\n' "$STALE" >&2
-    echo "Cloning it would carry that gap into the export, and the package would leave the" >&2
-    echo "release with nothing saying so. Rebuild the environment before preparing a release:" >&2
-    echo "    ./PoolSeqFlow analysis uninstall && ./PoolSeqFlow analysis install" >&2
-    echo "or add what is missing to the environment by hand and run this again." >&2
-    exit 1
-fi
-
 STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
 LOGDIR="dev/logs/prep-$NEW-$STAMP"
 mkdir -p "$LOGDIR"
@@ -207,22 +148,30 @@ say() { printf '%s\n' "$*" | tee -a "$LOGDIR/summary.txt"; }
 
 say "PoolSeqFlow release preparation"
 say "  target version : $NEW"
-say "  pipeline env   : $SOURCE_ENV  ->  $UPDATE_ENV"
-say "  analysis env   : $SOURCE_ANALYSIS_ENV  ->  $UPDATE_ANALYSIS_ENV"
+say "  pipeline env   : $PIPELINE_FILE  ->  $UPDATE_ENV"
+say "  analysis env   : $ANALYSIS_FILE  ->  $UPDATE_ANALYSIS_ENV"
 say "  scratch envs   : removed on every exit, unless --no-cleanup"
 say "  logs           : $LOGDIR"
 say ""
 
-# Clone one environment into a scratch copy, update everything in it, and print what moved.
-# $3 is the suffix that keeps the two environments' log files apart; the pipeline's is empty,
-# so its file names are unchanged.
+# Solve one shipped file into a scratch environment, update everything in it, and print what
+# moved. $3 is the suffix that keeps the two environments' log files apart; the pipeline's is
+# empty, so its file names are unchanged.
 prepare_env() {
-    local source="$1" scratch="$2" tag="$3" changed prefix floor
-    # Recorded before the status is judged: a clone that fails part way leaves an environment
+    local file="$1" scratch="$2" tag="$3" changed prefix floor
+    # Recorded before the status is judged: a solve that fails part way leaves an environment
     # behind, and the trap has to know about it either way.
     CREATED="$CREATED $scratch"
-    conda create --name "$scratch" --clone "$source" --yes > "$LOGDIR/clone$tag.log" 2>&1 \
-        || { say "      FAILED to clone '$source' - see $LOGDIR/clone$tag.log"; exit 1; }
+    # -n, not the file's own name: the exported files carry no `name:` key, which 00_static
+    # asserts so that a user's install cannot be named by whoever ran the export.
+    conda env create --name "$scratch" --file "$file" --yes > "$LOGDIR/solve$tag.log" 2>&1 \
+        || { say "      FAILED to solve '$file' - see $LOGDIR/solve$tag.log"; exit 1; }
+
+    # WHAT THE SHIPPED FILE RESOLVES TO TODAY, which is the baseline the update moves from.
+    # Read out of this solve rather than out of an installed environment, so the table below
+    # cannot report a drift that belongs to the maintainer's own machine.
+    conda list --name "$scratch" --export > "$LOGDIR/packages-before$tag.txt"
+    say "      $file solves to $(grep -c '^[^#]' "$LOGDIR/packages-before$tag.txt") packages"
 
     # THE UPDATE IS TOLD THE HOST FLOOR BEFORE IT RUNS, NOT CORRECTED AFTERWARDS.
     #
@@ -288,16 +237,10 @@ prepare_env() {
     fi
 }
 
-# ---------------------------------------------------------------- snapshot and clone ----
-say "[1/5] Recording the current tool sets..."
-conda list --name "$SOURCE_ENV" --export > "$LOGDIR/packages-before.txt"
-conda list --name "$SOURCE_ANALYSIS_ENV" --export > "$LOGDIR/packages-before-analysis.txt"
-say "      $SOURCE_ENV: $(grep -c '^[^#]' "$LOGDIR/packages-before.txt") packages"
-say "      $SOURCE_ANALYSIS_ENV: $(grep -c '^[^#]' "$LOGDIR/packages-before-analysis.txt") packages"
-
-say "[2/5] Cloning both and updating everything..."
-prepare_env "$SOURCE_ENV" "$UPDATE_ENV" ""
-prepare_env "$SOURCE_ANALYSIS_ENV" "$UPDATE_ANALYSIS_ENV" "-analysis"
+# ------------------------------------------------------------------ solve and update ----
+say "[1/6] Solving both shipped files, then updating everything in each..."
+prepare_env "$PIPELINE_FILE" "$UPDATE_ENV" ""
+prepare_env "$ANALYSIS_FILE" "$UPDATE_ANALYSIS_ENV" "-analysis"
 
 # Both environments carry Nextflow: the analysis layer is a pipeline of its own, and
 # install/environment-analysis.yml says it carries the pipeline environment's version. Two
@@ -312,8 +255,57 @@ if [ "$NF_PIPELINE" != "$NF_ANALYSIS" ]; then
     say ""
 fi
 
+# -------------------------------------------------------------------- module pins -------
+#
+# ASKED HERE, BEFORE THE SUITE, BECAUSE IT COSTS NOTHING AND THE ANSWER ALREADY EXISTS.
+#
+# A module pin has to name the version the shared analysis environment holds. conda_install_
+# packages refuses one that disagrees, because `--freeze-installed` does not cover a package
+# NAMED ON THE COMMAND LINE: conda installs that at the version asked for and downgrades the
+# baseline without a word. So an update that moves r-ggplot2 leaves every module pinning the
+# old one unable to install, and the modules are what the analysis layer is for.
+#
+# check-module-packages.sh at [5/6] reaches the same finding through a full solve of its own.
+# This is that finding an hour earlier, off the environment already in hand.
+say "[2/6] Checking the modules' pins against the updated baseline..."
+SHIPPED=$( { store_packages "$ROOT/modules"; store_packages "$ROOT/modules/lib"; } | sort -u )
+if [ -z "$SHIPPED" ]; then
+    say "      no module or library declares a package"
+else
+    # shellcheck disable=SC2086
+    PIN_COUNT=$(printf '%s\n' $SHIPPED | wc -l | tr -d ' ')
+    # shellcheck disable=SC2086
+    CLASH=$(conda_conflicting_packages "$UPDATE_ANALYSIS_ENV" $SHIPPED)
+    if [ -z "$CLASH" ]; then
+        say "      all $PIN_COUNT pins agree with what the updated baseline holds"
+    else
+        say ""
+        say "STOPPED: the update moved a package a module pins. Nothing was exported."
+        say ""
+        printf '%s\n' "$CLASH" | sed 's/^/      /' | tee -a "$LOGDIR/summary.txt"
+        say ""
+        say "      Each pin has to name the version the shared environment holds, or the module"
+        say "      cannot be installed at all: satisfying it would downgrade the baseline every"
+        say "      other module computes against, which is refused. Move each one in"
+        say "      modules/<name>/manifest.json to the installed version above, then bump that"
+        say "      module and run this again:"
+        say ""
+        say "          dev/scripts/bump-analysis-version.sh module <name>"
+        say ""
+        say "      Not done here. A pin is an input to a published module, so moving one can"
+        say "      change what that module computes, and the bump is what 00_static's"
+        say "      committed-change case asks for."
+        say ""
+        say "      The versions to write are already on disk, so the edit can be checked"
+        say "      without solving anything again:"
+        say "          $LOGDIR/packages-after-analysis.txt"
+        exit 1
+    fi
+fi
+say ""
+
 # ------------------------------------------------------------------------- test ---------
-say "[3/5] Running the full test suite against both scratch environments..."
+say "[3/6] Running the full test suite against both scratch environments..."
 ENV_PREFIX="$(conda env list | awk -v n="$UPDATE_ENV" '$1 == n {print $NF}')"
 if [ -z "$ENV_PREFIX" ] || [ ! -x "$ENV_PREFIX/bin/nextflow" ]; then
     say "      ERROR: '$UPDATE_ENV' has no usable nextflow at $ENV_PREFIX/bin/nextflow"
@@ -446,7 +438,7 @@ fi
 # would then carry a header promising a floor its own contents break. Checking the scratch
 # environment here catches that while the solve is still in hand, instead of after the file is
 # written and an install has been done from it.
-say "[4/5] Tests passed. Checking what each environment requires of its host..."
+say "[4/6] Tests passed. Checking what each environment requires of its host..."
 for e in "$UPDATE_ENV" "$UPDATE_ANALYSIS_ENV"; do
     if ! FLOOR_OUT=$(bash dev/scripts/check-host-floor.sh "$e" 2>&1); then
         printf '%s\n' "$FLOOR_OUT" | tee -a "$LOGDIR/summary.txt" | sed 's/^/      /'
@@ -463,8 +455,45 @@ for e in "$UPDATE_ENV" "$UPDATE_ANALYSIS_ENV"; do
         || { say "      FAILED to export '$e' - see $LOGDIR/summary.txt"; exit 1; }
 done
 
+# -------------------------------------------------------- prove what was written --------
+#
+# EVERYTHING ABOVE THIS LINE REASONED ABOUT THE SCRATCH ENVIRONMENTS. These two read the FILES,
+# which is a different question: an environment holds whatever solved into it once, while a file
+# names constraints and lets the solver choose again, on a machine that is not this one.
+#
+# Both build environments of their own and remove them. Both are re-runnable on their own, which
+# is what the failure messages below point at: the files are already written by this point, so a
+# failure here does not cost the hour again.
+say "[5/6] Proving the two files that were just written..."
+say "      Solving each from nothing and reading its floor (minutes)..."
+if ! bash dev/scripts/check-exported-floor.sh > "$LOGDIR/exported-floor.log" 2>&1; then
+    tail -n 30 "$LOGDIR/exported-floor.log" | sed 's/^/      /' | tee -a "$LOGDIR/summary.txt"
+    say ""
+    say "      A file that does not solve from nothing, or whose floor is above what the"
+    say "      release promises, is not shippable. Both files are written, so this is"
+    say "      re-runnable on its own once the cause is fixed:"
+    say "          dev/scripts/check-exported-floor.sh"
+    exit 1
+fi
+tail -n 4 "$LOGDIR/exported-floor.log" | sed 's/^/      /' | tee -a "$LOGDIR/summary.txt"
+
+say "      Putting the modules' pins through a baseline built from the new file (minutes)..."
+if ! bash dev/scripts/check-module-packages.sh > "$LOGDIR/module-packages.log" 2>&1; then
+    grep -E '^   (FAIL|ok)' "$LOGDIR/module-packages.log" | sed 's/^/   /' \
+        | tee -a "$LOGDIR/summary.txt"
+    say ""
+    say "      Every check in it must say ok. The full run is in"
+    say "          $LOGDIR/module-packages.log"
+    say "      and it is re-runnable on its own:"
+    say "          dev/scripts/check-module-packages.sh"
+    exit 1
+fi
+say "      every check passed."
+
 # The removal itself is the exit trap's, which runs on every path out of here.
-say "[5/5] Removing the scratch environments..."
+say "[6/6] Removing the scratch environments..."
 
 say ""
-say "Done. The release steps are in dev/RELEASING.md."
+say "Done. Read $LOGDIR/summary.txt, then the environment diffs:"
+say "    git diff install/environment.yml install/environment-analysis.yml"
+say "The release steps are in dev/RELEASING.md."

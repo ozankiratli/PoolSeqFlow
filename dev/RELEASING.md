@@ -32,20 +32,26 @@ Version-dependent prose is stale here: the bump is step 7. Note those passages a
 
 ## 2. Update, prove and freeze both conda environments
 
-### Update and freeze
+### Update, prove and freeze
 
 ```
 dev/scripts/prep-version.sh <new-version>
 ```
 
- - clones **both** environments  (`PoolSeqFlow-<current>` and `PoolSeqFlow-<current>-analysis`)  
- - runs `conda update --all` 
- - runs the **full suite** , and if **passes**,
- - exports them to `install/environment.yml` and `install/environment-analysis.yml`. 
+ - solves **both shipped files** (`install/environment.yml` and `install/environment-analysis.yml`) into scratch environments, which is the baseline a user installs from rather than whatever is installed here
+ - runs `conda update --all` in each
+ - checks every module pin still names what the updated baseline holds, **before** the suite
+ - runs the **full suite**, and if it passes,
+ - reads what each environment requires of its host and exports both files
+ - then proves the files it wrote: `check-exported-floor.sh` solves each from nothing and reads its floor, and `check-module-packages.sh` puts the module pins through a baseline built from the new file
 
-The scratch environments are removed on every exit. `--no-cleanup` keeps them, to reproduce a failure against.
+The scratch environments are removed on every exit. `--no-cleanup` keeps them, to reproduce a failure against. The conda package cache is left alone.
 
 Then read `dev/logs/prep-<version>-<timestamp>/`, including the per-environment table of what moved.
+
+**If it stops on a module pin**, the update moved a package a module names. Move each pin in `modules/<name>/manifest.json` to the version it reports as installed, bump that module with `dev/scripts/bump-analysis-version.sh module <name>`, and run step 2 again. The pin is not moved for you: it is an input to a published module, so it can change what that module computes.
+
+**Raising the host floor takes three things together**: a line in the manual's Requirements, a move of `HOST_GLIBC_FLOOR` in `export-environment.sh` (`2.28`), and a CHANGELOG entry naming the machines that lose support. The floor is never raised to make a solve pass.
 
 **Skippable when nothing has drifted**, which is an hour. Export both to a scratch path and diff -- the second argument is what keeps this off the shipped files:
 
@@ -55,33 +61,12 @@ dev/scripts/export-environment.sh PoolSeqFlow-<version>-analysis /tmp/b.yml
 diff /tmp/a.yml install/environment.yml && diff /tmp/b.yml install/environment-analysis.yml
 ```
 
-Identical both ways and the freeze still holds. The rest of step 2 still runs either way.
-
-### Prove the module packages still solve against what was just frozen
-
-```
-dev/scripts/check-module-packages.sh
-```
-
- - builds the baseline
- - installs what the modules published from this repository declare
- - checks no module can move a version another module or the release is running on
-
-**Every check must say `ok`.**
-
-### Prove the frozen environment installs on an older host than this one
+Identical both ways and the freeze still holds. Run the two proofs anyway -- they answer a question about the files, which no diff does:
 
 ```
 dev/scripts/check-exported-floor.sh
+dev/scripts/check-module-packages.sh
 ```
-
- - solves each exported file into a scratch environment of its own
- - has `check-host-floor.sh` read what it requires of the host
- - discards it
-
-**Must show a floor no higher than the manual's Requirements.** `HOST_GLIBC_FLOOR` in `export-environment.sh` is `2.28`.
-
-Raising the floor takes three things together: a line in the manual's Requirements, a move of `HOST_GLIBC_FLOOR`, and a CHANGELOG entry naming the machines that lose support.
 
 ### Read both diffs
 
