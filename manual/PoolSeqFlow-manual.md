@@ -6,7 +6,7 @@ A Nextflow pipeline for allele frequency analysis from pooled Illumina sequencin
 </p>
 
 <p class="psf-badges">
-<a href="https://www.nextflow.io/"><img src="https://img.shields.io/badge/nextflow-%E2%89%A526.04.0-3cb371.svg" alt="Nextflow >=26.04.0"></a>
+<a href="https://www.nextflow.io/"><img src="https://img.shields.io/badge/nextflow-%E2%89%A526.04.0-3cb371.svg" alt="Nextflow ≥26.04.0"></a>
 <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/license-Apache--2.0-60c0ff.svg" alt="Apache 2.0"></a>
 <a href="https://doi.org/10.5281/zenodo.19245611"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.19245611.svg" alt="DOI"></a>
 </p>
@@ -15,15 +15,15 @@ A Nextflow pipeline for allele frequency analysis from pooled Illumina sequencin
 
 !!! info "Platform support"
 
-    PoolSeqFlow is developed and tested on **Linux**. macOS and Windows are not supported: the shipped conda environments are pinned to `linux-64` builds, and the resume logic relies on symbolic links and Unix-style paths that do not behave correctly on native Windows filesystems.
+    PoolSeqFlow is developed and tested on **Linux**. macOS and Windows are not supported: the shipped conda environments are pinned to `linux-64` builds, and the resume logic relies on symbolic links and Unix-style paths that do not behave correctly on native Windows filesystems. macOS support is planned; Windows is not.
 
 ---
 
 ### What it is for
 
-Pool-seq sequences many individuals together in one library. You give up the ability to say which individual carried which allele, and in exchange you get an allele frequency estimate for the whole pool at a fraction of the cost of sequencing each individual separately. The unit of analysis stops being a genotype and becomes a **frequency**.
+Pool-seq sequences many individuals together in one library. You get an allele frequency snapshot of the whole population for a fraction of the cost of sequencing each individual, and you give up knowing which individual carried which allele. The unit of analysis stops being a genotype and becomes a **frequency**.
 
-That difference runs through every stage of this pipeline. A variant caller built for individuals wants to assign one of three genotypes per site; here there is no genotype to assign, only a ratio of read counts that has to survive intact from the pileup to the final table. PoolSeqFlow is built around keeping that ratio honest:
+That difference runs through every stage of this pipeline. A variant caller built for individual sequencing assigns a genotype per site; a pooled sample has no genotype to assign, only a ratio of read counts. PoolSeqFlow is built around keeping that ratio honest:
 
 - **No biallelic assumption.** Multiallelic sites are preserved through calling, filtering and conversion rather than being collapsed or dropped.
 - **Major-allele normalization.** VCFs are re-encoded so the most frequent allele is the reference, which makes frequencies comparable across samples and runs.
@@ -35,33 +35,22 @@ If you are weighing Pool-seq against individual sequencing, or checking whether 
 
 ### The pipeline
 
-```text
-Raw FASTQ reads
-      │
-      ▼
-[Step 0] Verify environment, parameters and folder structure
-      │
-      ▼
-[Step 1] Build reference dictionaries (BWA, SAMtools, SnpEff)
-      │
-      ▼
-[Step 2] QC & trimming (FastQC -> Trim Galore -> composition-aware clipping)
-      │
-      ▼
-[Step 3] Alignment (BWA-MEM)
-      │
-      ▼
-[Step 4] BAM cleanup (name-sort -> fixmate -> coord-sort -> markdup -> addRG -> filter -> index)
-      │
-      ▼
-[Step 5] Alignment, coverage & depth reports (BAMtools, SAMtools) -> depth ceiling per sample
-      │
-      ▼
-[Step 6] Depth capping, then variant calling (BCFtools mpileup + call)
-      │
-      ├────────────────────────────────────────────┐
-      ▼                                            ▼
-[Step 7] VCF -> allele frequency tables   [Step 8] Annotation (SnpEff, optional)
+```mermaid
+graph TD
+    reads(["Raw FASTQ reads"])
+    s0["<b>Step 0</b><br/>Verify environment, parameters<br/>and folder structure"]
+    s1["<b>Step 1</b><br/>Build reference dictionaries<br/>BWA, SAMtools, SnpEff"]
+    s2["<b>Step 2</b><br/>QC and trimming<br/>FastQC → Trim Galore → composition-aware clipping"]
+    s3["<b>Step 3</b><br/>Alignment<br/>BWA-MEM"]
+    s4["<b>Step 4</b><br/>BAM cleanup<br/>name-sort → fixmate → coord-sort → markdup → addRG → filter → index"]
+    s5["<b>Step 5</b><br/>Alignment, coverage and depth reports<br/>BAMtools, SAMtools → depth ceiling per sample"]
+    s6["<b>Step 6</b><br/>Depth capping, then variant calling<br/>BCFtools mpileup + call"]
+    s7["<b>Step 7</b><br/>VCF → allele frequency tables"]
+    s8["<b>Step 8</b><br/>Annotation<br/>SnpEff"]
+
+    reads --> s0 --> s1 --> s2 --> s3 --> s4 --> s5 --> s6
+    s6 --> s7
+    s6 -.->|optional| s8
 ```
 
 Each step is an independent Nextflow DSL2 module. Full detail in [Pipeline Steps](#pipeline-steps).
@@ -78,7 +67,7 @@ Each step is an independent Nextflow DSL2 module. Full detail in [Pipeline Steps
 
     Install the conda environment, write a `parameters.config`, and get a first run going.
 
-    [Getting Started ->](#getting-started)
+    [Getting Started →](#getting-started)
 
 -   **Deciding whether to use it**
 
@@ -86,7 +75,7 @@ Each step is an independent Nextflow DSL2 module. Full detail in [Pipeline Steps
 
     What Pool-seq buys you, what it costs, and the study designs this pipeline does and does not fit.
 
-    [Concepts ->](#when-to-use-poolseqflow)
+    [Concepts →](#when-to-use-poolseqflow)
 
 -   **Choosing your settings**
 
@@ -94,7 +83,7 @@ Each step is an independent Nextflow DSL2 module. Full detail in [Pipeline Steps
 
     Every parameter that changes a result, what it trades off, and how to pick a value for your data.
 
-    [Configuration ->](#configuration)
+    [Configuration →](#configuration)
 
 -   **Understanding your output**
 
@@ -102,7 +91,7 @@ Each step is an independent Nextflow DSL2 module. Full detail in [Pipeline Steps
 
     What each filter removes, what the frequency tables contain, and how to read a column.
 
-    [Interpreting Results ->](#interpreting-results)
+    [Interpreting Results →](#interpreting-results)
 
 </div>
 
@@ -110,19 +99,21 @@ Each step is an independent Nextflow DSL2 module. Full detail in [Pipeline Steps
 
 ### What is different about it
 
-**Configuration is a file, never a flag.** Every setting lives in `parameters.config`, so a run is fully described by something you can version, diff and publish. [Why →](#configuration-is-a-file-never-a-flag)
+**Clip points are measured for each sample.** Trimming reads the per-base composition table FastQC produced for that sample and derives where to clip from it, so you set a tolerance rather than a fixed number of bases. [How →](#composition-aware-clipping)
 
-**Resume is filesystem-based, so there is no `-resume` to remember.** Each step skips itself when its outputs already exist, which survives job timeouts, reboots and a cleared `work/`. [Why →](#resume-is-filesystem-based)
+**Each pool can state its own size.** Its detection limit follows from that size, so a design mixing a pool of 10 with a pool of 500 is one run and not two. [How →](#pools-of-different-sizes)
 
-**Nothing is copied.** Finished files are moved to permanent storage and symlinked back, so nothing the pipeline touches ever exists twice on disk. [Why →](#symbolic-links-instead-of-copies)
+**A run that would mix two configurations stops before any work happens.** The pipeline compares `parameters.config` and `metadata.csv` against the records kept beside your existing outputs, and on any difference it names what to delete rather than adding to it. [Why →](#the-change-guard)
 
-**Clipping thresholds are measured, not guessed.** Step 2 derives each sample's clip points from its own base-composition table, so you set a tolerance rather than a number of bases. [How →](#composition-aware-clipping)
+**Every setting lives in `parameters.config`.** There are no command-line overrides, so a run is described entirely by a file you can version, diff and publish beside the results it produced. [Why →](#configuration-without-flags)
 
-**Thread counts come from one number.** Set `threads` and every tool's core count follows a benchmarked ladder. [How →](#resources)
+**One invocation can analyze the same reads under several configurations.** A run table lists them, and every step the runs agree on is carried out once rather than once per configuration. [How →](#multi-run)
 
-**The run refuses to mix results from two settings.** Edit `parameters.config` or `metadata.csv`, or move to a new release, and step 0 stops before any work happens and names the outputs to delete. [How →](#step-0-verify-environment)
+**Resume is read from the filesystem rather than from a cached session.** Each step skips itself when its outputs are already in storage, so an interrupted run continues after a job timeout, a reboot, or a cleared `work/`. [Why →](#filesystem-based-resume)
 
-**One invocation, many parameter sets.** A run table analyzes the same reads against several references or filter settings at once, doing the work they share only once. [How →](#multi-run)
+**Finished artifacts are moved to permanent storage and symlinked back.** Each byte crosses between the two storage roots exactly once, so a project holds one copy of a result rather than one per stage. [Why →](#symbolic-links-and-the-two-storage-roots)
+
+**Thread counts follow from a single setting.** `threads` is the ceiling and each tool's share of it comes from a benchmarked ladder, so moving a project to a different machine means changing one number. [How →](#resources)
 
 ---
 
@@ -167,14 +158,17 @@ Pinning is deliberate. Pool-seq results depend on the exact behavior of the pile
 
 ### Ready
 
-Two pages. [Install](#install) gets the tool onto your machine and verifies it, which is two steps and a wait. [Quick Start](#quick-start) is everything to do with your own data: making the project, filling in the three files that describe it, and starting the run.
+Check out these two pages: 
+
+- [Install](#install) gets the tool onto your machine and verifies it, which is two steps and a wait.
+- [Quick Start](#quick-start) is everything to do with your own data: making the project, filling in the three files that describe it, and starting the run.
 
 [Install PoolSeqFlow](#install){ .md-button .md-button--primary } [Quick Start](#quick-start){ .md-button }
 
 Already have it installed and upgrading from an earlier version? Read [Upgrading](#upgrading) first. Your `parameters.config` is never touched by an update and can be missing parameters the new code expects.
 
-## Install and Update { #install }
-<!--@ page: install | nav: Install and Update -->
+## Install { #install }
+<!--@ page: install | nav: Install -->
 
 Check the [requirements](#getting-started) first if you have not, in particular that you are on Linux, and that conda is available.
 
@@ -210,21 +204,35 @@ Check the [requirements](#getting-started) first if you have not, in particular 
 ./PoolSeqFlow install
 ```
 
-This does two things at once, because they belong together: it creates a conda environment named `PoolSeqFlow-<version>`, and it copies the pipeline itself to `~/.local/opt/PoolSeqFlow-<version>`. The pinned tools are part of what produced a result, so code without its matching environment cannot reproduce anything.
+This does several things: 
 
-Commands are then linked into `~/.local/bin`, each under two names: `PoolSeqFlow-<version>`, which always means that exact release, and plain `PoolSeqFlow`, which points at the **newest version you have installed**. Releases install alongside each other rather than over each other, so an old project can keep running under the version that produced its results. `PoolSeqFlow list` shows what is installed; `PoolSeqFlow uninstall` removes one.
+- It creates a conda environment named `PoolSeqFlow-<version>`.
+- It copies the pipeline itself to `~/.local/opt/PoolSeqFlow-<version>`. 
+- Commands are then linked into `~/.local/bin`, each under two names: 
+  - `PoolSeqFlow-<version>`, which always means that exact release, and 
+  - plain `PoolSeqFlow`, which points at the **newest version you have installed**. 
+- Releases install alongside each other rather than over each other, so an old project can keep running under the version that produced its results. A later one is installed the same way; see [Upgrading](#upgrading).
+- `PoolSeqFlow list` shows what is installed; [`PoolSeqFlow uninstall`](#uninstalling) removes one.
 
-The analysis layer is reached through the same command, as `PoolSeqFlow analysis <command>`. It reads finished results and is **not enabled by this install**: it carries R in an environment of its own, which `PoolSeqFlow analysis install` builds and `PoolSeqFlow analysis uninstall` removes. Uninstalling a version removes its analysis environment along with everything else of that version's.
+The analysis layer is reached through the same command but not installed by default. To install it:
 
-Install somewhere else by setting `POOLSEQFLOW_PREFIX` (a shared location for a group, for instance):
+```bash
+PoolSeqFlow analysis install
+```
+
+- This creates a conda environment named `PoolSeqFlow-<version>-analysis`.
+
+To install somewhere else, such as a shared location for a group, set `POOLSEQFLOW_PREFIX`:
 
 ```bash
 POOLSEQFLOW_PREFIX=/opt/shared ./PoolSeqFlow install
 ```
 
-**Putting that `bin` directory on your `PATH` is yours to do.** The installer checks, tells you whether it is already there, and prints the exact line to add if it is not, but it does not edit your shell configuration. Until you add it, call the command by its full path.
+### 3. After the install
 
-Installing takes a while the first time; later installs reuse the conda package cache. It finishes by verifying itself and **fails if anything is missing**. An environment that was created but is short a tool is not an install, and the alternative is finding out hours into a run.
+- **Make sure the `bin` directory it installed into is on your `PATH`**: `~/.local/bin`, or `$POOLSEQFLOW_PREFIX/bin` if you set one.
+- Installing takes a while the first time; later installs reuse the conda package cache. 
+- It finishes by verifying itself and **fails if anything is missing**. 
 
 Once this is done the folder you downloaded has served its purpose. Everything from here uses the installed command, from your own project directory.
 
@@ -237,36 +245,18 @@ Installing writes a completion for each shell, under `XDG_DATA_HOME` or `~/.loca
 ~/.local/share/zsh/site-functions/_PoolSeqFlow            for zsh
 ```
 
-**The installer then tells you what your own shell needs**, rather than explaining every shell to everybody. It reads `$SHELL` and prints only the part that applies to you.
+The installer prints whichever of these applies to your shell:
 
-**In bash there is nothing to do**, as long as `bash-completion` is installed; that is what reads the directory, and without it bash needs the file sourced like any other shell. The installer checks and says which case you are in.
+- **bash needs nothing**, as long as `bash-completion` is installed; that is what reads the directory. The installer checks and says which case you are in.
+- **zsh needs one line in `~/.zshrc`**, **before** the line that runs `compinit` or sources oh-my-zsh, because every directory on its default `$fpath` belongs to root:
 
-**zsh needs one line**, because it looks for completions on `$fpath` and every directory on it by default belongs to root. Add yours in `~/.zshrc`, **before** the line that runs `compinit` or sources oh-my-zsh:
+    ```zsh
+    fpath=(~/.local/share/zsh/site-functions $fpath)
+    ```
 
-```zsh
-fpath=(~/.local/share/zsh/site-functions $fpath)
-```
+Both complete every command, the two targets `check` takes, the analysis commands, and **the modules that installation has in its store**. `analysis modules install <TAB>` offers nothing on purpose: those names come from the catalogue over the network. The zsh one also shows what each command is for.
 
-Each completes every command, the two targets `check` takes, the analysis commands, and **the modules you actually have installed**, so `PoolSeqFlow analysis <TAB>` lists the modules in that installation's store rather than a fixed list. `analysis modules install <TAB>` deliberately offers nothing: those names come from the catalogue over the network, and a keystroke should not make a network request. The zsh one also shows what each command is for as you scroll the list.
-
-Uninstalling the last installed version removes both. Another version left installed keeps them, since the command they complete is still there.
-
-It never runs `PoolSeqFlow` itself. Starting the wrapper means starting conda, which takes long enough to be felt on a keypress, so the completion reads what it needs from the filesystem instead.
-
-### Updating to a new release { #update }
-
-A release installs **alongside** the ones already on the machine rather than over them, so updating is the same two steps as a first install: get the new release, then `./PoolSeqFlow install`. Every earlier version keeps working under its own name, and plain `PoolSeqFlow` starts meaning the new one.
-
-**Then run `migrate_config` in each project directory, before the first run under the new release:**
-
-```bash
-PoolSeqFlow migrate_config
-```
-
-`parameters.config` belongs to you and an update never touches it, which is deliberate: an update must not silently change your analysis settings. The consequence is that after a new release your file can be missing parameters the newer code expects, and a missing parameter does not announce itself. It is not an error, it is unset, and for a true-or-false setting unset behaves exactly as `false`, so the run can complete under a setting you never chose. `migrate_config` rebuilds the file from the current template, keeps your values, and reports every parameter that changed.
-
-Two more things an update does not carry across. **The new installation's module store starts empty**, because no module ships inside a release, so install the ones you use again. And **a project belongs to one release for as long as it exists**: rather than mixing results from two versions, the pipeline refuses to continue a project under a version other than the one that produced them. [Upgrading](#upgrading) covers both, and what each line of the `migrate_config` report means.
-
+They go with the last installed version removed; another version left installed keeps them.
 
 ---
 
@@ -280,7 +270,7 @@ Two more things an update does not carry across. **The new installation's module
 
     Make the project directory, fill in the three files that describe your data, and start the pipeline.
 
-    [Quick Start ->](#quick-start)
+    [Quick Start →](#quick-start)
 
 -   **Coming from an earlier version**
 
@@ -288,7 +278,7 @@ Two more things an update does not carry across. **The new installation's module
 
     Your existing `parameters.config` can be missing parameters the new code expects, and a project belongs to the release that produced its results.
 
-    [Upgrading ->](#upgrading)
+    [Upgrading →](#upgrading)
 
 </div>
 
@@ -299,7 +289,7 @@ This page takes you from an installed PoolSeqFlow to a running pipeline. It assu
 
 ### 1. Make your project { #make-your-project }
 
-A project is a directory of your own. It is **not** the installation; that is a tool, shared by any number of projects and replaced wholesale when you upgrade, so a project kept inside it would not survive one. The pipeline refuses to start if you point it at the installation.
+A project is a directory of your own. Do not put any project into installation directory. The pipeline refuses to start if you point it at the installation.
 
 ```bash
 mkdir -p /path/to/project
@@ -310,19 +300,19 @@ PoolSeqFlow init
 The paths are yours to choose; the structure inside them is not. A project ready to run looks like this (`init` makes everything except the reads, the reference and `metadata.csv`):
 
 ```text
-/path/to/project/                <- mainDir, and the directory you run from
-├── parameters.config            <- your settings, read from wherever you launch
-├── metadata.csv                 <- what your samples are; you write this one
-├── metadata.csv.example         <- every column explained, to write it from
-├── Data/                        <- dataSource names this folder
+/path/to/project/                ← mainDir, and the directory you run from
+├── parameters.config            ← your settings, read from wherever you launch
+├── metadata.csv                 ← what your samples are; you write this one
+├── metadata.csv.example         ← every column explained, to write it from
+├── Data/                        ← dataSource names this folder
 │   ├── Sample1_R1.fq.gz
 │   ├── Sample1_R2.fq.gz
 │   ├── Sample2_R1.fq.gz
 │   ├── Sample2_R2.fq.gz
-│   └── ...
+│   └── …
 └── Reference/
-    ├── reference.fasta.gz       <- referenceFile
-    └── reference.gff.gz         <- gffFile, only if annotate = true
+    ├── reference.fasta.gz       ← referenceFile
+    └── reference.gff.gz         ← gffFile, only if annotate = true
 ```
 
 The file names are examples. `readPattern` is what finds the reads (`*_R{1,2}.fq.gz` by default, which is what matches the pairs above), and `referenceFile` and `gffFile` name the two in `Reference/`.
@@ -339,33 +329,33 @@ Data/                    Data/                      Data/
                              └── Sample2_R2.fq.gz       └── Sample2_R2.fq.gz
 ```
 
-**A sample is named by its file, never by its folder.** `Sample1_R1.fq.gz` is sample `Sample1` wherever it lies, so `metadata.csv` does not change and neither does `readPattern`. The folders are yours to arrange and the pipeline does not read meaning into them. A pair whose mates are in two *different* folders is still that pair, and is taken as one.
+**A sample is named by its file, never by its folder.** `Sample1_R1.fq.gz` is sample `Sample1` wherever it lies, so rearranging the folders changes neither `metadata.csv` nor `readPattern`. A pair whose mates sit in two *different* folders is still one pair.
 
-What step 0 checks is the pair itself: **every sample has exactly one of each mate.** Three ways to break it, all of which the reader would otherwise accept in silence:
+What is checked is the pair: **every sample has exactly one of each mate.** Three ways to break it, none of which would announce itself:
 
 | in `Data/` | what it is |
 |---|---|
-| `Sample1_R1.fq.gz` with no `Sample1_R2.fq.gz` anywhere | a sample that would be left out of the run without a word |
-| `run_A/Sample1_R1.fq.gz` and `run_B/Sample1_R1.fq.gz` | the same mate twice, which would be aligned against itself |
+| `Sample1_R1.fq.gz` with no `Sample1_R2.fq.gz` anywhere | a sample left out of the run |
+| `run_A/Sample1_R1.fq.gz` and `run_B/Sample1_R1.fq.gz` | the same mate twice, aligned against itself |
 | a full pair under both `run_A/` and `run_B/` | one sample over again, each copy overwriting the other's results |
 
-If two folders really do hold two different samples, give them two names. If they are one sample sequenced twice, that is two rows in `metadata.csv` sharing an `RG_Sample`. See [What a unit is](#what-a-unit-is).
+Two folders holding two different samples need two names. One sample sequenced twice is two rows in `metadata.csv` sharing an `RG_Sample`; see [What a unit is](#what-a-unit-is).
 
-**Hidden folders are skipped, and the run says so.** Anything beginning with a dot is not searched: `.snapshot` on NetApp storage holds a copy of every file per snapshot, and searching it would find every sample many times over. If one of them does hold reads, step 0 names it so you know what was left out.
+**Hidden folders are skipped, and the run names any that held reads.** Nothing beginning with a dot is searched: `.snapshot` on NetApp storage holds a copy of every file per snapshot, and searching it would find every sample many times over.
 
-`init` never overwrites. Running it again in a project you have already filled in reports what is there and changes nothing.
+Three things are then yours to fill in:
 
-It copies `parameters.config` for you because that is a settings file you edit in place. It does **not** write `metadata.csv`, because that is a table describing your experiment (which FASTQ pairs are one pool, how many individuals each holds, and the order your result columns come out in), and a copied one would describe someone else's. Write it yourself, starting from `metadata.csv.example`, and read [Metadata](#metadata) before your first run rather than after it.
+- **Edit `parameters.config`**: `mainDir`, `storageDir`, `readPattern`, `referenceFile`, `poolSize` and `ploidy` at minimum. The reference and the annotation may be gzipped or plain; the pipeline unpacks what it needs into `Reference/Dictionaries/`.
+- **Point `storageDir` at a different directory.** Finished results go there rather than into the project. See [Requirements](#getting-started).
+- **Write `metadata.csv` yourself.** `init` does not, because a copied table would describe someone else's experiment. Start from the `metadata.csv.example` it left beside you, which explains every column, and read [Metadata](#metadata) before your first run rather than after it.
 
-Finished results do not go here. They go to `storageDir`, which has to be a different directory. See [Requirements](#getting-started).
+`init` never overwrites: run it again in a project you have filled in and it reports what is there and changes nothing.
 
-Then edit `parameters.config`: `mainDir`, `storageDir`, `readPattern`, `referenceFile`, `poolSize` and `ploidy` at minimum. The reference and the annotation may be gzipped or plain; the pipeline takes either and unpacks what it needs into `Reference/Dictionaries/`.
-
-Analyzing one set of reads under several parameter sets (two reference genomes, say)? Run `PoolSeqFlow init multi` instead. It does everything `init` does, switches `multiRun` on, and copies `multi-run.csv.example` into the project. It does not write the run table itself, for the same reason it does not write `metadata.csv`.
+Analyzing one set of reads under several parameter sets, two reference genomes say? `PoolSeqFlow init multi` does everything `init` does, switches `multiRun` on, and copies `multi-run.csv.example` in. The run table is yours to write, for the same reason `metadata.csv` is.
 
 ### 2. Verify it any time { #check }
 
-**There are two checks and they answer different questions**, so `check` takes a word and refuses without one. An installation is a tool; a project is your configuration and your data. Neither answers the other, and a bare `check` would have to guess which you meant, leaving the other unchecked without saying so.
+**There are two types of checks:** 
 
 ```bash
 PoolSeqFlow check install    # the tools and helpers this release is built to run
@@ -382,31 +372,27 @@ Tools
 
   nextflow       nextflow     OK       26.04.6 build 12646
   cutadapt       cutadapt     OK       5.2
-  ...
+  …
   samtools       samtools     OK       samtools 1.24
   bcftools       bcftools     OK       bcftools 1.24
-  ...
+  …
 
 Pipeline helpers
 
   atomic_mv.sh                 OK
   depth2freq.awk               OK
-  ...
+  …
 ```
 
-**Every command the release is built to run**, with the version each reports. The list is the canonical one: what this release expects its environment to provide.
+**Every command the release is built to run**, with the version each reports, and **every helper in `bin/`**, present and executable; a lost executable bit would otherwise fail mid-run rather than at startup.
 
-**And each has to come from that environment.** Every tool on the list is pinned in `install/environment.yml`, so one that resolves from anywhere else means the environment is missing a package and your system's copy is standing in (at whatever version it happens to be, and only on this machine). That is reported, not passed over:
+**Each tool has to come from that environment.** All of them are pinned in `install/environment.yml`, so one that resolves from anywhere else means the environment is missing a package and your system's copy is standing in, at whatever version it happens to be and only on this machine:
 
 ```text
   samtools       samtools     OUTSIDE THE ENVIRONMENT  /usr/bin/samtools
 ```
 
-It is the failure worth catching, because it is the quiet one: the pipeline runs, the results look fine, and nothing reproduces anywhere else. Reinstalling with `PoolSeqFlow install` is the fix.
-
-**Every helper in `bin/`**, present and executable. `nextflow.config` puts that directory on `PATH` and the process scripts call the helpers by bare name, so a lost executable bit fails mid-run rather than at startup. `bin/` is enumerated rather than listed, so a helper added to a release is checked without anyone remembering to say so.
-
-The three `check_*.sh` scripts live there too (`bin/` is where everything that is *run* rather than sourced lives) and are the one thing skipped: they are run by the command line, never by a process script, so a run does not depend on them. `lib/` is not enumerated at all, because what is in there is sourced rather than run, which is the whole reason the two directories are separate.
+That is the quiet failure worth catching: the pipeline runs, the results look fine, and nothing reproduces anywhere else. Reinstalling with `PoolSeqFlow install` is the fix.
 
 **It reads no `parameters.config` and needs no project.** Run it from anywhere, including straight after installing and before you have a project at all.
 
@@ -428,22 +414,18 @@ Tools, as this project configures them
   nextflow       nextflow               OK       26.04.6 build 12646
   samtools       /usr/bin/samtools      OK       samtools 1.19
   bcftools       bcftools               OK       bcftools 1.24
-  ...
+  …
 
   tool list from: params.software in parameters.config
 ```
 
-**Your files parse**: `parameters.config` through Nextflow itself, and `metadata.csv` and the run table through the same parsers step 0 uses, so what you are told here is what a run would tell you. It also says whether the config was written for this release, which is the one thing that stops a run before anything else is read.
+**Your files parse**: `parameters.config` through Nextflow itself, `metadata.csv` and the run table through the same parsers a run uses. It also reports whether the config was written for this release, which is the one thing that stops a run before anything else is read.
 
-**And your settings are checked**, by the same rules step 0 applies, so a project is never told one thing here and another during the run. [What is checked](#parameter-checks) lists them. `NOTHING TO FLAG` is the healthy answer and the common one: a finding appears only when a setting would make the run produce nothing, or would quietly change what a published number means.
+**Your settings are checked by the same rules a run applies**, so a project is never told one thing here and another during the run. [What is checked](#parameter-checks) lists them. `NOTHING TO FLAG` is the healthy answer and the common one: a finding appears only when a setting would make the run produce nothing, or would quietly change what a published number means.
 
-**Every command, as *you* configured it.** The list comes from `params.software`, so a command [repointed at a system binary](#using-system-tools) is checked the way the run will call it, and the second column shows what will actually be invoked. That override is the setting most likely to be wrong and least likely to announce itself.
+**Every command, as *you* configured it.** The list comes from `params.software`, so a command [repointed at a system binary](#using-system-tools) is checked the way the run will call it, and the second column shows what will actually be invoked. That override is the setting most likely to be wrong and least likely to announce itself. If `params.software` cannot be read, no tool is checked and it says so.
 
-**A path outside the environment is not a finding here.** `check install` treats one as a fault, because the installation is supposed to provide its own tools; `check project` does the opposite, because repointing one is a thing you are allowed to do and this is where you see the result. It reports what will be invoked and whether it runs, and leaves the judgment to you.
-
-A project that repoints nothing gets the same tool answers from both checks. **That is the point**: the difference between them is exactly your own configuration.
-
-If `params.software` cannot be read, `check project` says so and checks no tool. It never falls back to the canonical list: the whole reason the section exists is that it reads yours.
+**A path outside the environment is not a finding here**, where `check install` treats one as a fault. Repointing a command is yours to do, so this check reports what will be invoked and whether it runs, and leaves the judgment to you.
 
 ### 3. Fill in the essentials
 
@@ -474,9 +456,7 @@ params {
 
 !!! warning "Set these through the file, never the command line"
 
-    PoolSeqFlow rejects command-line parameter overrides. Nextflow delivers `--param` values as strings, so `--annotate false` sets the string `"false"`, which Groovy evaluates as **true**, leaving annotation switched on with no warning. [Why →](#configuration-is-a-file-never-a-flag)
-
-The two directories cannot be the same path. They are storage tiers, not a preference: the pipeline works on `mainDir` and moves each output to `storageDir` once the last step that needed it has finished, which cannot mean anything if they are one place. On a cluster this is the difference between a node's fast disk and the archive it is backed by; on a laptop, make them two directories and the same reasoning still holds. One is churn, the other is what you keep.
+    PoolSeqFlow rejects command-line parameter overrides. Nextflow delivers `--param` values as strings, so `--annotate false` sets the string `"false"`, which Groovy evaluates as **true**, leaving annotation switched on with no warning. [Why →](#configuration-without-flags)
 
 ### 4. Size the run to your machine
 
@@ -523,11 +503,14 @@ Three things this file decides:
 | `pt_` | a phenotype you **measured** on the pool, and are testing against | `pt_resistance` |
 | `cov_` | measured too, but neither set nor the thing being tested | `cov_temperature` |
 
-Add as many of each as your experiment needs; the names after the prefix are yours. A column with **no** prefix is recorded just as faithfully and read by nothing, so a variable you might analyze later is worth prefixing now. Editing any of them never invalidates results you already have. All three describe the **pool**: what differs between two rows of one pool takes no prefix, because once their reads are merged nothing can tell them apart again. [Metadata](#kinds-of-metadata-column) has the full account.
+- Add as many of each as your experiment needs; the names after the prefix are yours.
+- A column with **no** prefix is recorded just as faithfully and read by nothing, so a variable you might analyze later is worth prefixing now.
+- Editing any of them never invalidates results you already have.
+- All three describe the **pool**. What differs between two rows of one pool takes no prefix, because once their reads are merged nothing can tell them apart again.
 
 **`exp_time` is the one name treated specially.** A project that has it must set `analysis.timeVar.kind` before any analysis will run; the pipeline itself does not care. Leave the column out if this is not a time course. See [The time axis](#the-time-axis).
 
-All of it is covered in [Metadata](#metadata). Getting `RG_Sample` wrong is the most common way to end up with results that are valid but not what you meant.
+[Metadata](#metadata) has the full account, and getting `RG_Sample` wrong is the most common way to end up with results that are valid but not what you meant.
 
 ### 6. Run
 
@@ -537,7 +520,7 @@ PoolSeqFlow run
 
 That is also the resume command. Every step checks whether its outputs already exist and skips itself if they do, so an interrupted run picks up where it left off with no extra flag. There is no `-resume`.
 
-Run it from your project directory, the one holding `parameters.config`. The pipeline reads its settings from wherever you launch, so running from anywhere else stops with a message saying so.
+**Run it from your project directory**, the one holding `parameters.config`: that is where the settings are read from, and anywhere else stops with a message saying so.
 
 To see where a run's results would go before spending any compute on it, `PoolSeqFlow dryrun` builds that directory tree empty and changes nothing else; `PoolSeqFlow dryclean` removes the preview.
 
@@ -549,19 +532,19 @@ To start genuinely from scratch, use `PoolSeqFlow reset` first. It requires typi
 storageDir/
 ├── Logs/
 └── Output/
-    ├── Frequencies/        <- the result: <name>_snp_freq.tsv, <name>_indel_freq.tsv
+    ├── Frequencies/        ← the result: <name>_snp_freq.tsv, <name>_indel_freq.tsv
     ├── VCF/
-    ├── Ready/              <- cleaned, indexed BAMs
+    ├── Ready/              ← cleaned, indexed BAMs
     ├── Reports/
-    ├── run_parameters.txt  <- the settings these results were produced under
-    └── ...
+    ├── run_parameters.txt  ← the settings these results were produced under
+    └── …
 ```
 
 `<name>` is `vcf.fileName`, which is `Test` until you change it.
 
 Start with `Output/Reports/Depth/` and `Output/run_parameters.txt`. The first says what depth ceiling each sample was given and why; the second is a read-only record of exactly which settings produced these files.
 
-Your inputs stay where they were, under `mainDir`. `Data/`, `Reference/` and the dictionaries built from your reference are working material, not results, and none of them are copied here.
+Your inputs stay where they were, under `mainDir`. `Data/`, `Reference/` and the dictionaries built from your reference are not copied here.
 
 If you are running a table of several runs, `Output/` and `Logs/` gain a level: work every run shared sits under `All_Runs/`, work some of them shared under `Shared_<N>/`, and whatever one run did alone under its own `RunID`. A single run keeps the plain tree above.
 
@@ -595,9 +578,7 @@ Before anything is installed there is no `PoolSeqFlow` on your `PATH`, so the fi
 
 **Each subcommand takes no arguments of its own**, with one exception: `analysis` carries a word (the analysis command, or the module to run) and `analysis modules` carries a second. Anything else is rejected. Two environment variables adjust the wrapper instead: `POOLSEQFLOW_PREFIX`, where `install` puts things and where `list` and `uninstall` look, and `POOLSEQFLOW_HOME`, to run a checkout without installing it.
 
-**Naming a version.** Every installed release is also on your `PATH` under its own name, so `PoolSeqFlow-2.1.0 run` uses that release and plain `PoolSeqFlow` uses the newest. This matters most for `uninstall`: with several installations present it lists them and asks which to remove, and if nothing is attached to ask (a script, a CI job), it refuses and tells you to name one, rather than guessing at which installation to delete. `PoolSeqFlow-2.1.0 uninstall` names it and is never asked.
-
-**What that list contains, and what removing one takes with it.** Every installed version, plus the unversioned `PoolSeqFlow` environment if a release from before per-version environments left one behind. A version whose analysis layer is installed is marked, because **an installation is removed whole**, taking its environment, its pipeline, and its analysis environment together:
+**Naming a version.** Every installed release is also on your `PATH` under its own name, so `PoolSeqFlow-2.1.0 run` uses that release and plain `PoolSeqFlow` uses the newest. `PoolSeqFlow list` shows what is installed, marks a version whose analysis layer is installed, and includes the unversioned environment if a release from before per-version environments left one behind:
 
 ```text
 Installed under /home/you/.local:
@@ -606,11 +587,7 @@ Installed under /home/you/.local:
   3) PoolSeqFlow-<version>             (this wrapper, analysis installed)
 ```
 
-Choosing 3 removes `PoolSeqFlow-<version>` and `PoolSeqFlow-<version>-analysis`. To remove only an analysis layer and keep the pipeline that produced your results, use `PoolSeqFlow analysis uninstall`, which never touches anything else.
-
-**Both then list exactly what will go and ask before removing any of it**, every time (including when there is only one installation and nothing to choose between). Choosing *which* is not the same as agreeing to the removal. Answering anything but `y` removes nothing, and with no terminal attached to ask (a script, a CI job), the command refuses rather than proceeding unasked. That is the same rule `uninstall all` has always followed.
-
-`PoolSeqFlow resume` still works as a deprecated alias for `run` and prints a notice.
+Naming a version matters most when removing one; see [Uninstalling](#uninstalling).
 
 **The analysis layer hangs off `analysis`**, the one subcommand that carries a word of its own. It ships with the same `PoolSeqFlow install` and is versioned with it:
 
@@ -627,24 +604,29 @@ Choosing 3 removes `PoolSeqFlow-<version>` and `PoolSeqFlow-<version>-analysis`.
 | `PoolSeqFlow analysis cite` | Print how to cite this copy, plus R and every package a module runs on |
 | `PoolSeqFlow analysis uninstall` | Remove the analysis environment, after confirmation. The pipeline, its environment, and your results are untouched |
 
-The environment is separate from the pipeline's and is built only when you ask for it. `PoolSeqFlow uninstall` removes both environments of the version it is removing.
+The analysis environment is separate from the pipeline's and is built only when you ask for it. `analysis cite` reads R's own citation records, so it prints the version of each package actually installed.
 
-`cite` reads R's own citation records, so what it prints is the version of each package actually installed rather than a list kept in the documentation.
-
-`PoolSeqFlow analysis` also accepts the name of an installed module. Modules are installed separately from the pipeline and each is documented with itself; the commands in the table above are the ones a release ships with.
+`PoolSeqFlow analysis` also accepts the name of an installed module. Modules are installed separately and each is documented with itself; the table above is what a release ships with.
 
 ## Upgrading
 <!--@ page: upgrading -->
 
-Two separate things upgrade here, and it helps to keep them apart. **The installation** is a tool: a new release installs alongside the ones you already have and disturbs none of them. **A project** is your results, and a project belongs to one release for as long as it exists.
+Two separate things upgrade here. 
 
-### Installing a new release
+- **The installation**: a new release installs alongside the ones you already have and disturbs none of them. 
+- **A project**: your results, and a project belongs to one release for as long as it exists.
 
-Download and install it exactly as you did the first time. Nothing is replaced: `~/.local/opt` gains a directory, `~/.local/bin` gains a `PoolSeqFlow-<version>` command, and plain `PoolSeqFlow` starts meaning the new one. Every earlier release still runs, under its own name.
+Coming from 2.2.0 or older, read [Coming from 2.2.0](#coming-from-220) alongside this: 3.0 moved where things live, not just the settings.
 
-Your projects are untouched by this. `parameters.config` lives in your project directory, not in the installation, so nothing an install or an uninstall does can reach it.
+### 1. Install the new release { #install-a-new-release }
 
-**The new release's module store starts empty.** No module ships inside a release, and the store belongs to the installation that runs it, so the old release keeps everything you installed into it and the new one has nothing. Ask the old one what to reinstall, then install each into the new one:
+Get it and install it exactly as you did the first time ([Install](#install)).
+
+- Nothing is replaced. `~/.local/opt` gains a directory, `~/.local/bin` gains a `PoolSeqFlow-<version>` command, and plain `PoolSeqFlow` starts meaning the new one. Every earlier release still runs under its own name.
+- Your projects are untouched: `parameters.config` lives in your project directory, not in the installation.
+- **The new release's module store starts empty.** No module ships inside a release, and the store belongs to the installation that runs it, so the old release keeps what you installed into it and the new one has nothing.
+
+Ask the old release what to reinstall, then install each into the new one:
 
 ```bash
 PoolSeqFlow-3.0.0 analysis modules list      # what the old release has
@@ -653,37 +635,16 @@ PoolSeqFlow analysis modules install mds     # and again, into the new one
 
 Nothing is lost by this. A module installs the libraries it needs along with it, and the analyses it has already produced are results; no install or uninstall reaches them.
 
-### A project belongs to one release
+### 2. Bring each project's configuration forward { #migrate-config }
 
-This is the part that changes how upgrading works. Completed steps are skipped by looking for output files, not by checking what produced them, so continuing an existing project under a new release would leave one set of results built by two versions of the pipeline, with nothing on disk to say which is which.
-
-The pipeline refuses. On the first run after upgrading it stops before any work happens:
-
-```text
-PIPELINE VERSION:      These results were produced by 2.2.0,
-PIPELINE VERSION:      and this is 3.0.0.
-```
-
-There are two ways forward, and both are deliberate choices rather than defaults:
-
-- **Finish the project on the release that started it**: `PoolSeqFlow-2.2.0 run`. The version that produced your results is still installed and still works, which is the reason releases sit side by side.
-- **Start the project again under the new one**: `PoolSeqFlow reset`, then run. This deletes the existing results.
-
-There is deliberately no third option. A project that changed version midway has no answer to the question of which version to cite.
-
-### Bringing your configuration forward
-
-`parameters.config` belongs to you and is never touched by an update; an update must not silently change your analysis settings. The consequence is that after installing a new release your file can be **missing parameters the newer code expects**, and `migrate_config` is the tool for exactly that. Run it before anything else.
-
-Skip it and the run stops before anything is computed. A configuration from an older release does not set `storageDir`, the pipeline recognizes that, and it refuses, naming the parameters it found that this release renamed or removed, and telling you to run `migrate_config`. The refusal covers `run`, `resume`, `dryrun`, `reset`, running an analysis module, and `analysis complete`. It never applies to `migrate_config` itself, which is the fix, nor to `clean` and `dryclean`, which read nothing it covers.
-
-### The assisted route
+Run this in each project directory, before the first run under the new release:
 
 ```bash
 PoolSeqFlow migrate_config
 ```
 
-Run it in your project directory. It backs your file up, rebuilds it from the current template, carries across every setting whose parameter still exists, and reports what happened to each one:
+- An update never touches `parameters.config`, because it must not silently change your analysis settings. So after a new release your file can be **missing parameters the newer code expects**.
+- `migrate_config` saves your file as `parameters.config.bak`, rebuilds it from the current template, carries across every setting whose parameter still exists, and reports what happened to each one.
 
 | Report | Meaning |
 |---|---|
@@ -695,17 +656,17 @@ Run it in your project directory. It backs your file up, rebuilds it from the cu
 | `Still yours to set` | The pipeline works the value out itself now, and your new config carries the parameter **commented out**; uncomment it to take it back |
 | `No longer used` | Your file had a parameter this release does not use |
 
-`Still yours to set` is the one people mistake for a loss. Coming from 2.2.0 it covers thirteen parameters (the eight `cores` values and the five `options` strings your file already had), none of which is gone. They are computed by default and sit commented out in your new config, so setting one is a matter of removing a `//`. It is distinct from `Now computed by the pipeline`, where the value is derived from other parameters and there is no line to uncomment.
+**`Still yours to set` is not a loss**, and is distinct from `Now computed by the pipeline`, where the value is derived from other parameters and there is no line to uncomment. Coming from 2.2.0 it covers thirteen parameters: the eight `cores` values and the five `options` strings your file already had.
 
-It also ends with a list of **files to move yourself**, and moves none of them. If you are upgrading from 2.2.0 or older, there will be several, because the layout changed: your reads, reference and sample table used to live under the storage directory and now belong on `mainDir`. It prints the exact `mv` commands, having checked which files are actually there. Read them before running them.
+**Move the files it names.** It ends with a list and moves none of them, printing the exact `mv` commands for the files it found. From 2.2.0 or older there will be several, because your reads, reference and sample table used to live under the storage directory and now belong on `mainDir`.
 
-One group in that list matters more than the rest. `.poolseqflow_params` and its neighbors are the records the change guard compares against; they are how "has anything changed since these results were produced" gets answered. Leave them behind and the next run finds no record, decides the project is new, and writes down your *current* configuration as though it had produced the results already on disk. The guard would then report that nothing has changed, having quietly stopped guarding.
+**`.poolseqflow_params` and its neighbors matter most in that list.** They are the records the change guard compares against. Leave them behind and the next run finds no record, decides the project is new, and writes your *current* configuration down as though it had produced the results already on disk. The guard then reports that nothing has changed, having quietly stopped guarding.
 
-**Treat the migrated config as a starting point, not an answer.** Migration can only recognize a parameter that still exists *and still means the same thing*. A parameter whose behavior changed while its value still looks like an ordinary number or string is carried across and is silently wrong. Always read the report, and compare afterwards.
+**Treat the migrated config as a starting point, not an answer.** Migration can only recognize a parameter that still exists *and still means the same thing*. One whose behavior changed while its value still looks like an ordinary number or string is carried across and is silently wrong.
 
-### The manual route
+#### Rebuilding by hand
 
-Every release adds parameters, and rebuilding by hand is often the safer choice; it is the only way to be certain you have actually looked at the new ones. The template ships inside the installation, and `init` is what puts a copy of it in front of you:
+Often the safer choice, and the only way to be certain you have looked at the new parameters:
 
 ```bash
 mv parameters.config parameters.config.bak            # keep your settings
@@ -713,35 +674,60 @@ PoolSeqFlow init                                      # writes a fresh parameter
 diff parameters.config.bak parameters.config          # see what changed, then re-apply yours
 ```
 
-`init` never overwrites, so move your own file aside first, as above; otherwise it reports the config as already present and leaves it alone.
+`init` never overwrites, so move your own file aside first; otherwise it reports the config as already present and leaves it alone.
 
-### Coming from 2.2.0
+### A project belongs to one release
 
-3.0 is a major release that brings in a complete new design and more reproducibility options, and the changes are structural rather than a handful of new settings.
+Completed steps are skipped by looking for output files, not by checking what produced them, so continuing a project under a new release would leave one set of results built by two versions, with nothing on disk to say which is which. The pipeline refuses, before any work happens:
 
-**Where things live has changed.** Before 3.0 there was one storage directory holding your inputs and your results together. There are now two, and they must be different paths: `mainDir` holds your reads, reference and configuration and is where you run, `storageDir` holds finished results. `migrate_config` prints the `mv` commands for the files that need to move.
+```text
+PIPELINE VERSION:      These results were produced by 2.2.0,
+PIPELINE VERSION:      and this is 3.0.0.
+```
 
-**`projectDir` is now `storageDir`.** A straight rename, and your value is carried over. Note that `projectDir` is also a name Nextflow defines for itself, which is why it could not stay.
+`migrate_config` does not clear this. There are two ways forward and deliberately no third, because a project that changed version midway has no answer to the question of which version to cite.
 
-**`RGTags.csv` is replaced by `metadata.csv`.** This one is not a rename and cannot be migrated: the old file held raw SAM read-group tags and nothing else, while the new one has [seven kinds of column](#kinds-of-metadata-column) and carries your pool sizes as well. `migrate_config` reports `rgTagsFile` as no longer used, tells you to move the file, and prints a note saying plainly that the two are not the same file under a new name, but rewriting it into the new schema is yours to do. Start from `$POOLSEQFLOW_HOME/metadata.csv.template`, which documents every column, and read [Metadata](#metadata). **Until `metadata.csv` exists the run stops at step 0**, so this is not a step you can defer. It is also the change that buys the most: the experiment itself (populations, timepoints, replicates) finally has somewhere to live.
+- **Finish the project on the release that started it**: `PoolSeqFlow-2.2.0 run`. That version is still installed and still works, which is the reason releases sit side by side.
+- **Start it again under the new one**: `PoolSeqFlow reset`, then run. This deletes the existing results.
 
-**The depth ceiling moved, and your old value is deliberately not carried.** In 2.2.0 `bcftools.maxDepth = 2000` was the only depth control there was: one number for every pileup in the run. From 3.0, step 5 measures a ceiling for each sample from its own depth histogram and step 6 applies it to the BAM before calling, so a sample is capped where its own coverage says to rather than at one number for the whole cohort. See [Depth capping](#depth-capping). `variantCall.maxDepth` is now a second ceiling on top of that one and ships as `0`, which `mpileup` reads as no limit at all.
+A project started fresh under the new release is governed by the ordinary [change guard](#the-change-guard) from then on, and the [Changelog](#changelog) has what each release changed.
 
-Carrying `2000` across would leave you capped at a number this release never chose, on top of a per-sample cap that cannot see it. So `migrate_config` reports it under `Format changed this release` and explains the change in full. Automatic capping is `capBAM.maxDepth = -1`, which is what you now have. **To reproduce results from 2.2.0 exactly, set `variantCall.maxDepth` back to your old value and `capBAM.maxDepth = 0`.**
 
-**The installation is separate from your project now.** Earlier releases were run from the folder you unpacked, with `parameters.config` beside the pipeline. From 3.0 you install once, releases sit side by side, and you run the installed command from your own project directory. If your project *is* the old unpacked folder, move it out; the pipeline refuses to run inside its own installation.
+## Uninstalling
+<!--@ page: uninstalling | nav: Uninstalling -->
 
-**Some parameters are gone**: `params.gff`, `params.dir.scripts` and `params.dir.output.temp`, along with `rgTagsFile` and `rgTagsPath` from the section above. `migrate_config` reports each under `No longer used`. The `cores` block and the `options` strings look gone too and are not; they are computed now and ship commented out, which the report says under `Still yours to set`.
+An installation is removed whole: its conda environment, its analysis environment where one is installed, the pipeline under `~/.local/opt`, and the links in `~/.local/bin`. Versions are separate, so removing one leaves the others working. `PoolSeqFlow list` shows what is on the machine.
 
-**Multi-run is new**, and off by default. `multiRun = false` changes nothing about how an existing project behaves.
+### One version
 
-### After upgrading
+```bash
+PoolSeqFlow uninstall            # the only installation, or it asks which
+PoolSeqFlow-3.1.1 uninstall      # that version, named
+```
 
-Once your configuration is current, the first run will still stop, because your existing results were produced by an older release. That is the version block described above, and `migrate_config` does not clear it: choose between finishing on the old release and starting again on the new one.
+- With several versions installed, plain `PoolSeqFlow uninstall` lists them and asks which. In a script, where there is nothing attached to ask, it refuses rather than guessing; name the version instead.
+- Plain `PoolSeqFlow` is re-pointed at the newest version that remains, and removed once none does.
+- `PoolSeqFlow analysis uninstall` removes only that release's analysis environment, leaving the pipeline installed.
+- If you installed with `POOLSEQFLOW_PREFIX` set, set it again: an uninstall looks only under that prefix.
 
-For a project started fresh under 3.0, the ordinary guard applies from then on: a change to an analysis-affecting parameter stops the next run, and the report names the folders to delete.
+### Every version
 
-See [The run refuses to mix settings](#the-run-refuses-to-mix-settings) for what is and is not tracked, and the [Changelog](#changelog) for what each release changed.
+```bash
+PoolSeqFlow uninstall all
+```
+
+Every PoolSeqFlow conda environment on the machine, every installed pipeline, and the links in `bin`.
+
+### What is not touched
+
+- **Your projects.** `parameters.config`, `Data/`, `Reference/` and everything in `storageDir` sit outside every installation, including the analyses a module has already produced.
+- **Another version's modules.** A module store belongs to the installation that holds it, so modules go with that version and with no other.
+
+Both forms list what will go and ask before anything does. The tab completions go with the last version removed; another version left installed keeps them.
+
+**Removing an environment means results produced with that version can no longer be reproduced without reinstalling it.**
+
+**On a network filesystem the directory can outlive its contents.** Files the running command still has open leave `.nfs*` placeholders behind, so the pipeline directory cannot remove itself from under itself. It says so, and prints the one `rm -rf` that finishes the job after the command has exited.
 
 # When to use PoolSeqFlow
 <!--@ section: concepts | nav: Concepts -->
@@ -823,7 +809,7 @@ Deep is not a problem in itself: no flat depth ceiling ships any more. Each samp
 
 ### Choosing between run layouts
 
-| If your samples are... | Do this |
+| If your samples are… | Do this |
 |---|---|
 | Independent pools you want compared | One run, one row per pool in `metadata.csv`, distinct `RG_Sample` values |
 | One pool split across lanes or runs to reach depth | One run, one row per FASTQ pair, **sharing** an `RG_Sample` so the reads are combined |
@@ -876,7 +862,7 @@ The reason is that in pooled data **the reference allele carries no special stat
 
 These two are simple to state and take a moment to sit with.
 
-Each pool has a **detection limit** set by how many chromosomes went into it: `1 / (ploidy x poolSize)`, one chromosome out of all of them, is the smallest allele fraction that pool can physically produce. The limit is set to half of this value, (`1 / (2 x ploidy x poolSize)`) as a statistical threshold. Anything below it is noise rather than a rare allele, because the pool contains nothing that could generate it.
+Each pool has a **detection limit** set by how many chromosomes went into it: `1 / (ploidy × poolSize)`, one chromosome out of all of them, is the smallest allele fraction that pool can physically produce. The limit is set to half of this value, (`1 / (2 × ploidy × poolSize)`) as a statistical threshold. Anything below it is noise rather than a rare allele, because the pool contains nothing that could generate it.
 
 The filter therefore applies a threshold **per pool**, not one threshold for the whole file. A pool of ten individuals and a pool of a hundred have different resolutions, and judging both at the same cut-off either discards real variation in the large pool or keeps noise in the small one.
 
@@ -901,7 +887,7 @@ PoolSeqFlow departs from stock Nextflow practice in several places. Each departu
 
 ---
 
-### Configuration is a file, never a flag
+### Configuration without flags
 
 **The decision.** Every setting lives in `parameters.config`. The wrapper takes a subcommand, not settings. There is no `--poolSize 50`.
 
@@ -927,7 +913,7 @@ it is a real boolean and behaves as expected. This class of failure is silent an
 
 ---
 
-### Resume is filesystem-based
+### Filesystem-based resume
 
 **The decision.** Every step checks whether its own outputs already exist, and skips itself if they do. It looks in permanent storage first and then on the working volume, so an output that has been produced but not yet moved to `storageDir` counts as done. This replaces Nextflow's `-resume` entirely; the wrapper never passes that flag. `PoolSeqFlow run` is both "start" and "resume".
 
@@ -943,13 +929,25 @@ A check for "does this output file already exist" survives all of that, because 
 
 Step-skipping happens *inside* each task rather than before it, so a re-run still submits every process to the scheduler. Those jobs exit almost immediately (they test for a file, create a symlink and copy two log files), but they are real submissions. Expect roughly one short job per process per sample on a fully resumed run.
 
-More importantly, "the output exists" is not the same as "the output is correct for your current settings". A file produced under `poolSize = 50` looks identical to one produced under `poolSize = 100`. That gap is closed separately, by the guardrails [below](#the-run-refuses-to-mix-settings).
+More importantly, "the output exists" is not the same as "the output is correct for your current settings". A file produced under `poolSize = 50` looks identical to one produced under `poolSize = 100`. That gap is closed separately, by the change guard [below](#the-change-guard).
 
 ---
 
-### Symbolic links instead of copies
+### Symbolic links and the two storage roots
 
 **The decision.** Each output is **moved** out of the task's working directory to where it belongs, and a **symbolic link** is left behind pointing at it. Nothing is copied, and no file the pipeline produces exists twice.
+
+```mermaid
+graph LR
+    task["task directory<br/>under <b>work/</b>"]
+    main["<b>mainDir</b><br/>your inputs, and<br/>everything in progress"]
+    store["<b>storageDir</b><br/>what you keep"]
+
+    task -->|"moved, symlink left behind"| main
+    main -->|"moved once the last step<br/>that needed it has finished,<br/>symlink left behind"| store
+```
+
+An output therefore crosses between the two roots exactly once, and a reader that opens it at the old path follows a link to wherever it is now.
 
 **Why.** Pool-seq intermediates are large. A run with a dozen pools moves through hundreds of gigabytes of BAMs and VCFs. Nextflow's default is to publish outputs by copying them out of `work/`, which means every large file exists twice for as long as `work/` survives.
 
@@ -966,7 +964,7 @@ On a cluster this maps onto a node's local disk and the network volume behind it
 
 ---
 
-### Threads are budgeted, not divided
+### The thread budget
 
 **The decision.** One `threads` value sizes the whole run. Every tool's core count is derived from it through a fixed ladder, and each process reserves what it actually uses.
 
@@ -976,7 +974,7 @@ The sharper reason is that a tool's advertised thread count is not always what i
 
 PoolSeqFlow reserves Trim Galore's full footprint and maps back to the worker count in the script, so the declaration and the reality agree. The full ladder is in [Resources](#resources).
 
-**What it costs.** Honest accounting is slower than optimistic accounting on a small machine. At `threads = 8`, a single trimming task reserves all eight cores, so samples are trimmed one at a time. Earlier behavior ran three concurrently at twelve threads each on an eight-core box, which was faster in wall-clock, and a 4.5x oversubscription. A request larger than the machine now fails immediately rather than quietly degrading:
+**What it costs.** Honest accounting is slower than optimistic accounting on a small machine. At `threads = 8`, a single trimming task reserves all eight cores, so samples are trimmed one at a time. Earlier behavior ran three concurrently at twelve threads each on an eight-core box, which was faster in wall-clock, and a 4.5× oversubscription. A request larger than the machine now fails immediately rather than quietly degrading:
 
 ```text
 Process requirement exceeds available CPUs -- req: 12; avail: 8
@@ -984,11 +982,11 @@ Process requirement exceeds available CPUs -- req: 12; avail: 8
 
 ---
 
-### The run refuses to mix settings
+### The change guard
 
 **The decision.** The run stops when the pipeline version, the analysis parameters, the run table or `metadata.csv` have changed since the existing outputs were produced.
 
-**Why.** This is the direct consequence of [filesystem-based resume](#resume-is-filesystem-based). Because a step skips itself when its output file exists, and the file carries no record of what produced it, changing `poolSize` and re-running would leave one `Frequencies/` folder holding tables computed under two different thresholds. Nothing downstream could detect that, and the mixture would be invisible in the output.
+**Why.** This is the direct consequence of [filesystem-based resume](#filesystem-based-resume). Because a step skips itself when its output file exists, and the file carries no record of what produced it, changing `poolSize` and re-running would leave one `Frequencies/` folder holding tables computed under two different thresholds. Nothing downstream could detect that, and the mixture would be invisible in the output.
 
 So a record of what produced them is kept beside the results:
 
@@ -1010,7 +1008,7 @@ The two verbatim copies serve a different purpose from the rest. They are not wh
 
 ---
 
-### Moves across filesystems are atomic
+### Atomic moves
 
 **The decision.** All cross-filesystem moves stage inside a temporary directory of the mover's own and rename into place, via `bin/atomic_mv.sh`.
 
@@ -1020,7 +1018,7 @@ Staging under a temporary name and renaming means an interrupted move leaves not
 
 ---
 
-### Steps delete their own inputs
+### Deleted intermediates
 
 **The decision.** Once a stage's output is safely in permanent storage, several steps delete the input they consumed: trimmed reads after clipping, each VCF after the next filter produces its successor.
 
@@ -1083,29 +1081,29 @@ Step 5 measures a per-position depth histogram for every sample and publishes it
 
 **What the detector looks for.** One rise and fall is a library. A rise, a fall to nothing, and a *second* rise is two populations, and the ceiling goes where coverage ran out:
 
-![A collapsed repeat: coverage at 120x, a second population at 4000x, and the cap between them](assets/depth-hill-small.svg)
+![A collapsed repeat: coverage at 120×, a second population at 4000×, and the cap between them](assets/depth-hill-small.svg)
 
 Blue is the sample before capping, green after. Everything above the ceiling collapses onto it, which is the spike at 447. Both axes are logarithmic and both have to be: the second population here holds two thousandths of the covered genome, so on a linear count axis it is invisible.
 
 The same shape at a different scale is the same decision. Organelle contamination is a small number of positions two orders of magnitude above the library:
 
-![Organelle contamination: 16 kb at 30000x above a 150x library, capped at 502](assets/depth-mito.svg)
+![Organelle contamination: 16 kb at 30000× above a 150× library, capped at 502](assets/depth-mito.svg)
 
-**A long tail is not a second population.** This is the distinction the whole stage turns on, and it is why nothing here uses a mean, a median or a maximum. The maximum is precisely the thing being cut. An overdispersed library reaching 3000x has one population, and is left alone:
+**A long tail is not a second population.** This is the distinction the whole stage turns on, and it is why nothing here uses a mean, a median or a maximum. The maximum is precisely the thing being cut. An overdispersed library reaching 3000× has one population, and is left alone:
 
-![An overdispersed library reaching 3000x, uncapped](assets/depth-heavy-tail.svg)
+![An overdispersed library reaching 3000×, uncapped](assets/depth-heavy-tail.svg)
 
-So is a library on a reference that most of the genome does not map to. Two thirds of the covered positions here sit at depth 1-5. That is not coverage and it is not an anomaly either, and the ceiling has to stay above the real lobe at 60x rather than below it:
+So is a library on a reference that most of the genome does not map to. Two thirds of the covered positions here sit at depth 1-5. That is not coverage and it is not an anomaly either, and the ceiling has to stay above the real lobe at 60× rather than below it:
 
-![A poor reference: a junk population at depth 1-5, a trough, then real coverage at 60x](assets/depth-bad-reference.svg)
+![A poor reference: a junk population at depth 1-5, a trough, then real coverage at 60×](assets/depth-bad-reference.svg)
 
 **The three outcomes, and the third is the one to read.** Under the default `capBAM.maxDepth = -1` a sample is capped where the detector finds a second population, and left **uncapped** where it does not, including when the histogram is one the detector cannot read. Every sample's decision is published as a sentence beside its histogram, whether it was capped or not, because "nothing was done" is the one outcome you cannot see in the output.
 
 The detector declines deliberately when the deep population is too large to call an artefact:
 
-![A pile-up at 20000x outweighing the real coverage at 200x, left uncapped](assets/depth-hill-dominant.svg)
+![A pile-up at 20000× outweighing the real coverage at 200×, left uncapped](assets/depth-hill-dominant.svg)
 
-Four fifths of the covered genome is at 20000x and one fifth at 200x. Which of those is the artefact cannot be read off a depth histogram, and capping at 500 would truncate most of a real genome on a guess. PoolSeqFlow reports it and does nothing. If you know which population is real, `param_capMaxDepth` in `metadata.csv` sets that sample's ceiling by hand; see [Metadata](#kinds-of-metadata-column).
+Four fifths of the covered genome is at 20000× and one fifth at 200×. Which of those is the artefact cannot be read off a depth histogram, and capping at 500 would truncate most of a real genome on a guess. PoolSeqFlow reports it and does nothing. If you know which population is real, `param_capMaxDepth` in `metadata.csv` sets that sample's ceiling by hand; see [Metadata](#kinds-of-metadata-column).
 
 **The knob.**
 
@@ -1243,10 +1241,10 @@ This is the filter that makes the pipeline pool-aware, and the one most worth un
 ```bash
 bcftools norm -m -  vcf                    # 1. split multiallelic sites into one line per ALT
 | bcftools view -i "INFO/AD[1]>0"          # 2. drop alleles with no supporting read at all
-| awk  ...                                   # 3. count samples that clear their own threshold
-| sed  '*' -> 'X'                           # 4. mask the spanning-deletion allele
+| awk  …                                   # 3. count samples that clear their own threshold
+| sed  '*' → 'X'                           # 4. mask the spanning-deletion allele
 | bcftools norm -m+                        # 5. rejoin into multiallelic records
-| sed  'X' -> '*'
+| sed  'X' → '*'
 ```
 
 #### What the filter keeps
@@ -1324,7 +1322,7 @@ Each pool can be set to get its own row of that table. `param_poolSize` in `meta
 
 `FORMAT/AD[:1]` indexes the **first** alternate allele. On a multiallelic record, a rare third allele would never be tested: it would simply ride along on whatever the second allele did. Splitting to one line per alternate (`norm -m -`) makes each allele stand on its own evidence; `norm -m+` puts the survivors back together.
 
-The `*` -> `X` substitution around the rejoin masks the spanning-deletion allele, which `norm -m+` does not handle in this position. It is restored immediately afterwards.
+The `*` → `X` substitution around the rejoin masks the spanning-deletion allele, which `norm -m+` does not handle in this position. It is restored immediately afterwards.
 
 ### 7. Depth and quality filter (step 7)
 
@@ -1375,7 +1373,7 @@ Work from the outside in. A variant lost at stage 1 cannot be recovered by loose
 | Almost every site gone after filtering | 7 | `vcffilter.minDP`: one under-covered sample removes sites for all of them |
 | Multiallelic sites reduced to two alleles | 4 | `variantCall.callOptions`: confirm `-A` is still present |
 
-Changing any of these invalidates existing outputs, and step 0 will stop the next run rather than mix results. That is covered in [Design Decisions](#the-run-refuses-to-mix-settings).
+Changing any of these invalidates existing outputs, and step 0 will stop the next run rather than mix results. That is covered in [Design Decisions](#the-change-guard).
 
 ## Interpreting Results
 <!--@ page: interpreting-results -->
@@ -1399,7 +1397,7 @@ and their two `_depth.tsv` counterparts.
 #### Columns
 
 ```text
-CHROM   POS   REF   ALLELE   TOTAL_AD   <sample 1>   <sample 2>   ...
+CHROM   POS   REF   ALLELE   TOTAL_AD   <sample 1>   <sample 2>   …
 ```
 
 | Column | Contents |
@@ -1496,7 +1494,7 @@ Use these when a frequency alone is not enough: a frequency of 0.5 from 400 read
 | `<name>.vcf` | Raw output of step 6: every called site, no step 7 filtering, original reference encoding |
 | `<name>_annotated.vcf` | SnpEff annotation of the **raw** call set, if `annotate = true` |
 
-Those two are the whole of it. Every VCF step 7 produces (`_sort`, `_sort_fp`, `_sort_fp_dq`, and the split `_snp` and `_indel` files) is consumed by the next process and deleted, so none of them survives a finished run. See [Steps delete their own inputs](#steps-delete-their-own-inputs).
+Those two are the whole of it. Every VCF step 7 produces (`_sort`, `_sort_fp`, `_sort_fp_dq`, and the split `_snp` and `_indel` files) is consumed by the next process and deleted, so none of them survives a finished run. See [Deleted intermediates](#deleted-intermediates).
 
 **The filtered call set is therefore not kept as a VCF.** What it becomes is the frequency tables. If you need the filtered sites in VCF form, the raw call set plus the positions in the tables is what you have to work from.
 
@@ -1543,33 +1541,25 @@ After a run finishes, four checks catch most problems:
 
 PoolSeqFlow is a set of Nextflow DSL2 modules, each an independent file under `scripts/` and each responsible for its own resume logic. Steps 0 to 8 are the analysis; a tenth module handles promotion, moving each finished artifact to permanent storage once nothing needs it any more. This page is the map; the detail is in [Steps](#pipeline-steps).
 
-```text
-Raw FASTQ reads
-      │
-      ▼
-[Step 0] Verify environment, parameters and folder structure
-      │
-      ▼
-[Step 1] Build reference dictionaries (BWA, SAMtools, SnpEff)
-      │
-      ▼
-[Step 2] QC & trimming (FastQC -> Trim Galore -> composition-aware clipping)
-      │
-      ▼
-[Step 3] Alignment (BWA-MEM)
-      │
-      ▼
-[Step 4] BAM cleanup (name-sort -> fixmate -> coord-sort -> markdup -> addRG -> filter -> index)
-      │
-      ▼
-[Step 5] Reports, and the depth ceiling for each sample
-      │
-      ▼
-[Step 6] Cap each BAM, then variant calling (BCFtools mpileup + call)
-      │
-      ├────────────────────────────────┐
-      ▼                                ▼
-[Step 7] VCF -> frequency tables   [Step 8] Annotation (optional)
+```mermaid
+graph TD
+    reads(["Raw FASTQ reads"])
+    s0["<b>Step 0</b><br/>Verify environment, parameters<br/>and folder structure"]
+    s1["<b>Step 1</b><br/>Build reference dictionaries<br/>BWA, SAMtools, SnpEff"]
+    s2["<b>Step 2</b><br/>QC and trimming<br/>FastQC → Trim Galore → composition-aware clipping"]
+    s3["<b>Step 3</b><br/>Alignment<br/>BWA-MEM"]
+    s4["<b>Step 4</b><br/>BAM cleanup<br/>name-sort → fixmate → coord-sort → markdup → addRG → filter → index"]
+    s5["<b>Step 5</b><br/>Reports, and the depth ceiling for each sample"]
+    s6["<b>Step 6</b><br/>Cap each BAM, then variant calling<br/>BCFtools mpileup + call"]
+    s7["<b>Step 7</b><br/>VCF → frequency tables"]
+    s8["<b>Step 8</b><br/>Annotation"]
+    promote(["Promotion<br/>each finished artifact to permanent storage"])
+
+    reads --> s0 --> s1 --> s2 --> s3 --> s4 --> s5 --> s6
+    s6 --> s7
+    s6 -.->|optional| s8
+    s7 --> promote
+    s8 -.-> promote
 ```
 
 ### What runs per sample and what runs once
@@ -1800,7 +1790,7 @@ A header fix is applied afterwards: `INFO/MQ` is declared `Integer` by bcftools 
 
 ---
 
-### Step 7: VCF -> Allele Frequency Tables
+### Step 7: VCF → Allele Frequency Tables
 
 `scripts/7_vcf2freq.nf`
 
@@ -1861,7 +1851,7 @@ If a run is interrupted, artifacts stay in `Utilized/` and the skip checks find 
 ## Resume Logic
 <!--@ page: resume -->
 
-PoolSeqFlow implements its own resume strategy rather than using Nextflow's. This page covers how it behaves; the reasoning behind replacing `-resume` is in [Design Decisions](#resume-is-filesystem-based).
+PoolSeqFlow implements its own resume strategy rather than using Nextflow's. This page covers how it behaves; the reasoning behind replacing `-resume` is in [Design Decisions](#filesystem-based-resume).
 
 ### Two directories
 
@@ -1888,7 +1878,7 @@ This strategy **replaces** Nextflow's `-resume`, and the wrapper never passes th
 - `cleanup = true` deletes task working directories once a run completes. `-resume` replays task outputs *from* those directories; after a successful run there is nothing to replay.
 - Several steps delete their own inputs once consumed. That leaves the upstream task's recorded outputs dangling, which invalidates the cache entry regardless.
 
-So `PoolSeqFlow run` is both "start" and "resume". `PoolSeqFlow resume` survives as a deprecated alias and prints a notice.
+So `PoolSeqFlow run` is both "start" and "resume".
 
 To start genuinely from scratch:
 
@@ -1989,7 +1979,7 @@ There are three directories, and keeping them apart is most of understanding the
 │   ├── 1_build_dictionaries.nf   # BWA, SAMtools and SnpEff indices from your reference
 │   ├── 2_trim_reads.nf           # Trim Galore, then composition-aware clipping
 │   ├── 3_align.nf                # BWA-MEM
-│   ├── 4_clean.nf                # Name-sort -> fixmate -> markdup -> addRG -> filter -> index
+│   ├── 4_clean.nf                # Name-sort → fixmate → markdup → addRG → filter → index
 │   ├── 5_reports.nf              # Alignment and coverage reports
 │   ├── 6_variant_call.nf         # One joint bcftools mpileup and call
 │   ├── 7_vcf2freq.nf             # Normalize, filter, split, convert to frequencies
@@ -2029,17 +2019,17 @@ One copy serves any number of projects, and it is replaced wholesale when you up
 ### What you provide, on `mainDir`
 
 ```text
-/path/to/working/directory/  <- mainDir, and where you run from
+/path/to/working/directory/  ← mainDir, and where you run from
 ├── parameters.config
 ├── metadata.csv
-├── metadata.csv.example     <- left by init; reference, nothing reads it
-├── Data/                    <- dataSource names this folder
+├── metadata.csv.example     ← left by init; reference, nothing reads it
+├── Data/                    ← dataSource names this folder
 │   ├── Sample1_R1.fq.gz
 │   ├── Sample1_R2.fq.gz
-│   └── ...
+│   └── …
 └── Reference/
     ├── reference.fasta.gz
-    └── reference.gff.gz     <- only if annotate = true
+    └── reference.gff.gz     ← only if annotate = true
 ```
 
 Either reference file may be gzipped or plain.
@@ -2156,7 +2146,7 @@ A run that sets its own `storageDir` gets none of this. It has a results tree to
 
 ### What survives a completed run {: #what-survives-a-completed-run }
 
-Several steps delete their inputs once the next stage has consumed them, and the deletion follows the symlink: the permanent copy goes too ([why](#steps-delete-their-own-inputs)). So the contents of `Output/VCF/` mid-run and after a completed run are not the same.
+Several steps delete their inputs once the next stage has consumed them, and the deletion follows the symlink: the permanent copy goes too ([why](#deleted-intermediates)). So the contents of `Output/VCF/` mid-run and after a completed run are not the same.
 
 With `vcf.fileName = 'Test'`:
 
@@ -2201,7 +2191,7 @@ The peak on `mainDir` falls as the run proceeds, since each artifact leaves for 
 # Configuration
 <!--@ section: configuration -->
 
-Everything the pipeline does is set in `parameters.config`. There are no command-line overrides ([why](#configuration-is-a-file-never-a-flag)). The optional analysis layer has settings of its own, in a file of its own. See [Analysis Layer](#analysis-configuration).
+Everything the pipeline does is set in `parameters.config`. There are no command-line overrides ([why](#configuration-without-flags)). The optional analysis layer has settings of its own, in a file of its own. See [Analysis Layer](#analysis-configuration).
 
 This page sorts the parameters by what they actually affect, which is the distinction that matters most: some change your numbers, some change only where files land or how fast the run goes, and some are computed for you and should not be edited at all.
 
@@ -2292,7 +2282,7 @@ What is checked today:
 
 **A setting that merely gives you fewer sites is never flagged.** `minDP 20` against `minDP 5` is your scientific judgment and the pipeline has no opinion on it. The line is whether a setting produces *nothing*, or silently changes what a number *means*.
 
-**An older config is judged on what it will actually do.** A parameter your `parameters.config` does not mention falls back to the pipeline's own default rather than to whatever an unset value happens to mean: `nextflow.config` resolves it below the point your file is read, so a config that never mentions `vcffilter.dropZeroDepth` runs at the shipped `true`, and one that does set it still wins. Running `PoolSeqFlow migrate_config` is what brings a config forward, and it reports every parameter that is new; see [Upgrading](#upgrading) and [Updating to a new release](#update).
+**An older config is judged on what it will actually do.** A parameter your `parameters.config` does not mention falls back to the pipeline's own default rather than to whatever an unset value happens to mean: `nextflow.config` resolves it below the point your file is read, so a config that never mentions `vcffilter.dropZeroDepth` runs at the shipped `true`, and one that does set it still wins. Running `PoolSeqFlow migrate_config` is what brings a config forward, and it reports every parameter that is new; see [Bring each project's configuration forward](#migrate-config).
 
 **Two things it cannot check**, both because the answer is not in your configuration:
 
@@ -2352,7 +2342,7 @@ A `param_` column that is not on this list is refused rather than ignored: a nam
 
 **The step a per-sample parameter is read at decides how much two runs can still share.** Runs sharing a value share the work up to the step that first reads it, and diverge from there on. So the same kind of override is cheap in one place and expensive in another:
 
-| Two runs differ in... | They still share | They repeat |
+| Two runs differ in… | They still share | They repeat |
 |---|---|---|
 | `param_poolSize` | trimming, alignment, BAM cleanup, reports, calling | the frequency tables only |
 | `param_capMaxDepth` | trimming, alignment, BAM cleanup | reports, capping, calling, and everything after |
@@ -2380,7 +2370,7 @@ The `software` block maps each tool to a command:
 software {
     samtools = 'samtools'
     bcftools = 'bcftools'
-    // ...
+    // …
 }
 ```
 
@@ -2664,10 +2654,10 @@ There is one results tree, and **only divergence gets a name**:
 
 ```text
 storageDir/Output/
-├── All_Runs/        <- work every run shared
-├── Shared_1/        <- work some of them shared
+├── All_Runs/        ← work every run shared
+├── Shared_1/        ← work some of them shared
 ├── Shared_2/
-├── reference_a/     <- work this run did alone
+├── reference_a/     ← work this run did alone
 └── reference_b/
 ```
 
@@ -2680,6 +2670,24 @@ Group numbers are assigned in order of appearance in the table, so reordering ro
 ### What is shared, and what is not
 
 Sharing is decided by comparing the parameters each step actually reads. Two runs share a step when every value that step depends on is the same for both, so runs differing only in `vcffilter.minDP` share everything up to and including variant calling, and diverge at the filtering.
+
+```mermaid
+graph TD
+    reads(["Raw FASTQ reads"])
+    trim["<b>All_Runs/</b><br/>QC and trimming"]
+    shared["<b>Shared_1/</b><br/>alignment, BAM cleanup, reports<br/>and variant calling, on reference A"]
+    a1["<b>run_a1/</b><br/>frequency conversion<br/>at its own minDP"]
+    a2["<b>run_a2/</b><br/>frequency conversion<br/>at its own minDP"]
+    b["<b>run_b/</b><br/>everything past trimming,<br/>on reference B"]
+
+    reads --> trim
+    trim --> shared
+    trim --> b
+    shared --> a1
+    shared --> a2
+```
+
+*Three runs. `run_a1` and `run_a2` name the same reference and differ only in `vcffilter.minDP`, so alignment and calling happen once for both. `run_b` names a reference of its own and shares nothing past the trimming.*
 
 One thing switches it off entirely. **A run that sets its own `storageDir` shares nothing**, because sharing means writing one artifact into one results tree, and a run with its own tree has nowhere to put a shared one. It repeats every step alone. That is allowed and occasionally what you want; the report names any run in that position so it is not discovered from a task count.
 
@@ -2714,7 +2722,7 @@ Every tool's thread count is derived from `threads`. **Do not set the per-tool c
 
 Three details explain the shape of that table.
 
-**Tools are quantized to where their scaling flattens.** BWA and cutadapt both take `cores.ladder` (the largest power of two at or below `threads`, capped at 8). Past that point the published scaling for these tools returns very little, so the cores are better spent on another task. FastQC is given `cores.fastqc`, which is two, because its `-t` counts *files* rather than threads per file and step 2 only ever hands it a pair. Measured on a pair of 2M-read files: `-t 2` is 1.93x faster than `-t 1`, and `-t 4`, `-t 6` and `-t 8` are no faster at all while each thread past the second costs roughly 250 MB of resident memory. Given eight files instead it scales to 4.8x, which is what the number is sized against.
+**Tools are quantized to where their scaling flattens.** BWA and cutadapt both take `cores.ladder` (the largest power of two at or below `threads`, capped at 8). Past that point the published scaling for these tools returns very little, so the cores are better spent on another task. FastQC is given `cores.fastqc`, which is two, because its `-t` counts *files* rather than threads per file and step 2 only ever hands it a pair. Measured on a pair of 2M-read files: `-t 2` is 1.93× faster than `-t 1`, and `-t 4`, `-t 6` and `-t 8` are no faster at all while each thread past the second costs roughly 250 MB of resident memory. Given eight files instead it scales to 4.8×, which is what the number is sized against.
 
 **Trim Galore's `--cores N` really runs N+4 threads** (N workers, two decompressors, a batcher and a writer). The ladder picks the largest N whose *full footprint* still fits in `threads`, which is why 4 cores yields `--cores 1` rather than `--cores 4`. The `--cores 1` case is the exception: it bypasses the worker pool entirely and is genuinely single-threaded.
 
@@ -2768,7 +2776,7 @@ Process requirement exceeds available CPUs -- req: 12; avail: 8
 
 Set `threads` to the cores you actually have (on HPC, the size of one node).
 
-Note the consequence on a small machine. At `threads = 8`, a single `TrimReads` task reserves all eight, so samples are trimmed one at a time instead of three at once. That is slower in wall-clock than running three concurrently at twelve threads each on eight cores, and it is also the only version of that arrangement which respects the machine. See [Threads are budgeted, not divided](#threads-are-budgeted-not-divided).
+Note the consequence on a small machine. At `threads = 8`, a single `TrimReads` task reserves all eight, so samples are trimmed one at a time instead of three at once. That is slower in wall-clock than running three concurrently at twelve threads each on eight cores, and it is also the only version of that arrangement which respects the machine. See [The thread budget](#the-thread-budget).
 
 ### `resourceLimits` is a ceiling, not an allocation
 
@@ -2985,7 +2993,7 @@ Check the before/after FastQC reports in `Output/Reports/Fastqc/<sample>/` after
 | `Output/Reports/Fastqc/<sample>/` | FastQC on trimmed and on clipped reads |
 | `Output/Reports/Trimming/<sample>/` | Trim Galore reports (`.txt` and, on 2.x, `.json`) |
 
-The trimmed reads are **deleted** once clipping has consumed them ([why](#steps-delete-their-own-inputs)); the clipped reads are what step 3 aligns.
+The trimmed reads are **deleted** once clipping has consumed them ([why](#deleted-intermediates)); the clipped reads are what step 3 aligns.
 
 ## Alignment & Cleaning
 <!--@ page: filters -->
@@ -3003,7 +3011,7 @@ Seven operations, streamed so no intermediate BAM is written:
 | 3 | Coordinate-sort | `samtools sort` | `markdup` requires coordinate order |
 | 4 | Mark and **remove** duplicates | `samtools markdup -r -s` | See [below](#why-duplicates-are-removed-not-just-marked) |
 | 5 | Add read groups | `samtools addreplacerg` | Writes the `@RG` string built from this sample's row in [`metadata.csv`](#metadata) |
-| 6 | Filter | `samtools view -F ... -f ... -q ...` | The filter proper |
+| 6 | Filter | `samtools view -F … -f … -q …` | The filter proper |
 | 7 | Index | `samtools index` | Produces the `.bai` |
 
 The result is written to `Output/Ready/` as `<sample>_ready.bam` with its index.
@@ -3061,7 +3069,7 @@ A PCR duplicate is a second read from a molecule that should only be counted onc
 
 ### Changing these values
 
-All three are analysis-affecting. Changing any of them means the existing BAMs no longer match your configuration, and the next run stops before doing any work ([why](#the-run-refuses-to-mix-settings)). Clearing it means deleting `Output/Ready/`, `Output/VCF/` and `Output/Frequencies/`.
+All three are analysis-affecting. Changing any of them means the existing BAMs no longer match your configuration, and the next run stops before doing any work ([why](#the-change-guard)). Clearing it means deleting `Output/Ready/`, `Output/VCF/` and `Output/Frequencies/`.
 
 Because the alignment step itself is unaffected, `Output/Aligned/` is preserved and the re-run starts from BAM cleanup rather than from BWA.
 
@@ -3113,7 +3121,7 @@ capBAM {
 
 **Nothing is deleted.** A position deeper than the ceiling is truncated to it on the way into the pileup, and the sample's ready BAM is untouched on disk. Reads are dropped whole rather than trimmed, so a pair may lose one mate.
 
-**`histogramMax` is how deep step 5 looks, and a sample deeper than it stops the run.** The histogram reaches `100000x` by default, and everything above that would land in a single open bin, so a ceiling read from it would be read from a partial picture. Rather than choose on partial evidence, step 5 fails and names the sample and the depth it found. Raise `histogramMax` past that depth and run again. An organelle in a well-covered library is the case that reaches it in practice. **Raising it costs nothing already produced**: `samtools stats` reports only the depths that actually occur, so every value the run completes at gives the same histogram and the same ceiling, and step 0 does not compare it against previous runs.
+**`histogramMax` is how deep step 5 looks, and a sample deeper than it stops the run.** The histogram reaches `100000×` by default, and everything above that would land in a single open bin, so a ceiling read from it would be read from a partial picture. Rather than choose on partial evidence, step 5 fails and names the sample and the depth it found. Raise `histogramMax` past that depth and run again. An organelle in a well-covered library is the case that reaches it in practice. **Raising it costs nothing already produced**: `samtools stats` reports only the depths that actually occur, so every value the run completes at gives the same histogram and the same ceiling, and step 0 does not compare it against previous runs.
 
 **Why the ceiling is measured rather than set.** Pooled coverage is uneven by design, so no single depth is "too deep" in the abstract. What is worth truncating is a *second population* of positions (a collapsed repeat, or a PCR hill) carrying read counts no single locus produced. A hand-set number cannot find those: it cuts legitimate coverage in a deep sample and lets the pile-up through in a shallow one. [The Filter Chain](#depth-capping) shows the histograms this is read off, including the two cases where the detector deliberately declines.
 
@@ -3235,7 +3243,7 @@ filterFalsePositives {
 
 The fraction of samples that must independently support an allele at frequency `S` or above for it to be kept. This is what makes the filter a **corroboration** test rather than a frequency cutoff, and it is what allows `S` to be set so low without drowning in sequencing error: errors do not recur at the same position across independent libraries.
 
-The comparison is `count >= n_samples x sampleThreshold`, so the effective requirement is the next whole number up:
+The comparison is `count >= n_samples × sampleThreshold`, so the effective requirement is the next whole number up:
 
 | Samples | `M` at 0.2 | Must support |
 |---|---|---|
@@ -3276,10 +3284,10 @@ bcftools view -e "FMT/DP<20" -Ov -o <name>_dp.vcf <input>
 vcftools --vcf <name>_dp.vcf --minQ 30 --recode --recode-INFO-all --out <name>_dq
 ```
 
-`minDP` -> `bcftools view -e "FMT/DP<N"`
+`minDP` → `bcftools view -e "FMT/DP<N"`
 : Removes a site if **any** sample falls below the depth. Read the negation carefully: the site survives only when *every* sample meets the floor.
 
-`minQUAL` -> `vcftools --minQ`
+`minQUAL` → `vcftools --minQ`
 : Removes sites whose `QUAL` falls below the value.
 
 !!! danger "The weakest library sets the threshold for every site"
@@ -3857,7 +3865,7 @@ Nothing is inferred, for the same reason `analysis.metadata.timeVar.kind` is not
 
 **`binary` is not "the two-group case".** It is a claim that one level is the *absence* of the other (affected or unaffected, resistant or susceptible), which is what makes a design a case/control design rather than a comparison of two arbitrary groups. Two groups that are neither, such as coastal and inland or two host plants, are **`nominal` with two levels**. The published result records which you declared.
 
-**`ordinal` and `nominal` are two kinds because they permit different things.** Scoring low/medium/high as 0/1/2 and fitting a slope asserts that low->medium is the same distance as medium->high, which an ordinal scale does not claim. Treating it as unordered instead throws the ordering away and loses the power to see a trend at all. So you say which you have, and the module fits accordingly.
+**`ordinal` and `nominal` are two kinds because they permit different things.** Scoring low/medium/high as 0/1/2 and fitting a slope asserts that low→medium is the same distance as medium→high, which an ordinal scale does not claim. Treating it as unordered instead throws the ordering away and loses the power to see a trend at all. So you say which you have, and the module fits accordingly.
 
 For a `nominal` phenotype the frame carries **no number at all** for each pool, only which group it is in. That is deliberate, and it is the same mechanism [categorical time](#the-time-axis) uses when it sets `position` to null: it makes *"you may not fit a rate on this"* something a module can check rather than something its author has to remember. Wing types `spotted`, `striped` and `curly` have an index each, and a slope fitted on that index would assert curly is twice as far from spotted as striped is.
 
@@ -4006,7 +4014,7 @@ POOL SIZES:            Output
 POOL SIZES:                ploidy 2, 6 pools of 100 individuals - 200 chromosomes, frequencies above 0.0025
 ```
 
-Those are the pipeline's own `poolSize` and `ploidy`, per pool: a pool whose rows set `param_poolSize` holds that many individuals and every other pool holds `poolSize` of them. The chromosome count is `ploidy x poolSize`, and the detection limit is `1 / (2 x ploidy x poolSize)`. That is the frequency below which step 7's false-positive filter took a call to be error rather than a rare allele, explained in [The Filter Chain](#where-s-comes-from). Pools of one size share a line; a pool of its own size gets one, because its chromosome count and its detection limit both move with it.
+Those are the pipeline's own `poolSize` and `ploidy`, per pool: a pool whose rows set `param_poolSize` holds that many individuals and every other pool holds `poolSize` of them. The chromosome count is `ploidy × poolSize`, and the detection limit is `1 / (2 × ploidy × poolSize)`. That is the frequency below which step 7's false-positive filter took a call to be error rather than a rare allele, explained in [The Filter Chain](#where-s-comes-from). Pools of one size share a line; a pool of its own size gets one, because its chromosome count and its detection limit both move with it.
 
 **Runs that hold a pool to different sizes never share a results directory.** `poolSize`, `param_poolSize` and `ploidy` are all part of what decides whether two runs share step 7's work ([Multi-run](#multi-run)), so each run's tables are filtered against its own sizes and land under its own name. The analysis layer checks the sizes across a directory's runs regardless, and stops if it ever finds two: a directory whose tables were filtered against two different pool sizes has no answer to what a frequency in it means.
 
@@ -4137,10 +4145,10 @@ Measured on an Intel i7-7700HQ at 2.8 GHz with R 4.6.1 and GCC 16.2, over a corp
 
 | Derivation | Reads | Vectorized R | Compiled | Ratio |
 |---|---|---|---|---|
-| `site_diversity` | one pool | 135 s | 11 s | 12x |
-| `allele_frequencies` | one pool | 104 s | 16 s | 7x |
-| `allele_frequencies` | six pools | 675 s | 69 s | 10x |
-| `nei_distance` | six pools | 710 s | 22 s | 32x |
+| `site_diversity` | one pool | 135 s | 11 s | 12× |
+| `allele_frequencies` | one pool | 104 s | 16 s | 7× |
+| `allele_frequencies` | six pools | 675 s | 69 s | 10× |
+| `nei_distance` | six pools | 710 s | 22 s | 32× |
 
 **The last row is a different kind of work and its ratio should not be averaged with the others.** The three parsers split strings, and what limits them is memory traffic; `nei_distance` reads what a parser already produced and does arithmetic on it. Its vectorized form makes one pass per *pair* of pools (fifteen at six pools), so what compiling removes is interpreted call overhead that grows with the square of the pool count, not with the site count. Expect its ratio to climb with more pools where the parsers' will not. It is also the reason `mds` is the one module whose statistic costs about as much as reading the table for it.
 
@@ -4187,8 +4195,8 @@ It reads the frequency and depth tables, and it needs your `metadata.csv`: the p
 | one per `exp_` column | that pool's value for each of your experimental variables, in the order `metadata.csv` gives them; blank where the cell was |
 | `pool_size` | individuals in the pool: its `param_poolSize`, or the project's `poolSize` where that cell was blank |
 | `ploidy` | copies of the genome per individual, from `parameters.config` |
-| `n_chrom` | `ploidy x pool_size`, the number of chromosomes sampled. **This is the only place ploidy enters any statistic here** |
-| `detection_limit` | `1 / (2 x ploidy x pool_size)`, the frequency below which step 7's filter took a call to be error. Not a property of this analysis: it is what already happened to the tables, repeated here so the numbers beside it can be read against it |
+| `n_chrom` | `ploidy × pool_size`, the number of chromosomes sampled. **This is the only place ploidy enters any statistic here** |
+| `detection_limit` | `1 / (2 × ploidy × pool_size)`, the frequency below which step 7's filter took a call to be error. Not a property of this analysis: it is what already happened to the tables, repeated here so the numbers beside it can be read against it |
 
 Nothing in this file is estimated. It is the design the results were produced under, printed where an analysis can be read against it. That is the point, because a frequency means nothing without the pool size it was read from.
 
@@ -4230,7 +4238,7 @@ One row per pool, over the called SNP sites of the whole project.
 | Column | What |
 |---|---|
 | `pool` | the `RG_Sample` |
-| `n_chrom` | `ploidy x pool_size`, as in [`design.tsv`](#basicstats-design) |
+| `n_chrom` | `ploidy × pool_size`, as in [`design.tsv`](#basicstats-design) |
 | `sites` | the called SNP sites |
 | `unmeasured` | how many of them this pool has no reads at. Zero unless you turned [`vcffilter.dropZeroDepth`](#unmeasured-cells) off |
 | `segregating` | how many of them are segregating **for this pool**, by the rule below |
@@ -4241,15 +4249,15 @@ One row per pool, over the called SNP sites of the whole project.
 
 **The diversity is Nei's, over every allele at a site**, corrected for the pool's effective sample size at that site:
 
-$$\hat\pi = \frac{1}{\text{sites}}\sum_{\text{sites}} \frac{n_{\text{eff}}}{n_{\text{eff}} - 1}\left(1 - \sum_j p_j^2\right), \qquad n_{\text{eff}} = \frac{n_{\text{chrom}} \cdot d}{n_{\text{chrom}} + d - 1}$$
+$$\hat\pi = \frac{1}{\text{sites}}\sum_{\text{sites}} \frac{n_{\text{eff}}}{n_{\text{eff}} - 1}\left(1 - \sum_j p_j^2\right), \qquad n_{\text{eff}} = \frac{n_{\text{chrom}} \cdot d}{n_{\text{chrom}} + d − 1}$$
 
-Not `2p(1-p)`: that form assumes two alleles and a privileged reference, so a triallelic site has to be collapsed or dropped before it can be used. $1 - \sum_j p_j^2$ needs no such choice, is defined for any number of alleles, and reduces to `2p(1-p)` where there are two. See [Nei 1973](#ref-nei1973diversity) for the statistic, [Ferretti et al. 2013](#ref-ferretti2013pool) for why a pooled estimate needs correcting at all, and [Hivert et al. 2018](#ref-hivert2018poolseq) for the effective sample size, including which of the two forms in circulation this is.
+Not `2p(1−p)`: that form assumes two alleles and a privileged reference, so a triallelic site has to be collapsed or dropped before it can be used. $1 - \sum_j p_j^2$ needs no such choice, is defined for any number of alleles, and reduces to `2p(1−p)` where there are two. See [Nei 1973](#ref-nei1973diversity) for the statistic, [Ferretti et al. 2013](#ref-ferretti2013pool) for why a pooled estimate needs correcting at all, and [Hivert et al. 2018](#ref-hivert2018poolseq) for the effective sample size, including which of the two forms in circulation this is.
 
 **`h_sum` and `sites` are published, and the ratio is published beside them, because the ratio is the part that is contestable.** Per-site diversity summed over the sites that were *called* is not the same as per-base diversity over the sites that were *callable*, and our tables hold only the former. A project's real π is `h_sum` over the number of positions that could have produced a call, which needs a per-position pass over the ready BAMs that no module does yet. `pi_per_called_site` is therefore an **upper bound** on π and will typically be far above it; invariant sites are missing from the denominator entirely. Quote `h_sum` and the count, not the ratio, unless you mean per called site and say so.
 
 **Our number will not match PoPoolation's or poolfstat's on a project with triallelic sites, and the reason is deliberate.** [Kofler et al. 2011a](#ref-kofler2011popoolation) implements estimators defined over two alleles, and poolfstat's reader skips multiallelic records outright; the diversity here sums over every allele the site has. On a strictly biallelic project the two agree. On a viral quasispecies, where the three- and four-allele sites are the signal, discarding them discards the result.
 
-**A site is segregating for a pool when an allele other than that pool's own major one reaches `max(detection_limit, minReads / depth)`.** Two limbs, because either alone is wrong: `detection_limit` is `1 / (2 x ploidy x pool_size)`, which at any ordinary depth is below one read and so admits every sequencing error; `minReads / depth` alone stops discriminating once the pool is large enough that one chromosome is rarer than a couple of reads. The crossover is at `depth = minReads / detection_limit`. The pool's **own** major allele and not the cohort's: a pool fixed for whatever the cohort calls alternate is not segregating, and reading the majority off the reference column would report that it is.
+**A site is segregating for a pool when an allele other than that pool's own major one reaches `max(detection_limit, minReads / depth)`.** Two limbs, because either alone is wrong: `detection_limit` is `1 / (2 × ploidy × pool_size)`, which at any ordinary depth is below one read and so admits every sequencing error; `minReads / depth` alone stops discriminating once the pool is large enough that one chromosome is rarer than a couple of reads. The crossover is at `depth = minReads / detection_limit`. The pool's **own** major allele and not the cohort's: a pool fixed for whatever the cohort calls alternate is not segregating, and reading the majority off the reference column would report that it is.
 
 ### `neff.tsv`: effective sample size, at two levels and from two sources { #basicstats-neff }
 
@@ -4370,7 +4378,7 @@ It reads the depth tables and your `metadata.csv`. The phenotype is a `pt_` colu
 
 **This is a model-based test.** It is not an assumption-light one, and there is no assumption-light one available: any test that weights pools by their precision has already conceded that they differ, and a null that then treats them as interchangeable contradicts its own statistic. So the assumptions are stated rather than hidden, and there are three.
 
-1. **How precisely a frequency was measured.** For one allele at one site in one unit, the variance is `p(1-p) x (dispersion + 1/n_eff)` (read sampling and pool sampling through `n_eff`, plus whatever excess uneven pooling left behind). Only the *ratio* between units is ever a claim: multiplying every weight by a constant leaves the result unchanged, so a pool size wrong by the same factor everywhere costs nothing, and one wrong differently per unit costs calibration.
+1. **How precisely a frequency was measured.** For one allele at one site in one unit, the variance is `p(1−p) x (dispersion + 1/n_eff)` (read sampling and pool sampling through `n_eff`, plus whatever excess uneven pooling left behind). Only the *ratio* between units is ever a claim: multiplying every weight by a constant leaves the result unchanged, so a pool size wrong by the same factor everywhere costs nothing, and one wrong differently per unit costs calibration.
 2. **Units are independent.** A unit is one independent biological entity; two pools are two units unless `analysis.design.technicalRep` says they are one material measured twice.
 3. **A site's alleles are several views of one comparison**, which is what the next section is about.
 
@@ -4394,7 +4402,7 @@ That is worth unpacking, because it is where this module departs from what most 
 
 That is not an argument from first principles alone. Measured on null sites of two, three and four alleles, the false-positive rate is flat across arity, and the sites the module selects have the same allele counts as the genome it selected them from, which is what `arity_mean` and `arity_selected` in [`permutations.tsv`](#association-diagnostics) let you check on your own data. The union-bound alternative (take the smallest allele p and multiply by *k* - 1) measured **37% above its nominal rate** at triallelic sites, which is why it is not used.
 
-**What it costs.** A site of *k* alleles carries *k* - 1 free tests, not *k*: at a biallelic site the reference and alternate rows are the same test with the sign flipped, and their p-values are identical. So one site is one finding, whatever its arity, and the allele rows tell you which allele carries it rather than giving you several findings.
+**What it costs.** A site of *k* alleles carries *k* − 1 free tests, not *k*: at a biallelic site the reference and alternate rows are the same test with the sign flipped, and their p-values are identical. So one site is one finding, whatever its arity, and the allele rows tell you which allele carries it rather than giving you several findings.
 
 ### The smallest p your design can reach { #association-floor }
 
@@ -4445,7 +4453,7 @@ A guard that passes tells you nothing. These are published so that someone readi
 |---|---|
 | `permutations`, `exhaustive` | how many rearrangements, and whether that was all of them |
 | `floor`, `design_floor` | the smallest p this run could reach, and the smallest the design can |
-| `dispersion` | the excess variance uneven pooling left behind, in units of `p(1-p)`. Large means the weights absorbed a lot; it is estimated from your data unless you set it. **A published `0` is a floor, not necessarily a measurement**: the method of moments can return a negative excess when the units scatter less than their own sampling variance predicts, which is noise and not a unit measured better than its depth allows, and it is reported as `0` |
+| `dispersion` | the excess variance uneven pooling left behind, in units of `p(1−p)`. Large means the weights absorbed a lot; it is estimated from your data unless you set it. **A published `0` is a floor, not necessarily a measurement**: the method of moments can return a negative excess when the units scatter less than their own sampling variance predicts, which is noise and not a unit measured better than its depth allows, and it is reported as `0` |
 | `depth_phenotype_cor` | depth lined up with the phenotype. This breaks label-based tests badly and is the reason this module does not use one |
 | `lambda_gc` | genomic inflation. If it is 3, nothing in the table is a p-value |
 | `arity_mean`, `arity_selected`, `selected` | the allele counts of the sites selected against all sites. **They should agree**; multiallelic sites at the top of a table are a biological claim, and this is how you check it is one |
@@ -4522,16 +4530,16 @@ It reads the depth tables and nothing else. There is nothing to declare and noth
 For two pools A and B at one site, with `J` the probability that two chromosomes drawn from the same pool carry the same allele and `J_AB` the probability that one drawn from each does:
 
 ```
-distance = (J_A + J_B) / 2 - J_AB
+distance = (J_A + J_B) / 2 − J_AB
 ```
 
-which expands to `½ x Σ (f_A - f_B)²` over **every** allele of the site, the reference included. A triallelic site contributes three terms. No allele is privileged and none is dropped, which matters here, because `MajorAlleleToRef.py` makes the reference the cohort's *major* allele, so dropping it would discard the most informative row rather than a redundant one. The site values are averaged over sites.
+which expands to `½ x Σ (f_A − f_B)²` over **every** allele of the site, the reference included. A triallelic site contributes three terms. No allele is privileged and none is dropped, which matters here, because `MajorAlleleToRef.py` makes the reference the cohort's *major* allele, so dropping it would discard the most informative row rather than a redundant one. The site values are averaged over sites.
 
-**The correction is the part that earns its keep.** `J` read off a sample is biased upward: two *reads* from one pool agree more often than two *chromosomes* do, and the shallower the pool the larger that excess. Uncorrected, the excess does not cancel. It depends on `1/n_A + 1/n_B`, so it inflates shallow-shallow pairs more than shallow-deep ones and those more than deep-deep. Simulated on six pools drawn from **one** population differing only in read depth, two at 30x and four at 400x, the two shallow pools come out as the *most distant pair in the matrix* and the leading axes separate the cohort by depth. There is one population. The corrected distance removes that: the same simulation leaves no depth ordering worth reading, with a residual roughly two orders of magnitude below the artefact it replaced.
+**The correction is the part that earns its keep.** `J` read off a sample is biased upward: two *reads* from one pool agree more often than two *chromosomes* do, and the shallower the pool the larger that excess. Uncorrected, the excess does not cancel. It depends on `1/n_A + 1/n_B`, so it inflates shallow-shallow pairs more than shallow-deep ones and those more than deep-deep. Simulated on six pools drawn from **one** population differing only in read depth, two at 30× and four at 400×, the two shallow pools come out as the *most distant pair in the matrix* and the leading axes separate the cohort by depth. There is one population. The corrected distance removes that: the same simulation leaves no depth ordering worth reading, with a residual roughly two orders of magnitude below the artefact it replaced.
 
 `distance.tsv` publishes the uncorrected sum beside the corrected one, so how much was subtracted is something you can look at rather than take on trust.
 
-The correction subtracts each pool's own diversity at a site, scaled by its effective sample size there, so it inherits everything `n_eff` does, including that ploidy enters exactly once, through `n_chrom = ploidy x poolSize`. Nothing here is limited to diploids.
+The correction subtracts each pool's own diversity at a site, scaled by its effective sample size there, so it inherits everything `n_eff` does, including that ploidy enters exactly once, through `n_chrom = ploidy × poolSize`. Nothing here is limited to diploids.
 
 ### Distances can come out negative, and that is correct { #mds-negative }
 
@@ -4961,7 +4969,7 @@ These pages are arranged by what you saw rather than by which part of the pipeli
 
 ### Why Linux only { #why-not-windows }
 
-**Windows.** The pipeline moves each file it produces to where it belongs and leaves a symbolic link behind, and it relies on Unix path semantics throughout. Neither behaves correctly on native Windows filesystems, and WSL only works under some filesystem configurations, which is not a guarantee worth documenting. See [Symbolic links instead of copies](#symbolic-links-instead-of-copies).
+**Windows.** The pipeline moves each file it produces to where it belongs and leaves a symbolic link behind, and it relies on Unix path semantics throughout. Neither behaves correctly on native Windows filesystems, and WSL only works under some filesystem configurations, which is not a guarantee worth documenting. See [Symbolic links and the two storage roots](#symbolic-links-and-the-two-storage-roots).
 
 **macOS.** Every tool a release runs is pinned to an exact build in `install/environment.yml` and `install/environment-analysis.yml`, and those files are exports from a Linux machine: they name builds that exist for `linux-64` and for no other platform. Conda cannot solve either of them on a Mac, so the install fails before anything else is reached. Supporting macOS means a second set of pinned files exported and verified on a Mac (one for Apple Silicon and one for Intel, since conda treats them as different platforms), and that is a piece of work rather than a flag. Earlier releases listed macOS as supported; that was never true of the pinned environments, and saying so was the error.
 
@@ -4980,6 +4988,20 @@ LibMambaUnsatisfiableError: Encountered problems while solving:
 
 **What sets it is `rsync`, which both environments carry.** Every artifact the pipeline produces is moved to permanent storage by a copy that is verified before the original is removed, and `rsync` is what stages that copy. So the floor is a property of the whole release rather than of the analysis layer: the analysis environment additionally carries a C and C++ compiler, because every module builds its hot path on your machine rather than shipping a binary, but that toolchain reaches back further than `rsync` does and is not what decides this.
 
+### Coming from 2.2.0
+
+3.0 was a structural release rather than a handful of new settings. [Upgrading](#upgrading) is the procedure; this is what changed under it.
+
+| What changed | What to do |
+|---|---|
+| **One storage root became two**, and they must be different paths: `mainDir` holds your reads, reference and configuration and is where you run; `storageDir` holds finished results | `migrate_config` prints the `mv` commands for the files that move |
+| **`projectDir` is now `storageDir`**, because `projectDir` is a name Nextflow defines for itself | A straight rename; your value is carried over |
+| **`RGTags.csv` is replaced by `metadata.csv`.** The old file held raw SAM read-group tags and nothing else; the new one has [seven kinds of column](#kinds-of-metadata-column), carries your pool sizes, and gives the experiment itself (populations, timepoints, replicates) somewhere to live | Not a rename, and not migratable: `rgTagsFile` is reported as no longer used and rewriting the file is yours to do. Start from `$POOLSEQFLOW_HOME/metadata.csv.template`, which documents every column, and read [Metadata](#metadata). **No run starts until `metadata.csv` exists**, so it cannot be deferred |
+| **The depth ceiling moved.** `bcftools.maxDepth = 2000` was the only depth control there was, one number for every pileup in the run. A ceiling is now measured for each sample from its own depth histogram and applied to the BAM before calling ([Depth capping](#depth-capping)), and `variantCall.maxDepth` is a second ceiling on top of it, shipping as `0`, which `mpileup` reads as no limit at all | Your old value is deliberately not carried: it would cap you at a number this release never chose, on top of a per-sample cap that cannot see it. It is reported under `Format changed this release`. Automatic capping is `capBAM.maxDepth = -1`, which is what you now have. **To reproduce 2.2.0 results exactly, set `variantCall.maxDepth` back to your old value and `capBAM.maxDepth = 0`** |
+| **The installation is separate from your project.** Earlier releases ran from the folder you unpacked, with `parameters.config` beside the pipeline | Install once, and run the installed command from your own project directory. If your project *is* the old unpacked folder, move it out: the pipeline refuses to run inside its own installation |
+| **Some parameters are gone**: `params.gff`, `params.dir.scripts`, `params.dir.output.temp`, `rgTagsFile` and `rgTagsPath` | Each is reported under `No longer used`. The `cores` block and the `options` strings look gone and are not: they are computed now and ship commented out, under `Still yours to set` |
+| **Multi-run is new**, and off | `multiRun = false` changes nothing about how an existing project behaves |
+
 ## The run will not start
 <!--@ page: startup | nav: Will not start -->
 
@@ -4997,7 +5019,7 @@ Your `parameters.config` predates the installed version. An absent parameter int
 Process requirement exceeds available CPUs -- req: 12; avail: 8
 ```
 
-`threads` is larger than the machine. Tasks reserve what they really use, so an oversized request fails at submission rather than quietly oversubscribing. Set `threads` to the cores you have. [Resources ->](#resources)
+`threads` is larger than the machine. Tasks reserve what they really use, so an oversized request fails at submission rather than quietly oversubscribing. Set `threads` to the cores you have. [Resources →](#resources)
 
 ### `RUN PARAMETERS` names a setting that would produce nothing { #parameter-refusal }
 
@@ -5019,7 +5041,7 @@ Not the change guard: nothing about your existing results is wrong. A setting in
 
 Working as designed. An analysis-affecting parameter, or the analysis-affecting part of `metadata.csv`, differs from what produced your existing outputs. Because completed steps are skipped by looking for output files, continuing would mix results from two configurations in one folder.
 
-The report names what to delete, and how much that is depends on what you changed. A reordered file invalidates less than an edited tag value, and a changed pool size less again. Deleting what it names clears the check. Or `PoolSeqFlow reset` to discard everything. [Why →](#the-run-refuses-to-mix-settings)
+The report names what to delete, and how much that is depends on what you changed. A reordered file invalidates less than an edited tag value, and a changed pool size less again. Deleting what it names clears the check. Or `PoolSeqFlow reset` to discard everything. [Why →](#the-change-guard)
 
 ### `PIPELINE VERSION` fails
 
@@ -5055,7 +5077,7 @@ find Data -name '*_R1.fq.gz' | sed 's|.*/||; s|_R1\.fq\.gz$||' | sort
 
 ### `DIRECTORY CHECK` fails
 
-`mainDir` and `storageDir` are the same path, or one of them is the installation. They are two storage tiers and an output moving from one to the other is what marks it finished, which cannot mean anything if they are one place. The installation is a tool that is replaced wholesale on upgrade, so a project inside it would not survive one. [Why →](#symbolic-links-instead-of-copies)
+`mainDir` and `storageDir` are the same path, or one of them is the installation. They are two storage tiers and an output moving from one to the other is what marks it finished, which cannot mean anything if they are one place. The installation is a tool that is replaced wholesale on upgrade, so a project inside it would not survive one. [Why →](#symbolic-links-and-the-two-storage-roots)
 
 ## Failures during the run
 <!--@ page: during-the-run | nav: During the run -->
@@ -5071,7 +5093,7 @@ Exit **4** means no read cycle had A/T and G/C ratios inside `at_gc_error`. On a
 
 Exit **3** means the FastQC per-base composition table did not have the expected `A`/`T`/`G`/`C` columns, which points at a FastQC version change or a corrupt report.
 
-[Trimming & Clipping ->](#when-it-refuses-to-run)
+[Trimming & Clipping →](#when-it-refuses-to-run)
 
 ### Symbolic link errors
 
@@ -5106,7 +5128,7 @@ If it names your files rather than your samples, fill in `RG_Sample` and rerun. 
 
 ### Sample columns in an unexpected order
 
-Column order follows `metadata.csv` **row order**. Where rows share an `RG_Sample`, the merged column takes the position of the first of them. [Metadata ->](#row-order-decides-column-order)
+Column order follows `metadata.csv` **row order**. Where rows share an `RG_Sample`, the merged column takes the position of the first of them. [Metadata →](#row-order-decides-column-order)
 
 ### `REF` does not match my reference genome
 
@@ -5124,7 +5146,7 @@ Work outward through the chain. A read lost at alignment cannot be recovered lat
 | Below the frequency floor? | `poolSize`, `ploidy` |
 | Site removed on quality? | `vcffilter.minQUAL` |
 
-[The Filter Chain ->](#tuning-the-chain)
+[The Filter Chain →](#tuning-the-chain)
 
 ### Much less depth than I sequenced for
 
@@ -5159,7 +5181,7 @@ The depth and quality filter is the most common of the three, and it catches peo
 
 ### Annotated VCF contains sites missing from my frequency tables
 
-Step 8 runs on step **6**'s output, in parallel with the frequency branch, so it never sees the step 7 filters. Its allele encoding is also the original reference-based one, not the major-allele normalized one. Join on `CHROM`/`POS` and expect unmatched rows. [Details ->](#the-vcf-files)
+Step 8 runs on step **6**'s output, in parallel with the frequency branch, so it never sees the step 7 filters. Its allele encoding is also the original reference-based one, not the major-allele normalized one. Join on `CHROM`/`POS` and expect unmatched rows. [Details →](#the-vcf-files)
 
 ## Resume behavior
 <!--@ page: resume | nav: Resume -->
@@ -5170,7 +5192,7 @@ Steps skip themselves when their outputs already exist. Delete the stale outputs
 
 ### A re-run submits every job anyway
 
-Expected. Step-skipping happens inside each task rather than before it, so a fully resumed run still submits roughly one short job per process per sample. [Resume Logic ->](#resume-logic)
+Expected. Step-skipping happens inside each task rather than before it, so a fully resumed run still submits roughly one short job per process per sample. [Resume Logic →](#resume-logic)
 
 ### `-resume` appears to do nothing
 
@@ -5197,7 +5219,7 @@ The module was asked for more than one worker and cannot go parallel. Either ins
 
 ### A pool holds one chromosome
 
-Refused, and it is the only pool size that is. A single haploid genome has no segregating sites, and the correction every diversity estimate applies divides by `n_eff - 1`, which is zero there. Correct `ploidy`, or that pool's `param_poolSize`. [->](#basicstats-design)
+Refused, and it is the only pool size that is. A single haploid genome has no segregating sites, and the correction every diversity estimate applies divides by `n_eff - 1`, which is zero there. Correct `ploidy`, or that pool's `param_poolSize`. [→](#basicstats-design)
 
 ## Getting help
 <!--@ page: help | nav: Getting help -->
@@ -5220,7 +5242,7 @@ A pooled allele frequency carries two rounds of sampling, and the correction for
 
 !!! warning "There are two effective sample sizes, and they are one apart"
 
-    `n·d/(n + d - 1)` and `n·d/(n + d)` are both in circulation for a pool of `n` chromosomes read to depth `d`. **PoolSeqFlow uses the first**, which is the form implied by [Hivert et al. 2018](#ref-hivert2018poolseq)'s `D₂`: their sum of `(d + n - 1)/n` is the sum of `d/n_eff` under that form and no other.
+    `n·d/(n + d − 1)` and `n·d/(n + d)` are both in circulation for a pool of `n` chromosomes read to depth `d`. **PoolSeqFlow uses the first**, which is the form implied by [Hivert et al. 2018](#ref-hivert2018poolseq)'s `D₂`: their sum of `(d + n - 1)/n` is the sum of `d/n_eff` under that form and no other.
 
     They agree closely at high depth and diverge exactly where diversity estimates are most fragile: shallow coverage and small pools. At `n = 2, d = 2` the first gives 1.33 and the second 1.00. **If a number from this pipeline disagrees with one from other software, check which form the other used before concluding the data disagree.**
 
@@ -5367,8 +5389,8 @@ PoolSeqFlow orchestrates other people's software, and a methods section should c
 
 ```text
 storageDir/Output/
-├── CITATIONS.md      <- readable, for a methods section
-└── references.bib    <- BibTeX, for a bibliography
+├── CITATIONS.md      ← readable, for a methods section
+└── references.bib    ← BibTeX, for a bibliography
 ```
 
 Both are generated from the run that produced them, which makes them accurate in two ways a static list cannot be:

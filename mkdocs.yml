@@ -111,7 +111,16 @@ markdown_extensions:
         - .
         - docs
       check_paths: true
-  - pymdownx.superfences
+  # The mermaid fence is a custom fence rather than a highlighted code block, so a
+  # ```mermaid block renders as a diagram. mkdocs-material ships the renderer; nothing
+  # else is needed. A diagram written this way exists on the site only - the manual also
+  # ships as one readable file, so anything a reader must have in the tarball stays as
+  # text or as an svg under manual/assets/.
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tilde
@@ -133,9 +142,10 @@ nav:
   - Home: index.md
   - Getting Started:
       - getting-started/index.md
-      - Install and Update: getting-started/install.md
+      - Install: getting-started/install.md
       - Quick Start: getting-started/quick-start.md
       - Upgrading: getting-started/upgrading.md
+      - Uninstalling: getting-started/uninstalling.md
   - Concepts:
       - concepts/index.md
       - Scientific Rationale: concepts/scientific-rationale.md
