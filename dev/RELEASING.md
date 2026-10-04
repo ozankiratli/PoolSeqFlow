@@ -40,7 +40,7 @@ dev/scripts/prep-version.sh <new-version>
 
  - solves **both shipped files** (`install/environment.yml` and `install/environment-analysis.yml`) into scratch environments, which is the baseline a user installs from rather than whatever is installed here
  - runs `conda update --all` in each
- - checks every module pin still names what the updated baseline holds, **before** the suite
+ - **moves any module pin the update left behind, and bumps that module with it**, before the suite, so the suite runs on what will ship
  - runs the **full suite**, and if it passes,
  - reads what each environment requires of its host and exports both files
  - then proves the files it wrote: `check-exported-floor.sh` solves each from nothing and reads its floor, and `check-module-packages.sh` puts the module pins through a baseline built from the new file
@@ -49,7 +49,7 @@ The scratch environments are removed on every exit. `--no-cleanup` keeps them, t
 
 Then read `dev/logs/prep-<version>-<timestamp>/`, including the per-environment table of what moved.
 
-**If it stops on a module pin**, the update moved a package a module names. Move each pin in `modules/<name>/manifest.json` to the version it reports as installed, bump that module with `dev/scripts/bump-analysis-version.sh module <name>`, and run step 2 again. The pin is not moved for you: it is an input to a published module, so it can change what that module computes.
+**A moved pin is a module change.** There is one version a pin may name -- whatever the shared analysis environment holds -- so when the update moves a package, `prep-version.sh` rewrites the pin in every manifest declaring it and bumps that module's version. Read those edits in the diff with the environment files: they are uncommitted like everything else here, and every module whose version moved is republished at step 11. A package version that changes what a module computes is the thing to look for.
 
 **Raising the host floor takes three things together**: a line in the manual's Requirements, a move of `HOST_GLIBC_FLOOR` in `export-environment.sh` (`2.28`), and a CHANGELOG entry naming the machines that lose support. The floor is never raised to make a solve pass.
 

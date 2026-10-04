@@ -22,8 +22,9 @@
 #      PoolSeqFlow-update-analysis, recording what each file resolves to today, then runs
 #      `conda update --all` in each, so the tools move as one mutually consistent set rather
 #      than one package at a time.
-#   2. Checks the modules' own package pins against the updated baseline. Free, and it fails
-#      before the suite rather than after it.
+#   2. Moves any module package pin the update left behind, and bumps that module's version with
+#      it. A pin may name exactly one version - whatever the shared analysis environment holds -
+#      so the update decides it, and before the suite, so the suite runs on what will ship.
 #   3. Runs the full test suite against both at once.
 #   4. Only if that passes: reads what each environment requires of its host, then exports them
 #      to install/environment.yml and install/environment-analysis.yml.
@@ -38,9 +39,9 @@
 # The conda package cache is left alone. `conda clean` reaches the packages every other
 # environment on this machine shares, which is a decision about the whole machine.
 #
-# This does not bump the version or touch the CHANGELOG - run dev/scripts/bump-version.sh
-# afterwards. It does not commit anything, and it does not move a module pin: that changes an
-# input to a published module and takes a version bump with it.
+# This does not bump the release version or touch the CHANGELOG - run dev/scripts/bump-version.sh
+# afterwards. It commits nothing: the two exported files, and any manifest whose pin moved, are
+# left in the tree to be reviewed and committed with the release.
 
 set -euo pipefail
 
@@ -70,7 +71,7 @@ POOLSEQFLOW_INSTALLED_HOME="${POOLSEQFLOW_INSTALLED_HOME:-}"
 # WHAT THIS SCRIPT NEEDS FROM THERE, NAMED, so a function that moves stops the run in its first
 # second. conda_conflicting_packages is called at [2/6], on the far side of the solve and the
 # update, so otherwise a rename would surface an hour in.
-WRAPPER_LIB_NEEDS="env_exists store_packages conda_conflicting_packages"
+WRAPPER_LIB_NEEDS="env_exists store_packages module_packages conda_conflicting_packages"
 for fn in $WRAPPER_LIB_NEEDS; do
     declare -F "$fn" > /dev/null \
         || { echo "ERROR: lib/wrapper_lib.sh defines no $fn(), which this script calls." >&2
@@ -90,9 +91,25 @@ done
 # process, so every exit path has to remove them or the next run finds them and refuses.
 CREATED=""
 
+# Manifests this run rewrote. A conda environment is removed on the way out; a file edit is not,
+# and after a failure these pin versions no export ever shipped - so they are named rather than
+# reverted. Reverting would mean a git operation on files the maintainer may have edited too.
+TOUCHED_MANIFESTS=""
+
 cleanup() {
     local status=$? e log
     trap - EXIT
+    if [ "$status" -ne 0 ] && [ -n "${TOUCHED_MANIFESTS:-}" ]; then
+        printf '\n' >&2
+        printf 'These manifests were rewritten before this failed, and still are:\n' >&2
+        for e in $TOUCHED_MANIFESTS; do printf '    %s\n' "$e" >&2; done
+        printf 'Each carries a moved package pin and the version bump that goes with it.\n' >&2
+        printf 'Nothing was exported, so they now pin versions the shipped environment files\n' >&2
+        printf 'do not hold. Keep them for the next attempt, or undo them:\n' >&2
+        # shellcheck disable=SC2086
+        printf '    git checkout --%s\n' "$(printf ' %s' $TOUCHED_MANIFESTS)" >&2
+        printf '\n' >&2
+    fi
     [ -n "$CREATED" ] || exit "$status"
     if [ "$NO_CLEANUP" -eq 1 ]; then
         printf 'Scratch environments kept, --no-cleanup:\n' >&2
@@ -257,49 +274,91 @@ fi
 
 # -------------------------------------------------------------------- module pins -------
 #
-# ASKED HERE, BEFORE THE SUITE, BECAUSE IT COSTS NOTHING AND THE ANSWER ALREADY EXISTS.
+# DONE HERE, BEFORE THE SUITE, BECAUSE THE MODULES MOVE WITH THE ENVIRONMENT.
 #
 # A module pin has to name the version the shared analysis environment holds. conda_install_
 # packages refuses one that disagrees, because `--freeze-installed` does not cover a package
 # NAMED ON THE COMMAND LINE: conda installs that at the version asked for and downgrades the
-# baseline without a word. So an update that moves r-ggplot2 leaves every module pinning the
-# old one unable to install, and the modules are what the analysis layer is for.
+# baseline without a word. So an update that moves r-future leaves every module pinning the old
+# one unable to install at all.
 #
-# check-module-packages.sh at [5/6] reaches the same finding through a full solve of its own.
-# This is that finding an hour earlier, off the environment already in hand.
+# WHICH MAKES THE NEW VALUE DERIVED RATHER THAN CHOSEN. There is exactly one version a pin may
+# name, and the update has just decided it. Reporting that and stopping made every environment
+# update a blocker on hand-editing manifests, so the pin is moved here and the module bumped with
+# it, which is what makes the edit publishable. Both changes are left uncommitted, like the
+# exported files, and each bumped module is republished at the end of the release.
+#
+# Before the suite, so the suite runs against the manifests that will ship.
 say "[2/6] Checking the modules' pins against the updated baseline..."
+pin_clashes() {
+    local shipped
+    shipped=$( { store_packages "$ROOT/modules"; store_packages "$ROOT/modules/lib"; } | sort -u )
+    [ -n "$shipped" ] || return 0
+    # shellcheck disable=SC2086
+    conda_conflicting_packages "$UPDATE_ANALYSIS_ENV" $shipped
+}
+
 SHIPPED=$( { store_packages "$ROOT/modules"; store_packages "$ROOT/modules/lib"; } | sort -u )
 if [ -z "$SHIPPED" ]; then
     say "      no module or library declares a package"
 else
     # shellcheck disable=SC2086
     PIN_COUNT=$(printf '%s\n' $SHIPPED | wc -l | tr -d ' ')
-    # shellcheck disable=SC2086
-    CLASH=$(conda_conflicting_packages "$UPDATE_ANALYSIS_ENV" $SHIPPED)
+    CLASH=$(pin_clashes)
     if [ -z "$CLASH" ]; then
         say "      all $PIN_COUNT pins agree with what the updated baseline holds"
     else
+        say "      the update moved packages the modules pin. Moving each pin with it:"
         say ""
-        say "STOPPED: the update moved a package a module pins. Nothing was exported."
+        MOVED=""
+        while read -r line; do
+            [ -n "$line" ] || continue
+            # conda_conflicting_packages prints `r-future=1.75.0 (installed 1.76.0)`.
+            OLD_SPEC="${line%% *}"
+            PKG="${OLD_SPEC%%=*}"
+            NOW=$(printf '%s' "$line" | sed -n 's/.*(installed \(.*\))$/\1/p')
+            [ -n "$NOW" ] || { say "      could not read an installed version from: $line"; exit 1; }
+            # A package name carries dots - r-data.table - so the pattern is escaped rather than
+            # trusted to match itself.
+            ESCAPED=$(printf '%s' "$OLD_SPEC" | sed 's/[].[^$*\\]/\\&/g')
+            for manifest in "$ROOT"/modules/*/manifest.json "$ROOT"/modules/lib/*/manifest.json; do
+                [ -f "$manifest" ] || continue
+                module_packages "$manifest" | grep -qxF "$OLD_SPEC" || continue
+                NAME=$(basename "$(dirname "$manifest")")
+                sed -i "s|\"$ESCAPED\"|\"$PKG=$NOW\"|" "$manifest"
+                module_packages "$manifest" | grep -qxF "$PKG=$NOW" \
+                    || { say "      FAILED to rewrite $OLD_SPEC in ${manifest#"$ROOT"/}"; exit 1; }
+                say "      $NAME: $OLD_SPEC -> $PKG=$NOW"
+                case " $MOVED " in *" $NAME "*) ;; *) MOVED="$MOVED $NAME" ;; esac
+                REL="${manifest#"$ROOT"/}"
+                case " $TOUCHED_MANIFESTS " in
+                    *" $REL "*) ;; *) TOUCHED_MANIFESTS="$TOUCHED_MANIFESTS $REL" ;;
+                esac
+            done
+        done <<< "$CLASH"
+
         say ""
-        printf '%s\n' "$CLASH" | sed 's/^/      /' | tee -a "$LOGDIR/summary.txt"
+        for NAME in $MOVED; do
+            BUMP_OUT=$(bash dev/scripts/bump-analysis-version.sh module "$NAME" 2>&1) \
+                || { say "      FAILED to bump '$NAME':"
+                     printf '%s\n' "$BUMP_OUT" | sed 's/^/        /' >&2; exit 1; }
+            printf '%s\n' "$BUMP_OUT" | head -1 | sed 's/^      /      /;s/^/      /' \
+                | tee -a "$LOGDIR/summary.txt"
+        done
+
+        # THAT THE REWRITE TOOK, asked of the manifests again rather than assumed from the sed
+        # exiting 0. A pin left behind here is a module nobody can install, found at [5/6] after
+        # the suite instead of now.
+        CLASH=$(pin_clashes)
+        if [ -n "$CLASH" ]; then
+            say ""
+            say "STOPPED: a pin still disagrees with the baseline after the rewrite."
+            printf '%s\n' "$CLASH" | sed 's/^/        /' | tee -a "$LOGDIR/summary.txt"
+            exit 1
+        fi
         say ""
-        say "      Each pin has to name the version the shared environment holds, or the module"
-        say "      cannot be installed at all: satisfying it would downgrade the baseline every"
-        say "      other module computes against, which is refused. Move each one in"
-        say "      modules/<name>/manifest.json to the installed version above, then bump that"
-        say "      module and run this again:"
-        say ""
-        say "          dev/scripts/bump-analysis-version.sh module <name>"
-        say ""
-        say "      Not done here. A pin is an input to a published module, so moving one can"
-        say "      change what that module computes, and the bump is what 00_static's"
-        say "      committed-change case asks for."
-        say ""
-        say "      The versions to write are already on disk, so the edit can be checked"
-        say "      without solving anything again:"
-        say "          $LOGDIR/packages-after-analysis.txt"
-        exit 1
+        say "      every pin now agrees with the baseline. The manifests are changed in the"
+        say "      tree and uncommitted, like the exported files below."
     fi
 fi
 say ""
