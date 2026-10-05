@@ -2,19 +2,19 @@
 
 Why PoolSeqFlow is built the way it is. This is the home for everything that used to live in the source as commentary: decisions and who made them, what was tried and rejected, what a choice was measured against, and the traps that produced a wrong answer once already.
 
-It is not user documentation — that is `manual/PoolSeqFlow-manual.md`. It is not an explanation of what the code does — that stays in the code. It is the reasoning a person needs before they *change* something, and the reason we moved it here is that the two kinds of writing had grown into each other: files where the argument for a design outweighed the description of it, and a developer had to read three paragraphs of history to find out what a function returned.
+It is not user documentation -- that is `manual/PoolSeqFlow-manual.md`. It is not an explanation of what the code does -- that stays in the code. It is the reasoning a person needs before they *change* something, and the reason we moved it here is that the two kinds of writing had grown into each other: files where the argument for a design outweighed the description of it, and a developer had to read three paragraphs of history to find out what a function returned.
 
 ## These notes are dated
 
 **Every note records the code as it stood when it was written, and says so at the top.** Later work moves things and a note is not rewritten to follow it: these are the record of how the project got here, not a second manual to keep in sync.
 
-So a present-tense description inside a note describes the code *at that note's date*. `manual/PoolSeqFlow-manual.md` is the current answer and always is — where the two disagree, the manual is right and the note is history.
+So a present-tense description inside a note describes the code *at that note's date*. `manual/PoolSeqFlow-manual.md` is the current answer and always is -- where the two disagree, the manual is right and the note is history.
 
-**Two files are exceptions and both say so at the top.** This index, and `shell-and-nextflow-gotchas.md` — a reference that is appended to as traps are found, with per-entry dates, rather than a record of one moment. Both are kept current.
+**Two files are exceptions and both say so at the top.** This index, and `shell-and-nextflow-gotchas.md` -- a reference that is appended to as traps are found, with per-entry dates, rather than a record of one moment. Both are kept current.
 
 ## The rule
 
-**It lives in `CLAUDE.md` at the repository root now, not here.** That file loads into every session; this one does not, which is why the rule was broken twice in a session that had it written down. Read `CLAUDE.md` for the current wording — the clause-level test, the tell-words, the third category, and the exclusions.
+**It lives in `CLAUDE.md` at the repository root now, not here.** That file loads into every session; this one does not, which is why the rule was broken twice in a session that had it written down. Read `CLAUDE.md` for the current wording -- the clause-level test, the tell-words, the third category, and the exclusions.
 
 In short: every comment *clause* is either what the code does or why we chose it. What it does stays, in one line. Why we chose it comes here.
 
@@ -23,12 +23,12 @@ In short: every comment *clause* is either what the code does or why we chose it
 | Where | What |
 |---|---|
 | **The source** | Only what a reader needs to understand the function below: what it does, what it returns, a contract or coupling they cannot see from here. |
-| **`manual/PoolSeqFlow-manual.md`** | Decisions that matter **scientifically** — anything that changes what a result means, or that a person interpreting output needs to know. The manual is the project's real documentation and is what the published site is generated from. |
+| **`manual/PoolSeqFlow-manual.md`** | Decisions that matter **scientifically** -- anything that changes what a result means, or that a person interpreting output needs to know. The manual is the project's real documentation and is what the published site is generated from. |
 | **Here** | The record of how it got here. Design churn, alternatives tried and dropped, what a thing used to be, measurements behind a choice, who decided what and when. |
 
 The manual is the one to keep watching. *"Pool size sets the detection limit"* is science and belongs in the manual. *"We tried three bcftools mechanisms and the second one silently returned zero records"* is development history and belongs here. A decision we changed five times is confusing to a reviewer and must not end up in either the source or the manual.
 
-**No source file references these notes**, and no source file references the test suite. Both point the wrong way. A note is dated, so a comment pointing at one imports a description of code as it used to be — which is the exact failure the rule above exists to prevent. And the dependency runs tests → scripts: a test may say what it is testing; a script may not say it is tested.
+**No source file references these notes**, and no source file references the test suite. Both point the wrong way. A note is dated, so a comment pointing at one imports a description of code as it used to be -- which is the exact failure the rule above exists to prevent. And the dependency runs tests -> scripts: a test may say what it is testing; a script may not say it is tested.
 
 ## Where this lives
 
@@ -38,16 +38,17 @@ The manual is the one to keep watching. *"Pool size sets the detection limit"* i
 
 ## Layout
 
-One file per subject, not per source file — the reasoning crosses file boundaries far more than the code does. A note names the source it applies to; a source file does not generally point back, except where a tripwire comment says "see the notes on X".
+One file per subject, not per source file -- the reasoning crosses file boundaries far more than the code does. A note names the source it applies to; a source file does not generally point back, except where a tripwire comment says "see the notes on X".
 
 | File | Subject |
 |---|---|
+| `sequencer-suffix.md` | why `_S<n>` must stay in `SampleID` and must not reach `RG_Sample`: the two unconnected messages a short name produces, the silent pool split a blank `RG_Sample` produces, and why stripping the suffix would lose a lane |
 | `metadata-file.md` | the sample metadata CSV, its prefixes, pooling and pool sizes |
 | `variant-model.md` | how work is shared between runs; the divergence tree |
 | `parameter-resolution.md` | what is computed vs set, and how a run's parameters are built |
 | `step-0-verification.md` | the checks, how often each runs, and how the report is assembled |
 | `change-guards.md` | what stops a project changing configuration mid-analysis |
-| `config-migration.md` | carrying a configuration forward a release: the 2.2.0 → 3.0.0 pass |
+| `config-migration.md` | carrying a configuration forward a release: the 2.2.0 -> 3.0.0 pass |
 | `four-roots.md` | installation / launch dir / mainDir / storageDir |
 | `dictionaries-and-snpeff.md` | step 1, and the three bugs its shape is the fix for |
 | `promotion.md` | moving artifacts from the working volume to permanent storage |
@@ -77,6 +78,18 @@ One file per subject, not per source file — the reasoning crosses file boundar
 | `host-glibc-floor.md` | v3.1.1's analysis environment installed only on the machine that froze it: virtual packages, the four guards, and why a solve cannot answer it |
 | `someone-elses-machine.md` | four defects a green suite could not see, because the suite runs where the assumption holds; and the second machine that found three of them in an hour |
 | `macos-support.md` | the sizing, after the manual was found claiming a platform the pinned environments cannot solve on: three blockers, and why exporting is what makes it single-platform |
+| `data-folder-walk.md` | step 0 prunes hidden folders and the read channel only filters them: what 3.2.0's CHANGELOG claimed, the symlink divergence beside it, and why a remote out-of-memory failure was not this |
+| `dropzerodepth-coverage.md` | the three separate mechanisms that had to be asserted, why `analysisParams()` being an exclusion list made one case prove less than its comment claimed, and the measurement showing the fixture cannot hold a zero-depth cell |
+| `logging.md` | every step lost its log on every failure path, and step 0 alone had the fix: the four designs measured against five failure modes, why writing as it happens beats a trap, and the two hypotheses that were wrong |
+| `parameter-rules.md` | the build: one helper, two callers, and every threshold measured. Which rules are in and why `cutadapt.min_length` cannot be, the level corrected by measuring, and why no multi-word phrase is safe to assert against folded output |
+| `parameter-validation.md` | PLANNED for before the next release cycle: step 0 validates no parameters at all, the catalogue of settings that produce nothing or silently change what a number means, and why the rules must live in one shell helper that both step 0 and `check_project.sh` call |
+| `migration-hole.md` | `dropZeroDepth` arriving needed a `migrate_config` note and nothing else: the shape every later addition copies and why stating the default beats narrating the change, the false conclusion a template key count leads to about the `storageDir` marker, and the two wrong files it was built in first |
+| `manual-pass.md` | the four shapes a release's read of the manual keeps finding, moved out of `RELEASING.md` because they are editorial rules an agent needs and Z does not, and what `check-manual-parameters.sh` proves against what the requirement actually is |
+| `empty-results.md` | a run that found nothing used to publish a table of column names and report success: the seven stages that all exit 0 over no records, the three refusals and the placeholder trap they avoid, and the measurement showing the destructive `-C` band is set by `varQualMin` rather than being a fixed range |
+| `unmeasured-cells.md` | what a pool with no reads at a site publishes, once `vcffilter.dropZeroDepth` made such a cell reachable: the measured shape bcftools emits, why a published `0` was two answers in one character, and the one `basicstats` aggregate that is left open |
+| `mapq-downgrade.md` | `scaleMapQ` measured whole-genome on real pools: three regimes (dead at 10 and below, total data loss from 11 to about 20, inverted above 30), why 100 dominates the shipped 50, and the frequency compression that scales with the frequency |
+| `cap-bam-cost.md` | SHELVED, measured: capping is the pipeline's second most expensive step and runs on one core of four. Where the time goes, why chromosomes are already independent, and why mpileup cannot take the cap instead. Its diagnosis is SUPERSEDED by `cap-depth-rewrite.md`; its timings are the record of what the step used to cost |
+| `cap-depth-rewrite.md` | capping made about seven times faster on Z's own BAMs, byte for byte: why the sorted stream makes all but one position of the check redundant, the difference array, the awk sweep that created the elements it deleted, and the two cases that passed for the wrong reason |
 | `brainstorming.md` | ideas for later releases: what each would buy, what it would break, and where it sits |
 | `module-queue.md` | the plan from v3.1.1: thirteen modules at one a week, published without a release, and the two shape questions the roster raised |
 
@@ -86,12 +99,12 @@ Each note says at the top what it was written against. Two changes cut across ma
 
 **Two scope renames happened after most of these were written**, in `cc00833`: the option scopes `samtools` and `bcftools` are now `cleanBAM` and `variantCall`. Any note naming `params.samtools.mapq` or `params.bcftools.maxDepth` is describing pre-3.0 code.
 
-**The comment campaign is finished and committed as `7ad02c1`, except `test/`**, whose comments — some 2,500 lines of them across the suite — were never swept. There the filter is different and `CLAUDE.md` says so: a comment recording the bug a case guards *is* its function, and deleting it is how the case later looks arbitrary and gets removed.
+**The comment campaign is finished and committed as `7ad02c1`, except `test/`**, whose comments -- some 2,500 lines of them across the suite -- were never swept. There the filter is different and `CLAUDE.md` says so: a comment recording the bug a case guards *is* its function, and deleting it is how the case later looks arbitrary and gets removed.
 
 ## Running a comment pass
 
-**Verification, when a pass runs:** `nextflow lint .` at zero errors *and* zero warnings, the suite, and per file a diff of non-comment lines against `HEAD`. For a Python file the line count misleads — a module docstring is not a `#` comment — so prove it with an AST comparison that strips docstrings. **Run `bash -n` over every shell file too**: an apostrophe written into a comment inside an embedded awk program closes the surrounding single-quoted string and stops the file parsing.
+**Verification, when a pass runs:** `nextflow lint .` at zero errors *and* zero warnings, the suite, and per file a diff of non-comment lines against `HEAD`. For a Python file the line count misleads -- a module docstring is not a `#` comment -- so prove it with an AST comparison that strips docstrings. **Run `bash -n` over every shell file too**: an apostrophe written into a comment inside an embedded awk program closes the surrounding single-quoted string and stops the file parsing.
 
-**The templates are not source.** `parameters.config.template`, `metadata.csv.template` and `multi-run.csv.example` are shipped to the user and read while editing, so their comments are the only help available at the point of use. Z ruled on them directly (2026-08-30): *"Too many comments make them unreadable… These are all manual material. The guides should be minimal here."* A template's comments say what a setting **is** and what format it takes; everything explanatory goes to the manual. **What must not be cut is not commentary at all:** the commented-out parameter assignments are the knobs. There are 14 in `parameters.config.template`, and `grep -vE '^\s*//'` hides them from an ordinary settings diff, so count them separately.
+**The templates are not source.** `parameters.config.template`, `metadata.csv.template` and `multi-run.csv.example` are shipped to the user and read while editing, so their comments are the only help available at the point of use. Z ruled on them directly (2026-08-30): *"Too many comments make them unreadable... These are all manual material. The guides should be minimal here."* A template's comments say what a setting **is** and what format it takes; everything explanatory goes to the manual. **What must not be cut is not commentary at all:** the commented-out parameter assignments are the knobs. There are 14 in `parameters.config.template`, and `grep -vE '^\s*//'` hides them from an ordinary settings diff, so count them separately.
 
-**Tooling:** `dev/scripts/comment-audit.sh` lists tell-word clauses and comment blocks of 4+ lines. It always exits 0 and is deliberately not a test case — a hard failure would train the next pass to reword around the words instead of deleting the decision behind them.
+**Tooling:** `dev/scripts/comment-audit.sh` lists tell-word clauses and comment blocks of 4+ lines. It always exits 0 and is deliberately not a test case -- a hard failure would train the next pass to reword around the words instead of deleting the decision behind them.

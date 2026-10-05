@@ -1,6 +1,7 @@
 # Build dependencies for the documentation site only.
 # The pipeline itself needs none of these - see install/environment.yml.
 #
-#   pip install -r docs/requirements.txt
-#   mkdocs serve
+#   python3 -m venv dev/manual/.venv
+#   dev/manual/.venv/bin/pip install -r manual/requirements.txt
+#   dev/scripts/serve_docs.sh
 mkdocs-material==9.7.7

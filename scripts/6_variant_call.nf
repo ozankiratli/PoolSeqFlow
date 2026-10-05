@@ -25,6 +25,14 @@ process CapBAM {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/6_VariantCalling_s1_CapBAM_${pair_id}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/6_VariantCalling_s1_CapBAM_${pair_id}_nextflow.log) 2>&1
 
     # Nothing to do if the VCF this feeds already exists. A header-only BAM satisfies the output
     # declaration; VariantCall finds the VCF and never opens it.
@@ -42,12 +50,6 @@ process CapBAM {
         echo "CAP BAM ${pair_id}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/6_VariantCalling_s1_CapBAM_${pair_id}_nextflow.log
     """
 }
 
@@ -74,6 +76,14 @@ process VariantCall {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/6_VariantCall_${run.vcf.fileName}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/6_VariantCall_${run.vcf.fileName}_nextflow.log) 2>&1
 
     # Either volume: still here while step 7 or 8 may read it, promoted once both are done.
     vcf_at=\$(find_artifact.sh "${rel_vcf}/${vcf_file}" ${search_roots} || true)
@@ -92,6 +102,22 @@ process VariantCall {
         ${run.software.bcftools} call ${run.variantCall.callOptions} \
         -o ${vcf_file}
 
+        # bcftools writes a well-formed header and no records when the pileup reaches it empty,
+        # and every later step succeeds over nothing, so this is the only place a call set that
+        # found nothing can still be told apart from one that has not been made yet.
+        called=\$(grep -vc '^#' ${vcf_file} || true)
+        if [ "\$called" -eq 0 ]; then
+            echo "VARIANT CALL ${vcf_file}: ERROR: variant calling produced no records at all."
+            echo "VARIANT CALL ${vcf_file}: The pileup reached bcftools call with nothing in it."
+            echo "VARIANT CALL ${vcf_file}: variantCall.scaleMapQ is the setting that does this:"
+            echo "VARIANT CALL ${vcf_file}: above 10 and below variantCall.varQualMin it caps every"
+            echo "VARIANT CALL ${vcf_file}: read's mapping quality under the minimum that then"
+            echo "VARIANT CALL ${vcf_file}: rejects it, and mpileup emits nothing without failing."
+            echo "VARIANT CALL ${vcf_file}: The pileup ran as: ${run.variantCall.mpileupOptions}"
+            echo "VARIANT CALL ${vcf_file}: Nothing was published, so this costs nothing already made."
+            exit 1
+        fi
+
         echo "VARIANT CALL ${vcf_file}: Fixing minor header issue..."
         sed -i 's/##INFO=<ID=MQ,Number=1,Type=Integer/##INFO=<ID=MQ,Number=1,Type=Float/' ${vcf_file}
         echo "VARIANT CALL ${vcf_file}: Type of MQ changed from Integer to Float..."
@@ -104,12 +130,6 @@ process VariantCall {
         echo "VARIANT CALL ${vcf_file}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/6_VariantCall_${run.vcf.fileName}_nextflow.log
     """
 }
 

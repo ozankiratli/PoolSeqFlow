@@ -44,7 +44,7 @@ def prose(entry: dict, key: str, reported: dict[str, str]) -> str:
     year = entry.get("year", "")
     tail = ", ".join(p for p in (who, where, year) if p)
 
-    line = f"- **{head}** — {tail}" if tail else f"- **{head}**"
+    line = f"- **{head}** -- {tail}" if tail else f"- **{head}**"
     if entry.get("doi"):
         line += f"  \n  <https://doi.org/{entry['doi']}>"
     elif entry.get("url"):

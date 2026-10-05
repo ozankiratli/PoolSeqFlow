@@ -17,6 +17,14 @@ process WriteCitations {
     probes = (run.software.collect { name, cmd -> "${name}=${cmd}" } +
               ["nextflow=nextflow", "python=python3"]).join(' ')
     """
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/Citations_WriteCitations_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/Citations_WriteCitations_nextflow.log) 2>&1
     . ${run.dir.lib}/tool_version.sh
 
     versions=""
@@ -41,12 +49,6 @@ process WriteCitations {
     # Not piped into tee, which would make the exit status tee's.
     cat citations.txt
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/Citations_WriteCitations_nextflow.log
     """
 }
 

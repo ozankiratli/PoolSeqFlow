@@ -309,7 +309,7 @@
 
 /* -------------------------------------------------------------- tables ---- */
 
-/* Rules only, no fills — the tables here are dense reference material and read
+/* Rules only, no fills -- the tables here are dense reference material and read
    better without a striped background competing with the code spans inside. */
 .md-typeset table:not([class]) {
   border: none;
@@ -477,7 +477,7 @@
   margin-bottom: 1.4em;
 }
 
-/* Badge row — keeps the shields on one line with no bullet artefacts. */
+/* Badge row -- keeps the shields on one line with no bullet artefacts. */
 .md-typeset .psf-badges {
   display: flex;
   flex-wrap: wrap;

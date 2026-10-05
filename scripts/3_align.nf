@@ -25,6 +25,14 @@ process Align {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/3_AlignReads_Align_${pair_id}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/3_AlignReads_Align_${pair_id}_nextflow.log) 2>&1
 
     # Either volume, permanent-first. An absent artifact is the ordinary answer, so emptiness is
     # what the branch tests.
@@ -50,12 +58,6 @@ process Align {
         echo "ALIGNING ${pair_id}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/3_AlignReads_Align_${pair_id}_nextflow.log
     """
 }
 

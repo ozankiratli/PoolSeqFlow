@@ -11,7 +11,7 @@
 #
 # J_A read off a sample is biased upward by the sampling: two reads from one pool agree more
 # often than two chromosomes do. The unbiased form subtracts that pool's own diversity at the
-# site, scaled by its effective sample size there. J_AB takes no such term — the two pools are
+# site, scaled by its effective sample size there. J_AB takes no such term -- the two pools are
 # sequenced independently, so nothing correlates their draws.
 #
 #     nei_distance(freq, site, n_eff_site)

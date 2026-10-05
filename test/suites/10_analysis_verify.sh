@@ -4,6 +4,7 @@
 # env: analysis
 # covers: analysis/0_verify_analysis.nf analysis/lib/nf/citations.nf
 # covers: analysis.nf
+# covers: parameters.config.template
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #

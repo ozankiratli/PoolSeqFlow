@@ -59,6 +59,13 @@ plugins-prod
 docs/
 site/
 
+# The mkdocs virtual environment, which dev/scripts/serve_docs.sh looks for. It belongs under
+# dev/: `manual` is a payload item, so the installer's `cp -r` would carry one placed there into
+# every installation made from a checkout. manual/.venv/ is listed only so that a copy made out of
+# habit cannot be committed.
+dev/manual/.venv/
+manual/.venv/
+
 __pycache__/
 *.pyc
 

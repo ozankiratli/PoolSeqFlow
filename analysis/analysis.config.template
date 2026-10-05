@@ -1,4 +1,4 @@
-// PoolSeqFlow analysis layer — project settings. The manual explains every setting in this file:
+// PoolSeqFlow analysis layer -- project settings. The manual explains every setting in this file:
 //     https://ozankiratli.github.io/PoolSeqFlow/
 //
 // OPTIONAL. Without it every module uses the values below, which are what PoolSeqFlow falls
@@ -58,7 +58,7 @@ params {
         folderName = ''
 
         // HOW YOUR METADATA FILE IS READ. Everything in here describes metadata.csv rather than
-        // this invocation, and none of it changes what the pipeline computed — exp_ and pt_
+        // this invocation, and none of it changes what the pipeline computed -- exp_ and pt_
         // columns are recorded and never acted on, so results you already have stay valid.
         //
         // A key this scope does not have is refused by name. That is the point of the scope: a
@@ -73,17 +73,17 @@ params {
             //     ['NA', 'N/A', 'na', '-']    several
             //     ['na_*']                    a wildcard: * is any run, ? is one character
             //
-            // Matched WHOLE and CASE SENSITIVELY, so 'NA' does not catch 'na' — list both if
+            // Matched WHOLE and CASE SENSITIVELY, so 'NA' does not catch 'na' -- list both if
             // your file has both. That is deliberate: a level genuinely called `na` has to stay
             // a level, and no setting can tell the two apart for you.
             //
             // Applies to exp_ and pt_ columns, which are the only ones the analysis layer reads.
             // An entry that would match everything is refused rather than obeyed, and the
-            // verification report names every cell this turned into a blank — read that line,
+            // verification report names every cell this turned into a blank -- read that line,
             // because a pattern wider than you meant removes values and leaves no error behind.
             missingValueEncoding = []
 
-            // THE TIME AXIS. Set this whenever your metadata has an exp_time column — a project
+            // THE TIME AXIS. Set this whenever your metadata has an exp_time column -- a project
             // that has one and does not say how to read it is refused, because time is the one
             // variable whose ORDER changes what a result means and it is never guessed.
             //
@@ -98,7 +98,7 @@ params {
             //     //                  is meaningful. Needs `unit` below.
             //     //   'datetime'     the values are dates. Needs `format`, and `locale` if the
             //     //                  month names are not English. Measured in days.
-            //     //   'categorical'  the values are labels in an order you give. Rank only —
+            //     //   'categorical'  the values are labels in an order you give. Rank only --
             //     //                  no rate can be fitted, and no unit may be set.
             //     kind = 'numerical'
             //
@@ -109,11 +109,11 @@ params {
             //     //   step                                  evenly spaced in something unnamed
             //     unit = 'generation'
             //
-            //     // datetime only. java.time patterns — yyyy or uuuu year, MM month digits,
+            //     // datetime only. java.time patterns -- yyyy or uuuu year, MM month digits,
             //     // MMM short name, MMMM full name, dd day, HH 24-hour, hh with a for 12-hour.
             //     // 07/03/2024 is a valid date under dd/MM/yyyy AND MM/dd/yyyy, four months
             //     // apart, so this is asked for rather than guessed. The verification report
-            //     // prints the dates it read, as ISO, in the order it will use them — read it.
+            //     // prints the dates it read, as ISO, in the order it will use them -- read it.
             //     format = 'dd/MM/yyyy'
             //
             //     // datetime only. The language month and weekday names are written in.
@@ -126,7 +126,7 @@ params {
             //     order = ['pre', 'post']
             // }
 
-            // PHENOTYPES — what was MEASURED on each pool, for a module to test against.
+            // PHENOTYPES -- what was MEASURED on each pool, for a module to test against.
             //
             // One block per pt_ column, and declare as many as you record. Those are the columns
             // checked for agreeing across the rows of one pool, which is what stops a pool
@@ -135,7 +135,7 @@ params {
             //
             // DECLARING ONE DOES NOT CHOOSE IT. Which phenotype an analysis tests against is the
             // module's own setting, so a project with three of them runs three analyses from one
-            // declaration block — set folderName so each lands somewhere of its own.
+            // declaration block -- set folderName so each lands somewhere of its own.
             //
             // A pt_ column you do not declare is still recorded, checked and reported; it simply
             // carries no scale, so no module can test against it. The verification report names
@@ -144,20 +144,20 @@ params {
             //
             // phenotypes {
             //     pt_wingspan {
-            //         // WHAT KIND OF SCALE IT IS. Never guessed — 0 and 1 read as numbers as
+            //         // WHAT KIND OF SCALE IT IS. Never guessed -- 0 and 1 read as numbers as
             //         // readily as they encode two groups, and no file says which of 'case'
             //         // and 'control' is the affected one.
             //         //
             //         //   'quantitative'  a measurement. Every value must parse as a number.
             //         //                   Counts and percentages are this too.
-            //         //   'binary'        PRESENCE and ABSENCE — affected or not, resistant or
+            //         //   'binary'        PRESENCE and ABSENCE -- affected or not, resistant or
             //         //                   not. Exactly two levels, as [absent, present].
             //         //   'ordinal'       groups whose ORDER means something and whose spacing
             //         //                   does not: low, medium, high.
             //         //   'nominal'       groups with no order: spotted, striped, curly.
             //         //
-            //         // Two groups that are not an absence and a presence — coastal and inland,
-            //         // two host plants — are 'nominal', not 'binary'.
+            //         // Two groups that are not an absence and a presence -- coastal and inland,
+            //         // two host plants -- are 'nominal', not 'binary'.
             //         kind = 'quantitative'
             //     }
             //
@@ -167,7 +167,7 @@ params {
             //         // REQUIRED for binary, ordinal and nominal; refused for quantitative.
             //         //
             //         // For 'binary' the order is [absent, present] and it decides the SIGN of
-            //         // every effect reported against it — write it the wrong way round and
+            //         // every effect reported against it -- write it the wrong way round and
             //         // every result reverses, with nothing in the data to tell you.
             //         // For 'ordinal' the order IS the scale.
             //         // For 'nominal' the order only sets which group others are reported
@@ -180,7 +180,7 @@ params {
             //     }
             // }
 
-            // COVARIATES — what was MEASURED alongside, and is neither set nor the response.
+            // COVARIATES -- what was MEASURED alongside, and is neither set nor the response.
             // A cage temperature, an altitude, a collection site, a technician when every
             // library of a pool shares one.
             //
@@ -191,15 +191,15 @@ params {
             //
             // Declaring one is optional. Undeclared, it is recorded, checked and reported like
             // any other pool-level column. Declared, it also gets a scale, so a module can
-            // compute with it — the kinds are the phenotype's and mean the same things.
+            // compute with it -- the kinds are the phenotype's and mean the same things.
             //
             // WHAT IT HOLDS IS SET HERE; WHAT IT DOES IS SET IN design.covariates above. A
             // covariate left out of the design is still resolved, still reported and still
-            // published — it is simply not a term in anybody's model.
+            // published -- it is simply not a term in anybody's model.
             //
             // EVEN ON THE RECORD ONLY IT EARNS ITS PLACE. With six or twenty pools there are
             // few degrees of freedom to spend, and a value in the report lets a reader see that
-            // the high-phenotype pools were also the warm ones — which is the confounding
+            // the high-phenotype pools were also the warm ones -- which is the confounding
             // nobody would otherwise suspect.
             //
             // covariates {
@@ -212,14 +212,14 @@ params {
             //     }
             // }
             //
-            // What differs BETWEEN two rows of one pool — the lane, the run, the technician who
-            // handled one library — is NOT a covariate and cannot be made one. The reads are
+            // What differs BETWEEN two rows of one pool -- the lane, the run, the technician who
+            // handled one library -- is NOT a covariate and cannot be made one. The reads are
             // merged, so no analysis can attribute one to the row it came from. Record it in an
             // unprefixed column; it is kept and never interpreted.
 
         }
 
-        // WHAT YOUR EXPERIMENT WAS — which pools are independent of each other.
+        // WHAT YOUR EXPERIMENT WAS -- which pools are independent of each other.
         //
         // Its own scope beside `metadata`, not inside it: that one says how the file is READ,
         // this one says what the file DESCRIBES. This is where degrees of freedom come from,
@@ -233,12 +233,12 @@ params {
         // design {
         //     // The variables that identify one thing you set up. Left empty it is every exp_
         //     // variable except time. SET IT if one of your exp_ columns is recorded ON each
-        //     // pool rather than saying what the pool is — a temperature, a census — because
+        //     // pool rather than saying what the pool is -- a temperature, a census -- because
         //     // that differs pool to pool and would split every unit into singletons.
         //     by = ['exp_population', 'exp_replicate']
         //
         //     // Which of those index REPEATS rather than naming a condition. Both take any
-        //     // number of columns — two lanes crossed with three sequencing runs is
+        //     // number of columns -- two lanes crossed with three sequencing runs is
         //     // technicalRep = ['exp_lane', 'exp_seqrun'], six technical replicates each.
         //     //
         //     // The two are not interchangeable. Biological replicates are independent repeats
@@ -250,13 +250,13 @@ params {
         //     // column out of it and each lane counts as an independent replicate, which
         //     // roughly halves every standard error in the project.
         //     //
-        //     // A key column named in neither is a CONDITION — what is being compared. The
+        //     // A key column named in neither is a CONDITION -- what is being compared. The
         //     // verification report prints every key column under its role, which is the only
         //     // place a column in the wrong place can be seen.
         //     biologicalRep = ['exp_replicate']
         //     technicalRep  = ['exp_lane']
         //
-        //     // Which of your cov_ columns are PART OF THE DESIGN — the ones a module may
+        //     // Which of your cov_ columns are PART OF THE DESIGN -- the ones a module may
         //     // adjust for, rather than only report. Left empty it is every cov_ column that
         //     // has a declared scale under metadata.covariates; naming any restricts it.
         //     //
@@ -269,7 +269,7 @@ params {
         //     covariates    = ['cov_temperature']
         //
         //     // WHAT A TIME AXIS MAKES OF ALL THAT. Only a time course can leave a trajectory
-        //     // with a gap in it, so this is the one thing the series scope holds — what a
+        //     // with a gap in it, so this is the one thing the series scope holds -- what a
         //     // series IS comes from the keys above.
         //     series {
         //         // What to do when a series does not cover every timepoint.

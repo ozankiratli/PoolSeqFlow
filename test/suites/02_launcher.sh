@@ -2,7 +2,8 @@
 # The ./PoolSeqFlow wrapper's environment handling, against a stub conda.
 # cost: static
 # covers: PoolSeqFlow lib/wrapper_lib.sh lib/tool_version.sh bin/check_install.sh
-# covers: bin/check_analysis_install.sh bin/check_project.sh
+# covers: bin/check_analysis_install.sh bin/check_project.sh bin/check_parameters.sh
+# covers: parameters.config.template metadata.csv.template
 #
 # These run entirely against the fake conda in lib/sandbox.sh. Nothing here creates,
 # activates or removes a real environment: a test suite that could delete an operator's
@@ -159,6 +160,145 @@ test_check_project_runs_in_the_project_with_the_environment_active() {
     assert_contains "$LAUNCHER_OUTPUT" "STUB check_project ran" "and it is the project script"
     assert_not_contains "$LAUNCHER_OUTPUT" "STUB check_install ran" "not the installation one"
 }
+
+# THE REAL bin/check_project.sh, not the stub the cases above use: what is under test here is the
+# script's own verdict rather than the wrapper's dispatch to it.
+#
+# PATH is cut back so that nextflow cannot be found, which keeps these cases free of a JVM and
+# asserts the property that makes them possible: the byte-order-mark verdict is printed BEFORE
+# the parse it protects, so it stands whether or not nextflow is there. A check that could only
+# speak after a successful parse would be silent in the one case it exists for.
+#
+# WHY IT EXISTS, measured 2026-09-26: a UTF-8 mark makes Nextflow refuse the config, and the
+# refusal it writes is `Unexpected character: ''` - the character rendered as nothing, against a
+# line the user can see is correct. Windows editors add the mark when they save as UTF-8.
+check_project_on() {
+    CP_OUT=$(cd "$1" && env PATH="/usr/bin:/bin" bash "$REPO_ROOT/bin/check_project.sh" 2>&1)
+    CP_STATUS=$?
+}
+
+test_check_project_passes_a_config_with_no_byte_order_mark() {
+    local proj; proj=$(guard_path "$TEST_TMPDIR/bom-clean")
+    rm -rf "$proj"; mkdir -p "$proj"
+    cp "$REPO_ROOT/parameters.config.template" "$proj/parameters.config"
+    check_project_on "$proj"
+    assert_contains "$CP_OUT" "NO BYTE-ORDER MARK" "a plain file should be said to be plain"
+    assert_not_contains "$CP_OUT" "dos2unix" "and no fix should be offered for it"
+}
+
+test_check_project_names_a_utf8_byte_order_mark_in_the_config() {
+    local proj; proj=$(guard_path "$TEST_TMPDIR/bom-utf8")
+    rm -rf "$proj"; mkdir -p "$proj"
+    { printf '\xef\xbb\xbf'; cat "$REPO_ROOT/parameters.config.template"; } > "$proj/parameters.config"
+    check_project_on "$proj"
+    assert_status 1 "$CP_STATUS" "a config Nextflow cannot parse is a failure, not a note"
+    assert_contains "$CP_OUT" "STARTS WITH A BYTE-ORDER MARK" "the verdict should name the cause"
+    assert_contains "$CP_OUT" "utf-8" "and which mark it is"
+    assert_contains "$CP_OUT" "dos2unix $proj/parameters.config" \
+        "and give a command that can be pasted, with the file in it"
+}
+
+# The utf-16 branch, so the check is not a test for one three-byte prefix. Excel's "Unicode Text"
+# and a PowerShell redirect both write this, and dos2unix converts it to UTF-8 - measured.
+test_check_project_names_a_utf16_byte_order_mark_in_the_config() {
+    local proj; proj=$(guard_path "$TEST_TMPDIR/bom-utf16")
+    rm -rf "$proj"; mkdir -p "$proj"
+    python3 -c "import sys; open(sys.argv[1],'wb').write(open(sys.argv[2],'rb').read().decode().encode('utf-16'))" \
+        "$proj/parameters.config" "$REPO_ROOT/parameters.config.template"
+    check_project_on "$proj"
+    assert_status 1 "$CP_STATUS" "a UTF-16 config cannot be parsed either"
+    assert_contains "$CP_OUT" "STARTS WITH A BYTE-ORDER MARK" "the verdict should name the cause"
+    assert_contains "$CP_OUT" "utf-16" "and say it is a UTF-16 one, not a UTF-8 one"
+}
+
+# THE PARAMETER RULES ARE bin/check_parameters.sh's, and its own cases are in 03_helpers where
+# they cost nothing. What these assert is the WIRING: that check_project.sh calls it, renders each
+# level the way this script renders everything else, folds the explanation, and lets a FAIL decide
+# its own exit status. One rule is used as the vehicle and it does not matter which.
+#
+# A STUBBED nextflow, so these stay in a suite that starts no JVM. It answers the two forms the
+# script uses: a bare `config` for the parse verdict, and `config -flat` for the values read after
+# it. STATUS IS NOT ASSERTED except where noted: PATH is cut back so no tool resolves, so the
+# tools section fails in every one of these.
+check_project_with_pileup() {   # mpileup-option-string
+    local opts="$1" proj stub
+    proj=$(guard_path "$TEST_TMPDIR/pileup-check")
+    rm -rf "$proj"; mkdir -p "$proj"
+    cp "$REPO_ROOT/parameters.config.template" "$proj/parameters.config"
+    cp "$REPO_ROOT/metadata.csv.template" "$proj/metadata.csv"
+    stub=$(guard_path "$TEST_TMPDIR/pileup-check-stub")
+    rm -rf "$stub"; mkdir -p "$stub"
+    cat > "$stub/nextflow" <<STUB
+#!/bin/sh
+[ "\$1" = config ] || exit 1
+cat <<'FLAT'
+params.metadataFile = 'metadata.csv'
+params.multiRunFile = 'runs.csv'
+params.multiRun = false
+params.ploidy = 2
+params.poolSize = 100
+params.vcffilter.minDP = 20
+params.vcffilter.dropZeroDepth = true
+params.filterFalsePositives.sampleThreshold = 0.2
+params.capBAM.maxDepth = -1
+params.variantCall.maxDepth = 0
+params.fastqc.memory = 2048
+FLAT
+echo "params.variantCall.mpileupOptions = '$opts'"
+STUB
+    chmod +x "$stub/nextflow"
+    CP_OUT=$(cd "$proj" && env PATH="$stub:/usr/bin:/bin" bash "$REPO_ROOT/bin/check_project.sh" 2>&1)
+    CP_STATUS=$?
+}
+
+# SILENCE IS THE ANSWER FOR A SOUND PARAMETER SET. The helper prints a finding per rule that has
+# something to say and nothing otherwise, so a healthy project gets one line rather than nine.
+test_check_project_says_nothing_to_flag_for_the_shipped_defaults() {
+    check_project_with_pileup "-B -C 100 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
+    assert_contains "$CP_OUT" "NOTHING TO FLAG" "the template's own values should raise nothing"
+    assert_not_contains "$CP_OUT" "DISCARDS EVERY READ" "and certainly not a failure"
+}
+
+test_check_project_renders_a_parameter_failure() {
+    check_project_with_pileup "-B -C 15 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
+    assert_contains "$CP_OUT" "DISCARDS EVERY READ" "the verdict should be rendered"
+    assert_contains "$CP_OUT" "variantCall.scaleMapQ" "against the parameter it belongs to"
+    assert_contains "$CP_OUT" "15 is below varQualMin 30" "with the detail beside it"
+    # The explanation is folded under the row rather than run off the terminal.
+    assert_contains "$CP_OUT" "Raise scaleMapQ above varQualMin" "and the explanation printed"
+    assert_status 1 "$CP_STATUS" "and a parameter failure should fail the check"
+}
+
+# THE BOUNDARY MOVES WITH varQualMin, so a check written against a constant would be wrong. The
+# same -C 15 that fails above is sound here.
+test_check_project_accepts_a_scale_that_clears_a_lower_minimum() {
+    check_project_with_pileup "-B -C 15 -q 5 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
+    assert_contains "$CP_OUT" "NOTHING TO FLAG" "15 clears a minimum of 5"
+    assert_not_contains "$CP_OUT" "DISCARDS EVERY READ" "and must not be refused"
+}
+
+# A NOTE IS NOT A WARNING AND NOT A FAILURE, and the three are rendered differently. An option
+# string pinned by hand with no -C in it cannot be judged, and saying so is the answer.
+test_check_project_reports_an_unjudgeable_option_string() {
+    check_project_with_pileup "-B -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
+    assert_contains "$CP_OUT" "NOT CHECKED" "an option string without -C is unjudged"
+    assert_contains "$CP_OUT" "no -C or -q in mpileupOptions" "and says why"
+    assert_not_contains "$CP_OUT" "DISCARDS EVERY READ" "never guessed at"
+}
+
+# The helper is part of the installation, so its absence is an incomplete install rather than a
+# clean bill of health. Reported, not passed over.
+test_check_project_reports_a_missing_parameter_checker() {
+    local saved
+    saved=$(guard_path "$TEST_TMPDIR/checker-saved")
+    cp "$REPO_ROOT/bin/check_parameters.sh" "$saved"
+    chmod -x "$REPO_ROOT/bin/check_parameters.sh"
+    check_project_with_pileup "-B -C 100 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou"
+    chmod +x "$REPO_ROOT/bin/check_parameters.sh"
+    assert_contains "$CP_OUT" "NOT CHECKED" "a missing checker should be reported"
+    assert_contains "$CP_OUT" "check_parameters.sh is missing" "and named"
+}
+
 
 # `conda env create` takes its name from environment.yml unless -n overrides it. Without the
 # override every release lands in one environment again, which is the bug being fixed.
@@ -321,7 +461,7 @@ test_install_reports_environments_left_from_other_versions() {
     run_launcher_with_envs "base PoolSeqFlow PoolSeqFlow-0.1.0" install
     assert_contains "$LAUNCHER_OUTPUT" "Other PoolSeqFlow environments" "should report what else is installed"
     assert_contains "$LAUNCHER_OUTPUT" "unversioned" "the legacy env should be labeled, not called a version"
-    assert_contains "$LAUNCHER_OUTPUT" "uninstall_all" "should offer the bulk removal command"
+    assert_contains "$LAUNCHER_OUTPUT" "uninstall all" "should offer the bulk removal command"
 }
 
 test_list_marks_the_current_version() {
@@ -350,7 +490,7 @@ test_uninstall_explains_itself_when_the_environment_is_absent() {
 
 test_uninstall_all_removes_every_poolseqflow_environment() {
     local log
-    run_launcher_with_envs "base PoolSeqFlow PoolSeqFlow-0.1.0 $VERSIONED_ENV" uninstall_all <<< "y"
+    run_launcher_with_envs "base PoolSeqFlow PoolSeqFlow-0.1.0 $VERSIONED_ENV" uninstall all <<< "y"
     log=$(cat "$LAUNCHER_CONDA_LOG")
     assert_contains "$log" "env remove -n PoolSeqFlow " "should remove the legacy environment"
     assert_contains "$log" "env remove -n PoolSeqFlow-0.1.0" "should remove other versions"
@@ -358,7 +498,7 @@ test_uninstall_all_removes_every_poolseqflow_environment() {
 }
 
 test_uninstall_all_aborts_on_a_negative_answer() {
-    run_launcher_with_envs "base PoolSeqFlow PoolSeqFlow-0.1.0" uninstall_all <<< "n"
+    run_launcher_with_envs "base PoolSeqFlow PoolSeqFlow-0.1.0" uninstall all <<< "n"
     assert_status 1 "$LAUNCHER_STATUS" "declining should exit non-zero"
     assert_contains "$LAUNCHER_OUTPUT" "Aborted" "should say it aborted"
     assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env remove" "must remove nothing"
@@ -367,20 +507,38 @@ test_uninstall_all_aborts_on_a_negative_answer() {
 # Piped into a script or run from CI there is no one to answer, and silence must not be
 # taken for consent.
 test_uninstall_all_aborts_without_a_terminal() {
-    run_launcher_with_envs "base PoolSeqFlow" uninstall_all < /dev/null
+    run_launcher_with_envs "base PoolSeqFlow" uninstall all < /dev/null
     assert_status 1 "$LAUNCHER_STATUS" "no confirmation should exit non-zero"
     assert_contains "$LAUNCHER_OUTPUT" "no confirmation received" "should say why it stopped"
     assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env remove" "must remove nothing"
 }
 
-# The wrapper takes exactly one subcommand; parameters.config.template documents that.
+# Four subcommands take a word of their own -- `analysis`, `check`, `init multi`, `uninstall all`.
+# Every other takes none, and the ones that do take exactly the words they name.
 test_wrapper_rejects_extra_arguments() {
-    run_launcher_with_envs "base" uninstall all
-    assert_status 1 "$LAUNCHER_STATUS" "two arguments should be refused"
+    run_launcher_with_envs "base" list extra
+    assert_status 1 "$LAUNCHER_STATUS" "a verb that takes no word should refuse one"
+    run_launcher_with_envs "base" init bogus
+    assert_status 1 "$LAUNCHER_STATUS" "init should refuse a word that is not multi"
+    run_launcher_with_envs "base" uninstall bogus
+    assert_status 1 "$LAUNCHER_STATUS" "uninstall should refuse a word that is not all"
+    run_launcher_with_envs "base" init multi extra
+    assert_status 1 "$LAUNCHER_STATUS" "init should refuse a second word"
     run_launcher_with_envs "base"
     assert_status 1 "$LAUNCHER_STATUS" "no argument should be refused"
     run_launcher_with_envs "base" nonsense_command
     assert_status 1 "$LAUNCHER_STATUS" "an unknown subcommand should be refused"
+}
+
+# The old single-token names shipped in 3.2.0, so they say where they went rather than reading as
+# an unknown subcommand.
+test_the_renamed_subcommands_say_what_they_are_now() {
+    run_launcher_with_envs "base" init_multi
+    assert_status 1 "$LAUNCHER_STATUS" "init_multi should be refused"
+    assert_contains "$LAUNCHER_OUTPUT" "'init multi'" "and should name what replaced it"
+    run_launcher_with_envs "base" uninstall_all
+    assert_status 1 "$LAUNCHER_STATUS" "uninstall_all should be refused"
+    assert_contains "$LAUNCHER_OUTPUT" "'uninstall all'" "and should name what replaced it"
 }
 
 # Everything `init` writes is something you then edit, so a second run must leave it alone.
@@ -413,13 +571,13 @@ test_init_multi_switches_multirun_on_without_inventing_a_table() {
     proj=$(guard_path "$TEST_TMPDIR/init-multi-project")
     rm -rf "$proj"; mkdir -p "$proj"
 
-    out=$(cd "$proj" && POOLSEQFLOW_HOME="$REPO_ROOT" bash "$REPO_ROOT/PoolSeqFlow" init_multi 2>&1)
+    out=$(cd "$proj" && POOLSEQFLOW_HOME="$REPO_ROOT" bash "$REPO_ROOT/PoolSeqFlow" init multi 2>&1)
     assert_contains "$(grep -E '^[[:space:]]*multiRun[[:space:]]*=' "$proj/parameters.config")" \
-        "true" "init_multi should switch multiRun on"
+        "true" "init multi should switch multiRun on"
     assert_contains "$out" "multi-run.csv.example" "should point at the rules for writing a table"
-    [ -f "$proj/multi-run.csv.example" ] || fail_case "init_multi should leave the example beside you"
+    [ -f "$proj/multi-run.csv.example" ] || fail_case "init multi should leave the example beside you"
     if [ -e "$proj/runs.csv" ]; then
-        fail_case "init_multi must not invent a run table"
+        fail_case "init multi must not invent a run table"
     fi
 }
 
@@ -1535,7 +1693,7 @@ test_uninstall_aborts_on_a_negative_answer() {
     assert_dir "$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION" "and leave the pipeline in place"
 }
 
-# The same shape as uninstall_all: no terminal means no consent, so nothing goes.
+# The same shape as `uninstall all`: no terminal means no consent, so nothing goes.
 test_uninstall_aborts_without_a_terminal() {
     run_launcher_with_envs "base $VERSIONED_ENV" install
     local sb; sb=$(dirname "$LAUNCHER_PREFIX")
@@ -1613,7 +1771,30 @@ test_install_puts_the_tab_completion_where_bash_finds_it() {
     assert_file "$file" "the completion should be installed under XDG_DATA_HOME"
     assert_contains "$(cat "$file" 2>/dev/null)" "complete -F _poolseqflow" \
         "and it should be the real completion, not an empty placeholder"
-    assert_contains "$LAUNCHER_OUTPUT" "bashcompinit" "the message should tell a zsh user what to add"
+}
+
+# WHAT TO DO NEXT DEPENDS ON THE SHELL, and the message says only the half that applies.
+#
+# Printing both cases buried the half with work in it: Z installed 3.2.0, read a message
+# explaining bash and zsh, and did not add the two zsh lines - so completion did not work for
+# the person who had just written it. $SHELL is set here rather than inherited, or the case
+# would assert whatever shell the operator happens to use.
+test_the_completion_advice_matches_the_users_shell() {
+    SHELL=/bin/zsh run_launcher_with_envs "base $VERSIONED_ENV" install
+    assert_status 0 "$LAUNCHER_STATUS" "install should succeed under zsh"
+    # The ACTIONABLE part, not the greeting: zsh cannot find a completion until its directory
+    # is on $fpath, so the line that puts it there is what the message owes a zsh user. The
+    # wording around it is free to change without failing this.
+    assert_contains "$LAUNCHER_OUTPUT" "fpath=(" "zsh needs the fpath line"
+    assert_contains "$LAUNCHER_OUTPUT" "zsh/site-functions" "naming the directory it just wrote"
+
+    SHELL=/bin/bash run_launcher_with_envs "base $VERSIONED_ENV" install
+    assert_status 0 "$LAUNCHER_STATUS" "install should succeed under bash"
+    # `fpath=(` and not `~/.zshrc`: the PATH advice names ~/.zshrc too, for a prefix that is
+    # not on PATH - which it never is in a sandbox - so that needle matches a message this case
+    # is not about.
+    assert_not_contains "$LAUNCHER_OUTPUT" "fpath=(" \
+        "and must not hand a bash user the zsh incantation"
 }
 
 # UNINSTALLING THE LAST VERSION TAKES IT WITH IT. A completion left behind completes a command

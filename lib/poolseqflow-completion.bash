@@ -3,11 +3,12 @@
 # Tab completion for PoolSeqFlow, in bash and in zsh.
 #
 # SOURCED, never run. `PoolSeqFlow install` puts it in the user's bash-completion directory,
-# where bash finds it by the command's name. zsh does not read that directory, so it needs two
-# lines in ~/.zshrc, and install prints them:
+# where bash finds it by the command's name.
 #
-#     autoload -U +X bashcompinit && bashcompinit
-#     . ~/.local/share/bash-completion/completions/PoolSeqFlow
+# FOR BASH ONLY. zsh has its own, lib/_PoolSeqFlow, rather than running this one through
+# `bashcompinit` - that emulates `compgen` and the emulation ignores the `--` prefix argument,
+# so every candidate is offered whatever has been typed. Measured: `compgen -W 'alpha beta'
+# -- 'a'` answers `alpha beta`.
 #
 # NOTHING HERE RUNS THE WRAPPER. It evaluates `conda shell.bash hook` before it dispatches, which
 # costs about 0.4s, and a keystroke cannot. Every list below is a literal or comes from the
@@ -53,9 +54,8 @@ _poolseqflow_modules() {
 
 # Fill COMPREPLY with the words of $1 that start with $2, one array element each.
 #
-# A read loop rather than `mapfile`, which is a bash builtin zsh does not have. It also keeps
-# each match one element without relying on word splitting, which differs between the two shells
-# outside the `emulate -L sh` that zsh's bashcompinit wraps this call in.
+# A read loop rather than `COMPREPLY=( $(compgen ...) )`, so a candidate containing whitespace
+# stays one element instead of being split into several.
 _poolseqflow_reply() {
     local line
     COMPREPLY=()
@@ -70,8 +70,8 @@ _poolseqflow() {
     cur=${COMP_WORDS[COMP_CWORD]}
     cmd=${COMP_WORDS[0]}
     # Every verb the wrapper dispatches, which 00_static checks against its `case`.
-    top="install init init_multi check run dryrun dryclean migrate_config clean reset"
-    top="$top analysis version cite list uninstall uninstall_all"
+    top="install init check run dryrun dryclean migrate_config clean reset"
+    top="$top analysis version cite list uninstall"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
         _poolseqflow_reply "$top" "$cur"
@@ -81,6 +81,12 @@ _poolseqflow() {
     case ${COMP_WORDS[1]} in
         check)
             [ "$COMP_CWORD" -eq 2 ] && _poolseqflow_reply "install project" "$cur"
+            ;;
+        init)
+            [ "$COMP_CWORD" -eq 2 ] && _poolseqflow_reply "multi" "$cur"
+            ;;
+        uninstall)
+            [ "$COMP_CWORD" -eq 2 ] && _poolseqflow_reply "all" "$cur"
             ;;
         analysis)
             modules=$(_poolseqflow_modules "$cmd" | tr '\n' ' ')

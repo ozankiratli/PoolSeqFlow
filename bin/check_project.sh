@@ -77,6 +77,27 @@ check_tool() {
     fi
 }
 
+# The byte-order mark a file begins with: utf-8, utf-16le, utf-16be, or nothing at all.
+#
+# Read as bytes through `od`, because a mark is invisible everywhere it matters. Nextflow's own
+# refusal prints `Unexpected character: ''` with the character rendered as nothing, and no
+# editor shows one, so a file that is wrong looks identical to a file that is right.
+#
+# Measured against this release, 2026-09-26: a UTF-8 mark makes Nextflow refuse the config it
+# leads, whether that file is nextflow.config or an included parameters.config, while both CSV
+# parsers read past one. The same three bytes are therefore fatal in one file and harmless in
+# another, and each caller below says which it is looking at. CRLF is not checked: a config
+# with CRLF line endings parses, measured the same day.
+byte_order_mark() {
+    local first
+    first=$(od -An -tx1 -N3 "$1" 2>/dev/null | tr -d ' \n')
+    case $first in
+        efbbbf*) printf 'utf-8' ;;
+        fffe*)   printf 'utf-16le' ;;
+        feff*)   printf 'utf-16be' ;;
+    esac
+}
+
 echo "PoolSeqFlow project check"
 echo "========================="
 echo "  $PROJECT_DIR"
@@ -105,6 +126,22 @@ else
          "run: PoolSeqFlow migrate_config"
     [ -n "$stale" ] && printf '    %sparameters it renamed or removed:%s%s\n' \
                               "$DIM" "$RESET" "$stale"
+fi
+
+# Before the parse below, because the parse is what a mark breaks. Nextflow names the file and
+# the column and then prints the offending character as nothing, so the error it produces on its
+# own is a file the user can see is correct and a cause they cannot see at all.
+checked=$((checked + 1))
+config_mark=$(byte_order_mark "$CONFIG")
+if [ -z "$config_mark" ]; then
+    pass "parameters.config" "NO BYTE-ORDER MARK"
+else
+    fail "parameters.config" "STARTS WITH A BYTE-ORDER MARK" "run: dos2unix $CONFIG"
+    printf '    %sA %s mark sits before the first setting, and Nextflow refuses the\n' \
+           "$DIM" "$config_mark"
+    printf '    file over a character nothing displays. Editors on Windows add one\n'
+    printf '    when they save as UTF-8; dos2unix removes it, and converts UTF-16\n'
+    printf '    to UTF-8 as well.%s\n' "$RESET"
 fi
 
 # Nextflow's own parse, from the project against the installation, exactly as a run would.
@@ -163,6 +200,11 @@ check_table() {
     fi
     if out=$(python3 "$INSTALL_DIR/bin/$parser" "$path" 2>&1 >/dev/null); then
         pass "$label" "PARSES"
+        # A parser that exits 0 may still have written notes, and this discarded them. The only
+        # note either parser had before 2026-09-26 - a pool given two different exp_, pt_ or
+        # cov_ values - could therefore be reached by no user through any path: resolve_
+        # parameters.nf keeps a parser's stderr only when it fails, and so did this.
+        [ -n "$out" ] && printf '%s\n' "$out" | sed "s/^/    ${DIM}/;s/$/${RESET}/"
     else
         fail "$label" "FAILED TO PARSE"
         printf '%s\n' "$out" | sed 's/^/    /'
@@ -182,6 +224,43 @@ else
         fail "multiRunFile" "NOT SET" "multiRun is on and no run table is named"
     else
         check_table "$multirun_file" "$PROJECT_DIR/$multirun_file" parse_multirun.py
+    fi
+fi
+
+# THE PARAMETER RULES LIVE IN bin/check_parameters.sh, which step 0 runs as well. A project told
+# one thing here and another during the run would be worse than either alone, so there is one
+# implementation and two callers.
+#
+# It reads the COMPOSED config, so a project that pinned an option string by hand is judged on
+# what will actually run. Silence means nothing to flag.
+if [ "$PARSED" -eq 1 ]; then
+    checked=$((checked + 1))
+    if [ ! -x "$INSTALL_DIR/bin/check_parameters.sh" ]; then
+        warn "parameters" "NOT CHECKED" "bin/check_parameters.sh is missing"
+    else
+        findings=$(cd "$PROJECT_DIR" && nextflow config -flat "$INSTALL_DIR" 2>/dev/null \
+                   | "$INSTALL_DIR/bin/check_parameters.sh") || true
+        if [ -z "$findings" ]; then
+            pass "parameters" "NOTHING TO FLAG"
+        else
+            printf '%s\n' "$findings" | while IFS=$'\t' read -r level label headline detail why; do
+                [ -n "$level" ] || continue
+                case $level in
+                    FAIL) fail "$label" "$headline" "$detail" ;;
+                    WARN) warn "$label" "$headline" "$detail" ;;
+                    *)    note "$label" "$headline${detail:+: $detail}" ;;
+                esac
+                # Folded here rather than in the helper: the helper emits one line per finding so
+                # a caller can read it with `read`, and step 0 wraps to its own width.
+                [ -n "$why" ] && printf '%s' "$why" | fold -s -w 72 \
+                    | sed "s|^|    ${DIM}|;s|$|${RESET}|"
+            done
+            # The pipeline above runs in a subshell, so `missing` did not survive it. Ask the
+            # helper again for the status alone, which is what decides this script's own.
+            if printf '%s\n' "$findings" | grep -q '^FAIL'; then
+                missing=$((missing + 1))
+            fi
+        fi
     fi
 fi
 

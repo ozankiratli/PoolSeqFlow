@@ -23,7 +23,7 @@ dependencies:
   - backports.zstd=1.7.0=py311h6f959d0_1
   - bamtools=2.5.3=he132191_0
   - bash=5.2.37=h4be8908_0
-  - bcftools=1.24=h118bc1c_2
+  - bcftools=1.24=h118bc1c_4
   - bwa=0.7.19=h577a1d6_1
   - bzip2=1.0.8=hda65f42_10
   - c-ares=1.34.8=hebe6cf0_2
@@ -35,7 +35,7 @@ dependencies:
   - cutadapt=5.2=py311hc303176_2
   - diffutils=3.12=h73b1eb8_0
   - dnaio=1.2.4=py311hc303176_0
-  - fastqc=0.12.1=hdfd78af_0
+  - fastqc=0.13.0=hdfd78af_0
   - findutils=4.10.0=h86094a7_1
   - font-ttf-dejavu-sans-mono=2.37=hab24e00_0
   - font-ttf-inconsolata=3.000=h77eed37_0
@@ -52,7 +52,7 @@ dependencies:
   - grep=3.12=h09507ce_2
   - gsl=2.6=he838d99_2
   - gzip=1.14=hb9d3cd8_0
-  - harfbuzz=14.5.0=ha770c72_0
+  - harfbuzz=14.5.1=ha770c72_0
   - htslib=1.24=ha79157c_0
   - icu=78.3=h54a6638_2
   - isa-l=2.32.1=hb03c661_0
@@ -70,31 +70,32 @@ dependencies:
   - libdeflate=1.25=hd45a770_1
   - libedit=3.1.20250104=pl5321h373387f_1
   - libev=4.33=h280c20c_3
-  - libexpat=2.8.4=hd2095e1_0
+  - libexpat=2.8.5=hd2095e1_0
   - libffi=3.7.0=h81df57d_1
   - libfreetype=2.14.3=ha770c72_2
   - libfreetype6=2.14.3=h5e6c136_2
-  - libgcc=16.2.0=ha9f2e26_5
-  - libgcc-ng=16.2.0=h69a702a_5
+  - libgcc=16.2.0=ha9f2e26_7
+  - libgcc-ng=16.2.0=h69a702a_7
   - libgettextpo=0.25.1=h0e23cf9_2
-  - libgfortran=16.2.0=h69a702a_5
-  - libgfortran5=16.2.0=h6b99dfc_5
+  - libgfortran=16.2.0=h69a702a_7
+  - libgfortran5=16.2.0=h6b99dfc_7
   - libglib=2.90.0=h569388d_0
-  - libgomp=16.2.0=he0feb66_5
-  - libharfbuzz=14.5.0=h23af247_0
-  - libharfbuzz-devel=14.5.0=h23af247_0
+  - libgomp=16.2.0=he0feb66_7
+  - libharfbuzz=14.5.1=h23af247_0
+  - libharfbuzz-devel=14.5.1=h23af247_0
   - libiconv=1.18=h0cb94f2_3
   - libjpeg-turbo=3.2.0=hb03c661_1
   - liblzma=5.8.3=hb03c661_1
+  - liblzma-devel=5.8.3=hb03c661_1
   - libnghttp2=1.68.1=h74cf4be_1
   - libnsl=2.0.1=hb9d3cd8_1
   - libopenblas=0.3.34=pthreads_hf13c14d_2
-  - libpng=1.6.58=h922cc85_1
+  - libpng=1.6.59=h922cc85_0
   - libpsl=0.23.1=hd9e3e90_1
   - libsqlite=3.53.4=h13e7031_1
   - libssh2=1.11.1=h6154650_1
-  - libstdcxx=16.2.0=h934c35e_5
-  - libstdcxx-ng=16.2.0=hdf11a46_5
+  - libstdcxx=16.2.0=h934c35e_7
+  - libstdcxx-ng=16.2.0=hdf11a46_7
   - libtiff=4.7.2=hcc2c06a_1
   - libuuid=2.42.4=hcfc3c73_0
   - libwebp-base=1.6.0=hd42ef1d_1
@@ -106,11 +107,11 @@ dependencies:
   - ncurses=6.6=hdb14827_1
   - nextflow=26.04.6=h2a3209d_1
   - openjdk=25.0.2=h1602c4f_26
-  - openssl=3.6.4=h781a0a9_0
+  - openssl=3.6.5=h781a0a9_0
   - packaging=26.3=pyhc364b38_0
   - pbzip2=1.1.13=h1fcc475_2
   - pcre2=10.47=h8b3dc9c_1
-  - perl=5.32.1=9_h7cc23a3_perl5
+  - perl=5.32.1=10_h7cc23a3_perl5
   - pigz=2.8=h421ea60_2
   - pip=26.2.1=pyh8b19718_0
   - pixman=0.46.4=h54a6638_3
@@ -147,6 +148,9 @@ dependencies:
   - xorg-libxt=1.3.1=h7cc23a3_1
   - xorg-libxtst=1.2.5=h7cc23a3_4
   - xxhash=0.8.3=hec8ed23_1
+  - xz=5.8.3=ha02ee65_1
+  - xz-gpl-tools=5.8.3=ha02ee65_1
+  - xz-tools=5.8.3=hb03c661_1
   - zlib=1.3.2=h25fd6f3_3
   - zlib-ng=2.3.3=hceb46e0_1
   - zstandard=0.25.0=py311h194be0f_4

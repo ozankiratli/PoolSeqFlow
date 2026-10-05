@@ -3,6 +3,7 @@
 # cost: jvm
 # env: pipeline
 # covers: dryrun.nf scripts/variants.nf scripts/resolve_parameters.nf
+# covers: parameters.config.template
 #
 # What these are about is the promise the subcommand makes. A preview verifies the project and
 # builds the directory tree it would fill, and it leaves the project able to say "this has never

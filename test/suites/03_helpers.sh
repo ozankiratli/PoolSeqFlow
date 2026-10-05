@@ -833,6 +833,169 @@ A1,12
     assert_contains "$PM_ERR" "pt_wingspan" "and showing the shape of one"
 }
 
+# ------------------------------------------------- files a person actually saved --
+#
+# Every metadata and multi-run file in this suite until now was written BY this suite: ASCII,
+# LF, commas, exact spelling. None of them was ever the file a collaborator sends back after
+# opening it in Excel, so this whole class of defect was invisible by construction.
+#
+# FOUND ON A COLLABORATOR'S MACHINE, 2026-09-25. A correct metadata.csv was refused with
+# "line 1: no 'SampleID' column", on a file whose first word is plainly SampleID. Measured
+# afterwards: SEVEN different file shapes produce that identical message - a UTF-8 byte-order
+# mark, a semicolon delimiter, a tab delimiter, 'Sample ID', 'sampleid', a zero-width space, and
+# curly quotes - and `dos2unix` fixes exactly one of them.
+#
+# The mark had a second form that is worse than the refusal. With SampleID in any column but the
+# first, the file was ACCEPTED: the leading column's name carried the mark, so it matched
+# nothing, RG_Sample was then defaulted from SampleID, and every pool that should have merged
+# became its own pool. Exit 0, no message, different numbers.
+#
+# So the assertions below are not only that each shape is handled. Where a file is genuinely
+# unusable they assert the MESSAGE NAMES WHAT WAS READ, because the defect that cost a day was a
+# message that reported what we wanted and never what we found.
+
+# Write metadata.csv from a printf FORMAT rather than a literal, so a case can place bytes that
+# no editor displays. pm() takes a literal and cannot express one in an ASCII source file.
+pm_bytes() {
+    helpers_sandbox
+    # shellcheck disable=SC2059
+    printf "$1" > "$HELPERS_DIR/metadata.csv"
+    PM_STATUS=0
+    python3 "$REPO_ROOT/bin/parse_metadata.py" "$HELPERS_DIR/metadata.csv" \
+        > "$HELPERS_DIR/metadata.json" 2>"$HELPERS_DIR/pm.err" || PM_STATUS=$?
+    PM_ERR=$(cat "$HELPERS_DIR/pm.err")
+}
+
+test_metadata_accepts_a_byte_order_mark() {
+    pm_bytes '\xef\xbb\xbfSampleID,RG_Sample,param_poolSize\nA1,PoolA,50\n'
+    assert_status 0 "$PM_STATUS" "Excel's CSV UTF-8 is how a collaborator saves: $PM_ERR"
+    assert_contains "$(cat "$HELPERS_DIR/metadata.json")" '"SampleID": "A1"' \
+        "and the column should be SampleID, not a name carrying the mark"
+}
+
+# THE SILENT FORM, and the reason the fix is the codec in rows_of() rather than a check on the
+# header. Before it, this file was accepted with PoolA orphaned under a key nothing reads and
+# RG_Sample defaulted from SampleID - two lanes of one pool becoming two pools, in a run that
+# reported success and published a VCF with an extra column.
+test_metadata_does_not_lose_the_first_column_to_a_byte_order_mark() {
+    pm_bytes '\xef\xbb\xbfRG_Sample,SampleID\nPoolA,A1\nPoolA,A2\n'
+    assert_status 0 "$PM_STATUS" "the file is well formed: $PM_ERR"
+    local json; json=$(cat "$HELPERS_DIR/metadata.json")
+    assert_contains "$json" '"RG_Sample": "PoolA"' \
+        "both rows belong to PoolA; a mark on that column splits the pool"
+    assert_not_contains "$json" '"RG_Sample": "A1"' \
+        "RG_Sample must not be defaulted from SampleID when the user set it"
+}
+
+# A SEMICOLON FILE is what Excel writes wherever the comma is the decimal mark, and dos2unix does
+# nothing for it. The whole line arrives as one column, so listing what was read says "your
+# delimiter is wrong" where "no SampleID column" says something the user can see is false.
+test_metadata_names_the_columns_it_read_when_sampleid_is_missing() {
+    pm 'SampleID;RG_Sample;param_poolSize
+A1;PoolA;50
+'
+    assert_status 1 "$PM_STATUS" "a semicolon file has no SampleID column"
+    assert_contains "$PM_ERR" "names read from that line" "the message should say what it read"
+    assert_contains "$PM_ERR" "'SampleID;RG_Sample;param_poolSize'" \
+        "showing the whole line as the single column it parsed"
+}
+
+# A ZERO-WIDTH SPACE is not whitespace, so no strip() removes it. It is the shape where the
+# listing has to print an ESCAPE rather than the character, or the message shows 'SampleID'
+# spelled correctly and claims it is missing - which is where this started.
+test_metadata_shows_an_invisible_character_as_an_escape() {
+    pm_bytes '\xe2\x80\x8bSampleID,RG_Sample\nA1,PoolA\n'
+    assert_status 1 "$PM_STATUS" "a zero-width space is not stripped and does not match"
+    # The needle is assembled from a lone backslash on purpose. Written out as the escape
+    # sequence it stands for, it becomes the character itself in too many editors - which is
+    # exactly the confusion this case is about, and it would make the assertion pass on a
+    # message that printed the character invisibly.
+    local esc='\'
+    assert_contains "$PM_ERR" "${esc}u200b" "the listing must escape it, not print it invisibly"
+}
+
+# Excel's "Unicode Text" and a PowerShell redirect both write UTF-16. UnicodeDecodeError is a
+# ValueError, so it fell past the OSError and csv.Error handlers and reached the user as a raw
+# traceback, which names no file and suggests nothing.
+test_metadata_reports_a_utf16_file_rather_than_crashing() {
+    helpers_sandbox
+    python3 -c \
+        "import sys; open(sys.argv[1],'wb').write('SampleID,RG_Sample\nA1,PoolA\n'.encode('utf-16'))" \
+        "$HELPERS_DIR/metadata.csv"
+    PM_STATUS=0
+    python3 "$REPO_ROOT/bin/parse_metadata.py" "$HELPERS_DIR/metadata.csv" \
+        > "$HELPERS_DIR/metadata.json" 2>"$HELPERS_DIR/pm.err" || PM_STATUS=$?
+    PM_ERR=$(cat "$HELPERS_DIR/pm.err")
+    assert_status 1 "$PM_STATUS" "a UTF-16 file cannot be read as CSV"
+    assert_contains "$PM_ERR" "not UTF-8 text" "and the message should say why"
+    assert_contains "$PM_ERR" "CSV UTF-8" "and what to save it as instead"
+    assert_not_contains "$PM_ERR" "Traceback" "rather than a traceback"
+}
+
+# The multi-run table is edited in the same spreadsheet as the metadata and had the identical
+# line. Its two messages contradicted each other on screen, both blaming an invisible mark:
+# "'RunID' is not a parameter name" directly above "no 'RunID' column".
+mr_bytes() {
+    helpers_sandbox
+    # shellcheck disable=SC2059
+    printf "$1" > "$HELPERS_DIR/runs.csv"
+    MR_OUT=$(python3 "$REPO_ROOT/bin/parse_multirun.py" "$HELPERS_DIR/runs.csv" 2>"$HELPERS_DIR/stderr")
+    MR_STATUS=$?
+    MR_ERR=$(cat "$HELPERS_DIR/stderr")
+}
+
+test_multirun_accepts_a_byte_order_mark() {
+    mr_bytes '\xef\xbb\xbfRunID,referenceFile\nrefA,a.fasta.gz\n'
+    assert_status 0 "$MR_STATUS" "the multi-run table is written in Excel too: $MR_ERR"
+    assert_contains "$MR_OUT" '"RunID": "refA"' "and RunID should be RunID"
+}
+
+test_multirun_names_the_columns_it_read_when_runid_is_missing() {
+    mr 'RunID;referenceFile
+refA;a.fasta.gz
+'
+    assert_status 1 "$MR_STATUS" "a semicolon file has no RunID column"
+    assert_contains "$MR_ERR" "names read from that line" "the message should say what it read"
+    assert_contains "$MR_ERR" "'RunID;referenceFile'" "as the single column it parsed"
+}
+
+# A NOTE AND NOT A REFUSAL, and the note is about the FILE rather than any row: the parsers read
+# past a mark, so nothing computed from this table is wrong. It is said because the editor that
+# added one adds it to everything it saves, and in parameters.config a mark stops the run
+# outright - measured against this release. This is the cheap place to find that out.
+test_metadata_notes_a_byte_order_mark_it_read_past() {
+    pm_bytes '\xef\xbb\xbfSampleID,RG_Sample\nA1,PoolA\n'
+    assert_status 0 "$PM_STATUS" "the file is usable"
+    assert_contains "$PM_ERR" "usable, with notes" "and reported as usable"
+    assert_contains "$PM_ERR" "byte-order mark" "with the mark named"
+    assert_contains "$PM_ERR" "parameters.config" "and the file where it would be fatal"
+    assert_contains "$PM_ERR" "dos2unix" "and what removes it"
+}
+
+test_metadata_says_nothing_about_a_file_with_no_mark() {
+    pm 'SampleID,RG_Sample
+A1,PoolA
+'
+    assert_status 0 "$PM_STATUS" "an ordinary file is ordinary"
+    assert_not_contains "$PM_ERR" "byte-order mark" "and gets no note about one"
+}
+
+test_multirun_notes_a_byte_order_mark_it_read_past() {
+    mr_bytes '\xef\xbb\xbfRunID,referenceFile\nrefA,a.fasta.gz\n'
+    assert_status 0 "$MR_STATUS" "the file is usable"
+    assert_contains "$MR_ERR" "usable, with notes" "and reported as usable"
+    assert_contains "$MR_ERR" "byte-order mark" "with the mark named"
+    assert_contains "$MR_ERR" "dos2unix" "and what removes it"
+}
+
+test_multirun_says_nothing_about_a_file_with_no_mark() {
+    mr 'RunID,referenceFile
+refA,a.fasta.gz
+'
+    assert_status 0 "$MR_STATUS" "an ordinary file is ordinary"
+    assert_not_contains "$MR_ERR" "byte-order mark" "and gets no note about one"
+}
+
 # ---------------------------------------------------------------- citations --
 
 # Writes both citation files into a scratch directory and echoes it. Runs against the real
@@ -1413,4 +1576,626 @@ test_atomic_mv_leaves_nothing_behind_when_it_fails() {
     assert_status 1 "$status" "a missing source should fail"
     assert_no_file "$HELPERS_DIR/dst/x" "and write nothing"
     assert_count 0 "$(find "$HELPERS_DIR/dst" -name '.atomic_mv.*' | wc -l)" "and stage nothing"
+}
+
+# depth2freq.awk: the depth table's counts as one row per allele.
+#
+# THE ZERO-DEPTH CELL IS WHAT THESE EXIST FOR. Until vcffilter.dropZeroDepth was added, a
+# published table could not hold one - vcffilter.minDP removes a site where any sample falls
+# short, and the smallest useful minDP is 1 - so the converter's total == 0 branch was
+# unreachable from a real run and wrote 0. With dropZeroDepth = false and minDP = 0 it is
+# reachable, and a 0 there is the same character a pool fixed for the other allele publishes.
+#
+# The input shapes below are real bcftools output, measured rather than assumed: a sample with
+# no reads gets GT ./. and AD 0,0, so the cell is zeros and not a missing value.
+
+# Convert a depth table written inline, and leave the result in D2F_OUT.
+d2f() {
+    printf '%s' "$1" > "$HELPERS_DIR/depth.tsv"
+    D2F_OUT=$(awk -f "$REPO_ROOT/bin/depth2freq.awk" < "$HELPERS_DIR/depth.tsv")
+}
+
+# One cell of that result, by data row and by column, both 1-based.
+d2f_cell() {   # row column
+    printf '%s' "$D2F_OUT" | awk -F'\t' -v r="$2" 'NR == '"$(( $1 + 1 ))"' { print $r }'
+}
+
+test_depth2freq_writes_na_for_a_sample_with_no_reads() {
+    helpers_sandbox
+    # SampleB saw nothing here; SampleA is fixed for the alternate.
+    d2f 'CHROM	POS	REF	ALT	TOTAL_AD	SampleA	SampleB
+chrT	30	A	C	0,20	0,20	0,0
+'
+    assert_eq "NA" "$(d2f_cell 1 7)" "a pool with no reads has no frequency on the REF row"
+    assert_eq "NA" "$(d2f_cell 2 7)" "nor on any other allele of that site"
+}
+
+# THE DISCRIMINATION THE CHANGE IS FOR. A pool that was measured and carries none of an allele
+# publishes 0, and that is a real observation. If this case and the one above ever agree, the
+# table has stopped saying which of the two a reader is looking at.
+#
+# It is the control and it passes on both sides of the NA change, which is its job: the pair
+# is what has meaning, and a zero turning into NA here would be the regression.
+test_depth2freq_keeps_zero_for_an_allele_a_sample_was_measured_without() {
+    helpers_sandbox
+    d2f 'CHROM	POS	REF	ALT	TOTAL_AD	SampleA	SampleB
+chrT	30	A	C	0,20	0,20	0,0
+'
+    assert_eq "0" "$(d2f_cell 1 6)" "20 reads and none of them REF is a frequency of 0"
+    assert_eq "1" "$(d2f_cell 2 6)" "and the allele they all carry is 1"
+}
+
+# NA is per cell, not per column: the pools that did see reads are published as they were.
+test_depth2freq_leaves_the_other_pools_of_the_site_alone() {
+    helpers_sandbox
+    d2f 'CHROM	POS	REF	ALT	TOTAL_AD	S1	S2	S3
+chr1	100	A	G	60,40	30,10	0,0	20,20
+'
+    assert_eq "0.75" "$(d2f_cell 1 6)" "the first pool is untouched"
+    assert_eq "NA"   "$(d2f_cell 1 7)" "the empty one between them is NA"
+    assert_eq "0.5"  "$(d2f_cell 1 8)" "and so is the third"
+}
+
+# And per site, not per pool: a pool empty at one site still publishes the sites it was read at.
+test_depth2freq_na_does_not_spread_down_a_column() {
+    helpers_sandbox
+    d2f 'CHROM	POS	REF	ALT	TOTAL_AD	S1	S2
+chr1	100	A	G	60,40	30,10	0,0
+chr1	200	A	G	60,40	30,10	30,10
+'
+    assert_eq "NA"   "$(d2f_cell 1 7)" "empty at the first site"
+    assert_eq "0.75" "$(d2f_cell 3 7)" "and read at the second"
+}
+
+# TOTAL_AD is converted by the same loop as the sample columns and takes the same rule.
+test_depth2freq_applies_the_rule_to_total_ad() {
+    helpers_sandbox
+    d2f 'CHROM	POS	REF	ALT	TOTAL_AD	S1
+chr1	100	A	G	0,0	0,0
+'
+    assert_eq "NA" "$(d2f_cell 1 5)" "a cohort total of no reads is NA as well"
+}
+
+# parsed_vals is global and indexed by column and allele, and the write loop runs over the
+# CELL's counts while the print loop runs over the ALT column's alleles. Where a cell holds
+# fewer counts than its row declares alleles, the print loop reads whatever an earlier row
+# left at that index - and publishes a frequency measured at a different site.
+#
+# It cannot reach here from a run: AD is Number=R, so bcftools writes one count per allele,
+# and MajorAlleleToRef.py stops on a ragged cell before this ever sees it. The case is written
+# against the converter's own contract rather than against what currently feeds it. Measured:
+# with the clear removed, chr1:200's third allele publishes 0.25, carried from chr1:100.
+#
+# The row is still ragged afterwards and the cell comes out empty. Refusing it outright is a
+# different question and is not what this asserts.
+test_depth2freq_does_not_carry_a_count_from_an_earlier_row() {
+    helpers_sandbox
+    d2f 'CHROM	POS	REF	ALT	TOTAL_AD	S1
+chr1	100	A	G,T	2,1,1	2,1,1
+chr1	200	A	G,T	1,1	1,1
+'
+    assert_eq "0.25" "$(d2f_cell 3 6)" "the complete row is converted as it always was"
+    assert_not_contains "$(d2f_cell 6 6)" "0.25" \
+        "and the short cell below it must not republish that number"
+}
+
+# cap_depth.awk: truncate a coordinate-sorted SAM so no reference position is covered more
+# than `cap` times.
+#
+# THE CONTRACT, NOT THE IMPLEMENTATION. The first case below recomputes per-position depth
+# from the OUTPUT and asserts no position exceeds the cap. That is what the helper promises
+# and it holds whatever the inside looks like -- which matters here, because the inside was a
+# per-position array scanned twice per read and is now a difference array read once, and the
+# case had to survive that without being rewritten.
+#
+# Written after the fact: this helper shipped from 1.0 with no unit coverage at all, and the
+# rewrite was verified against three real BAMs before any of these existed.
+
+# The fixture is APPENDED TO A FILE rather than composed in a variable. `$(...)` strips
+# trailing newlines, so building the SAM by concatenating command substitutions silently glues
+# the last record of one stack onto the first of the next -- which produced a malformed
+# fixture that one of the cases below passed against anyway.
+cap_begin() {   # reference-sequence names
+    : > "$HELPERS_DIR/in.sam"
+    printf '@HD\tVN:1.6\tSO:coordinate\n' >> "$HELPERS_DIR/in.sam"
+    local c
+    for c in "$@"; do printf '@SQ\tSN:%s\tLN:100000\n' "$c" >> "$HELPERS_DIR/in.sam"; done
+}
+
+# A stack of identical reads at one position. SEQ and QUAL are `*`: nothing here reads them.
+cap_stack() {   # chrom start count cigar
+    local i
+    for i in $(seq 1 "$3"); do
+        printf 'r%s_%s_%s\t0\t%s\t%s\t60\t%s\t*\t0\t0\t*\t*\n' \
+               "$1" "$2" "$i" "$1" "$2" "$4" >> "$HELPERS_DIR/in.sam"
+    done
+}
+
+cap_record() { printf '%s\n' "$1" >> "$HELPERS_DIR/in.sam"; }
+
+cap_run() {   # cap-value
+    CAP_OUT=$(awk -f "$REPO_ROOT/bin/cap_depth.awk" -v cap="$1" < "$HELPERS_DIR/in.sam" \
+              2> "$HELPERS_DIR/cap.err")
+    CAP_STATUS=$?
+    CAP_ERR=$(cat "$HELPERS_DIR/cap.err")
+}
+
+# The deepest any reference position is covered in a SAM stream, computed here rather than
+# taken from the helper: walk each record's CIGAR, count the positions it consumes, take the
+# maximum over all of them.
+deepest() {
+    printf '%s\n' "$1" | awk '
+        !/^@/ && $4 > 0 {
+            n = ""; span = 0
+            for (i = 1; i <= length($6); i++) {
+                c = substr($6, i, 1)
+                if (c >= "0" && c <= "9") { n = n c; continue }
+                if (c ~ /[MDN=X]/) span += n + 0
+                n = ""
+            }
+            for (p = $4; p < $4 + span; p++) d[$3 "\t" p]++
+        }
+        END { m = 0; for (k in d) if (d[k] > m) m = d[k]; print m }'
+}
+
+test_cap_depth_never_leaves_a_position_over_the_cap() {
+    helpers_sandbox
+    local c
+    for c in 1 5 17 30 61 200; do
+        # Overlapping stacks at 1, 40 and 80: a read starting at 40 spans into the one at 80,
+        # so what it must be judged against is not the depth at its own start alone.
+        cap_begin chr1
+        cap_stack chr1 1 30 100M
+        cap_stack chr1 40 30 100M
+        cap_stack chr1 80 30 100M
+        cap_run "$c"
+        assert_status 0 "$CAP_STATUS" "capping at $c should succeed"
+        local got; got=$(deepest "$CAP_OUT")
+        [ "$got" -le "$c" ] \
+            || fail_case "cap $c: a position is covered $got times in the output"
+    done
+}
+
+# Nothing is dropped that did not have to be: at a cap at or above the deepest position the
+# stream passes through untouched.
+test_cap_depth_keeps_everything_under_the_cap() {
+    helpers_sandbox
+    cap_begin chr1
+    cap_stack chr1 1 12 100M
+    cap_run 12
+    assert_eq "12" "$(printf '%s' "$CAP_OUT" | grep -c '^r')" \
+        "a cap equal to the depth should drop nothing"
+    assert_contains "$CAP_ERR" "dropped 0" "and say so"
+}
+
+# THE HEADER IS NOT A RECORD. It passes through ahead of everything and is not counted.
+test_cap_depth_passes_the_header_through() {
+    helpers_sandbox
+    cap_begin chr1
+    cap_stack chr1 1 5 100M
+    cap_run 2
+    assert_eq "@HD	VN:1.6	SO:coordinate" "$(printf '%s' "$CAP_OUT" | sed -n '1p')" \
+        "the header leads the output"
+    assert_contains "$CAP_ERR" "kept 2, dropped 3" "and is not in the tally"
+}
+
+# A NEW REFERENCE SEQUENCE STARTS FROM NOTHING. Carrying state across would cap the second one
+# against depth accumulated on the first, and positions repeat between them.
+test_cap_depth_resets_at_a_new_reference_sequence() {
+    helpers_sandbox
+    cap_begin chr1 chr2
+    cap_stack chr1 1 10 100M
+    cap_stack chr2 1 10 100M
+    cap_run 10
+    assert_eq "10" "$(printf '%s' "$CAP_OUT" | grep -c '	chr1	')" "chr1 keeps its ten"
+    assert_eq "10" "$(printf '%s' "$CAP_OUT" | grep -c '	chr2	')" "and chr2 its own ten"
+    assert_contains "$CAP_ERR" "dropped 0" "neither counted against the other"
+}
+
+# A RECORD THAT CONSUMES NO REFERENCE IS NOT CAPPED. A CIGAR of only soft clips covers no
+# position, so there is nothing to count it against and it survives however deep the stack at
+# its own coordinate is.
+#
+# ORDER IS THE WHOLE CASE. The soft-clipped read sits DIRECTLY after the stack, on the same
+# reference sequence, at a coordinate already at the cap -- that is the only arrangement in
+# which the guard does anything. Written first with an unmapped record in between, where the
+# `*` RNAME forces a new-sequence reset that clears the depth before the soft-clipped read is
+# judged: the case passed with the guard deleted outright. The unmapped record is now last,
+# where a sorted BAM puts it anyway.
+test_cap_depth_keeps_records_that_cover_no_position() {
+    helpers_sandbox
+    cap_begin chr1
+    cap_stack chr1 1 4 100M
+    cap_record 's1	0	chr1	1	60	100S	*	0	0	*	*'
+    cap_record 'u1	4	*	0	0	*	*	0	0	*	*'
+    cap_run 1
+    assert_contains "$CAP_OUT" "s1	0" "a read consuming no reference survives a capped position"
+    assert_contains "$CAP_OUT" "u1	4" "and so does an unmapped one"
+    assert_eq "1" "$(printf '%s' "$CAP_OUT" | grep -c '	100M	')" "while the stack is still capped"
+    assert_contains "$CAP_ERR" "kept 3" "all three counted as kept, with the one capped read"
+}
+
+# ONLY M, D, N, = AND X CONSUME THE REFERENCE. A deletion makes a read reach FURTHER than its
+# sequence length, and a read counted short would leave the positions past its sequence
+# uncapped. 50M20D50M spans 120 where a plain 100M spans 100, so the stack at 110 sits inside
+# the first read's reach and outside the second's -- which is what makes this discriminating
+# rather than merely passing.
+test_cap_depth_measures_the_span_from_the_cigar() {
+    helpers_sandbox
+    cap_begin chr1
+    cap_stack chr1 1 3 50M20D50M
+    cap_stack chr1 110 3 10M
+    cap_run 3
+    assert_contains "$CAP_ERR" "dropped 3" \
+        "the stack at 110 is already at the cap, reached by the deletion-spanning reads"
+    local got; got=$(deepest "$CAP_OUT")
+    [ "$got" -le 3 ] || fail_case "a position is covered $got times at cap 3"
+}
+
+test_cap_depth_refuses_a_cap_that_is_not_a_positive_depth() {
+    helpers_sandbox
+    local v
+    for v in 0 -1 abc ''; do
+        cap_begin chr1
+        cap_stack chr1 1 2 100M
+        cap_run "$v"
+        assert_status 2 "$CAP_STATUS" "a cap of '$v' should be refused"
+        assert_contains "$CAP_ERR" "must be a positive depth" "saying what a cap is"
+        assert_not_contains "$CAP_ERR" "kept" "and no tally after a usage error"
+    done
+}
+
+# MajorAlleleToRef.py: re-polarize a VCF so REF is the allele the whole cohort read most.
+#
+# It runs TWICE in step 7 -- once before the false-positive filter and again after it, because
+# removing alleles can change which one is major -- so anything it gets wrong is applied to every
+# published frequency, twice.
+#
+# THE INVARIANTS RUN OVER THE REAL VCF. test/data/vcf/called.vcf is genuine bcftools output and
+# its README says anything testing this script should start there. What it does NOT contain is a
+# multiallelic record or a spanning deletion, so the ordering cases below are hand-written: the
+# point of those is an exact permutation, which needs exact input.
+#
+# Written after the fact. This was the last bin/ helper with no unit coverage.
+
+M2R_OUT=""
+M2R_STATUS=0
+M2R_LOG=""
+
+# Run the script over an inline VCF body, with a two-sample header unless one is given.
+m2r() {   # body [format] [sample-columns]
+    local body="$1" fmt="${2:-GT:DP:AD}" cols="${3:-S1	S2}"
+    {
+        printf '##fileformat=VCFv4.2\n'
+        printf '##INFO=<ID=AD,Number=R,Type=Integer,Description="allelic depth">\n'
+        printf '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t%s\n' "$cols"
+        printf '%s\n' "$body"
+    } > "$HELPERS_DIR/in.vcf"
+    python3 "$REPO_ROOT/bin/MajorAlleleToRef.py" \
+        "$HELPERS_DIR/in.vcf" "$HELPERS_DIR/out.vcf" > "$HELPERS_DIR/m2r.log" 2>&1
+    M2R_STATUS=$?
+    M2R_LOG=$(cat "$HELPERS_DIR/m2r.log")
+    M2R_OUT=$(grep -v '^#' "$HELPERS_DIR/out.vcf" 2>/dev/null || true)
+}
+
+# One field of one data row of the result, both 1-based.
+m2r_field() { printf '%s\n' "$M2R_OUT" | sed -n "${1}p" | cut -f"$2"; }
+
+test_major_allele_to_ref_flips_when_the_alternate_is_more_read() {
+    helpers_sandbox
+    # Cohort AD is 15,135: the alternate is read nine times as often, so it becomes REF.
+    m2r 'chr1	100	.	A	G	50	.	DP=150;AD=15,135	GT:DP:AD	0/1:100:10,90	0/1:50:5,45'
+    assert_status 0 "$M2R_STATUS" "the script should succeed"
+    assert_eq "G" "$(m2r_field 1 4)" "the most-read allele becomes REF"
+    assert_eq "A" "$(m2r_field 1 5)" "and the former reference becomes the alternate"
+    assert_contains "$(m2r_field 1 8)" "AD=135,15" "INFO/AD follows the same order"
+}
+
+test_major_allele_to_ref_leaves_an_already_major_reference_alone() {
+    helpers_sandbox
+    m2r 'chr1	100	.	A	G	50	.	DP=150;AD=135,15	GT:DP:AD	0/1:100:90,10	0/1:50:45,5'
+    assert_eq "A" "$(m2r_field 1 4)" "a reference already most-read stays"
+    assert_eq "G" "$(m2r_field 1 5)" "and so does the alternate"
+    assert_contains "$(m2r_field 1 8)" "AD=135,15" "with the counts untouched"
+}
+
+# AN EXACT TIE KEEPS THE REFERENCE, which rests on Python's sort being stable rather than on
+# anything the script says. If that ever changes, REF flips on every tied site in a run and
+# nothing else would report it.
+test_major_allele_to_ref_keeps_the_reference_on_an_exact_tie() {
+    helpers_sandbox
+    m2r 'chr1	100	.	A	G	50	.	DP=100;AD=50,50	GT:DP:AD	0/1:100:50,50'  'GT:DP:AD' 'S1'
+    assert_eq "A" "$(m2r_field 1 4)" "a tie must not flip the reference"
+    assert_eq "G" "$(m2r_field 1 5)" "nor reorder the alternate"
+}
+
+# ONE ORDERING FOR THE WHOLE SITE. The permutation comes from INFO/AD and no sample chooses its
+# own, so a sample whose own counts disagree with the cohort is still reordered the cohort's way.
+# Getting this wrong would mis-assign every frequency at the site while looking entirely normal.
+test_major_allele_to_ref_reorders_every_sample_by_the_same_permutation() {
+    helpers_sandbox
+    # S2's own majority is the REFERENCE (30 against 10), against the cohort's alternate (80
+    # against 60). It must still be reordered the cohort's way.
+    m2r 'chr1	100	.	A	G	50	.	DP=140;AD=60,80	GT:DP:AD	0/1:100:10,90	0/1:40:30,10'
+    assert_eq "G" "$(m2r_field 1 4)" "the cohort decides REF"
+    assert_eq "90,10" "$(printf '%s' "$(m2r_field 1 10)" | cut -d: -f3)" \
+        "the sample agreeing with the cohort is reordered"
+    assert_eq "10,30" "$(printf '%s' "$(m2r_field 1 11)" | cut -d: -f3)" \
+        "and so is the sample that disagrees, the same way"
+}
+
+# DEPTH IS REDEFINED AS THE SUM OF THE REORDERED COUNTS, in INFO and in every sample. The rest of
+# the chain depends on it: vcffilter.minDP filters on FORMAT/DP, and the depth table sums the same
+# AD.
+#
+# THE TWO HALVES CATCH DIFFERENT THINGS, measured by removing each recompute in turn.
+#
+# INFO: the real VCF is enough. mpileup's INFO/DP is raw depth including reads assigned to no
+# allele, so it already disagrees with sum(INFO/AD) on 35 of the 135 records, and removing that
+# recompute fails the sweep below by exactly that count.
+#
+# FORMAT: the real VCF proves nothing. bcftools writes each sample's DP equal to sum(AD) already,
+# so the invariant holds whether or not this script touches it -- measured: deleting the
+# FORMAT/DP assignment left the sweep passing. What makes that recompute load-bearing is the
+# SECOND invocation, after filterFalsePositives.sh has removed alleles and left DP larger than the
+# counts that remain, so the record below is shaped like that one.
+test_major_allele_to_ref_rewrites_depth_as_the_sum_of_the_counts() {
+    helpers_sandbox
+    # DP says 200 and 200 while the counts total 150 and 100: what an allele removal leaves behind.
+    m2r 'chr1	100	.	A	G	50	.	DP=200;AD=15,135	GT:DP:AD	0/1:200:10,90	0/1:80:5,45'
+    assert_contains "$(m2r_field 1 8)" "DP=150" "INFO/DP is recomputed from the counts that remain"
+    assert_eq "100" "$(printf '%s' "$(m2r_field 1 10)" | cut -d: -f2)" \
+        "and so is each sample's own DP"
+    assert_eq "50" "$(printf '%s' "$(m2r_field 1 11)" | cut -d: -f2)" "for every sample"
+
+    python3 "$REPO_ROOT/bin/MajorAlleleToRef.py" \
+        "$REPO_ROOT/test/data/vcf/called.vcf" "$HELPERS_DIR/real.vcf" > /dev/null 2>&1
+    assert_status 0 "$?" "the real VCF should convert"
+    local bad
+    bad=$(grep -v '^#' "$HELPERS_DIR/real.vcf" | awk -F'\t' '
+        { split($9, f, ":"); for (i in f) if (f[i] == "AD") ad = i; else if (f[i] == "DP") dp = i
+          for (s = 10; s <= NF; s++) {
+              split($s, g, ":"); n = split(g[ad], c, ","); t = 0
+              for (j = 1; j <= n; j++) t += c[j]
+              if (t != g[dp] + 0) bad++
+          }
+          split($8, info, ";"); isum = 0
+          for (i in info) if (info[i] ~ /^AD=/) { n = split(substr(info[i], 4), a, ","); for (j = 1; j <= n; j++) isum += a[j] }
+          for (i in info) if (info[i] ~ /^DP=/) if (substr(info[i], 4) + 0 != isum) bad++
+        } END { print bad + 0 }')
+    assert_eq "0" "$bad" "every DP should equal the sum of its own AD, in INFO and every sample"
+}
+
+# EVERY GENOTYPE IS BLANKED. Re-polarizing invalidates the caller's calls and a pool has no
+# genotype to replace them with, so leaving them would invite a tool to read one.
+test_major_allele_to_ref_blanks_every_genotype() {
+    helpers_sandbox
+    python3 "$REPO_ROOT/bin/MajorAlleleToRef.py" \
+        "$REPO_ROOT/test/data/vcf/called.vcf" "$HELPERS_DIR/real.vcf" > /dev/null 2>&1
+    local called
+    called=$(grep -v '^#' "$HELPERS_DIR/real.vcf" | awk -F'\t' '
+        { split($9, f, ":"); for (i in f) if (f[i] == "GT") gt = i
+          for (s = 10; s <= NF; s++) { split($s, g, ":"); if (g[gt] != "./.") n++ } } END { print n + 0 }')
+    assert_eq "0" "$called" "no sample should keep a genotype"
+}
+
+test_major_allele_to_ref_orders_a_multiallelic_site_by_count() {
+    helpers_sandbox
+    # Counts 10 / 50 / 30 for A / G / T, so the order becomes G, T, A.
+    m2r 'chr1	100	.	A	G,T	50	.	DP=90;AD=10,50,30	GT:DP:AD	0/1:90:10,50,30'  'GT:DP:AD' 'S1'
+    assert_eq "G"   "$(m2r_field 1 4)" "the most-read allele leads"
+    assert_eq "T,A" "$(m2r_field 1 5)" "and the rest follow in count order"
+    assert_contains "$(m2r_field 1 8)" "AD=50,30,10" "INFO/AD takes the same order"
+    assert_eq "50,30,10" "$(printf '%s' "$(m2r_field 1 10)" | cut -d: -f3)" "and so does the sample"
+}
+
+# A SPANNING DELETION IS AN ALLELE LIKE ANY OTHER. It carries reads, and the analysis layer
+# declares that it reaches the SNP table as one, so it must order by count and not be special.
+test_major_allele_to_ref_treats_a_spanning_deletion_as_an_allele() {
+    helpers_sandbox
+    m2r 'chr1	100	.	A	G,*	50	.	DP=90;AD=10,50,30	GT:DP:AD	0/1:90:10,50,30'  'GT:DP:AD' 'S1'
+    assert_eq "G"   "$(m2r_field 1 4)" "the most-read allele still leads"
+    assert_eq "*,A" "$(m2r_field 1 5)" "and the star sorts on its count like the rest"
+}
+
+test_major_allele_to_ref_copies_the_header_through() {
+    helpers_sandbox
+    m2r 'chr1	100	.	A	G	50	.	DP=150;AD=15,135	GT:DP:AD	0/1:100:10,90	0/1:50:5,45'
+    assert_eq "$(grep -c '^#' "$HELPERS_DIR/in.vcf")" "$(grep -c '^#' "$HELPERS_DIR/out.vcf")" \
+        "every header line should survive"
+    assert_contains "$(head -1 "$HELPERS_DIR/out.vcf")" "##fileformat=VCFv4.2" "in order"
+}
+
+# The one guard it has. Without FORMAT/AD there is nothing to reorder, and carrying on would
+# publish frequencies from counts it never read.
+test_major_allele_to_ref_refuses_a_vcf_without_format_ad() {
+    helpers_sandbox
+    m2r 'chr1	100	.	A	G	50	.	DP=150;AD=15,135	GT:DP	0/1:100	0/1:50'  'GT:DP' 'S1	S2'
+    assert_status 1 "$M2R_STATUS" "a VCF with no FORMAT/AD should be refused"
+    assert_contains "$M2R_LOG" "No FORMAT/AD field" "saying what is missing"
+}
+
+# check_parameters.sh: judge a resolved parameter set, one finding per line.
+#
+# THE RULES LIVE HERE AND NOWHERE ELSE. Both bin/check_project.sh and step 0 call this, so a
+# project cannot be told one thing before a run and another during it. 02_launcher asserts the
+# wiring through check_project.sh; these are the rules themselves, at static cost.
+#
+# WHAT BELONGS IN IT: a setting that makes the run produce NOTHING, or that silently changes what
+# a published number means. minDP 20 against minDP 5 is a scientific choice and is not its
+# business. Every threshold below was measured, not chosen.
+
+# The shipped defaults, which every case starts from and mutates.
+cp_defaults() {
+    cat <<'FLAT'
+params.variantCall.mpileupOptions = '-B -C 100 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou'
+params.filterFalsePositives.sampleThreshold = 0.2
+params.vcffilter.minDP = 20
+params.vcffilter.dropZeroDepth = true
+params.ploidy = 2
+params.poolSize = 100
+params.capBAM.maxDepth = -1
+params.variantCall.maxDepth = 0
+params.fastqc.memory = 2048
+FLAT
+}
+
+# Run the helper over the defaults with the given assignments replacing theirs.
+CP_FIND=""
+CP_RC=0
+cp_check() {   # params.key=value ...
+    local a k
+    cp_defaults > "$HELPERS_DIR/flat.txt"
+    for a in "$@"; do
+        k=${a%%=*}
+        grep -v "^${k} = " "$HELPERS_DIR/flat.txt" > "$HELPERS_DIR/flat.tmp" || true
+        mv "$HELPERS_DIR/flat.tmp" "$HELPERS_DIR/flat.txt"
+        printf '%s = %s\n' "${a%%=*}" "${a#*=}" >> "$HELPERS_DIR/flat.txt"
+    done
+    CP_FIND=$(bash "$REPO_ROOT/bin/check_parameters.sh" < "$HELPERS_DIR/flat.txt")
+    CP_RC=$?
+}
+
+# The level and verdict for one parameter, or empty when it said nothing.
+cp_verdict() { printf '%s\n' "$CP_FIND" | awk -F'\t' -v k="$1" '$2 == k { print $1, $3 }'; }
+
+# SILENCE IS THE ANSWER FOR A SOUND SET, and it is the case most likely to rot: a rule added with
+# a wrong threshold makes the shipped template noisy, and a user who sees a warning on a default
+# stops reading warnings.
+test_check_parameters_says_nothing_about_the_shipped_defaults() {
+    helpers_sandbox
+    cp_check
+    assert_eq "" "$CP_FIND" "the template's own values should produce no finding at all"
+    assert_status 0 "$CP_RC" "and exit clean"
+}
+
+# -C caps every read's mapping quality near its own value and -q rejects anything below the
+# minimum, so a -C under -q leaves the pileup empty. Measured on real pools at six values of -q
+# (12, 15, 20, 30, 40, 50): one below returned zero sites every time.
+test_check_parameters_refuses_a_scale_below_the_quality_minimum() {
+    helpers_sandbox
+    cp_check "params.variantCall.mpileupOptions='-B -C 15 -q 30 -Q 30'"
+    assert_eq "FAIL DISCARDS EVERY READ" "$(cp_verdict variantCall.scaleMapQ)" \
+        "a scale under the minimum should be refused"
+    assert_status 1 "$CP_RC" "and set a failing status"
+}
+
+# THE BOUNDARY IS THE RELATIONSHIP, NOT A RANGE. The same 15 is sound against a lower minimum,
+# and a rule written against a constant would call this broken.
+test_check_parameters_accepts_a_scale_that_clears_a_lower_minimum() {
+    helpers_sandbox
+    cp_check "params.variantCall.mpileupOptions='-B -C 15 -q 5 -Q 30'"
+    assert_eq "" "$(cp_verdict variantCall.scaleMapQ)" "15 clears a minimum of 5"
+    assert_status 0 "$CP_RC" "and is not a failure"
+}
+
+test_check_parameters_separates_an_inert_scale_from_a_deliberate_zero() {
+    helpers_sandbox
+    cp_check "params.variantCall.mpileupOptions='-B -C 5 -q 30 -Q 30'"
+    assert_eq "WARN INERT AT 5" "$(cp_verdict variantCall.scaleMapQ)" \
+        "below 11 the adjustment does nothing, whatever was written"
+    cp_check "params.variantCall.mpileupOptions='-B -C 0 -q 30 -Q 30'"
+    assert_eq "NOTE OFF" "$(cp_verdict variantCall.scaleMapQ)" \
+        "zero is a deliberate off, not an accident"
+}
+
+# Clearing the minimum is not being safe: at -C equal to -q only the best-placed reads survive,
+# measured at 6% of the sites an unadjusted run called.
+test_check_parameters_warns_when_the_scale_barely_clears_the_minimum() {
+    helpers_sandbox
+    cp_check "params.variantCall.mpileupOptions='-B -C 35 -q 30 -Q 30'"
+    assert_eq "WARN SEVERE AT 35" "$(cp_verdict variantCall.scaleMapQ)" \
+        "just above the minimum is still severe"
+    assert_status 0 "$CP_RC" "but not a failure: it does produce records"
+}
+
+# An option string pinned by hand may carry neither flag. Saying so beats guessing from settings
+# it was not built from, which is the trap the whole composed-value approach exists to avoid.
+test_check_parameters_declines_to_judge_an_option_string_without_the_pair() {
+    helpers_sandbox
+    cp_check "params.variantCall.mpileupOptions='-B -q 30 -Q 30'"
+    assert_eq "NOTE NOT CHECKED" "$(cp_verdict variantCall.scaleMapQ)" "unjudged, and said so"
+    assert_status 0 "$CP_RC" "and never a failure"
+}
+
+# sampleThreshold is a fraction of the samples. Above 1 it asks for more samples than exist:
+# measured at 1.5 against the fixture VCF, 0 of 135 sites survived.
+test_check_parameters_refuses_a_sample_threshold_above_one() {
+    helpers_sandbox
+    cp_check "params.filterFalsePositives.sampleThreshold=1.5"
+    assert_eq "FAIL REMOVES EVERY SITE" "$(cp_verdict filterFalsePositives.sampleThreshold)" \
+        "a fraction above 1 cannot be satisfied"
+    cp_check "params.filterFalsePositives.sampleThreshold=0"
+    assert_eq "WARN INERT AT 0" "$(cp_verdict filterFalsePositives.sampleThreshold)" \
+        "and at 0 it asks for nothing"
+}
+
+# A MISSING KEY MUST NOT CRASH AND MUST NOT INVENT A FINDING. Every rule declines to judge a value
+# it does not have, because after resolution an absent key means the project's config never defined
+# it and there is nothing to compare. The one thing that is never acceptable is a spurious verdict
+# about a parameter nobody set.
+test_check_parameters_survives_a_config_with_nothing_in_it() {
+    helpers_sandbox
+    printf 'params.mainDir = /somewhere\n' > "$HELPERS_DIR/flat.txt"
+    CP_FIND=$(bash "$REPO_ROOT/bin/check_parameters.sh" < "$HELPERS_DIR/flat.txt")
+    CP_RC=$?
+    assert_status 0 "$CP_RC" "an empty parameter set is unjudgeable, not a failure"
+    # The pileup pair is the only rule that speaks, and it speaks to say it cannot judge.
+    assert_eq "NOTE NOT CHECKED" "$(cp_verdict variantCall.scaleMapQ)" "and says so"
+    assert_eq "" "$(cp_verdict poolSize)" "no verdict on a poolSize nobody set"
+    assert_eq "" "$(cp_verdict ploidy)" "nor on ploidy"
+    assert_eq "" "$(cp_verdict fastqc.memory)" "nor on fastqc.memory"
+    assert_eq "" "$(cp_verdict filterFalsePositives.sampleThreshold)" "nor on the threshold"
+}
+
+# n_chrom is ploidy times poolSize. At 1 the unbiased diversity correction n_eff/(n_eff - 1) is
+# infinite -- measured, n_eff(1, 50) is exactly 1 -- so any diversity computed over such a pool is
+# meaningless. A WARNING and not a failure, because the PIPELINE is unaffected: it publishes
+# frequencies perfectly well and only an analysis degrades. Refusing a run here would be stricter
+# than the thing being protected.
+test_check_parameters_warns_about_a_pool_of_one_chromosome() {
+    helpers_sandbox
+    cp_check "params.poolSize=1" "params.ploidy=1"
+    assert_eq "WARN ONE CHROMOSOME" "$(cp_verdict poolSize)" "one chromosome cannot carry diversity"
+    assert_status 0 "$CP_RC" "but the pipeline runs, so it must not fail the check"
+    cp_check "params.ploidy=0"
+    assert_eq "FAIL NOT A PLOIDY" "$(cp_verdict ploidy)" "and a ploidy below 1 is not a ploidy"
+    # A haploid pool of two is legitimate and must not be caught by the same rule.
+    cp_check "params.poolSize=2" "params.ploidy=1"
+    assert_eq "" "$(cp_verdict poolSize)" "two haploid individuals are a pool"
+}
+
+# capBAM.maxDepth -1 asks step 5 to measure a ceiling per sample. A positive variantCall.maxDepth
+# then caps every sample flat at pileup time as well, so the smaller wins and the measured
+# ceilings stop deciding.
+test_check_parameters_notes_a_flat_ceiling_over_measured_ones() {
+    helpers_sandbox
+    cp_check "params.variantCall.maxDepth=500"
+    assert_eq "NOTE OVERRIDES THE MEASURED CEILINGS" "$(cp_verdict variantCall.maxDepth)" \
+        "a flat ceiling undercuts the per-sample ones"
+    # Not a conflict when nothing is being measured.
+    cp_check "params.variantCall.maxDepth=500" "params.capBAM.maxDepth=0"
+    assert_eq "" "$(cp_verdict variantCall.maxDepth)" \
+        "with capBAM off there is no measured ceiling to override"
+}
+
+test_check_parameters_refuses_a_memory_size_carrying_a_unit() {
+    helpers_sandbox
+    cp_check "params.fastqc.memory=2G"
+    assert_eq "FAIL NOT A PLAIN NUMBER" "$(cp_verdict fastqc.memory)" "FastQC rejects a unit"
+    assert_status 1 "$CP_RC" "so the run would fail later; better here"
+}
+
+# A FINDING IS ONE LINE OF FIVE TAB-SEPARATED FIELDS, because both callers read it with `read`.
+# An explanation running onto a second line, or a stray tab inside one, would silently shift every
+# field after it.
+test_check_parameters_emits_one_line_of_five_fields_per_finding() {
+    helpers_sandbox
+    cp_check "params.variantCall.mpileupOptions='-B -C 15 -q 30 -Q 30'" \
+             "params.filterFalsePositives.sampleThreshold=1.5" "params.fastqc.memory=2G"
+    assert_eq "3" "$(printf '%s\n' "$CP_FIND" | wc -l)" "three findings, three lines"
+    assert_eq "" "$(printf '%s\n' "$CP_FIND" | awk -F'\t' 'NF != 5 { print NR }')" \
+        "every line should hold exactly five fields"
+    assert_eq "" "$(printf '%s\n' "$CP_FIND" | awk -F'\t' '$1 !~ /^(FAIL|WARN|NOTE)$/ { print NR }')" \
+        "and every level should be one of the three"
 }

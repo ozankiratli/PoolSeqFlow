@@ -90,9 +90,13 @@ def rows_of(path):
 
     Comments are whole lines starting with `#`, tested before parsing so that a `#` inside a
     quoted value is left alone. CRLF is tolerated; the file is never rewritten.
+
+    `utf-8-sig` consumes a leading UTF-8 byte-order mark, which Excel writes when it saves as
+    "CSV UTF-8". Plain `utf-8` leaves the mark on the front of the first header name, where no
+    editor shows it and no message printed from here can name it.
     """
     out = []
-    with open(path, newline="", encoding="utf-8") as handle:
+    with open(path, newline="", encoding="utf-8-sig") as handle:
         for lineno, raw in enumerate(handle, start=1):
             stripped = raw.strip("\r\n").strip()
             if not stripped or stripped.startswith("#"):
@@ -100,6 +104,20 @@ def rows_of(path):
             fields = next(csv.reader([raw.strip("\r\n")]))
             out.append((lineno, [f.strip() for f in fields]))
     return out
+
+
+def leading_mark(path):
+    """The name of the byte-order mark the file begins with, or None.
+
+    Read as raw bytes, because rows_of() decodes with `utf-8-sig` and consumes a UTF-8 mark: by
+    the time anything else here sees a column name, the evidence is gone. Only the UTF-8 mark is
+    looked for - a UTF-16 file never reaches this, having failed to decode.
+    """
+    try:
+        with open(path, "rb") as handle:
+            return "UTF-8" if handle.read(3) == b"\xef\xbb\xbf" else None
+    except OSError:
+        return None
 
 
 def check(path):
@@ -115,6 +133,12 @@ def check(path):
         return None, [f"{path}: {exc.strerror}"], []
     except csv.Error as exc:
         return None, [f"{path}: could not be read as CSV: {exc}"], []
+    except UnicodeDecodeError:
+        return None, [
+            f"{path}: is not UTF-8 text, so none of it could be read. Excel's "
+            f"'Unicode Text' and a PowerShell redirect both write UTF-16. Save it as "
+            f"'CSV UTF-8' and try again."
+        ], []
 
     if not rows:
         return None, [f"{path}: is empty (only blank lines and comments)"], []
@@ -178,7 +202,9 @@ def check(path):
     if SAMPLE_ID not in header:
         errors.append(
             f"line {header_line}: no '{SAMPLE_ID}' column. Every row needs one: it is what "
-            f"joins the row to a pair of FASTQ files, and it becomes the read group's ID."
+            f"joins the row to a pair of FASTQ files, and it becomes the read group's ID. "
+            f"The names read from that line were: "
+            f"{', '.join(repr(column) for column in header)}"
         )
 
     if not body:
@@ -338,6 +364,17 @@ def main(argv):
         for message in errors:
             print(f"  {message}", file=sys.stderr)
         return 1
+
+    # A note about the FILE rather than the table, so it is added here rather than in check():
+    # this one is true of the bytes on disk and says nothing about any row.
+    mark = leading_mark(argv[1])
+    if mark:
+        warnings.append(
+            f"it begins with a {mark} byte-order mark, which was read past. Nothing about this "
+            f"file is wrong, but the editor that added one adds it to every file it saves, and "
+            f"in parameters.config it stops the run: check that file too, and dos2unix removes "
+            f"the mark."
+        )
 
     # stderr and exit 0: the caller reads the records off stdout either way, and step 0 reports
     # these in the context of the project rather than of the file.

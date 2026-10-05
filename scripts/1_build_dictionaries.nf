@@ -72,6 +72,14 @@ process UngzipReference {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/1_BuildDictionary_s1_UngzipReference_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/1_BuildDictionary_s1_UngzipReference_nextflow.log) 2>&1
 
     mkdir -p ${run.dir.dictionaries}
 
@@ -98,12 +106,6 @@ process UngzipReference {
         echo "UNGZIP ${run.referenceFile}:             COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/1_BuildDictionary_s1_UngzipReference_nextflow.log
     """
 }
 
@@ -120,6 +122,14 @@ process CreateBwaIndex {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/1_BuildDictionary_s2_1_CreateBwaIndex_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/1_BuildDictionary_s2_1_CreateBwaIndex_nextflow.log) 2>&1
 
     echo "BWA INDEX ${run.referenceFile}:          Start building BWA index..."
     # The exact five files the symlinks below point at, one test each.
@@ -149,12 +159,6 @@ process CreateBwaIndex {
         echo "BWA INDEX ${run.referenceFile}:          COMPLETED"
     fi
     
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/1_BuildDictionary_s2_1_CreateBwaIndex_nextflow.log
     """
 }
 
@@ -171,6 +175,14 @@ process CreateSamtoolsFaiIndex {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/1_BuildDictionary_s2_2_CreateSamtoolsFaiIndex_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/1_BuildDictionary_s2_2_CreateSamtoolsFaiIndex_nextflow.log) 2>&1
 
     echo "SAMTOOLS INDEX ${run.referenceFile}:     Start building samtools fai index..."
     # The exact file the symlink below points at, not any *.fai in the directory.
@@ -191,12 +203,6 @@ process CreateSamtoolsFaiIndex {
         echo "SAMTOOLS INDEX ${run.referenceFile}:     COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/1_BuildDictionary_s2_2_CreateSamtoolsFaiIndex_nextflow.log
     """
 }
 
@@ -217,6 +223,14 @@ process BuildSnpEffDb {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/1_BuildDictionary_s2_3_BuildSnpEffDb_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/1_BuildDictionary_s2_3_BuildSnpEffDb_nextflow.log) 2>&1
 
     buildSnpEffDb() {
         echo "SNPEFF DB BUILD:    Building SnpEff database..."
@@ -298,12 +312,6 @@ process BuildSnpEffDb {
         ln -s ${build_verify_path} .
     fi
     
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/1_BuildDictionary_s2_3_BuildSnpEffDb_nextflow.log
     """
 }
 

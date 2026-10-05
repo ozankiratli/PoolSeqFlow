@@ -1,9 +1,10 @@
 #!/bin/bash
 # Checks that need no data: syntax, release packaging, version consistency.
 # cost: static
-# covers: PoolSeqFlow install/ dev/scripts/ modules/repo/index.tsv .gitattributes
+# covers: PoolSeqFlow install/ lib/ dev/scripts/ modules/repo/index.tsv .gitattributes
 # covers: analysis/citations.json citations/citations.json citations/references.bib
 # covers: analysis/references.bib manual/references.bib
+# covers: parameters.config.template metadata.csv.template multi-run.csv.example
 
 # `nextflow lint` was brought to zero warnings during the post-2.2.0 audit. Held there
 # deliberately: once the count is zero a new warning is a signal rather than noise.
@@ -682,6 +683,52 @@ test_check_install_hint_uses_the_versioned_environment() {
 
 # A malformed version has to be refused before anything is cloned, updated or exported.
 # This runs no conda commands - the check is ahead of them.
+# prep-version.sh sources lib/wrapper_lib.sh and calls into it at its step 2, which sits on the
+# far side of an hour of solving and updating. It names what it needs in WRAPPER_LIB_NEEDS and
+# refuses at once when one of them is absent, so a function that moves costs a second instead of
+# an hour. That guard is only worth having while the list matches the calls under it, which is
+# what this checks - in both directions, because a list that has drifted is a guard covering
+# nothing while reading as one that covers everything.
+#
+# The malformed-version case below cannot catch this: it exits at the version regex, which is
+# twenty lines before the source.
+test_prep_version_declares_what_it_takes_from_wrapper_lib() {
+    local out
+    out=$(cd "$REPO_ROOT" && python3 - <<'PY'
+import pathlib, re
+
+DEF = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\(\) \{", re.M)
+script = pathlib.Path("dev/scripts/prep-version.sh").read_text(encoding="utf-8")
+lib = pathlib.Path("lib/wrapper_lib.sh").read_text(encoding="utf-8")
+
+defined = set(DEF.findall(lib))
+own = set(DEF.findall(script))
+
+found = re.search(r'^WRAPPER_LIB_NEEDS="([^"]*)"', script, re.M)
+if not found:
+    print("prep-version.sh declares no WRAPPER_LIB_NEEDS, so nothing holds the list honest")
+    raise SystemExit
+declared = found.group(1).split()
+
+for name in declared:
+    if name not in defined:
+        print("declares %s(), which lib/wrapper_lib.sh does not define" % name)
+
+# Comments go, and the declaration itself with them: the names in it are a list, not calls. Only
+# names that ARE functions in wrapper_lib are looked for, so a bare word cannot cry wolf.
+body = re.sub(r"^\s*#.*$", "", script, flags=re.M)
+body = re.sub(r"^WRAPPER_LIB_NEEDS=.*$", "", body, flags=re.M)
+for name in sorted(defined):
+    if name in own or name in declared:
+        continue
+    if re.search(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(name), body):
+        print("calls %s() from lib/wrapper_lib.sh without declaring it" % name)
+PY
+)
+    assert_eq "" "$out" \
+        "prep-version.sh must declare what it takes from wrapper_lib:"$'\n'"$out"
+}
+
 test_prep_version_rejects_a_malformed_version() {
     local out status
     for bad in "" "2.3" "v2.3.0" "2.3.0-rc1"; do
@@ -930,6 +977,55 @@ print("\n".join(sorted(name.rstrip(".") for name in names if name.rstrip("."))))
 READS
 }
 
+# Every parameter stepParameterMap() declares for one step, read FROM INSIDE THAT FUNCTION and
+# nowhere else.
+#
+# variants.nf holds a second map of the same shape. stepFolders() has `        7: ['dir.subpath.
+# vcf', 'dir.subpath.freq'],` - eight spaces, the step number, a bracket - so a search of the
+# whole file for the first match was correct only while stepParameterMap() happened to be defined
+# above it. Reorder the two and this would compare the reads against the FOLDER map, losing nine
+# of step 7's ten declarations at once and reporting them as undeclared: a check that fails loudly
+# for a reason that has nothing to do with what it is checking.
+#
+# The entry is taken by matching brackets rather than by line shape, because three of the seven
+# entries fit on one line and a line-based reader ran two of them together - which made the check
+# PASS, one step's declarations covering the next one's reads.
+step_declared_parameters() {
+    python3 - "$1" "$2" <<'DECLARED'
+import re, sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+step = sys.argv[2]
+
+
+def balanced(source, start, opener, closer):
+    depth, i = 0, start
+    while i < len(source):
+        if source[i] == opener:
+            depth += 1
+        elif source[i] == closer:
+            depth -= 1
+            if depth == 0:
+                return source[start:i]
+        i += 1
+    return ""
+
+
+found = re.search(r"^def stepParameterMap\s*\(", text, re.M)
+if not found:
+    sys.exit("scripts/variants.nf has no stepParameterMap()")
+scope = balanced(text, text.find("{", found.end()), "{", "}")
+if not scope:
+    sys.exit("stepParameterMap() has no balanced body")
+
+entry = re.search(r"^        %s: \[" % re.escape(step), scope, re.M)
+if not entry:
+    sys.exit("stepParameterMap() has no entry for step " + step)
+body = re.sub(r"//[^\n]*", "", balanced(scope, entry.end() - 1, "[", "]"))
+print("\n".join(sorted(set(re.findall(r"'([^']*)'", body)))))
+DECLARED
+}
+
 # THE PARAMETER MAP AGAINST THE SOURCE IT DESCRIBES.
 #
 # stepParameterMap() in scripts/variants.nf decides which runs may share a step's work, and
@@ -970,27 +1066,12 @@ test_step_parameter_map_covers_what_each_step_reads() {
         file=$(ls "$REPO_ROOT"/scripts/${step}_*.nf 2>/dev/null | head -1)
         [ -n "$file" ] || { fail_case "no source file for step $step"; continue; }
 
-        # The step's entry, taken by matching brackets rather than by line shape: three of the
-        # seven entries fit on one line, and a line-based reader silently ran two of them
-        # together - which made the check pass because one step's declarations covered the
-        # next one's reads.
-        declared=$(STEP="$step" python3 -c '
-import os, re, sys
-text = open(sys.argv[1]).read()
-step = os.environ["STEP"]
-start = re.search(r"^        %s: \[" % step, text, re.M)
-if not start:
-    sys.exit("no map entry for step " + step)
-i, depth = start.end() - 1, 0
-while i < len(text):
-    if text[i] == "[": depth += 1
-    elif text[i] == "]":
-        depth -= 1
-        if depth == 0: break
-    i += 1
-body = re.sub(r"//[^\n]*", "", text[start.end() - 1:i])
-print("\n".join(sorted(set(re.findall(r"'"'"'([^'"'"']*)'"'"'", body)))))
-' "$variants")
+        # stderr folded in, so a refusal from the helper becomes the reason this case gives rather
+        # than a line on the terminal and an empty list here. The old inline version did not read
+        # the status at all: a missing entry left `declared` empty and every one of the step's
+        # reads was reported undeclared, which named ten problems for one cause.
+        declared=$(step_declared_parameters "$variants" "$step" 2>&1) \
+            || { fail_case "$declared"; continue; }
 
         reads=$(step_parameter_reads "$file" \
                 | grep -Ev "$excluded" | grep -Ev "$indirect" | grep -Ev "$through")
@@ -1469,8 +1550,19 @@ test_the_completion_offers_every_verb_the_wrapper_takes() {
         printf "%s\n" "${COMPREPLY[@]}"' _ "$REPO_ROOT" | sort -u)
 
     [ -n "$dispatched" ] || { fail_case "no verbs were extracted from the wrapper's case"; return; }
-    [ -n "$offered" ] || { fail_case "the completion offered nothing at all"; return; }
-    assert_eq "$dispatched" "$offered" "the completion and the wrapper must agree on the verbs"
+    [ -n "$offered" ] || { fail_case "the bash completion offered nothing at all"; return; }
+    assert_eq "$dispatched" "$offered" "the bash completion and the wrapper must agree"
+
+    # THE ZSH COMPLETION IS A SECOND LIST AND HAS TO AGREE TOO. It is native rather than a
+    # bash completion run through bashcompinit, because that emulates `compgen` and the
+    # emulation ignores the `--` prefix argument - so a shared file offers every candidate
+    # whatever has been typed. Two files is the cost of that, and this is what keeps them
+    # from drifting apart or from the wrapper.
+    local zsh_offered
+    zsh_offered=$(sed -n "/^    verbs=(/,/^    )/p" "$REPO_ROOT/lib/_PoolSeqFlow" \
+        | sed -n "s/^        '\([a-z_]*\):.*/\1/p" | sort -u)
+    [ -n "$zsh_offered" ] || { fail_case "the zsh completion offered nothing at all"; return; }
+    assert_eq "$dispatched" "$zsh_offered" "the zsh completion and the wrapper must agree"
 }
 
 # The second level, for the two subcommands that have a fixed set. `analysis` also offers the
@@ -1482,11 +1574,15 @@ test_the_completion_offers_the_subcommands_each_verb_takes() {
         reply() { COMP_WORDS=("${@:2}" ""); COMP_CWORD=$1; _poolseqflow; printf "%s\n" "${COMPREPLY[@]}"; }
         printf "check: %s\n" "$(reply 2 PoolSeqFlow check | sort | tr "\n" " ")"
         printf "modules: %s\n" "$(reply 3 PoolSeqFlow analysis modules | sort | tr "\n" " ")"
+        printf "init: %s\n" "$(reply 2 PoolSeqFlow init | sort | tr "\n" " ")"
+        printf "uninstall: %s\n" "$(reply 2 PoolSeqFlow uninstall | sort | tr "\n" " ")"
         ' _ "$REPO_ROOT")
 
     assert_contains "$out" "check: install project " \
         "check takes the two targets its usage names"
     assert_contains "$out" "modules: available install list uninstall " \
         "analysis modules takes the four verbs its usage names"
+    assert_contains "$out" "init: multi " "init takes the one word its usage names"
+    assert_contains "$out" "uninstall: all " "uninstall takes the one word its usage names"
 }
 

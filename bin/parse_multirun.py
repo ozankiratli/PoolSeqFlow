@@ -32,9 +32,13 @@ def rows_of(path):
 
     Comments are whole lines starting with `#`, tested before parsing so that a `#` inside a
     quoted value is left alone.
+
+    `utf-8-sig` consumes a leading UTF-8 byte-order mark, which Excel writes when it saves as
+    "CSV UTF-8". Plain `utf-8` leaves the mark on the front of the first header name, where no
+    editor shows it and no message printed from here can name it.
     """
     out = []
-    with open(path, newline="", encoding="utf-8") as handle:
+    with open(path, newline="", encoding="utf-8-sig") as handle:
         for lineno, raw in enumerate(handle, start=1):
             # CRLF is tolerated; the file the user wrote is never rewritten.
             stripped = raw.strip("\r\n").strip()
@@ -43,6 +47,20 @@ def rows_of(path):
             fields = next(csv.reader([raw.strip("\r\n")]))
             out.append((lineno, [f.strip() for f in fields]))
     return out
+
+
+def leading_mark(path):
+    """The name of the byte-order mark the file begins with, or None.
+
+    Read as raw bytes, because rows_of() decodes with `utf-8-sig` and consumes a UTF-8 mark: by
+    the time anything else here sees a column name, the evidence is gone. Only the UTF-8 mark is
+    looked for - a UTF-16 file never reaches this, having failed to decode.
+    """
+    try:
+        with open(path, "rb") as handle:
+            return "UTF-8" if handle.read(3) == b"\xef\xbb\xbf" else None
+    except OSError:
+        return None
 
 
 def check(path):
@@ -56,6 +74,12 @@ def check(path):
         return None, [f"{path}: {exc.strerror}"]
     except csv.Error as exc:
         return None, [f"{path}: could not be read as CSV: {exc}"]
+    except UnicodeDecodeError:
+        return None, [
+            f"{path}: is not UTF-8 text, so none of it could be read. Excel's "
+            f"'Unicode Text' and a PowerShell redirect both write UTF-16. Save it as "
+            f"'CSV UTF-8' and try again."
+        ]
 
     if not rows:
         return None, [f"{path}: is empty (only blank lines and comments)"]
@@ -88,7 +112,9 @@ def check(path):
     if RUN_ID not in header:
         errors.append(
             f"line {header_line}: no '{RUN_ID}' column. Every run needs a name: it is what "
-            f"separates the runs' outputs from each other."
+            f"separates the runs' outputs from each other. "
+            f"The names read from that line were: "
+            f"{', '.join(repr(column) for column in header)}"
         )
 
     if not body:
@@ -162,6 +188,20 @@ def main(argv):
         for message in errors:
             print(f"  {message}", file=sys.stderr)
         return 1
+
+    # stderr and exit 0, as parse_metadata.py does: the caller reads the table off stdout either
+    # way. A note about the FILE rather than the rows, which is why it is not one of check()'s
+    # errors - nothing here is wrong.
+    mark = leading_mark(argv[1])
+    if mark:
+        print(f"{argv[1]}: usable, with notes.", file=sys.stderr)
+        print(
+            f"  it begins with a {mark} byte-order mark, which was read past. Nothing about "
+            f"this file is wrong, but the editor that added one adds it to every file it "
+            f"saves, and in parameters.config it stops the run: check that file too, and "
+            f"dos2unix removes the mark.",
+            file=sys.stderr,
+        )
 
     json.dump(runs, sys.stdout)
     sys.stdout.write("\n")

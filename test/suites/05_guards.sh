@@ -6,6 +6,7 @@
 # covers: scripts/metadata.nf bin/parse_metadata.py bin/parse_multirun.py
 # covers: bin/classify_manifest.sh
 # covers: poolseqflow.nf
+# covers: parameters.config.template nextflow.config
 #
 # These run step 0 alone rather than the whole pipeline, so they are cheap. What they are
 # about is the distinction the parameter check draws between a value the user changed and a
@@ -98,6 +99,34 @@ test_a_changed_parameter_value_fails_the_run() {
     assert_contains "$report" "STATUS=FAIL" "the stage should record a failure"
 }
 
+# vcffilter.dropZeroDepth is the FIRST parameter added since v3.0.0, so it is the first whose
+# tracking had never been exercised. What this asserts is that it is ANALYSIS-AFFECTING: it
+# reaches the recorded manifest and the comparison names it, so a project that flips it is
+# stopped rather than quietly mixing results produced under the other answer.
+#
+# WHAT IT DOES NOT ASSERT, checked rather than assumed: this says nothing about step 7's artifact
+# identity. analysisParams() in 0_verify_environment.nf is an EXCLUSION list -- anything not named
+# in skipKey or skipPrefix counts -- so the guard fires whether or not the parameter appears in
+# stepParameterMap(). Measured: deleting it from scripts/variants.nf:44 leaves this case passing.
+# The declaration is 00_static's business; what the toggle DOES is the expression case in
+# 04_pipeline.
+#
+# So the thing that would break this is an edit to that exclusion list -- `vcffilter.` added to
+# skipPrefix, or this key added to skipKey. capBAM.histogramMax is already excluded on exactly
+# that reasoning, which is why the list is a plausible place for a wrong entry.
+test_flipping_dropzerodepth_fails_the_run() {
+    guards_ready || return
+    write_sandbox_config "$GUARD_SB" 's|^        dropZeroDepth .*|        dropZeroDepth   = false|'
+    local status report
+    status=$(run_verify_only "$GUARD_SB")
+    report=$(guard_report)
+    assert_status 1 "$status" "flipping dropZeroDepth should fail the run"
+    assert_contains "$report" "parameters.config has CHANGED" "should name the file that moved"
+    assert_contains "$report" "dropZeroDepth" "should name the parameter"
+    assert_contains "$report" "was  true" "should show the recorded value"
+    assert_contains "$report" "now  false" "should show the new value"
+}
+
 # THE EXECUTION DEFAULTS A PROJECT MAY REPLACE, and until E6g it could replace none of them.
 #
 # nextflow.config's includeConfig sat ABOVE its own assignments and Nextflow is later-wins, so
@@ -145,6 +174,33 @@ OVERRIDE
         "workDir must stay under mainDir"
     assert_not_contains "$flat" "somewhere-the-project-picked" \
         "a project must not be able to move the work directory out of mainDir"
+}
+
+# A DEFAULT HAS TO SURVIVE THE PARAMETER BEING ABSENT, or it is not a default. Step 7 reads
+# vcffilter.dropZeroDepth in a ternary and Nextflow resolves an absent key to null, which a
+# ternary reads as false -- so a config written before the parameter existed ran as `false`
+# where the template ships `true`, with nothing saying so. Measured through the real engine
+# before nextflow.config resolved it: RAW=[null], and the expression came out without the zero
+# term.
+#
+# The second half is what keeps the fix from being worse than the hole: the resolution sits
+# below the include and tests containsKey, so a project that says false still gets false. A
+# plain assignment there would win silently over every project on the machine.
+test_an_absent_parameter_resolves_to_its_default() {
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb flat
+    sb=$(make_pipeline_sandbox "absent-default")
+
+    write_sandbox_config "$sb" '/dropZeroDepth/d'
+    flat=$(sandbox_config_flat "$sb")
+    [ -n "$flat" ] || { fail_case "nextflow config produced nothing for $sb"; return; }
+    assert_contains "$flat" "params.vcffilter.dropZeroDepth = true" \
+        "a config that never sets it must resolve to the shipped default"
+
+    write_sandbox_config "$sb" 's|^        dropZeroDepth .*|        dropZeroDepth   = false|'
+    flat=$(sandbox_config_flat "$sb")
+    assert_contains "$flat" "params.vcffilter.dropZeroDepth = false" \
+        "and a project that sets it must still win"
 }
 
 # THE HELPERS' OWN DEPENDENCIES ARE VERIFIED LIKE ANY OTHER TOOL. bin/atomic_mv.sh copies an
@@ -696,7 +752,11 @@ TABLE
     assert_contains "$out" "RUN trim trim_galore.quality=30"    "the row's own value"
     assert_contains "$out" "RUN trim trim_galore.options=--fastqc --paired --retain_unpaired -q 30 " \
         "trim_galore.quality must re-derive options"
-    assert_contains "$out" "RUN depth variantCall.mpileupOptions=-B -C 50 -q 30 -Q 30 -d 4000 -a AD,DP,SP,INFO/AD -Ou" \
+    # -C is the TEMPLATE'S scaleMapQ, which this row does not set: it moved from 50 to 100 when
+    # the default was measured, and this expectation did not, so the case failed from then until
+    # the suite was next run in full. The `pinned` row below keeps 50 deliberately, as a value
+    # that differs from the default and so cannot pass by coincidence.
+    assert_contains "$out" "RUN depth variantCall.mpileupOptions=-B -C 100 -q 30 -Q 30 -d 4000 -a AD,DP,SP,INFO/AD -Ou" \
         "variantCall.maxDepth must re-derive mpileupOptions"
 
     # A row setting a DERIVED value directly wins, even against its own input in the same row.
@@ -1322,4 +1382,69 @@ test_a_read_pattern_matching_nothing_is_refused() {
     assert_status 1 "$status" "a pattern matching nothing should stop the run"
     assert_contains "$out" "No FASTQ files found" "saying nothing matched"
     assert_contains "$out" "Expected pattern" "and what it was looking for"
+}
+
+# THE PARAMETER RULES RUN IN STEP 0, not only in `PoolSeqFlow check project`. They are
+# bin/check_parameters.sh's, with their own cases in 03_helpers; what these two assert is that step
+# 0 calls it, renders what it says, and lets the LEVEL decide whether the run continues.
+#
+# A FRESH sandbox, never the baseline one: changing a parameter in the baseline would also trip the
+# change guard, and then there would be two reasons for one failure and no way to tell them apart.
+# On a first run there is nothing recorded yet, so the parameter rules speak alone.
+verify_fresh_config() {   # name sed-expression
+    local sb
+    sb=$(make_pipeline_sandbox "$1")
+    write_sandbox_config "$sb" "$2"
+    VF_STATUS=$(run_verify_only "$sb")
+    VF_REPORT=$(cat "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)
+    VF_SB="$sb"
+}
+
+# scaleMapQ under varQualMin makes the pileup emit nothing. Caught here, it costs a step-0 run;
+# uncaught, it costs alignment and calling first and then fails in step 6.
+test_a_parameter_that_would_produce_nothing_stops_the_run() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    verify_fresh_config "params-fail" 's|^        scaleMapQ .*|        scaleMapQ       = 15|'
+    assert_status 1 "$VF_STATUS" "a parameter that produces nothing must stop the run; see $VF_SB/run.out"
+    assert_contains "$VF_REPORT" "DISCARDS EVERY READ" "the report should carry the verdict"
+    assert_contains "$VF_REPORT" "variantCall.scaleMapQ" "against the parameter responsible"
+    assert_contains "$VF_REPORT" "15 is below varQualMin 30" "with both numbers"
+    # THE EXPLANATION IS ASSERTED BY ITS INDENT, not by its words. It is wrapped with `fold -s`,
+    # so no multi-word phrase survives reliably: the first attempt looked for "Raise scaleMapQ
+    # above varQualMin" and the fold landed between "Raise" and "scaleMapQ". The deeper indent is
+    # what says a wrapped explanation was printed at all, and it holds however the prose changes.
+    assert_contains "$VF_REPORT" "RUN PARAMETERS:            " \
+        "the explanation should be folded in under the verdict"
+    assert_contains "$VF_REPORT" "rather than after the compute it would waste" \
+        "and say why it stopped here"
+    # NOTHING ALIGNED. The point of catching it at step 0 is that no compute is spent.
+    assert_no_file "$VF_SB/store/Output/VCF/Test.vcf" "no VCF should have been produced"
+}
+
+# A WARNING IS NOT A FAILURE, and the difference has to survive the trip through step 0. scaleMapQ
+# 35 against varQualMin 30 is severe and measured at 6% of the sites, but it does produce records,
+# so the run is the user's to make.
+test_a_parameter_warning_does_not_stop_the_run() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    verify_fresh_config "params-warn" 's|^        scaleMapQ .*|        scaleMapQ       = 35|'
+    assert_status 0 "$VF_STATUS" "a warning must not stop the run; see $VF_SB/run.out"
+    assert_contains "$VF_REPORT" "SEVERE AT 35" "but it should still be said"
+    assert_not_contains "$VF_REPORT" "DISCARDS EVERY READ" "and not reported as the other thing"
+}
+
+# SILENCE FOR THE SHIPPED DEFAULTS. The case most likely to rot: a rule added with a wrong
+# threshold makes every ordinary run noisy, and a user who sees a warning on a default stops
+# reading warnings at all.
+test_the_shipped_defaults_raise_no_parameter_finding() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    verify_fresh_config "params-clean" 's|^    poolSize .*|    poolSize        = 100|'
+    assert_status 0 "$VF_STATUS" "the defaults should verify; see $VF_SB/run.out"
+    local level
+    for level in FAIL WARN NOTE; do
+        assert_not_contains "$VF_REPORT" "RUN PARAMETERS:        $level" \
+            "the template's own values should raise no $level"
+    done
 }

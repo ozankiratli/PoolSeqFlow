@@ -54,6 +54,14 @@ process SortRefAltByFrequency {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/7_s1_SortRefAltByFrequency_${vcf.baseName}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/7_s1_SortRefAltByFrequency_${vcf.baseName}_nextflow.log) 2>&1
 
     echo "SORT ALLELES BY FREQ ${vcf}: Sorting alleles by frequency..."
     if [ -f ${target_snp_freq_tsv} ] || [ -f ${target_indel_freq_tsv} ]; then
@@ -97,12 +105,6 @@ process SortRefAltByFrequency {
         echo "SORT ALLELES BY FREQ ${vcf}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/7_s1_SortRefAltByFrequency_${vcf.baseName}_nextflow.log
     """
 }
 
@@ -144,7 +146,6 @@ process FilterPotentialFalsePositives {
     indel_freq_tsv = "${indel_freq_base}.tsv"
     target_indel_freq_tsv = "${target_folder_freq}/${indel_freq_tsv}"
 
-
     sensitivity = run.filterFalsePositives.sensitivity
     threshold = run.filterFalsePositives.sampleThreshold
 
@@ -156,6 +157,15 @@ process FilterPotentialFalsePositives {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/7_s2_FilterFalsePositives_${vcf.baseName}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/7_s2_FilterFalsePositives_${vcf.baseName}_nextflow.log) 2>&1
+
     echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Filtering possible false positives..."
     if [ -f ${target_snp_freq_tsv} ] || [ -f ${target_indel_freq_tsv} ]; then
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Found at least one of the existing freq files"
@@ -194,6 +204,20 @@ process FilterPotentialFalsePositives {
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Order might change after filtering, reordering alleles again..."
         MajorAlleleToRef.py "\$TMP_FILE" "${filterfp_vcf}"
 
+        # In the else branch only: the skip branches above write a zero-byte placeholder on
+        # purpose, and a size test would refuse those instead.
+        surviving=\$(grep -vc '^#' ${filterfp_vcf} || true)
+        if [ "\$surviving" -eq 0 ]; then
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: ERROR: no site survived the cross-sample filter."
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Every called site was removed, so there is"
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: nothing left to publish a frequency for."
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: This run required an allele in ${threshold} of the"
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: samples at a frequency above ${sensitivity}."
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: filterFalsePositives.sampleThreshold and poolSize"
+            echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: are what move those. Nothing was published."
+            exit 1
+        fi
+
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Moving ${filterfp_vcf} to ${target_folder_vcf}..."
         atomic_mv.sh ${filterfp_vcf} ${target_filterfp_vcf}
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: Creating symbolic link..."
@@ -206,12 +230,6 @@ process FilterPotentialFalsePositives {
         echo "FILTER POTENTIAL FALSE POSITIVES ${vcf}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/7_s2_FilterFalsePositives_${vcf.baseName}_nextflow.log
     """
 }
 
@@ -232,6 +250,13 @@ process DepthAndQualityFilter {
     // Depth-filtered intermediate, kept in the task directory. Named _dp so the process's own
     // "*_dq.vcf" output glob cannot pick it up.
     filterdp_vcf = "${vcf.baseName}_dp.vcf"
+
+    // bcftools excludes the whole SITE when the expression holds for any one sample, so this
+    // is an intersection across samples: every published site has every sample at or above
+    // minDP. The zero term is redundant whenever minDP is 1 or more.
+    depth_exclude = run.vcffilter.dropZeroDepth
+        ? "FMT/DP<${run.vcffilter.minDP} || FMT/DP==0"
+        : "FMT/DP<${run.vcffilter.minDP}"
 
     filterdq_base = "${vcf.baseName}_dq"
     filterdq_vcf = "${filterdq_base}.vcf"
@@ -258,6 +283,15 @@ process DepthAndQualityFilter {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/7_s3_DepthAndQualityFilter_${vcf.baseName}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/7_s3_DepthAndQualityFilter_${vcf.baseName}_nextflow.log) 2>&1
+
     echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Filtering VCF for depth and quality ${vcf.baseName}..."
     if [ -f ${target_snp_freq_tsv} ] || [ -f ${target_indel_freq_tsv} ]; then
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Found at least one of the existing freq files"
@@ -278,13 +312,28 @@ process DepthAndQualityFilter {
         ln -s ${target_filterdq_vcf} .
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: COMPLETED"
     else
-        echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Depth Filtering VCF..."
-        ${run.software.bcftools} view -e "FMT/DP<${run.vcffilter.minDP}" -Ov -o ${filterdp_vcf} ${vcf}
+        echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Depth Filtering VCF, excluding ${depth_exclude}"
+        ${run.software.bcftools} view -e "${depth_exclude}" -Ov -o ${filterdp_vcf} ${vcf}
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Quality Filtering VCF..."
         ${run.software.vcftools} --vcf ${filterdp_vcf} \
             --minQ ${run.vcffilter.minQUAL} \
             --recode --recode-INFO-all \
             --out ${filterdq_base}
+
+        # In the else branch only: the skip branches above write a zero-byte placeholder on
+        # purpose, and a size test would refuse those instead.
+        surviving=\$(grep -vc '^#' ${filterdq_recode_vcf} || true)
+        if [ "\$surviving" -eq 0 ]; then
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: ERROR: no site survived the depth and quality filter."
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Both are applied to the whole SITE: one sample under"
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: the depth removes it for every sample, so the"
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: shallowest library sets the threshold for the cohort."
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: This run used minDP ${run.vcffilter.minDP}, minQUAL ${run.vcffilter.minQUAL},"
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: dropZeroDepth ${run.vcffilter.dropZeroDepth}. Check the weakest sample in"
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Output/Reports/Coverage before raising any of them."
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Nothing was published, so this costs nothing already made."
+            exit 1
+        fi
 
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Renaming ${filterdq_recode_vcf} as ${filterdq_vcf} and moving to ${target_folder_vcf}"
         atomic_mv.sh ${filterdq_recode_vcf} ${target_filterdq_vcf}
@@ -298,12 +347,6 @@ process DepthAndQualityFilter {
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/7_s3_DepthAndQualityFilter_${vcf.baseName}_nextflow.log
     """
 }
 
@@ -344,6 +387,14 @@ process SplitSNPsAndINDELs {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/7_s4_SplitSNPsAndINDELs_${vcf.baseName}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/7_s4_SplitSNPsAndINDELs_${vcf.baseName}_nextflow.log) 2>&1
     echo "SPLIT SNPS AND INDELS ${vcf}: Splitting ${vcf.baseName} to SNP and INDEL VCFs..."
     # AND, where the three processes above use OR: this one has TWO outputs, and calculating a
     # missing table needs a real split VCF, not the dummy this branch emits.
@@ -406,12 +457,6 @@ process SplitSNPsAndINDELs {
         rm \$(realpath ${vcf})
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/7_s4_SplitSNPsAndINDELs_${vcf.baseName}_nextflow.log
     """
 }
 
@@ -437,6 +482,14 @@ process CalculateFrequencies {
 
     """
     set -eo pipefail
+    mkdir -p ${dir_log}
+    {
+        echo ""
+        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
+    } >> ${dir_log}/7_s5_CalculateFrequencies_${vcf.baseName}_nextflow.log
+    # Written as it happens rather than copied at the end: a task killed by a signal leaves what
+    # it had reached. stdbuf keeps tee line-buffered, so the last line is not held in a buffer.
+    exec > >(stdbuf -oL tee -a ${dir_log}/7_s5_CalculateFrequencies_${vcf.baseName}_nextflow.log) 2>&1
 
     echo "CALCULATE FREQUENCIES ${vcf}: Calculating Frequencies"
     if [ -f ${target_freq_file} ] && [ -f ${target_depth_file} ]; then
@@ -463,12 +516,6 @@ process CalculateFrequencies {
         echo "CALCULATE FREQUENCIES ${vcf}: COMPLETED"
     fi
 
-    mkdir -p ${dir_log}
-    {
-        echo ""
-        echo "===== run=${workflow.runName} | session=${workflow.sessionId} | attempt=${task.attempt} | \$(date -Is) ====="
-        cat .command.log
-    } >> ${dir_log}/7_s5_CalculateFrequencies_${vcf.baseName}_nextflow.log
     """
 }
 
