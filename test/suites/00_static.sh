@@ -977,6 +977,55 @@ print("\n".join(sorted(name.rstrip(".") for name in names if name.rstrip("."))))
 READS
 }
 
+# Every parameter stepParameterMap() declares for one step, read FROM INSIDE THAT FUNCTION and
+# nowhere else.
+#
+# variants.nf holds a second map of the same shape. stepFolders() has `        7: ['dir.subpath.
+# vcf', 'dir.subpath.freq'],` - eight spaces, the step number, a bracket - so a search of the
+# whole file for the first match was correct only while stepParameterMap() happened to be defined
+# above it. Reorder the two and this would compare the reads against the FOLDER map, losing nine
+# of step 7's ten declarations at once and reporting them as undeclared: a check that fails loudly
+# for a reason that has nothing to do with what it is checking.
+#
+# The entry is taken by matching brackets rather than by line shape, because three of the seven
+# entries fit on one line and a line-based reader ran two of them together - which made the check
+# PASS, one step's declarations covering the next one's reads.
+step_declared_parameters() {
+    python3 - "$1" "$2" <<'DECLARED'
+import re, sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+step = sys.argv[2]
+
+
+def balanced(source, start, opener, closer):
+    depth, i = 0, start
+    while i < len(source):
+        if source[i] == opener:
+            depth += 1
+        elif source[i] == closer:
+            depth -= 1
+            if depth == 0:
+                return source[start:i]
+        i += 1
+    return ""
+
+
+found = re.search(r"^def stepParameterMap\s*\(", text, re.M)
+if not found:
+    sys.exit("scripts/variants.nf has no stepParameterMap()")
+scope = balanced(text, text.find("{", found.end()), "{", "}")
+if not scope:
+    sys.exit("stepParameterMap() has no balanced body")
+
+entry = re.search(r"^        %s: \[" % re.escape(step), scope, re.M)
+if not entry:
+    sys.exit("stepParameterMap() has no entry for step " + step)
+body = re.sub(r"//[^\n]*", "", balanced(scope, entry.end() - 1, "[", "]"))
+print("\n".join(sorted(set(re.findall(r"'([^']*)'", body)))))
+DECLARED
+}
+
 # THE PARAMETER MAP AGAINST THE SOURCE IT DESCRIBES.
 #
 # stepParameterMap() in scripts/variants.nf decides which runs may share a step's work, and
@@ -1017,27 +1066,12 @@ test_step_parameter_map_covers_what_each_step_reads() {
         file=$(ls "$REPO_ROOT"/scripts/${step}_*.nf 2>/dev/null | head -1)
         [ -n "$file" ] || { fail_case "no source file for step $step"; continue; }
 
-        # The step's entry, taken by matching brackets rather than by line shape: three of the
-        # seven entries fit on one line, and a line-based reader silently ran two of them
-        # together - which made the check pass because one step's declarations covered the
-        # next one's reads.
-        declared=$(STEP="$step" python3 -c '
-import os, re, sys
-text = open(sys.argv[1]).read()
-step = os.environ["STEP"]
-start = re.search(r"^        %s: \[" % step, text, re.M)
-if not start:
-    sys.exit("no map entry for step " + step)
-i, depth = start.end() - 1, 0
-while i < len(text):
-    if text[i] == "[": depth += 1
-    elif text[i] == "]":
-        depth -= 1
-        if depth == 0: break
-    i += 1
-body = re.sub(r"//[^\n]*", "", text[start.end() - 1:i])
-print("\n".join(sorted(set(re.findall(r"'"'"'([^'"'"']*)'"'"'", body)))))
-' "$variants")
+        # stderr folded in, so a refusal from the helper becomes the reason this case gives rather
+        # than a line on the terminal and an empty list here. The old inline version did not read
+        # the status at all: a missing entry left `declared` empty and every one of the step's
+        # reads was reported undeclared, which named ten problems for one cause.
+        declared=$(step_declared_parameters "$variants" "$step" 2>&1) \
+            || { fail_case "$declared"; continue; }
 
         reads=$(step_parameter_reads "$file" \
                 | grep -Ev "$excluded" | grep -Ev "$indirect" | grep -Ev "$through")

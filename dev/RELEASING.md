@@ -61,7 +61,7 @@ dev/scripts/export-environment.sh PoolSeqFlow-<version>-analysis /tmp/b.yml
 diff /tmp/a.yml install/environment.yml && diff /tmp/b.yml install/environment-analysis.yml
 ```
 
-Identical both ways and the freeze still holds. Run the two proofs anyway -- they answer a question about the files, which no diff does:
+Identical both ways and the freeze still holds. Run the two proofs anyway: they answer a question about the files, which no diff does:
 
 ```
 dev/scripts/check-exported-floor.sh
@@ -91,6 +91,7 @@ Double check that `bin/config_migrate.sh` is ready for this release. List what t
  - **meaning or format changed** -- a line in `reformatted()`, so the template value wins
  - **added, and its absence would change behavior** -- resolve its default in `nextflow.config`, below the include and guarded by `containsKey`
  - **added** -- a note under "Read these before your next run", giving the default and what to write for the other value
+ - **its default moved** -- nothing to do here, and that is the point: an existing config keeps its own value, so an upgrading project goes on behaving as it did while a new project behaves differently from the same reads. `config_migrate.sh` must not change an analysis setting, so the CHANGELOG is the only place a user can learn it
 
 If this release renames `storageDir`, move the marker in `config_is_current()` with it.
 
@@ -99,6 +100,8 @@ Then read the report a migrating user would see:
 ```
 dev/scripts/check-migration.sh
 ```
+
+**Read `Kept your value` as carefully as the rest.** It is where a moved default shows up, written as `template -> yours`, and it is the one block that looks like nothing happened.
 
 Also run the language sweep before the merge:
 
@@ -130,6 +133,10 @@ dev/scripts/bump-analysis-version.sh module <name>
 bash test/run_tests.sh
 ```
 
+A full run solves **both** `install/environment.yml` and `install/environment-analysis.yml` into a scratch pair, runs against those, and removes them on the way out. 
+
+Only a full run does this. `--fast` and `--suite` resolve this tree's exact version and skip what is not installed, so they stay cheap, and neither ever borrows another release's environment.
+
 ## 6. Merge to `main`
 
 Open the merge request, review the diff as a whole, merge.
@@ -143,9 +150,23 @@ dev/scripts/bump-version.sh <new-version>
 
 Abandoning the cycle after this: `dev/scripts/bump-version.sh --revert` undoes the bump and the CHANGELOG section it added. It refuses once the version has been tagged.
 
+**Then raise the environment floor of every module step 2 named.** A moved pin names a package version only this release's environment holds, so those modules require this release and nothing earlier -- and `environment` in their manifests is what tells a user on the older release to upgrade, instead of letting the install reach conda and fail there.
+
+```
+"environment": "<new-version>"      in each modules/<name>/manifest.json
+```
+
+**It has to be here and not at step 2.** `analysis/lib/nf/modules.nf` refuses at run time any module whose floor is above the running release, so setting it before the bump makes every one of those modules unrunnable in its own repository:
+
+```text
+'mds' v20261004.001 needs the analysis environment of PoolSeqFlow 3.3.0 or newer, and this is 3.2.0.
+```
+
+No second version bump is needed -- the module's version already moved at step 2 and nothing is committed yet, and the gate compares committed state.
+
 ## 8. Run the full suite
 
-**Install the new version first.** The suite cannot run without both environments:
+**Install the new version first**, and here that is the point rather than a prerequisite: this step is the only one that measures the environments a user actually receives, instead of a scratch solve of the files that describe them.
 
 ```
 ./PoolSeqFlow install
@@ -227,6 +248,10 @@ dev/scripts/publish-module.sh <name>
 ```
 
 It writes the tarball and the catalogue row together and commits neither. **Commit them together** -- the site deploys `modules/repo/` wholesale, so a row without its file advertises a download that 404s until the next deploy -- and push, which is what deploys.
+
+**This is after the release, and a pin move is why it cannot move earlier.** A module whose pin step 2 moved names a package version only this release's environment holds, so its `environment` floor is this release, and that floor cannot be written before the version exists. The catalogue carries a row per module version and the wrapper installs the newest row whose floor an installation clears, so everyone on an earlier release keeps the row they were already running and sees the new one as `needs PoolSeqFlow <version>`.
+
+**Read what the moved pin does to the result.** A package version is an input to what a module computes. Step 2 moves the pin because there is only one version it may name, not because the new version is known to compute the same numbers -- so a module whose pin moved is worth a look before it is published, and worth a CHANGELOG line if the answer changed.
 
 ## 12. Return to `dev`
 

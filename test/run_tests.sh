@@ -22,6 +22,18 @@
 # Exit status is 0 only when every case that ran passed. Skips do not fail the run: a
 # machine without the conda environment can still check everything that does not need it.
 #
+# A FULL RUN - no filters and no --fast - looks for no installed environment at all. It solves
+# install/environment.yml and install/environment-analysis.yml into a scratch pair, runs against
+# those, and removes them on the way out: those files are what the release ships, and the suite
+# writes to an environment, so a release gate must not touch the one the current release depends
+# on. That costs minutes, and it is the run that decides whether to publish.
+#
+# A filtered run resolves this tree's exact version and skips what is not installed, so --fast
+# and --suite stay cheap. It never borrows another release's environment either.
+#
+# TEST_CONDA_ENV and TEST_ANALYSIS_ENV name an environment to use in place of either, which is
+# how dev/scripts/prep-version.sh passes in the pair it has already built.
+#
 # Deliberately not `set -e`. A failing assertion has to be recorded and reported, not abort
 # the whole run - a suite that stops at its first problem hides the rest of them.
 set -uo pipefail
@@ -96,40 +108,39 @@ conda_env_dirs() {
 # The installed environment for this tree's version. <suffix> is "" for the pipeline environment
 # and "-analysis" for the other; <probe> is the binary that proves it is usable.
 #
-# THIS TREE'S VERSION FIRST, and another only with a warning on stderr. A bare PoolSeqFlow-*
-# glob takes whatever sorts first, which is the oldest environment on the machine, so a tree at
-# 3.1.2 with 3.1.1 still installed measured 3.1.1 and said nothing. The same glob had already
-# been caught doing the same thing in prep-version.sh.
+# THIS TREE'S VERSION, BY EXACT NAME, AND NOTHING ELSE.
 #
-# The analysis environment is excluded by name rather than by probe, because it carries nextflow
-# too - measured, all four installed environments do - so `PoolSeqFlow-*` probed for bin/nextflow
-# returns PoolSeqFlow-<version>-analysis as the pipeline environment.
+# It used to fall back to any PoolSeqFlow-*<suffix> environment that had the probe, warning on
+# stderr. That is the wrong shape: a tree at 3.3.0 with 3.1.1 still installed measured 3.1.1's
+# packages, and a number computed against versions no user receives is worse than no number,
+# because the run is green and describes other software. Z, 2026-10-04: *"Again this is the wrong
+# shape. It should create a new scratch environment to test."* So an absent environment is absent,
+# and a full run builds a scratch one below rather than borrowing a release's.
+#
+# The old glob needed to exclude *-analysis by name, because that environment carries nextflow
+# too - measured, all four installed environments do - so a probe for bin/nextflow returned the
+# analysis environment as the pipeline one. An exact name cannot make that mistake.
 find_release_env() {
-    local suffix="$1" probe="$2" dir candidate other=""
+    local suffix="$1" probe="$2" dir candidate
     while IFS= read -r dir; do
         candidate="$dir/PoolSeqFlow-${TREE_VERSION}${suffix}"
         if [ -x "$candidate/bin/$probe" ]; then
             printf '%s' "$candidate"
             return 0
         fi
-        for candidate in "$dir"/PoolSeqFlow-*"$suffix"; do
-            [ -z "$suffix" ] && case "$candidate" in *-analysis) continue ;; esac
-            [ -x "$candidate/bin/$probe" ] && [ -z "$other" ] && other="$candidate"
-        done
     done < <(conda_env_dirs)
-    if [ -n "$other" ]; then
-        printf 'WARNING: PoolSeqFlow-%s%s is not installed; testing %s instead\n' \
-            "$TREE_VERSION" "$suffix" "$(basename "$other")" >&2
-        printf '%s' "$other"
-    fi
     return 0
 }
 
 # The conda environment supplying nextflow, bwa, samtools and the rest. Point
 # TEST_CONDA_ENV at another one to test against it; suites that need tools skip without it.
-if [ -z "${TEST_CONDA_ENV:-}" ]; then
-    TEST_CONDA_ENV=$(find_release_env "" nextflow)
-fi
+#
+# NEITHER ENVIRONMENT IS RESOLVED HERE. Which one a run should use depends on whether it is a
+# full run, and that is not known until the suites have been selected - so both are settled in
+# one place below, after the scope is decided. Only whether the caller named one is recorded now,
+# because the assignment that follows would otherwise erase the answer.
+TEST_CONDA_ENV_GIVEN=0
+[ -n "${TEST_CONDA_ENV:-}" ] && TEST_CONDA_ENV_GIVEN=1
 TEST_CONDA_ENV="${TEST_CONDA_ENV:-}"
 export TEST_CONDA_ENV
 
@@ -158,33 +169,10 @@ export -f have_analysis_r
 # below describes - the fix landed on the activation and never reached the search that decides
 # whether there is anything to activate. So the hook was resolved correctly from a variable that
 # was always empty.
-if [ -z "${TEST_ANALYSIS_ENV:-}" ]; then
-    TEST_ANALYSIS_ENV=$(find_release_env -analysis Rscript)
-fi
+TEST_ANALYSIS_ENV_GIVEN=0
+[ -n "${TEST_ANALYSIS_ENV:-}" ] && TEST_ANALYSIS_ENV_GIVEN=1
 TEST_ANALYSIS_ENV="${TEST_ANALYSIS_ENV:-}"
 export TEST_ANALYSIS_ENV
-
-# THE conda SHELL FUNCTION, DEFINED BUT NOT USED YET. Sourcing the hook is what makes
-# `conda activate` exist in a script at all; the activation itself happens further down, around
-# the block of suites that declare `# env: analysis`, so nothing else in the run has an
-# environment on its PATH.
-#
-# It used to activate here, for the whole process. That put the analysis environment behind
-# every one of the 500-odd cases that do not want it, and made the pipeline suites unable to
-# notice a missing tool: both environments carry nextflow, samtools, bcftools and rsync, so
-# anything dropped from the pipeline environment was quietly answered by the analysis one.
-#
-# THE HOOK IS FOUND FROM THE ENVIRONMENT'S OWN PATH, NOT FROM `conda info --base`. That command
-# prints a plugin's load error onto stdout alongside the answer - anaconda-anon-usage does it on
-# every invocation - so the variable holds an error message with a path stuck on the end, the
-# `-f` test fails against nonsense, and the activation is skipped in silence. An environment
-# lives at <base>/envs/<name>, so the base is two directories up and needs nothing to say so.
-if [ -n "$TEST_ANALYSIS_ENV" ]; then
-    _conda_hook="$(dirname "$(dirname "$TEST_ANALYSIS_ENV")")/etc/profile.d/conda.sh"
-    # shellcheck disable=SC1091
-    [ -f "$_conda_hook" ] && . "$_conda_hook"
-    unset _conda_hook
-fi
 
 # The analysis environment's Rscript, empty when there is none. A module's own R may use the
 # packages that environment pins, and some of its paths need one the system R does not carry;
@@ -326,13 +314,27 @@ for candidate in "${POOLSEQFLOW_TEST_XDEV:-}" /dev/shm /var/tmp; do
 done
 export TEST_XDEV_TMPDIR
 
+# Conda environments this run built, and only those. Named before the trap is set, because a
+# conda environment outlives the process and a build interrupted part way still leaves one.
+SCRATCH_ENVS=""
+
 cleanup() {
+    local env
     if [ "$KEEP" -eq 1 ]; then
         printf '\nworking directory kept at %s\n' "$TEST_TMPDIR"
         [ -n "$TEST_XDEV_TMPDIR" ] && printf 'second filesystem kept at %s\n' "$TEST_XDEV_TMPDIR"
+        for env in ${SCRATCH_ENVS:-}; do
+            printf 'scratch environment kept: %s\n' "$env"
+            printf '    remove it with: conda env remove -n %s -y\n' "$env"
+        done
     else
         rm -rf "$TEST_TMPDIR"
         [ -n "$TEST_XDEV_TMPDIR" ] && rm -rf "$TEST_XDEV_TMPDIR"
+        for env in ${SCRATCH_ENVS:-}; do
+            printf '\nremoving the scratch environment %s\n' "$env"
+            conda env remove --name "$env" --yes > /dev/null 2>&1 \
+                || printf 'WARNING: could not remove %s\n' "$env" >&2
+        done
     fi
 }
 trap cleanup EXIT
@@ -384,20 +386,6 @@ fi
 
 printf '%sPoolSeqFlow test suite%s\n' "$C_HEAD" "$C_OFF"
 
-# BOTH ENVIRONMENTS, NAMED. Only the pipeline one was printed, so an analysis environment that
-# was never found looked exactly like a run that did not need one - and the skips it caused read
-# as a machine without R rather than as a suite that had failed to look in the right place.
-if have_tools; then
-    printf '%stools:    %s%s\n' "$C_DIM" "$TEST_CONDA_ENV" "$C_OFF"
-else
-    printf '%stools:    none found - suites needing the pipeline will skip%s\n' "$C_DIM" "$C_OFF"
-fi
-if have_analysis_r; then
-    printf '%sanalysis: %s%s\n' "$C_DIM" "$TEST_ANALYSIS_ENV" "$C_OFF"
-else
-    printf '%sanalysis: none found - suites needing R will skip%s\n' "$C_DIM" "$C_OFF"
-fi
-
 # WHAT THIS RUN COVERS, before it covers it. A filtered run and a full one are told apart by
 # this line and by nothing else in the output, and a green result over a subset nobody chose
 # reads exactly like a green result over everything.
@@ -407,6 +395,14 @@ for suite in "${SUITES[@]}"; do
     matches_any "$(suite_cost "$suite")" "${COST_FILTERS[@]+"${COST_FILTERS[@]}"}" || continue
     SELECTED+=("$(basename "$suite" .sh)")
 done
+# A FULL RUN IS EVERY SUITE WITH EVERY CASE: no filters, and not --fast, which skips the cases
+# that run the pipeline. It is the only run that builds an environment it cannot find, so what
+# counts as one is decided here, beside the line that reports it.
+FULL_RUN=0
+if [ "${#SUITE_FILTERS[@]}" -eq 0 ] && [ "${#CASE_FILTERS[@]}" -eq 0 ] \
+   && [ "${#COST_FILTERS[@]}" -eq 0 ] && [ "$FAST" -eq 0 ]; then
+    FULL_RUN=1
+fi
 if [ "${#SUITE_FILTERS[@]}" -eq 0 ] && [ "${#CASE_FILTERS[@]}" -eq 0 ] \
    && [ "${#COST_FILTERS[@]}" -eq 0 ]; then
     printf '%sscope: every suite (%d)%s\n' "$C_DIM" "${#SELECTED[@]}" "$C_OFF"
@@ -420,6 +416,114 @@ fi
 if [ "${#SELECTED[@]}" -eq 0 ]; then
     printf 'nothing matches %s%s\n' "${SUITE_FILTERS[*]}" "${COST_FILTERS[*]:+ at cost ${COST_FILTERS[*]}}" >&2
     exit 2
+fi
+
+# A FULL RUN BUILDS BOTH FROM THE SHIPPED FILES AND LOOKS FOR NOTHING INSTALLED.
+#
+# Two reasons it must not reach for PoolSeqFlow-<version>, even when one is sitting there:
+#
+#   THE SUITE WRITES TO AN ENVIRONMENT. 02_launcher installs and uninstalls, and installing a
+#   module puts that module's own packages into the analysis environment. Running the release
+#   gate against the environment the current release depends on can change it, mid-cycle, under
+#   the maintainer. Z, 2026-10-04: *"We're trying to avoid changing the existing environment
+#   during the release cycle."*
+#
+#   AND IT IS THE WRONG TOOL SET. install/environment.yml is what this release will ship, and in
+#   a cycle it has just been re-exported with packages moved; the installed environment belongs
+#   to the release being replaced. Green against that describes software nobody receives.
+#
+# TEST_CONDA_ENV and TEST_ANALYSIS_ENV still win, which is how dev/scripts/prep-version.sh hands
+# over the pair it has already built instead of paying for a second one.
+#
+# A FILTERED RUN resolves this tree's own version by exact name and skips what is not there.
+# --fast, --cost static and --suite <name> are what a change is checked with, several times an
+# hour, and a solve inside one of those would stop them being used.
+#
+# THE SCRATCH NAME BELONGS TO NO RELEASE. Building PoolSeqFlow-<tree version> instead would leave
+# an environment solved from this tree's files standing under a version those files have not
+# shipped as - the error dev/scripts/check-exported-floor.sh exists to avoid.
+build_scratch_env() {
+    local label="$1" file="$2" suffix="$3" probe="$4" scratch prefix
+    scratch="PoolSeqFlow-suite-$$$suffix"
+    if ! command -v conda > /dev/null 2>&1; then
+        printf '%s%s: no conda, so no scratch environment can be built%s\n' \
+            "$C_DIM" "$label" "$C_OFF" >&2
+        return 1
+    fi
+    if [ ! -f "$REPO_ROOT/$file" ]; then
+        printf '%s%s: %s is missing, so there is nothing to build from%s\n' \
+            "$C_DIM" "$label" "$file" "$C_OFF" >&2
+        return 1
+    fi
+    printf '%s%s: solving %s into %s. This takes minutes.%s\n' \
+        "$C_DIM" "$label" "$file" "$scratch" "$C_OFF" >&2
+    # Recorded before the status is judged: a solve that fails part way still leaves one behind.
+    SCRATCH_ENVS="$SCRATCH_ENVS $scratch"
+    if ! conda env create --name "$scratch" --file "$REPO_ROOT/$file" --yes \
+            > "$TEST_TMPDIR/solve-$label.log" 2>&1; then
+        printf 'ERROR: %s did not solve:\n' "$file" >&2
+        tail -n 15 "$TEST_TMPDIR/solve-$label.log" >&2
+        return 1
+    fi
+    prefix=$(conda env list | awk -v n="$scratch" '$1 == n {print $NF}')
+    if [ -z "$prefix" ] || [ ! -x "$prefix/bin/$probe" ]; then
+        printf 'ERROR: %s was created but has no bin/%s\n' "$scratch" "$probe" >&2
+        return 1
+    fi
+    printf '%s' "$prefix"
+}
+
+if [ "$FULL_RUN" -eq 1 ]; then
+    [ "$TEST_CONDA_ENV_GIVEN" -eq 1 ] \
+        || TEST_CONDA_ENV=$(build_scratch_env tools install/environment.yml "" nextflow) || true
+    [ "$TEST_ANALYSIS_ENV_GIVEN" -eq 1 ] \
+        || TEST_ANALYSIS_ENV=$(build_scratch_env analysis install/environment-analysis.yml \
+                                                -analysis Rscript) || true
+else
+    [ "$TEST_CONDA_ENV_GIVEN" -eq 1 ] \
+        || TEST_CONDA_ENV=$(find_release_env "" nextflow)
+    [ "$TEST_ANALYSIS_ENV_GIVEN" -eq 1 ] \
+        || TEST_ANALYSIS_ENV=$(find_release_env -analysis Rscript)
+fi
+export TEST_CONDA_ENV TEST_ANALYSIS_ENV
+
+# THE conda SHELL FUNCTION, DEFINED BUT NOT USED YET. Sourcing the hook is what makes
+# `conda activate` exist in a script at all; the activation itself happens further down, around
+# the block of suites that declare `# env: analysis`, so nothing else in the run has an
+# environment on its PATH.
+#
+# It used to activate here, for the whole process. That put the analysis environment behind
+# every one of the 500-odd cases that do not want it, and made the pipeline suites unable to
+# notice a missing tool: both environments carry nextflow, samtools, bcftools and rsync, so
+# anything dropped from the pipeline environment was quietly answered by the analysis one.
+#
+# THE HOOK IS FOUND FROM THE ENVIRONMENT'S OWN PATH, NOT FROM `conda info --base`. That command
+# prints a plugin's load error onto stdout alongside the answer - anaconda-anon-usage does it on
+# every invocation - so the variable holds an error message with a path stuck on the end, the
+# `-f` test fails against nonsense, and the activation is skipped in silence. An environment
+# lives at <base>/envs/<name>, so the base is two directories up and needs nothing to say so.
+if [ -n "$TEST_ANALYSIS_ENV" ]; then
+    _conda_hook="$(dirname "$(dirname "$TEST_ANALYSIS_ENV")")/etc/profile.d/conda.sh"
+    # shellcheck disable=SC1091
+    [ -f "$_conda_hook" ] && . "$_conda_hook"
+    unset _conda_hook
+fi
+
+# BOTH ENVIRONMENTS, NAMED, and after any build so this says what was really used. Only the
+# pipeline one was printed once, so an analysis environment that was never found looked exactly
+# like a run that did not need one - and the skips it caused read as a machine without R rather
+# than as a suite that had failed to look in the right place.
+if have_tools; then
+    printf '%stools:    %s%s\n' "$C_DIM" "$TEST_CONDA_ENV" "$C_OFF"
+else
+    printf '%stools:    none for %s - suites needing the pipeline will skip%s\n' \
+        "$C_DIM" "$TREE_VERSION" "$C_OFF"
+fi
+if have_analysis_r; then
+    printf '%sanalysis: %s%s\n' "$C_DIM" "$TEST_ANALYSIS_ENV" "$C_OFF"
+else
+    printf '%sanalysis: none for %s - suites needing R will skip%s\n' \
+        "$C_DIM" "$TREE_VERSION" "$C_OFF"
 fi
 
 SUITES_RUN=0

@@ -24,7 +24,10 @@
 #      than one package at a time.
 #   2. Moves any module package pin the update left behind, and bumps that module's version with
 #      it. A pin may name exactly one version - whatever the shared analysis environment holds -
-#      so the update decides it, and before the suite, so the suite runs on what will ship.
+#      so the update decides it, and before the suite, so the suite runs on what will ship. It
+#      names the modules whose `environment` floor has to follow, and does not move it: the frame
+#      refuses a module whose floor is above the running release, which is still the old version
+#      here. That one waits for the bump.
 #   3. Runs the full test suite against both at once.
 #   4. Only if that passes: reads what each environment requires of its host, then exports them
 #      to install/environment.yml and install/environment-analysis.yml.
@@ -359,6 +362,31 @@ else
         say ""
         say "      every pin now agrees with the baseline. The manifests are changed in the"
         say "      tree and uncommitted, like the exported files below."
+        say ""
+        # THE FLOOR THESE MODULES NOW NEED, AND WHY IT IS NOT SET HERE.
+        #
+        # A moved pin names a package version only this release's environment holds, so each of
+        # these modules now requires this release and nothing earlier. `environment` is the field
+        # that says so, and it has to move too - or a user on the previous release installs the
+        # module, reaches conda, and is refused with "already holds" instead of being told to
+        # upgrade.
+        #
+        # It CANNOT move now. analysis/lib/nf/modules.nf refuses at run time any module whose
+        # environment is above the running release, and the release is still the old version until
+        # bump-version.sh. Setting it here made every module in this repository unrunnable, which
+        # the suite found as six failures in the three module suites:
+        #
+        #   'mds' v... needs the analysis environment of PoolSeqFlow 3.3.0 or newer, and this is 3.2.0.
+        #
+        # So the pin moves here, where the solve decides it, and the floor moves after the bump.
+        say "      AFTER dev/scripts/bump-version.sh, raise the environment floor in each:"
+        for NAME in $MOVED; do
+            say "          modules/$NAME/manifest.json      \"environment\": \"$NEW\""
+        done
+        say ""
+        say "      Not now: the frame refuses a module whose floor is above the running release,"
+        say "      and that is still the old version until the bump. Each module is republished"
+        say "      at the end of the release, which is when the floor has to be true."
     fi
 fi
 say ""
