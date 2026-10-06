@@ -87,6 +87,10 @@ for (needed in c("permutations", "fdr", "reportBelow", "reportTop", "binSize", "
 # Collapse each unit's pools onto one weighted value: the weights summed, the frequency their
 # weighted mean. Where a unit holds one pool this returns that pool unchanged, so a design with
 # no biological replication takes the same path and gets the same answer.
+#
+# Over the pools that were READ at the site. An unread pool has no frequency and an n_eff of NA,
+# so it drops out of both sums and the unit is the weighted mean of the rest. A unit none of
+# whose pools were read has no weight and no frequency there: both are NA.
 roll_up <- function(freq, weight, site, groups) {
     held <- matrix(0, nrow = nrow(weight), ncol = length(groups),
                    dimnames = list(NULL, names(groups)))
@@ -94,9 +98,11 @@ roll_up <- function(freq, weight, site, groups) {
                     dimnames = list(NULL, names(groups)))
     for (unit in seq_along(groups)) {
         mine <- weight[, groups[[unit]], drop = FALSE]
-        held[, unit] <- rowSums(mine)
+        held[, unit] <- rowSums(mine, na.rm = TRUE)
+        held[rowSums(!is.na(mine)) == 0, unit] <- NA_real_
         value[, unit] <- rowSums(mine[site, , drop = FALSE] *
-                                 freq[, groups[[unit]], drop = FALSE]) / held[site, unit]
+                                 freq[, groups[[unit]], drop = FALSE], na.rm = TRUE) /
+                         held[site, unit]
     }
     value[!is.finite(value)] <- NA_real_
     list(weight = held, freq = value)
@@ -162,13 +168,24 @@ site_statistic <- function(t, site, sites) {
 # does not shrink with depth, so the truth is Var(f) = p(1-p) * (theta + 1/n_eff). This is theta
 # by method of moments: the scatter the units actually show, less the sampling variance the
 # weights predict. Clamped at zero.
+#
+# Each site over the units it was read in, and a site read in fewer than two has no scatter and
+# takes no part. NA when no site has two.
 dispersion_of <- function(freq, weight, site) {
-    held <- ncol(freq)
-    center <- rowMeans(freq)
-    spread <- (rowSums(freq * freq) - held * center * center) / (held - 1)
+    read <- !is.na(weight) & weight > 0
+    here <- read[site, , drop = FALSE]
+    count <- rowSums(here)
+    kept <- freq
+    kept[!here] <- 0
+    center <- rowSums(kept) / count
+    spread <- (rowSums(kept * kept) - count * center * center) / (count - 1)
     scale <- center * (1 - center)
-    excess <- (spread - scale * rowMeans(1 / weight)[site]) / scale
-    max(0, mean(excess[is.finite(excess)]))
+    inverse <- 1 / weight
+    inverse[!read] <- 0
+    excess <- (spread - scale * (rowSums(inverse) / rowSums(read))[site]) / scale
+    usable <- excess[is.finite(excess) & count >= 2]
+    if (length(usable) == 0) return(NA_real_)
+    max(0, mean(usable))
 }
 
 # Every rearrangement of the units, as index rows, enumerated whole while it fits.
@@ -206,6 +223,11 @@ rearrangements <- function(units, budget) {
 # and no permutation p can be zero.
 permutation_p <- function(freq, weight, site, sites, y, observed, budget) {
     moves <- rearrangements(ncol(weight), budget)
+    # A unit not read at a site is given weight 0 there and no frequency, exactly as
+    # fit_alleles() gives it, so it has no residual and the center is the weighted mean of the
+    # units read.
+    weight[is.na(weight) | weight <= 0] <- 0
+    freq[is.na(freq) | weight[site, , drop = FALSE] <= 0] <- 0
     root <- sqrt(weight)
     center <- rowSums(weight[site, , drop = FALSE] * freq) / rowSums(weight)[site]
     z <- (freq - center) * root[site, , drop = FALSE]
@@ -214,18 +236,48 @@ permutation_p <- function(freq, weight, site, sites, y, observed, budget) {
     # to the null: a bin holds a contiguous run of sites and every bin sees the same
     # rearrangements in the same order.
     ranges <- chunk_ranges(sites, OPTS$binSize)
+    units <- seq_len(ncol(weight))
     tally <- function(range) {
         rows <- which(site >= range[1] & site <= range[2])
         held <- weight[range[1]:range[2], , drop = FALSE]
         index <- site[rows] - range[1] + 1L
         here <- range[2] - range[1] + 1L
         seen <- observed[range[1]:range[2]]
+        # The observed statistic less rounding, absolute below 1 and relative above it: rebuilt,
+        # the identity itself lands up to 4e-14 of S away from S, which at S of 400 is past 1e-12.
+        reach <- pmin(seen - 1e-12, seen * (1 - 1e-12))
         found <- integer(here)
+
+        # EACH SITE IS REARRANGED AMONG THE UNITS IT WAS READ IN, in the order they take inside
+        # the rearrangement of all of them: uniform when that one is, and each order met equally
+        # often across the enumerated set. A unit not read keeps its own zero residual in place.
+        pattern <- apply(held > 0, 1, function(m) paste(which(m), collapse = ","))
+        groups <- lapply(split(seq_along(rows), pattern[index]), function(at) {
+            mine <- which(held[index[at[1]], ] > 0)
+            list(at = at, mine = mine, all = length(mine) == length(units))
+        })
+        whole <- length(groups) == 1 && groups[[1]]$all
+
         for (row in seq_len(nrow(moves$rows))) {
-            rebuilt <- center[rows] + z[rows, moves$rows[row, ], drop = FALSE] /
-                root[site[rows], , drop = FALSE]
+            move <- moves$rows[row, ]
+            if (whole) {
+                rebuilt <- center[rows] + z[rows, move, drop = FALSE] /
+                    root[site[rows], , drop = FALSE]
+            } else {
+                rebuilt <- matrix(0, nrow = length(rows), ncol = length(units))
+                for (group in groups) {
+                    taken <- move
+                    if (!group$all) {
+                        taken <- units
+                        taken[group$mine] <- move[move %in% group$mine]
+                    }
+                    at <- group$at
+                    rebuilt[at, ] <- center[rows[at]] + z[rows[at], taken, drop = FALSE] /
+                        root[site[rows[at]], , drop = FALSE]
+                }
+            }
             under <- site_statistic(fit_alleles(rebuilt, held, index, y)$t, index, here)
-            found <- found + (!is.na(under) & under >= seen - 1e-12)
+            found <- found + (!is.na(under) & under >= reach)
         }
         found
     }
@@ -329,16 +381,35 @@ read_depth_table <- function(path) {
     table
 }
 
-# The largest weighted leverage at a site, over units. It costs one pass and it is the
-# diagnostic that says whether one unit is carrying the slope by itself, which at six of them
-# is the question a reader has.
+# Whether the phenotype varies over the units read at each site. Compared on the stored values:
+# a weighted mean of one repeated value need not return it exactly, and a sum of squares about
+# that mean then finds a spread of 1e-28 where there is none.
+spread_of <- function(weight, y) {
+    read <- !is.na(weight) & weight > 0
+    phen <- matrix(y, nrow = nrow(weight), ncol = ncol(weight), byrow = TRUE)
+    high <- phen
+    high[!read] <- -Inf
+    low <- phen
+    low[!read] <- Inf
+    columns <- seq_len(ncol(phen))
+    do.call(pmax, lapply(columns, function(j) high[, j])) >
+        do.call(pmin, lapply(columns, function(j) low[, j]))
+}
+
+# The largest weighted leverage at a site, over the units read there. It costs one pass and it
+# is the diagnostic that says whether one unit is carrying the slope by itself, which at six of
+# them is the question a reader has. NA where the phenotype does not vary over those units.
 top_leverage <- function(weight, y) {
+    weight[is.na(weight)] <- 0
     total <- rowSums(weight)
     phen <- matrix(y, nrow = nrow(weight), ncol = ncol(weight), byrow = TRUE)
     centered <- phen - rowSums(weight * phen) / total
     sxx <- rowSums(weight * centered * centered)
     held <- weight * (1 / total + centered * centered / sxx)
-    do.call(pmax, c(lapply(seq_len(ncol(held)), function(j) held[, j]), list(na.rm = TRUE)))
+    out <- do.call(pmax, c(lapply(seq_len(ncol(held)), function(j) held[, j]),
+                           list(na.rm = TRUE)))
+    out[!spread_of(weight, y)] <- NA_real_
+    out
 }
 
 n_chrom <- vapply(pool_order, function(name) {
@@ -383,14 +454,26 @@ for (entry in design$phenotypes[declared %in% chosen]) {
         # analysis.modules.association.dispersion to 0 recovers the plain n_eff weights.
         theta <- if (is.null(OPTS$dispersion)) dispersion_of(held$freq, held$weight, parsed$site)
                  else as.numeric(OPTS$dispersion)
-        held$weight <- 1 / (theta + 1 / held$weight)
+        # NA when no site was read in two units, and the weights are then left as they are.
+        if (!is.na(theta)) held$weight <- 1 / (theta + 1 / held$weight)
 
         fit <- fit_alleles(held$freq, held$weight, parsed$site, y)
         observed <- site_statistic(fit$t, parsed$site, sites)
+        # A site read in fewer than three units leaves no residual degree of freedom, and one
+        # whose read units all carry one phenotype value has no slope: neither is tested. Each
+        # keeps its row and its n_observed.
+        varied <- spread_of(held$weight, y)
+        untestable <- fit$observed < 3 | !varied
+        observed[untestable] <- NA_real_
         shuffled <- permutation_p(held$freq, held$weight, parsed$site, sites, y,
                                   observed, budget)
 
         tested <- sum(!is.na(observed))
+        if (tested == 0) {
+            message("association.R: no site of ", entry$column, " (", kind, ") was tested: none ",
+                    "was read in three units that differ in the phenotype. Every row is still ",
+                    "published, and n_observed says how many units each was read in.")
+        }
         adjusted <- rep(NA_real_, sites)
         adjusted[!is.na(observed)] <- p.adjust(shuffled$p[!is.na(observed)],
                                                method = method, n = tested)
@@ -401,38 +484,55 @@ for (entry in design$phenotypes[declared %in% chosen]) {
         # zero or on 1e-18 decides between t = Inf and t = 8e15.
         spent <- !is.finite(fit$t) | fit$variance <= 0 | fit$exhausted
         flagged <- as.integer(tapply(spent, parsed$site, any))
+        flagged[!varied] <- NA_integer_
 
         site_rows[[length(site_rows) + 1]] <- data.frame(
             phenotype = entry$column, kind = kind,
             chrom = table$CHROM, pos = as.integer(table$POS),
             k = parsed$alleles, n_observed = fit$observed, n_units = length(unit_pools),
             S = observed, perm_p = shuffled$p, fdr_p = adjusted,
-            mean_weight = rowMeans(held$weight), max_leverage = top_leverage(held$weight, y),
+            mean_weight = rowMeans(held$weight, na.rm = TRUE),
+            max_leverage = top_leverage(held$weight, y),
             zero_variance = flagged,
             stringsAsFactors = FALSE, check.names = FALSE)
 
         alleles <- unlist(lapply(strsplit(paste(table$REF, table$ALT, sep = ","), ",",
                                           fixed = TRUE), identity), use.names = FALSE)
+        # The alleles of a site with no test carry no statistic either.
+        untested <- untestable[parsed$site]
+        slope <- fit$b1
+        error <- fit$se
+        ratio <- fit$t
+        slope[untested] <- NA_real_
+        error[untested] <- NA_real_
+        ratio[untested] <- NA_real_
+        closed <- 2 * pt(-abs(ratio), fit$df[parsed$site])
         allele_rows[[length(allele_rows) + 1]] <- data.frame(
             phenotype = entry$column, kind = kind,
             chrom = table$CHROM[parsed$site], pos = as.integer(table$POS)[parsed$site],
             allele = alleles,
-            b1 = fit$b1, se = fit$se, t = fit$t,
-            p = 2 * pt(-abs(fit$t), fit$df[parsed$site]),
+            b1 = slope, se = error, t = ratio, p = closed,
             stringsAsFactors = FALSE, check.names = FALSE)
 
         # `design_floor` is what the design supports by rearrangement alone and `floor` what this
         # run could reach. They differ only when the set was too large to enumerate.
-        # THE SMALLEST P THIS DESIGN CAN REACH BY REARRANGEMENT AT ALL. Reversing the phenotype
-        # negates every slope and leaves |t| alone, so the reversal always ties with the observed
-        # arrangement and the floor is TWO over the count, never one.
-        limit <- 2 / factorial(length(unit_pools))
+        # THE SMALLEST P THIS DESIGN CAN REACH BY REARRANGEMENT AT ALL: one over the count.
+        limit <- 1 / factorial(length(unit_pools))
         if (limit > 0.05) {
             message("association.R: ", length(unit_pools), " units allow ",
                     factorial(length(unit_pools)), " rearrangements, so the smallest p any site ",
                     "can reach is ", signif(limit, 3), ". Nothing here can be significant at ",
                     "0.05 and the table is a RANKING of effect sizes, not a test. More units is ",
                     "the only thing that changes it.")
+        } else {
+            short <- sum(!is.na(observed) & 1 / factorial(fit$observed) > 0.05)
+            if (short > 0) {
+                message("association.R: ", short, " tested site(s) of ", entry$column, " (",
+                        kind, ") were read in too few units to reach 0.05. A site read in m ",
+                        "units is rearranged among those m alone and has the floor of an m-unit ",
+                        "design, 1/m!; n_observed in association.tsv says which sites these are. ",
+                        "Their p ranks them and cannot make them significant.")
+            }
         }
 
         alive <- !is.na(observed)
@@ -442,7 +542,8 @@ for (entry in design$phenotypes[declared %in% chosen]) {
             units = length(unit_pools), permutations = shuffled$count,
             exhaustive = shuffled$exhaustive, floor = shuffled$floor, design_floor = limit,
             dispersion = theta,
-            depth_phenotype_cor = suppressWarnings(cor(colMeans(held$weight), y)),
+            depth_phenotype_cor = suppressWarnings(cor(colMeans(held$weight, na.rm = TRUE), y,
+                                                       use = "pairwise.complete.obs")),
             lambda_gc = if (any(alive)) {
                 median(observed[alive]^2, na.rm = TRUE) / qchisq(0.5, 1)
             } else NA_real_,
@@ -512,7 +613,9 @@ if (!drawable) {
             "they would have shown is in association.tsv and permutations.tsv.")
 }
 
-if (drawable && any(!is.na(sites_table$perm_p))) {
+# Drawn when no site was tested as well: qq.png is a declared output, and the frame refuses a
+# folder that lacks one.
+if (drawable) {
     frame <- do.call(rbind, lapply(split(sites_table, sites_table$phenotype), function(part) {
         seen <- sort(part$perm_p[!is.na(part$perm_p)])
         if (length(seen) == 0) return(NULL)
@@ -520,17 +623,25 @@ if (drawable && any(!is.na(sites_table$perm_p))) {
                    expected = -log10(ppoints(length(seen))),
                    observed = -log10(seen), stringsAsFactors = FALSE)
     }))
-    figure <- ggplot2::ggplot(frame, ggplot2::aes(x = expected, y = observed)) +
-        ggplot2::geom_abline(slope = 1, intercept = 0, color = "gray60") +
-        ggplot2::geom_point(size = 0.5, alpha = 0.6) +
-        ggplot2::facet_wrap(~ phenotype, ncol = 1) +
-        ggplot2::labs(title = "Permutation p-values against the uniform they should follow",
-                      subtitle = paste0("A permutation p is discrete, so the points sit on a ",
-                                        "ladder; the ceiling is the design's own floor."),
-                      x = "Expected -log10(p)", y = "Observed -log10(p)") +
-        ggplot2::theme_bw(base_size = 9)
+    figure <- if (is.null(frame)) {
+        ggplot2::ggplot() +
+            ggplot2::labs(title = "Permutation p-values against the uniform they should follow",
+                          subtitle = paste0("No site was tested: none was read in three units ",
+                                            "that differ in the phenotype.")) +
+            ggplot2::theme_bw(base_size = 9)
+    } else {
+        ggplot2::ggplot(frame, ggplot2::aes(x = expected, y = observed)) +
+            ggplot2::geom_abline(slope = 1, intercept = 0, color = "gray60") +
+            ggplot2::geom_point(size = 0.5, alpha = 0.6) +
+            ggplot2::facet_wrap(~ phenotype, ncol = 1) +
+            ggplot2::labs(title = "Permutation p-values against the uniform they should follow",
+                          subtitle = paste0("A permutation p is discrete, so the points sit on ",
+                                            "a ladder; the ceiling is the design's own floor."),
+                          x = "Expected -log10(p)", y = "Observed -log10(p)") +
+            ggplot2::theme_bw(base_size = 9)
+    }
     ggplot2::ggsave(file.path(out, "qq.png"), figure, width = 6,
-                    height = 2.6 * length(unique(frame$phenotype)) + 0.6, dpi = 150)
+                    height = 2.6 * max(1, length(unique(frame$phenotype))) + 0.6, dpi = 150)
 }
 
 # Nothing is plotted along a sequence until one is named in the module's `chromosomes` setting.
