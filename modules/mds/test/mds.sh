@@ -484,6 +484,78 @@ test_two_identical_pools_come_out_negative() {
                  "and it is exactly minus the correction"
 }
 
+# A cohort of the corpus's six pools over forty sites into $1, every cell read except the sixth
+# pool's at the first $2 sites, so every pair with the sixth pool rests on 40 - $2 sites and every
+# other pair on 40. The counts vary by site and pool so that no distance is degenerate.
+mds_thin_cohort() {
+    mkdir -p "$1/Frequencies"
+    cp "$CORPUS_DIR/design.json" "$CORPUS_DIR/pools.json" "$1/"
+    python3 - "$1/Frequencies/Test_snp_depth.tsv" "$2" <<'PY'
+import sys
+path, emptied = sys.argv[1], int(sys.argv[2])
+pools = ["TestSample%d" % n for n in range(1, 7)]
+rows = ["\t".join(["CHROM", "POS", "REF", "ALT", "TOTAL_AD"] + pools)]
+for site in range(40):
+    cells = []
+    for pool in range(6):
+        ref, alt = 50 + (site * 7 + pool * 13) % 40, 30 + (site * 11 + pool * 5) % 50
+        if pool == 5 and site < emptied:
+            ref, alt = 0, 0
+        cells.append((ref, alt))
+    total = "%d,%d" % (sum(c[0] for c in cells), sum(c[1] for c in cells))
+    rows.append("\t".join(["chr1", str(100 + site), "A", "G", total] +
+                          ["%d,%d" % cell for cell in cells]))
+open(path, "w").write("\n".join(rows) + "\n")
+PY
+}
+
+# A PAIR AVERAGED OVER FEWER THAN 30 SITES IS FLAGGED, and one over 30 is not. Z set the warning
+# at 30 on 2026-10-06, from the validation harness's measurement that a distance near 0.02 is off
+# by about half itself at 30 shared sites. The boundary is tested on both sides, 29 against 30,
+# because the comparison is the whole rule: `<=` for `<` would flag the second run, and a flag
+# column that never says 1 would pass every other case in this suite, where the corpus's fourteen
+# sites put every pair under the line.
+test_a_pair_on_few_sites_is_flagged() {
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
+    local sb; sb=$(guard_path "$TEST_TMPDIR/mds-few-sites")
+    mds_corpus "$sb"
+
+    mds_thin_cohort "$sb/thin" 11
+    mds_on_cohort "$sb/thin" "$MDS_OPTIONS" "$sb/run29"
+    local table="$sb/run29/distance.tsv" pool
+    if [ ! -s "$table" ]; then
+        fail_case "nothing published"$'\n'"$(cat "$sb/run29/out.txt")"
+        return
+    fi
+    for pool in TestSample1 TestSample2 TestSample3 TestSample4 TestSample5; do
+        assert_eq "29" "$(pair_cell "$table" "$pool" TestSample6 sites)" \
+                  "$pool and TestSample6 share the 29 sites both were read at"
+        assert_eq "1" "$(pair_cell "$table" "$pool" TestSample6 few_sites)" \
+                  "so $pool and TestSample6 are flagged"
+    done
+    assert_eq "40" "$(pair_cell "$table" TestSample1 TestSample2 sites)" \
+              "TestSample1 and TestSample2 share all forty"
+    assert_eq "0" "$(pair_cell "$table" TestSample1 TestSample2 few_sites)" \
+              "so they are not"
+    assert_contains "$(cat "$sb/run29/out.txt")" \
+                    "5 of 15 pairs of pools rest on fewer than 30 shared sites" \
+                    "the run must say how many pairs are flagged"
+    assert_contains "$(cat "$sb/run29/out.txt")" "TestSample1 and TestSample6: 29 sites" \
+                    "and name them"
+
+    mds_thin_cohort "$sb/edge" 10
+    mds_on_cohort "$sb/edge" "$MDS_OPTIONS" "$sb/run30"
+    table="$sb/run30/distance.tsv"
+    assert_eq "30" "$(pair_cell "$table" TestSample1 TestSample6 sites)" \
+              "at ten sites emptied the sixth pool's pairs rest on thirty"
+    local flagged
+    flagged=$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "few_sites") c = i; next }
+                          { n += $c } END { print n + 0 }' "$table")
+    assert_eq "0" "$flagged" "and thirty is not fewer than thirty: no pair is flagged"
+    assert_not_contains "$(cat "$sb/run30/out.txt")" "rest on fewer than" \
+                        "and the run says nothing"
+}
+
 # AND ONCE THROUGH NEXTFLOW, which is what proves main.nf assembles what the direct cases check.
 test_mds_runs_through_the_frame() {
     analysis_ready single || return
@@ -504,4 +576,10 @@ test_mds_runs_through_the_frame() {
         "the shared library must be folded into the published script"
     assert_contains "$(cat "$dir/mds.R")" "not floored at zero" \
         "and the header must say what a negative distance means"
+    # The corpus's fourteen sites put every pair under 30. A task that succeeds shows nothing on
+    # the console unless its process sets debug, and then only its stdout, so this is the line
+    # that proves the warning reaches the person running it.
+    assert_contains "$(cat "$ANALYSIS_SB/run.out")" \
+                    "15 of 15 pairs of pools rest on fewer than 30 shared sites" \
+                    "the warning on thin pairs must reach the console of the run"
 }

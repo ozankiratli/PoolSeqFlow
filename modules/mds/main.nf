@@ -39,8 +39,7 @@ def useCompiled(Map settings) {
 // The depth tables of one results directory, by the artifact class the manifest asked for.
 //
 // Every published frequency is a six-significant-digit rendering of a ratio these hold exactly,
-// and a cell with no reads is published there as 0 rather than as missing, so this module reads
-// the depth tables and nothing else.
+// so this module reads the depth tables and nothing else.
 def depthTables(Map target) {
     def spec = target.classes.depths
     def found = file("${spec.dir}/${spec.pattern}")
@@ -59,6 +58,8 @@ def depthTables(Map target) {
 // the settings the project declared, so every module in a project reads one answer.
 process Analyze {
     tag "${target.label}"
+    // What mds.R writes to stdout, on the console of the run.
+    debug true
 
     input:
     tuple val(target), path(depths)
@@ -96,6 +97,7 @@ process Analyze {
               "${settings.includeIndels ? 'SNPs and indels' : 'SNPs'}; ${settings.dimensions} axes",
               "# a distance is a per-site mean over the sites BOTH pools were read at, and is " +
               "not floored at zero"].join('\n').replace("'", "'\\''")
+    target_label = "${target.label}".replace("'", "'\\''")
 
     """
     mkdir -p published
@@ -116,7 +118,9 @@ process Analyze {
     Rscript --vanilla published/mds.R --design design.json --pools pools.json \\
         --options options.json --cpp-frequencies published/allele_frequencies.cpp \\
         --cpp-distance published/nei_distance.cpp \\
-        --depths '${depths.collect { path -> path.name }.join(',')}' --out published
+        --depths '${depths.collect { path -> path.name }.join(',')}' --out published \\
+        > notes.txt
+    awk -v label='${target_label}' '{ print "MDS " label ": " \$0 }' notes.txt
     """
 }
 
