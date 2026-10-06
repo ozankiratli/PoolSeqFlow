@@ -2,6 +2,10 @@
 """Build the published tables that the basicstats module is judged against.
 
 Usage: freq_corpus.py <Output-directory> [<sidecar-directory>]
+       freq_corpus.py --association-from <depth-table> [--units 2,2,2]
+                                                           what association must compute
+                                                           from a table a case has changed,
+                                                           its pools grouped into units
 
 Writes, under the Output directory, exactly what a completed run publishes and nothing else:
 
@@ -62,11 +66,13 @@ And five more for the association module, each documented where it is defined:
 THE INDEL TABLE is separate because the site counts report SNPs and indels separately, and
 because diversity is computed over the SNP table alone - a gate the module states.
 
-NO CELL IS ZERO-DEPTH. Reaching one takes both vcffilter.minDP at zero and
-vcffilter.dropZeroDepth off, which is two deliberate edits away from any default, so this
-corpus does not carry one and the NA paths in n_eff(), site_diversity() and
-allele_frequencies() are exercised by the libraries' own unit tests instead. What a published
-table does with such a cell is bin/depth2freq.awk's answer and is covered in 03_helpers.
+NO CELL IS ZERO-DEPTH IN THE CORPUS AS WRITTEN, because every expectation below describes these
+tables and a zero cell changes what several of them mean. A case that needs one empties a cell
+in its own copy and computes what to expect from that copy: basicstats with awk, association
+with --association-from, whose site_fit() and residual_p() leave an unread pool out. The NA
+paths in n_eff(), site_diversity() and allele_frequencies() are also exercised by the libraries'
+own unit tests, and what a published table does with such a cell is bin/depth2freq.awk's answer,
+covered in 03_helpers.
 """
 
 import itertools
@@ -176,8 +182,9 @@ SNP_SITES = [
     # float can be trusted to find twice, and which row gets which moves when any pool's depth
     # changes. Both sites carry `separated` for that reason.
     #
-    # Its permutation p is 2/20 = 0.1. An infinite t, three pools against three, and a tenth is
-    # the smallest p the design can produce - the complementary labeling always ties.
+    # Its permutation p is 1/720. Moving labels, three pools against three, a tenth would be the
+    # smallest p, the complementary labeling tying with it; the residuals move here, and at these
+    # unequal depths nothing ties with the observed arrangement.
     ("chr10", 1600, "A", ["G"], [
         [100, 0], [80, 0], [0, 400], [60, 0], [0, 300], [0, 40]]),
 
@@ -188,17 +195,17 @@ SNP_SITES = [
     #
     # The weighting is what keeps t down to 4.45 here, because the three pools with no alternate
     # read at all are the three deepest and carry most of the weight - which is the weighting
-    # working. THE PERMUTATION P IS 4/720 REGARDLESS, the fourth smallest the design can give.
-    # A permutation null is built from the same six reads, so it does not notice that six is not
-    # many; only a minimum-evidence gate does.
+    # working. THE PERMUTATION P IS 9/720 REGARDLESS. A permutation null is built from the same six
+    # reads, so it does not notice that six is not many; only a minimum-evidence gate does.
     ("chr10", 1700, "C", ["T"], [
         [100, 0], [80, 1], [400, 0], [57, 3], [300, 0], [40, 2]]),
 
     # THE SAME ABSURDITY, OUT OF THREE READS. Perfectly separated under the binary phenotype
     # like chr10:1600, from three alternate reads rather than seven hundred and forty, and the
     # closed form cannot tell the two apart - both give an effectively infinite t and a p at or
-    # indistinguishable from zero, and both are capped at a permutation p of 0.1. That is the
-    # argument for gating on evidence before the fit rather than on significance after it.
+    # indistinguishable from zero - and the permutation does not cap them either: 1/720 and
+    # 6/720. That is the argument for gating on evidence before the fit rather than on
+    # significance after it.
     #
     # THE THREE PRESENT POOLS ARE AT ONE DEPTH ON PURPOSE. Separation means no variance WITHIN
     # a group, and one read at three different depths is three different frequencies: at 400,
@@ -371,26 +378,70 @@ def wls(y, f, w):
             "p": p}
 
 
-def site_fit(counts, y):
+def single(pools):
+    """Every pool a unit of its own, which is the corpus design."""
+    return [[i] for i in range(pools)]
+
+
+def units_of(counts, groups):
+    """Each unit's weight and allele frequencies at one site, or None for a unit with no read pool.
+
+    `groups` is each unit's pool indices. Over the pools of a unit that were read, the weight is
+    the sum of their n_eff and each frequency their n_eff-weighted mean, as roll_up() collapses
+    them. A unit of one read pool is that pool's own frequency and n_eff, taken as computed: a
+    weighted mean over one pool need not return it exactly, and the corpus expectations predate
+    units.
+    """
+    out = []
+    for members in groups:
+        read = [i for i in members if sum(counts[i]) > 0]
+        if not read:
+            out.append(None)
+            continue
+        depths = [float(sum(counts[i])) for i in read]
+        sizes = [n_eff(N_CHROM, d) for d in depths]
+        alleles = range(len(counts[read[0]]))
+        if len(read) == 1:
+            out.append((sizes[0], [counts[read[0]][j] / depths[0] for j in alleles]))
+            continue
+        weight = sum(sizes)
+        out.append((weight, [sum(s * counts[i][j] / d for s, i, d in zip(sizes, read, depths))
+                             / weight for j in alleles]))
+    return out
+
+
+def site_fit(counts, y, groups=None):
     """Every allele of one site fitted against the phenotype, and the site statistic.
 
-    `counts` is one count list per pool, in POOLS order. The weight is n_eff at that pool's
-    depth here, so it is the same for every allele of the site and different at every site.
+    `counts` is one count list per pool, in POOLS order, and `y` one phenotype value per unit;
+    `groups` names each unit's pools and defaults to a unit per pool. The weight is n_eff at that
+    pool's depth here, so it is the same for every allele of the site and different at every site.
 
     The site statistic is max |t| over ALL alleles, the reference included: the frequencies of a
     site sum to 1, so the reference row carries the negated sum of the others and is where a
     signal spread across several alternates shows up.
+
+    OVER THE UNITS THAT WERE READ. A pool with no reads at the site has no frequency, so it is
+    left out and the fit is over the rest, phenotype included. Fewer than three units left is no
+    test - a slope and its standard error need three, as the design does - and neither is three
+    or more that all carry one phenotype value, which have no slope. S is then nan and no allele
+    is fitted. `observed` is how many units were read.
     """
-    depths = [float(sum(cell)) for cell in counts]
-    w = [n_eff(N_CHROM, d) for d in depths]
+    units = units_of(counts, groups or single(len(counts)))
+    read = [u for u, unit in enumerate(units) if unit is not None]
+    y = [y[u] for u in read]
+    if len(read) < 3 or max(y) == min(y):
+        return {"alleles": [], "S": math.nan, "weights": [], "observed": len(read)}
+    w = [units[u][0] for u in read]
     alleles = []
-    for j in range(len(counts[0])):
-        f = [cell[j] / depth for cell, depth in zip(counts, depths)]
+    for j in range(len(units[read[0]][1])):
+        f = [units[u][1][j] for u in read]
         alleles.append(wls(y, f, w))
     # An allele with no test in it takes no part in the maximum. A site where none of them has
     # one has no statistic at all, which is not the same as a statistic of zero.
     tested = [abs(a["t"]) for a in alleles if not math.isnan(a["t"])]
-    return {"alleles": alleles, "S": max(tested) if tested else math.nan, "weights": w}
+    return {"alleles": alleles, "S": max(tested) if tested else math.nan, "weights": w,
+            "observed": len(read)}
 
 
 def rearrangements_of(n):
@@ -406,7 +457,7 @@ def rearrangements_of(n):
     return list(itertools.permutations(range(n)))
 
 
-def residual_p(counts, y, moves):
+def residual_p(counts, y, groups=None):
     """The site's permutation p, from moving the standardised residuals rather than the labels.
 
     THE LABELS DO NOT MOVE. Pools read at different depths carry different precision; weighting
@@ -422,23 +473,40 @@ def residual_p(counts, y, moves):
     not, and would be a different null.
 
     The identity rearrangement is one of the 720 counted, which is what stops a p of zero.
+
+    OVER THE UNITS THAT WERE READ, and their m! rearrangements enumerated here directly. A site
+    read in m units is the test an m-unit design would run, so no p there can fall below 1/m!,
+    where moving residuals across all six would reach 1/720. The module gets there another way -
+    the order the read units take inside each rearrangement of all six - so a case comparing the
+    two compares two algorithms.
+
+    A REARRANGEMENT REACHES THE OBSERVED STATISTIC TO WITHIN ROUNDING, absolute below 1 and
+    relative above it, the module's own rule. Rebuilt, the identity lands up to 4e-14 of S away
+    from S; an absolute 1e-12 then misses it above S of about 100, and the site reports p 0.
     """
-    observed = site_fit(counts, y)["S"]
+    units = units_of(counts, groups or single(len(counts)))
+    read = [u for u, unit in enumerate(units) if unit is not None]
+    if len(read) < 3:
+        return float("nan")
+    moves = rearrangements_of(len(read))
+
+    observed = site_fit(counts, y, groups)["S"]
     if math.isnan(observed):
         return float("nan")
 
-    depths = [float(sum(cell)) for cell in counts]
-    w = [n_eff(N_CHROM, d) for d in depths]
+    y = [y[u] for u in read]
+    w = [units[u][0] for u in read]
     root = [math.sqrt(wi) for wi in w]
     total = sum(w)
 
     centers, standardised = [], []
-    for j in range(len(counts[0])):
-        f = [cell[j] / depth for cell, depth in zip(counts, depths)]
+    for j in range(len(units[read[0]][1])):
+        f = [units[u][1][j] for u in read]
         center = sum(wi * fi for wi, fi in zip(w, f)) / total
         centers.append(center)
         standardised.append([(fi - center) * ri for fi, ri in zip(f, root)])
 
+    reach = min(observed - 1e-12, observed * (1 - 1e-12))
     reached = 0
     for move in moves:
         best = float("nan")
@@ -447,7 +515,7 @@ def residual_p(counts, y, moves):
             t = wls(y, rebuilt, w)["t"]
             if not math.isnan(t) and (math.isnan(best) or abs(t) > best):
                 best = abs(t)
-        if not math.isnan(best) and best >= observed - 1e-12:
+        if not math.isnan(best) and best >= reach:
             reached += 1
     return float(reached) / len(moves)
 
@@ -567,7 +635,7 @@ def association_expectations():
         for chrom, pos, _ref, alts, cells in SNP_SITES:
             site = "%s.%s.%d" % (prefix, chrom, pos)
             fit = site_fit(cells, y)
-            perm = residual_p(cells, y, moves)
+            perm = residual_p(cells, y)
             if not math.isnan(perm):
                 smallest = min(smallest, perm)
             # WHERE THE RESIDUAL VARIANCE REACHES ZERO, t AND p ARE NOT COMPARABLE BETWEEN
@@ -595,6 +663,138 @@ def association_expectations():
 
         put("%s.smallest_p" % prefix, smallest)
 
+    return "\n".join(lines) + "\n"
+
+
+def max_leverage(y, w):
+    """The largest weighted leverage over the pools given, w_i * (1/W + (y_i - ybar_w)^2 / sxx).
+
+    nan where there is no slope for a pool to carry: fewer than two pools, or no spread in y,
+    which is tested on the values themselves - a weighted mean of one repeated value need not
+    return it, and the module once published a leverage of 2 off the difference. Two pools carry
+    a slope equally and wholly, so two give exactly 1.
+    """
+    if len(w) < 2 or max(y) == min(y):
+        return math.nan
+    total = sum(w)
+    ybar = sum(wi * yi for wi, yi in zip(w, y)) / total
+    sxx = sum(wi * (yi - ybar) ** 2 for wi, yi in zip(w, y))
+    if sxx <= 0.0:
+        return math.nan
+    return max(wi * (1.0 / total + (yi - ybar) ** 2 / sxx) for wi, yi in zip(w, y))
+
+
+def pearson(x, y):
+    """The plain correlation of two lists of one length; nan where either has no spread."""
+    n = len(x)
+    if n < 2:
+        return math.nan
+    mx, my = sum(x) / n, sum(y) / n
+    sxx = sum((a - mx) ** 2 for a in x)
+    syy = sum((b - my) ** 2 for b in y)
+    if sxx <= 0.0 or syy <= 0.0:
+        return math.nan
+    return sum((a - mx) * (b - my) for a, b in zip(x, y)) / math.sqrt(sxx * syy)
+
+
+def bh(ps):
+    """Benjamini-Hochberg over the p-values given, as R's p.adjust(method = "BH") computes it."""
+    order = sorted(range(len(ps)), key=lambda i: ps[i])
+    adjusted = [0.0] * len(ps)
+    running = 1.0
+    for rank in range(len(ps), 0, -1):
+        i = order[rank - 1]
+        running = min(running, ps[i] * len(ps) / rank)
+        adjusted[i] = running
+    return adjusted
+
+
+def dispersion_from(sites):
+    """theta by method of moments, as the module estimates it when `dispersion` is left unset.
+
+    `sites` holds each site's units_of(). For every allele of a site read in two or more units:
+    the scatter of the read units' frequencies about their plain mean, less the sampling variance
+    their weights predict, in units of p(1-p). The mean of those, clamped at zero; nan when no
+    site was read in two units.
+    """
+    excess = []
+    for units in sites:
+        read = [unit for unit in units if unit is not None]
+        if len(read) < 2:
+            continue
+        inverse = sum(1.0 / weight for weight, _ in read) / len(read)
+        for j in range(len(read[0][1])):
+            f = [freqs[j] for _, freqs in read]
+            center = sum(f) / len(f)
+            spread = (sum(x * x for x in f) - len(f) * center * center) / (len(f) - 1)
+            scale = center * (1.0 - center)
+            if scale > 0.0:
+                excess.append((spread - scale * inverse) / scale)
+    return max(0.0, sum(excess) / len(excess)) if excess else math.nan
+
+
+def association_from(path, groups=None):
+    """What the association module must compute from a depth table as it stands, quantitative
+    phenotype: per site S, perm_p, fdr_p, n_observed, mean_weight and max_leverage, and for the
+    table depth_phenotype_cor and the dispersion it would estimate.
+
+    For a case that has changed the corpus - emptied a pool's cell at a site, say - and so cannot
+    read expected.tsv, which describes the corpus as written. Pools are found by their header, as
+    the module finds them, and each cell is read whole: REF first, then one count per ALT.
+    `groups` names each unit's pools, as --units does; a unit takes its first pool's phenotype,
+    which is what a design built by grouping the corpus's pools carries.
+
+    A UNIT WITH NO READS AT A SITE HAS NO WEIGHT THERE, NOT A WEIGHT OF 0. mean_weight and
+    max_leverage are over the units read at the site, and depth_phenotype_cor correlates the
+    phenotype with each unit's mean weight over the sites it was read at - Z, 2026-10-05: "NA for
+    non existant is correct". A 0 averaged in instead put mean_weight at chr10:500, read in two
+    of six, at a third of its value. Every number here is at plain n_eff weights, the module at
+    dispersion 0, except the dispersion itself.
+    """
+    groups = groups or single(len(POOLS))
+    y = [float(PHENOTYPE[members[0]]) for members in groups]
+    lines = []
+
+    def put(key, value):
+        if isinstance(value, float) and math.isnan(value):
+            lines.append("%s\tNA" % key)
+        elif value == math.inf:
+            lines.append("%s\tInf" % key)
+        else:
+            lines.append("%s\t%.12g" % (key, value))
+
+    sites, ps, collapsed = [], [], []
+    carried = [[] for _ in groups]
+    with open(path) as handle:
+        header = handle.readline().rstrip("\n").split("\t")
+        at = [header.index(pool) for pool in POOLS]
+        for line in handle:
+            row = line.rstrip("\n").split("\t")
+            cells = [[int(c) for c in row[i].split(",")] for i in at]
+            units = units_of(cells, groups)
+            collapsed.append(units)
+            fit = site_fit(cells, y, groups)
+            read = [u for u, unit in enumerate(units) if unit is not None]
+            w = [units[u][0] for u in read]
+            for u, wu in zip(read, w):
+                carried[u].append(wu)
+            site = "assoc.%s.%s" % (row[0], row[1])
+            p = residual_p(cells, y, groups)
+            sites.append(site)
+            ps.append(p)
+            put(site + ".S", fit["S"])
+            put(site + ".perm_p", p)
+            put(site + ".n_observed", fit["observed"])
+            put(site + ".mean_weight", sum(w) / len(w) if w else math.nan)
+            put(site + ".max_leverage", max_leverage([y[u] for u in read], w))
+    tested = [i for i, p in enumerate(ps) if not math.isnan(p)]
+    adjusted = dict(zip(tested, bh([ps[i] for i in tested])))
+    for i, site in enumerate(sites):
+        put(site + ".fdr_p", adjusted.get(i, math.nan))
+    seen = [u for u in range(len(groups)) if carried[u]]
+    put("assoc.depth_phenotype_cor",
+        pearson([sum(carried[u]) / len(carried[u]) for u in seen], [y[u] for u in seen]))
+    put("assoc.dispersion", dispersion_from(collapsed))
     return "\n".join(lines) + "\n"
 
 
@@ -789,6 +989,16 @@ def merge(sites):
 
 
 def main():
+    if len(sys.argv) in (3, 5) and sys.argv[1] == "--association-from":
+        groups = None
+        if len(sys.argv) == 5:
+            if sys.argv[3] != "--units":
+                sys.exit("usage: freq_corpus.py --association-from <depth-table> [--units 2,2,2]")
+            sizes = [int(size) for size in sys.argv[4].split(",")]
+            starts = [sum(sizes[:u]) for u in range(len(sizes))]
+            groups = [list(range(start, start + size)) for start, size in zip(starts, sizes)]
+        sys.stdout.write(association_from(sys.argv[2], groups))
+        return
     argv = [a for a in sys.argv[1:] if a != "--merged"]
     merged = "--merged" in sys.argv
     if len(argv) not in (1, 2):

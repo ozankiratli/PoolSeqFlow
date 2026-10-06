@@ -41,7 +41,8 @@ def stepParameterMap() {
         // threshold from them, and a blank param_poolSize cell takes the run's poolSize. The
         // sensitivity derived from them cannot stand in for them - pinned by hand, it lets two
         // runs of different pool sizes share one results directory.
-        7: [ artifact: ['vcffilter.minDP', 'vcffilter.minQUAL', 'vcffilter.dropZeroDepth',
+        7: [ artifact: ['vcffilter.minDP', 'vcffilter.minQUAL', 'vcffilter.keepLowDepthAsZero',
+                        'vcffilter.minSamples',
                         'filterFalsePositives.sensitivity',
                         'filterFalsePositives.sampleThreshold',
                         'poolSize', 'ploidy',

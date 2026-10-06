@@ -358,13 +358,23 @@ fi
 
 # Read back from the report, so this fires exactly when the migration added the parameter: a
 # config that already sets it has chosen its own value and is told nothing.
-NEW_DROPZERO=$(awk -F'\t' '$1 == "NEW" && $2 == "vcffilter.dropZeroDepth" { print $3 }' "$REPORT")
-if [ -n "$NEW_DROPZERO" ]; then
+NEW_KEEPLOW=$(awk -F'\t' '$1 == "NEW" && $2 == "vcffilter.keepLowDepthAsZero" { print $3 }' "$REPORT")
+OLD_DROPZERO=$(awk -F'\t' '$1 == "DROPPED" && $2 == "vcffilter.dropZeroDepth" { print $3 }' "$REPORT")
+if [ -n "$NEW_KEEPLOW" ]; then
     note_heading
-    echo "  vcffilter.dropZeroDepth IS NEW, and your config now has its default."
+    echo "  vcffilter.keepLowDepthAsZero IS NEW, and your config now has its default."
     echo
-    echo "  The default is $NEW_DROPZERO: a site where any pool has no reads at all is dropped."
-    echo "  To keep those sites, with the unread pool published as NA, set it to false."
+    echo "  The default is $NEW_KEEPLOW: a site with any cell below minDP, or with no reads at all,"
+    echo "  is dropped. To keep such a site and write those cells as unread, set it to true;"
+    echo "  vcffilter.minSamples then says how many of a site's cells must reach minDP."
+    if [ -n "$OLD_DROPZERO" ]; then
+        echo
+        echo "  It replaces vcffilter.dropZeroDepth, which this release no longer reads, and your"
+        echo "  value of that was not carried. dropZeroDepth = true is what the default does."
+        echo "  dropZeroDepth = false differed from it only at minDP 0, where it kept a site with a"
+        echo "  cell that had no reads. keepLowDepthAsZero = true keeps such a site at any minDP,"
+        echo "  and treats a cell below minDP the same way."
+    fi
     echo
 fi
 

@@ -218,7 +218,7 @@ for (name in pool_names) {
 
     # Every depth summary below is over the sites this pool was READ at, and `unmeasured`
     # counts the rest. A called site holds no reads for a pool only where
-    # vcffilter.dropZeroDepth is off, which is what makes any of these differ from `sites`.
+    # vcffilter.keepLowDepthAsZero is on, which is what makes any of these differ from `sites`.
     read_at <- !is.na(stats$depth) & stats$depth > 0
 
     for (chrom in intersect(chrom_levels, unique(snp$CHROM))) {

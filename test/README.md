@@ -203,24 +203,8 @@ Two details worth knowing when writing assertions against the frequency tables:
 
 ## Known gaps
 
-- **Every `bin/` helper now has unit coverage.** `03_helpers.sh` covers `classify_manifest.sh`,
-  `find_artifact.sh`, `depth_cutoff.py`, `filterFalsePositives.sh`, both parsers, `atomic_mv.sh`,
-  `cap_depth.awk` and `MajorAlleleToRef.py`, and `config_migrate.sh` has a suite of its own.
-  `depth2freq.awk` has cases
-  there too, but only for what a zero-depth cell publishes and for the row it must not carry
-  forward: its shape -- one row per allele, `ALT` becoming `ALLELE`, the column count held --
-  is still asserted only by `04_pipeline`, through a whole run.
-- **The fixture cannot hold a zero-depth cell**, so `vcffilter.dropZeroDepth` has no behavior case
-  and the two settings are compared by the expression each builds instead. Every sample carries
-  ~75x across the whole reference and the called VCF has no `DP=0` anywhere. Thinning one sample
-  was measured and does not work: at 250 pairs bwa logs `skip orientation FR as there are not
-  enough pairs`, estimates no insert size, nothing is flagged properly paired, and step 4's `0x2`
-  filter discards every read -- the trap `test/tools/make_fixture.py`'s docstring warns about. The
-  requirements conflict, because bwa needs thousands of pairs and a zero-depth cell needs almost
-  none locally. **A sample with a regional coverage gap satisfies both**: an option in
-  `make_fixture.py` restricting one sample's fragments to part of the genome, and a committed
-  fixture of its own beside `base/`, about 2 MB. Not built; the toggle is redundant above
-  `minDP 1`, so nothing a default run publishes depends on it.
+- **Every `bin/` helper now has unit coverage.** `03_helpers.sh` covers `classify_manifest.sh`, `find_artifact.sh`, `depth_cutoff.py`, `filterFalsePositives.sh`, both parsers, `atomic_mv.sh`, `cap_depth.awk`, `mask_depth.awk` and `MajorAlleleToRef.py`, and `config_migrate.sh` has a suite of its own. `depth2freq.awk` has cases there too, but only for what a zero-depth cell publishes and for the row it must not carry forward: its shape -- one row per allele, `ALT` becoming `ALLELE`, the column count held -- is still asserted only by `04_pipeline`, through a whole run.
+- **The fixture cannot hold a zero-depth cell**, so `vcffilter.keepLowDepthAsZero` is not watched through a run: `04_pipeline` asserts which depth filter each run was handed, and what the mask does is `03_helpers`' cases, against a table built for it and against the called VCF at `minDP` 65 and 70, where its real cells are read in every number of pools from 1 to 6. Every sample carries ~75x across the whole reference and the called VCF has no `DP=0` anywhere. Thinning one sample was measured and does not work: at 250 pairs bwa logs `skip orientation FR as there are not enough pairs`, estimates no insert size, nothing is flagged properly paired, and step 4's `0x2` filter discards every read -- the trap `test/tools/make_fixture.py`'s docstring warns about. The requirements conflict, because bwa needs thousands of pairs and a zero-depth cell needs almost none locally. **A sample with a regional coverage gap satisfies both**: an option in `make_fixture.py` restricting one sample's fragments to part of the genome, and a committed fixture of its own beside `base/`, about 2 MB. Not built; the mask is off by default, so nothing a default run publishes depends on it.
 - No fault injection: the failure paths hardened during the audit -- a mid-pipe tool death,
   an interrupted decompress, a failed database copy -- have no cases.
 - The `-m` parsing in `ClipReads` is only covered end to end. Finer cases would want that

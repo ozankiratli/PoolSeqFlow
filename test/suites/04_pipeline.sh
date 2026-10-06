@@ -881,10 +881,10 @@ multirun_run() {
     # guard. Its own sandbox, never a copy of the shared one.
     write_sandbox_config "$MULTIRUN_SB" "s|^    multiRun .*|    multiRun        = true|"
     cat > "$MULTIRUN_SB/main/runs.csv" <<'CSV'
-RunID,vcffilter.minQUAL,poolSize,annotate,vcffilter.dropZeroDepth
+RunID,vcffilter.minQUAL,poolSize,annotate,vcffilter.keepLowDepthAsZero
 inherit,,,,
 filter,1000,,,
-plain,,25,false,false
+plain,,25,false,true
 CSV
     MULTIRUN_STATUS=$(run_pipeline "$MULTIRUN_SB")
     [ "$MULTIRUN_STATUS" = "0" ]
@@ -1384,38 +1384,39 @@ test_a_depth_filter_that_removes_every_site_stops_the_run() {
 # variants are shared by too few pools. Nothing in a fixture-driven suite can produce that without
 # a fixture built for it, and it is not worth one for a guard whose message is three lines.
 
-# vcffilter.dropZeroDepth, which had no coverage at any level. 00_static proves it is DECLARED in
-# stepParameterMap() -- delete it from scripts/variants.nf and a static case fails in seconds --
-# and 05_guards proves flipping it invalidates a finished project. Neither watches the expression
-# it actually builds, and that ternary in scripts/7_vcf2freq.nf is the thing that can invert.
+# vcffilter.keepLowDepthAsZero picks which of two depth filters step 7 runs. 00_static proves it
+# and minSamples are DECLARED in stepParameterMap() -- delete one from scripts/variants.nf and a
+# static case fails in seconds -- and 05_guards proves flipping the switch invalidates a finished
+# project. Neither watches which filter a run was handed, and the switch in
+# scripts/7_vcf2freq.nf is the thing that can invert.
 #
-# WHY THIS IS NOT A BEHAVIOR CASE, measured rather than assumed. Observing the toggle needs a
-# site where one sample has no reads, and this fixture cannot hold one: every sample carries ~75x
-# over the whole reference, and test/data/vcf/README.md says the same of the called VCF. Thinning
-# one sample to 250 pairs was tried and produces NO coverage at all, not low coverage --
-# `[M::mem_pestat] skip orientation FR as there are not enough pairs`, so bwa estimates no insert
-# size, nothing is flagged properly paired, and step 4's 0x2 filter discards the lot. That is the
-# trap make_fixture.py's own docstring warns about. The two requirements are in direct conflict:
-# bwa needs thousands of pairs to pair-estimate, and a zero-depth cell needs almost none locally.
-# A regional-gap sample satisfies both and is new committed fixture data; see test/README.md.
+# WHAT THE MASK DOES is 03_helpers' business, against the called VCF and a table built for it,
+# at static cost. A run is the wrong place to watch it: every sample carries ~75x over the whole
+# reference, and the called VCF holds two cells below minDP 20 in 810, which the false-positive
+# filter removes at the default pool size. Thinning one sample for more was tried and produces
+# NO coverage at all, not low coverage -- `[M::mem_pestat] skip orientation FR as there are not
+# enough pairs`, so bwa estimates no insert size, nothing is flagged properly paired, and step
+# 4's 0x2 filter discards the lot. A regional-gap sample would serve; see test/README.md.
 #
 # So this rides the multi-run instead, where `plain` already diverges at step 7, and asserts the
-# expression each run was handed. It costs no extra pipeline run.
-test_dropzerodepth_decides_the_depth_expression() {
+# filter each run was handed. It costs no extra pipeline run, and the other multi-run cases
+# assert files and task counts, not the sites `plain` keeps, so the switch is safe there.
+test_keeplowdepthaszero_decides_the_depth_filter() {
     needs_multirun || return
-    local on off
-    on=$(cat "$MULTIRUN_SB/store/Logs/inherit/7_vcf2freq/7_s3_DepthAndQualityFilter_"*.log)
-    off=$(cat "$MULTIRUN_SB/store/Logs/plain/7_vcf2freq/7_s3_DepthAndQualityFilter_"*.log)
+    local off on
+    off=$(cat "$MULTIRUN_SB/store/Logs/inherit/7_vcf2freq/7_s3_DepthAndQualityFilter_"*.log)
+    on=$(cat "$MULTIRUN_SB/store/Logs/plain/7_vcf2freq/7_s3_DepthAndQualityFilter_"*.log)
 
-    assert_contains "$on" "FMT/DP<20" "the inheriting run filters on the configured depth"
-    assert_contains "$on" "FMT/DP==0" "and dropZeroDepth=true adds the zero term"
-    assert_contains "$off" "FMT/DP<20" "the diverging run keeps the same depth floor"
-    assert_not_contains "$off" "FMT/DP==0" "and dropZeroDepth=false must not add the zero term"
+    assert_contains "$off" "excluding FMT/DP<20 || FMT/DP==0" \
+        "the inheriting run drops a site with any cell under the floor, or empty"
+    assert_not_contains "$off" "Masking" "and masks no cell"
+    assert_contains "$on" \
+        "Masking every cell below minDP 20, keeping a site where minSamples (2) or more of its cells are read" \
+        "the diverging run masks cells instead, at the shipped minSamples"
+    assert_not_contains "$on" "excluding FMT/DP" "and excludes no site on depth"
 
-    # Redundant above minDP 1, which is why this is safe to set on a run whose numbers other
-    # cases assert: the site sets are identical and only the expression differs.
-    local on_rows off_rows
-    on_rows=$(awk 'END{print NR}' "$MULTIRUN_SB/store/Output/inherit/Frequencies/Test_snp_freq.tsv")
-    off_rows=$(awk 'END{print NR}' "$MULTIRUN_SB/store/Output/plain/Frequencies/Test_snp_freq.tsv")
-    [ "$on_rows" -gt 1 ] && [ "$off_rows" -gt 1 ] || fail_case         "both runs should publish sites (got $on_rows and $off_rows rows)"
+    local off_rows on_rows
+    off_rows=$(awk 'END{print NR}' "$MULTIRUN_SB/store/Output/inherit/Frequencies/Test_snp_freq.tsv")
+    on_rows=$(awk 'END{print NR}' "$MULTIRUN_SB/store/Output/plain/Frequencies/Test_snp_freq.tsv")
+    [ "$off_rows" -gt 1 ] && [ "$on_rows" -gt 1 ] || fail_case         "both runs should publish sites (got $off_rows and $on_rows rows)"
 }

@@ -144,6 +144,18 @@ assert_close() {
         fail_case "$message: expected '$want', got '$got'"
         return
     fi
+    # A VALUE THAT IS NOT A NUMBER MATCHES ONLY ITSELF. awk reads NA, NaN and Inf all as 0, so
+    # the arithmetic below passed NA against 0 and Inf against 0 - and a p of zero where NA was
+    # due is exactly the defect the association module once had, invisible to every case
+    # asserting it through here. -Inf it reads correctly, and it is listed with the rest anyway.
+    case "$got" in NA|NaN|nan|Inf|inf|-Inf|-inf)
+        [ "$got" = "$want" ] || fail_case "$message: expected $want, got $got"
+        return ;;
+    esac
+    case "$want" in NA|NaN|nan|Inf|inf|-Inf|-inf)
+        fail_case "$message: expected $want, got $got"
+        return ;;
+    esac
     awk -v a="$got" -v b="$want" 'BEGIN { exit !(a - b < 1e-9 && b - a < 1e-9) }' \
         || fail_case "$message: expected $want, got $got"
 }

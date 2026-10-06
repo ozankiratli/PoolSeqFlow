@@ -244,8 +244,10 @@ test_the_effective_size_is_reported_at_both_levels() {
             "$(awk -F'\t' -v p="$pool" '$1=="pool" && $2==p && $4=="histogram" {print $9}' "$sb/run/neff.tsv")" \
             "$pool: one library is not a bound"
 
-        # THE INVARIANT. Called sites carry at least vcffilter.minDP reads in every sample by
-        # construction, so their harmonic depth cannot be below the genome-wide one.
+        # THE INVARIANT. A pool's called sites carry at least vcffilter.minDP reads wherever it
+        # was read, by construction -- with keepLowDepthAsZero on, a cell below the floor is
+        # written as unread and left out -- so their harmonic depth cannot be below the
+        # genome-wide one.
         called=$(awk -F'\t' -v p="$pool" '$1=="pool" && $2==p && $4=="called" {print $6}' "$sb/run/neff.tsv")
         awk -v a="$called" -v b="$hist" 'BEGIN { exit !(a > b) }' \
             || fail_case "$pool: the called depth ($called) must exceed the genome-wide one ($hist)"
@@ -259,9 +261,9 @@ test_the_effective_size_is_reported_at_both_levels() {
 # A POOL WITH NO READS AT A CALLED SITE, which every depth summary here must leave out rather
 # than average in as a zero.
 #
-# Reaching one takes vcffilter.dropZeroDepth off AND vcffilter.minDP at zero, two deliberate
-# edits from any default, so the corpus does not carry one and this case makes it: one cell of
-# one pool emptied at one site, every other cell of that site left alone.
+# Reaching one takes vcffilter.keepLowDepthAsZero on, a deliberate edit from the default, so
+# the corpus does not carry one and this case makes it: one cell of one pool emptied at one
+# site, every other cell of that site left alone.
 #
 # What it guards, measured before the change on a four-site pool at depth 100: depth_mean fell
 # to 75 and read as an ordinary number, and depth_harmonic fell to exactly 0 - harmonic_mean()

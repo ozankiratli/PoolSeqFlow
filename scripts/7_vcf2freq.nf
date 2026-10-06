@@ -251,12 +251,16 @@ process DepthAndQualityFilter {
     // "*_dq.vcf" output glob cannot pick it up.
     filterdp_vcf = "${vcf.baseName}_dp.vcf"
 
-    // bcftools excludes the whole SITE when the expression holds for any one sample, so this
-    // is an intersection across samples: every published site has every sample at or above
-    // minDP. The zero term is redundant whenever minDP is 1 or more.
-    depth_exclude = run.vcffilter.dropZeroDepth
-        ? "FMT/DP<${run.vcffilter.minDP} || FMT/DP==0"
-        : "FMT/DP<${run.vcffilter.minDP}"
+    // keepLowDepthAsZero OFF: bcftools excludes the whole SITE when the expression holds for any
+    // one sample, so every cell of a published site is at or above minDP, and a cell with no
+    // reads takes its site with it. The zero term carries that at minDP 0, where the floor cannot.
+    //
+    // ON: mask_depth.awk writes every cell below minDP, or with no reads, as unread -- zeros,
+    // published as NA -- and keeps a site where at least minSamples cells remain read.
+    //
+    // Read as text: `as boolean` would take a quoted 'false' for true.
+    keep_low = "${run.vcffilter.keepLowDepthAsZero}".toLowerCase() == 'true'
+    depth_exclude = "FMT/DP<${run.vcffilter.minDP} || FMT/DP==0"
 
     filterdq_base = "${vcf.baseName}_dq"
     filterdq_vcf = "${filterdq_base}.vcf"
@@ -312,8 +316,14 @@ process DepthAndQualityFilter {
         ln -s ${target_filterdq_vcf} .
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: COMPLETED"
     else
-        echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Depth Filtering VCF, excluding ${depth_exclude}"
-        ${run.software.bcftools} view -e "${depth_exclude}" -Ov -o ${filterdp_vcf} ${vcf}
+        if [ "${keep_low}" = "true" ]; then
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Masking every cell below minDP ${run.vcffilter.minDP}, keeping a site where minSamples (${run.vcffilter.minSamples}) or more of its cells are read"
+            mask_depth.awk -v minDP=${run.vcffilter.minDP} -v minSamples=${run.vcffilter.minSamples} \\
+                < ${vcf} > ${filterdp_vcf}
+        else
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Depth Filtering VCF, excluding ${depth_exclude}"
+            ${run.software.bcftools} view -e "${depth_exclude}" -Ov -o ${filterdp_vcf} ${vcf}
+        fi
         echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Quality Filtering VCF..."
         ${run.software.vcftools} --vcf ${filterdp_vcf} \
             --minQ ${run.vcffilter.minQUAL} \
@@ -325,12 +335,19 @@ process DepthAndQualityFilter {
         surviving=\$(grep -vc '^#' ${filterdq_recode_vcf} || true)
         if [ "\$surviving" -eq 0 ]; then
             echo "DEPTH AND QUALITY FILTER VCF ${vcf}: ERROR: no site survived the depth and quality filter."
-            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Both are applied to the whole SITE: one sample under"
-            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: the depth removes it for every sample, so the"
-            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: shallowest library sets the threshold for the cohort."
-            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: This run used minDP ${run.vcffilter.minDP}, minQUAL ${run.vcffilter.minQUAL},"
-            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: dropZeroDepth ${run.vcffilter.dropZeroDepth}. Check the weakest sample in"
-            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Output/Reports/Coverage before raising any of them."
+            if [ "${keep_low}" = "true" ]; then
+                echo "DEPTH AND QUALITY FILTER VCF ${vcf}: A site needed minSamples (${run.vcffilter.minSamples}) of its cells read to"
+                echo "DEPTH AND QUALITY FILTER VCF ${vcf}: minDP, and the QUAL floor applies to the whole site."
+                echo "DEPTH AND QUALITY FILTER VCF ${vcf}: This run used minDP ${run.vcffilter.minDP}, minQUAL ${run.vcffilter.minQUAL},"
+                echo "DEPTH AND QUALITY FILTER VCF ${vcf}: keepLowDepthAsZero true and minSamples ${run.vcffilter.minSamples}. Check the"
+            else
+                echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Both are applied to the whole SITE: one sample under"
+                echo "DEPTH AND QUALITY FILTER VCF ${vcf}: the depth removes it for every sample, so the"
+                echo "DEPTH AND QUALITY FILTER VCF ${vcf}: shallowest library sets the threshold for the cohort."
+                echo "DEPTH AND QUALITY FILTER VCF ${vcf}: This run used minDP ${run.vcffilter.minDP}, minQUAL ${run.vcffilter.minQUAL}"
+                echo "DEPTH AND QUALITY FILTER VCF ${vcf}: and keepLowDepthAsZero false. Check the"
+            fi
+            echo "DEPTH AND QUALITY FILTER VCF ${vcf}: weakest sample in Output/Reports/Coverage before changing any of them."
             echo "DEPTH AND QUALITY FILTER VCF ${vcf}: Nothing was published, so this costs nothing already made."
             exit 1
         fi

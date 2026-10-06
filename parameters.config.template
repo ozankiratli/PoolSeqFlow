@@ -117,8 +117,15 @@ params {
     vcffilter {
         minDP           = 20
         minQUAL         = 30
-        // Drop a site where any sample has no reads. Redundant above minDP 1.
-        dropZeroDepth   = true
+        // Off, a site is dropped when any of its cells -- one pool's reads there -- is below
+        // minDP or empty, so the shallowest library decides which sites the whole cohort keeps.
+        // Set true to keep the site instead and write those cells as unread: depth 0 in the
+        // depth table, NA in the frequency table.
+        keepLowDepthAsZero = false
+        // With keepLowDepthAsZero true, how many of a site's cells must reach minDP for it to be
+        // kept, from 1 to the number of pools with reads. While it is false this changes no
+        // result, though an edit to it still counts as a parameter change.
+        minSamples      = 2
     }
     
     // Filter False Positives parameters

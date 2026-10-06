@@ -135,7 +135,7 @@ dev/scripts/bump-analysis-version.sh module <name>
 bash test/run_tests.sh
 ```
 
-A full run solves **both** `install/environment.yml` and `install/environment-analysis.yml` into a scratch pair, runs against those, and removes them on the way out. 
+A full run solves **both** `install/environment.yml` and `install/environment-analysis.yml` into a scratch pair, runs against those, and removes them on the way out. **Its last lines must name both as they go**, `removing the scratch environment PoolSeqFlow-suite-<pid>` and the same with `-analysis`. A run that ends without them left the pair installed, which `conda env list` shows; the next full run removes it, and any other pair whose run is no longer running, before it builds its own.
 
 Only a full run does this. `--fast` and `--suite` resolve this tree's exact version and skip what is not installed, so they stay cheap, and neither ever borrows another release's environment.
 

@@ -314,9 +314,11 @@ for candidate in "${POOLSEQFLOW_TEST_XDEV:-}" /dev/shm /var/tmp; do
 done
 export TEST_XDEV_TMPDIR
 
-# Conda environments this run built, and only those. Named before the trap is set, because a
-# conda environment outlives the process and a build interrupted part way still leaves one.
-SCRATCH_ENVS=""
+# Conda environments this run built, and only those, in SCRATCH_ENVS. Sourced before the trap is
+# set, because a conda environment outlives the process and a build interrupted part way still
+# leaves one.
+# shellcheck source=lib/scratch_envs.sh
+source "$SCRIPT_DIR/lib/scratch_envs.sh"
 
 cleanup() {
     local env
@@ -324,17 +326,13 @@ cleanup() {
         printf '\nworking directory kept at %s\n' "$TEST_TMPDIR"
         [ -n "$TEST_XDEV_TMPDIR" ] && printf 'second filesystem kept at %s\n' "$TEST_XDEV_TMPDIR"
         for env in ${SCRATCH_ENVS:-}; do
-            printf 'scratch environment kept: %s\n' "$env"
+            printf 'scratch environment kept: %s, until the next full run removes it\n' "$env"
             printf '    remove it with: conda env remove -n %s -y\n' "$env"
         done
     else
         rm -rf "$TEST_TMPDIR"
         [ -n "$TEST_XDEV_TMPDIR" ] && rm -rf "$TEST_XDEV_TMPDIR"
-        for env in ${SCRATCH_ENVS:-}; do
-            printf '\nremoving the scratch environment %s\n' "$env"
-            conda env remove --name "$env" --yes > /dev/null 2>&1 \
-                || printf 'WARNING: could not remove %s\n' "$env" >&2
-        done
+        remove_scratch_envs
     fi
 }
 trap cleanup EXIT
@@ -442,43 +440,13 @@ fi
 # THE SCRATCH NAME BELONGS TO NO RELEASE. Building PoolSeqFlow-<tree version> instead would leave
 # an environment solved from this tree's files standing under a version those files have not
 # shipped as - the error dev/scripts/check-exported-floor.sh exists to avoid.
-build_scratch_env() {
-    local label="$1" file="$2" suffix="$3" probe="$4" scratch prefix
-    scratch="PoolSeqFlow-suite-$$$suffix"
-    if ! command -v conda > /dev/null 2>&1; then
-        printf '%s%s: no conda, so no scratch environment can be built%s\n' \
-            "$C_DIM" "$label" "$C_OFF" >&2
-        return 1
-    fi
-    if [ ! -f "$REPO_ROOT/$file" ]; then
-        printf '%s%s: %s is missing, so there is nothing to build from%s\n' \
-            "$C_DIM" "$label" "$file" "$C_OFF" >&2
-        return 1
-    fi
-    printf '%s%s: solving %s into %s. This takes minutes.%s\n' \
-        "$C_DIM" "$label" "$file" "$scratch" "$C_OFF" >&2
-    # Recorded before the status is judged: a solve that fails part way still leaves one behind.
-    SCRATCH_ENVS="$SCRATCH_ENVS $scratch"
-    if ! conda env create --name "$scratch" --file "$REPO_ROOT/$file" --yes \
-            > "$TEST_TMPDIR/solve-$label.log" 2>&1; then
-        printf 'ERROR: %s did not solve:\n' "$file" >&2
-        tail -n 15 "$TEST_TMPDIR/solve-$label.log" >&2
-        return 1
-    fi
-    prefix=$(conda env list | awk -v n="$scratch" '$1 == n {print $NF}')
-    if [ -z "$prefix" ] || [ ! -x "$prefix/bin/$probe" ]; then
-        printf 'ERROR: %s was created but has no bin/%s\n' "$scratch" "$probe" >&2
-        return 1
-    fi
-    printf '%s' "$prefix"
-}
-
+#
+# The building, the removal and the sweep of what killed runs left are in lib/scratch_envs.sh.
+# CALLED, NEVER CAPTURED IN $(...): the names a build records have to reach this shell for the
+# cleanup at exit to see them, and for two days they did not.
 if [ "$FULL_RUN" -eq 1 ]; then
-    [ "$TEST_CONDA_ENV_GIVEN" -eq 1 ] \
-        || TEST_CONDA_ENV=$(build_scratch_env tools install/environment.yml "" nextflow) || true
-    [ "$TEST_ANALYSIS_ENV_GIVEN" -eq 1 ] \
-        || TEST_ANALYSIS_ENV=$(build_scratch_env analysis install/environment-analysis.yml \
-                                                -analysis Rscript) || true
+    sweep_scratch_envs
+    build_scratch_pair
 else
     [ "$TEST_CONDA_ENV_GIVEN" -eq 1 ] \
         || TEST_CONDA_ENV=$(find_release_env "" nextflow)
@@ -502,12 +470,22 @@ export TEST_CONDA_ENV TEST_ANALYSIS_ENV
 # every invocation - so the variable holds an error message with a path stuck on the end, the
 # `-f` test fails against nonsense, and the activation is skipped in silence. An environment
 # lives at <base>/envs/<name>, so the base is two directories up and needs nothing to say so.
-if [ -n "$TEST_ANALYSIS_ENV" ]; then
-    _conda_hook="$(dirname "$(dirname "$TEST_ANALYSIS_ENV")")/etc/profile.d/conda.sh"
+#
+# EITHER ENVIRONMENT ANSWERS, because both live under the same base and the hook is what makes
+# `conda activate` exist for BOTH of them. Reading it from the analysis one alone was wrong and
+# survived only on luck: while find_release_env fell back to any PoolSeqFlow-*-analysis it could
+# find, that variable was never empty. Once it stopped borrowing, a run with only the pipeline
+# environment sourced no hook, `conda activate` did not exist, the activation failed into its
+# `|| true`, and every pipeline case died on `CONDA_PREFIX is <none>` - 97 of them, with nothing
+# in the suite's own output naming the cause.
+_hook_from="${TEST_ANALYSIS_ENV:-$TEST_CONDA_ENV}"
+if [ -n "$_hook_from" ]; then
+    _conda_hook="$(dirname "$(dirname "$_hook_from")")/etc/profile.d/conda.sh"
     # shellcheck disable=SC1091
     [ -f "$_conda_hook" ] && . "$_conda_hook"
     unset _conda_hook
 fi
+unset _hook_from
 
 # BOTH ENVIRONMENTS, NAMED, and after any build so this says what was really used. Only the
 # pipeline one was printed once, so an analysis environment that was never found looked exactly
