@@ -67,12 +67,25 @@ build_scratch_pair() {
 }
 
 # This run's environments, removed and named one by one.
+#
+# THE ACTIVE ONE IS DEACTIVATED FIRST. conda refuses to remove the environment that is active -
+# "Cannot remove current environment. Deactivate and run conda remove again" - and the runner
+# leaves the last suite's environment active, which in a full run is the analysis one. The first
+# full run after the subshell fix removed the pair's tools environment and printed only "could not
+# remove ...-analysis", because conda's reason went to /dev/null with the rest of its output. A
+# failure now prints the last of what conda said.
 remove_scratch_envs() {
-    local env
+    local env active said
     for env in ${SCRATCH_ENVS:-}; do
         printf '\nremoving the scratch environment %s\n' "$env"
-        conda env remove --name "$env" --yes > /dev/null 2>&1 \
-            || printf 'WARNING: could not remove %s\n' "$env" >&2
+        active="${CONDA_PREFIX:-}"
+        if [ "${active##*/}" = "$env" ]; then
+            conda deactivate > /dev/null 2>&1 || true
+        fi
+        if ! said=$(conda env remove --name "$env" --yes 2>&1); then
+            printf 'WARNING: could not remove %s. conda said:\n' "$env" >&2
+            printf '%s\n' "$said" | grep -v '^[[:space:]]*$' | tail -n 3 | sed 's/^/    /' >&2
+        fi
     done
 }
 

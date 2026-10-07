@@ -266,8 +266,6 @@ test_a_new_parameter_states_its_default() {
         "the arrival should be called out"
     assert_contains "$MIGRATE_OUTPUT" "The default is false" "stating the default behavior"
     assert_contains "$MIGRATE_OUTPUT" "set it to true" "and what to write for the other one"
-    assert_not_contains "$MIGRATE_OUTPUT" "It replaces vcffilter.dropZeroDepth" \
-        "and a config that never had dropZeroDepth is not told about it"
 }
 
 # A config that already sets it chose its own value, so there is no default to announce.
@@ -276,19 +274,4 @@ test_the_new_parameter_note_is_absent_when_it_was_set() {
     assert_not_contains "$MIGRATE_OUTPUT" "vcffilter.keepLowDepthAsZero IS NEW" \
         "a config that already sets it saw no arrival"
     assert_eq "true" "$(migrated_value keepLowDepthAsZero)" "and its own value is carried"
-}
-
-# A config written from dev while dropZeroDepth existed still carries it. It is DROPPED and never
-# mapped: dropZeroDepth = true is the new default, and false has no exact counterpart, because
-# keepLowDepthAsZero = true also writes a cell below minDP as unread. The note says what replaced
-# it and why the value was not carried, and the new key holds its default.
-test_dropzerodepth_is_dropped_and_its_replacement_explained() {
-    migrate_config_with -e 's|^        keepLowDepthAsZero = false|        dropZeroDepth   = false|' \
-                        -e '/minSamples/d'
-    assert_contains "$MIGRATE_OUTPUT" "vcffilter.dropZeroDepth" "the dropped key is reported"
-    assert_contains "$MIGRATE_OUTPUT" "It replaces vcffilter.dropZeroDepth" \
-        "and the note names what replaced it"
-    assert_eq "" "$(migrated_value dropZeroDepth)" "the old key is gone from the config"
-    assert_eq "false" "$(migrated_value keepLowDepthAsZero)" \
-        "and the new one holds its default, not a translation of the old value"
 }

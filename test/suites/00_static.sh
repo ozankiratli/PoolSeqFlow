@@ -1341,9 +1341,12 @@ scratch_envs_in_isolation() {
 test_a_full_run_removes_the_environments_it_built() {
     local stub="$TEST_TMPDIR/scratch-envs" said pid
     make_stub_conda "$stub"
+    # The analysis environment is left active, as a full run leaves it: its last suites are the
+    # analysis ones, and conda refuses to remove an active environment.
     said=$(scratch_envs_in_isolation "$stub" '
         TEST_CONDA_ENV_GIVEN=0 TEST_ANALYSIS_ENV_GIVEN=0
         build_scratch_pair 2> /dev/null
+        CONDA_PREFIX="/fake/envs/PoolSeqFlow-suite-$$-analysis"
         remove_scratch_envs')
     assert_not_contains "$said" "NOT THE STUB" "the case must run against the stub conda alone"
     pid=$(printf '%s\n' "$said" | sed -n 's/^pid //p')
@@ -1354,6 +1357,12 @@ test_a_full_run_removes_the_environments_it_built() {
                     "and the analysis one"
     assert_contains "$said" "removing the scratch environment PoolSeqFlow-suite-$pid" \
                     "and the run must say so"
+    # The deactivation must come before the removal of the environment it deactivates.
+    local order
+    order=$(grep -nE '^deactivate|^env remove --name PoolSeqFlow-suite-[0-9]+-analysis ' \
+                "$stub/conda.log" | cut -d: -f2 | cut -d' ' -f1 | paste -sd' ')
+    assert_eq "deactivate env" "$order" \
+              "the active analysis environment must be deactivated before it is removed"
 
     # The two calls in the runner itself, which the lines above cannot see: the build as a
     # statement of its own, and the removal in the cleanup at exit. Wrapping the first in $(...)
