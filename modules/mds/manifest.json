@@ -4,7 +4,7 @@
   "contract": "freq-1",
   "license": "GPL-3.0-or-later",
   "frame": "20260910.001",
-  "environment": "3.0.0",
+  "environment": "3.3.0",
   "summary": "the pools placed by Nei's minimum distance, on a classical MDS (principal coordinates analysis)",
   "needs": [
     "depths"
