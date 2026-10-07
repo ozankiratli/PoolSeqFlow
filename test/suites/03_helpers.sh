@@ -1580,11 +1580,11 @@ test_atomic_mv_leaves_nothing_behind_when_it_fails() {
 
 # depth2freq.awk: the depth table's counts as one row per allele.
 #
-# THE ZERO-DEPTH CELL IS WHAT THESE EXIST FOR. Until vcffilter.dropZeroDepth was added, a
-# published table could not hold one - vcffilter.minDP removes a site where any sample falls
-# short, and the smallest useful minDP is 1 - so the converter's total == 0 branch was
-# unreachable from a real run and wrote 0. With dropZeroDepth = false and minDP = 0 it is
-# reachable, and a 0 there is the same character a pool fixed for the other allele publishes.
+# THE ZERO-DEPTH CELL IS WHAT THESE EXIST FOR. Under the default filter a published table cannot
+# hold one -- vcffilter.minDP removes a site where any sample falls short or has no reads -- so
+# the converter's total == 0 branch was unreachable from a real run and wrote 0.
+# vcffilter.keepLowDepthAsZero writes every cell below the floor as zeros, which makes it routine,
+# and a 0 there is the same character a pool fixed for the other allele publishes.
 #
 # The input shapes below are real bcftools output, measured rather than assumed: a sample with
 # no reads gets GT ./. and AD 0,0, so the cell is zeros and not a missing value.
@@ -1677,6 +1677,201 @@ chr1	200	A	G,T	1,1	1,1
     assert_eq "0.25" "$(d2f_cell 3 6)" "the complete row is converted as it always was"
     assert_not_contains "$(d2f_cell 6 6)" "0.25" \
         "and the short cell below it must not republish that number"
+}
+
+# mask_depth.awk: the depth filter when vcffilter.keepLowDepthAsZero is on. A cell below minDP,
+# or with no reads, is written as unread, and a site is kept where minSamples of its cells are
+# read. A cell is one pool's reads at one site.
+#
+# The example the design was decided on, four pools and five sites at minDP 20:
+#
+#     site   depths         after masking   read
+#     100    25,30,40,35    25,30,40,35     4
+#     200    0,30,40,0      0,30,40,0       2
+#     300    25,30,5,10     25,30,0,0       2
+#     400    0,30,5,10      0,30,0,0        1
+#     500    20,30,5,25     20,30,0,25      3
+#
+# THE COUNT IS TAKEN IN THE PASS THAT WRITES THE CELLS, so the cells it counts are the cells it
+# leaves read. bcftools selects the same sites with N_PASS(FMT/DP>=20 & FMT/DP>0) -- measured on
+# this table -- but cannot rewrite AD, and with `&&` for `&` the count silently keeps 300 and 400
+# at three, because `&&` lets two different pools satisfy one half each.
+mask_example() {
+    {
+        printf '##fileformat=VCFv4.2\n'
+        printf '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\tD\n'
+        printf 'chr1\t100\t.\tA\tG\t50\t.\tDP=130;AD=78,52;MQ=40\tGT:DP:AD\t./.:25:15,10\t./.:30:18,12\t./.:40:24,16\t./.:35:21,14\n'
+        printf 'chr1\t200\t.\tA\tG\t50\t.\tDP=70;AD=42,28;MQ=40\tGT:DP:AD\t./.:0:0,0\t./.:30:18,12\t./.:40:24,16\t./.:0:0,0\n'
+        printf 'chr1\t300\t.\tA\tG\t50\t.\tDP=70;AD=42,28;MQ=40\tGT:DP:AD\t./.:25:15,10\t./.:30:18,12\t./.:5:3,2\t./.:10:6,4\n'
+        printf 'chr1\t400\t.\tA\tG\t50\t.\tDP=45;AD=27,18;MQ=40\tGT:DP:AD\t./.:0:0,0\t./.:30:18,12\t./.:5:3,2\t./.:10:6,4\n'
+        printf 'chr1\t500\t.\tA\tG\t50\t.\tDP=80;AD=48,32;MQ=40\tGT:DP:AD\t./.:20:12,8\t./.:30:18,12\t./.:5:3,2\t./.:25:15,10\n'
+    } > "$HELPERS_DIR/example.vcf"
+}
+
+# Mask $3 at floor $1 and count $2, leaving the output in masked.vcf and the positions it kept,
+# space-separated, in MASK_KEPT.
+mask_kept() {   # minDP minSamples vcf
+    "$REPO_ROOT/bin/mask_depth.awk" -v minDP="$1" -v minSamples="$2" < "$3" \
+        > "$HELPERS_DIR/masked.vcf"
+    MASK_KEPT=$(grep -v '^#' "$HELPERS_DIR/masked.vcf" | cut -f2 | paste -sd' ')
+}
+
+test_mask_depth_keeps_a_site_where_minsamples_cells_are_read() {
+    helpers_sandbox
+    mask_example
+    mask_kept 20 1 "$HELPERS_DIR/example.vcf"
+    assert_eq "100 200 300 400 500" "$MASK_KEPT" "minSamples 1 keeps every site with a cell read"
+    mask_kept 20 2 "$HELPERS_DIR/example.vcf"
+    assert_eq "100 200 300 500" "$MASK_KEPT" "minSamples 2 drops 400, with one cell read"
+    mask_kept 20 3 "$HELPERS_DIR/example.vcf"
+    assert_eq "100 500" "$MASK_KEPT" "minSamples 3 keeps the two with three or more"
+    mask_kept 20 4 "$HELPERS_DIR/example.vcf"
+    assert_eq "100" "$MASK_KEPT" "minSamples 4 is the default rule, every cell at the floor"
+}
+
+# A cell below the floor is written as unread -- AD zeros, DP 0 -- and the site's INFO/AD and
+# INFO/DP are recounted from the cells as written, which is what puts only the measured cells
+# into the depth table's TOTAL_AD. A site where nothing was masked comes out exactly as it went
+# in, header and all.
+test_mask_depth_writes_a_shallow_cell_as_unread() {
+    helpers_sandbox
+    mask_example
+    mask_kept 20 2 "$HELPERS_DIR/example.vcf"
+    local site
+    site=$(awk -F'\t' '$2 == 300' "$HELPERS_DIR/masked.vcf")
+    assert_eq "./.:25:15,10" "$(printf '%s' "$site" | cut -f10)" "a cell at the floor is left alone"
+    assert_eq "./.:0:0,0" "$(printf '%s' "$site" | cut -f12)" "a cell at 5 is written as unread"
+    assert_eq "./.:0:0,0" "$(printf '%s' "$site" | cut -f13)" "and so is one at 10"
+    assert_eq "DP=55;AD=33,22;MQ=40" "$(printf '%s' "$site" | cut -f8)" \
+              "INFO/AD and INFO/DP counted from the two cells read, MQ untouched"
+    assert_eq "$(grep -v '^chr1	[2-5]00' "$HELPERS_DIR/example.vcf")" \
+              "$(grep -v '^chr1	[2-5]00' "$HELPERS_DIR/masked.vcf")" \
+              "the header and site 100, where nothing was masked, come out as they went in"
+}
+
+# A site of three alleles: the unread cell carries one 0 per allele, counted from ALT, and the
+# cohort's AD keeps the site's arity. The FORMAT is the called VCF's own, DP before AD with
+# fields between, and INFO keys that merely begin with DP are not DP.
+test_mask_depth_masks_every_allele_of_a_multiallelic_site() {
+    helpers_sandbox
+    {
+        printf '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n'
+        printf 'chr1\t700\t.\tA\tG,T\t50\t.\tDP=90;AD=50,30,10;DP4=1,2,3,4\tGT:PL:DP:SP:AD\t./.:0,0,0:40:0:20,15,5\t./.:0,0,0:42:0:25,12,5\t./.:0,0,0:8:0:5,3,0\n'
+    } > "$HELPERS_DIR/tri.vcf"
+    mask_kept 20 2 "$HELPERS_DIR/tri.vcf"
+    local site
+    site=$(grep -v '^#' "$HELPERS_DIR/masked.vcf")
+    assert_eq "./.:0,0,0:0:0:0,0,0" "$(printf '%s' "$site" | cut -f12)" \
+              "the cell at 8 reads as unread at all three alleles"
+    assert_eq "DP=82;AD=45,27,10;DP4=1,2,3,4" "$(printf '%s' "$site" | cut -f8)" \
+              "the cohort counts the two cells read, at three alleles, and DP4 is not DP"
+}
+
+# Keys are matched by their whole name. bcftools 1.24 writes ADF and ADR beside AD, in FORMAT and
+# in INFO, when variantCall.mpileupOptions asks for them, and a match by prefix would take a
+# strand's counts for the cell's or overwrite INFO/ADF and INFO/ADR with the cohort's AD. DPR is
+# no key bcftools 1.24 writes; it stands for any FORMAT key that begins with DP. Each look-alike
+# sits on both sides of its real key across the first two records, so a match that keeps the
+# first hit and one that keeps the last both fail. The third record's last cell stops short of
+# its FORMAT, which the VCF specification allows; masked, it is written in full, with `.` for each
+# field it never had. Found by mutation: no case above failed with any of these guards removed.
+test_mask_depth_matches_keys_by_their_whole_name() {
+    helpers_sandbox
+    {
+        printf '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n'
+        printf 'chr1\t800\t.\tA\tG\t50\t.\tADF=23,14;AD=43,28;ADR=20,14;DP=71\tGT:ADF:AD:ADR:DPR:DP\t./.:8,4:15,10:7,6:15,10:25\t./.:12,8:22,14:10,6:22,14:36\t./.:3,2:6,4:3,2:6,4:10\n'
+        printf 'chr1\t900\t.\tA\tG\t50\t.\tAD=43,28;DP=71\tGT:AD:DP:DPR\t./.:15,10:25:15,10\t./.:22,14:36:22,14\t./.:6,4:10:6,4\n'
+        printf 'chr1\t1000\t.\tA\tG\t50\t.\tDP=70;AD=42,28\tGT:PL:DP:SP:AD\t./.:0,0,0:30:0:18,12\t./.:0,0,0:40:0:24,16\t./.\n'
+    } > "$HELPERS_DIR/keys.vcf"
+    mask_kept 20 2 "$HELPERS_DIR/keys.vcf"
+    assert_eq "800 900 1000" "$MASK_KEPT" \
+              "every site keeps two cells read, which a DPR taken for DP would mask"
+    local site
+    site=$(awk -F'\t' '$2 == 800' "$HELPERS_DIR/masked.vcf")
+    assert_eq "./.:3,2:0,0:3,2:6,4:0" "$(printf '%s' "$site" | cut -f12)" \
+              "the masked cell's AD and DP are zeroed, and nothing else"
+    assert_eq "ADF=23,14;AD=37,24;ADR=20,14;DP=61" "$(printf '%s' "$site" | cut -f8)" \
+              "INFO/AD and INFO/DP are recounted, and the strand counts are left alone"
+    site=$(awk -F'\t' '$2 == 900' "$HELPERS_DIR/masked.vcf")
+    assert_eq "./.:0,0:0:6,4" "$(printf '%s' "$site" | cut -f12)" \
+              "with DPR after DP, the masked cell's DP is still the one zeroed"
+    site=$(awk -F'\t' '$2 == 1000' "$HELPERS_DIR/masked.vcf")
+    assert_eq "./.:.:0:.:0,0" "$(printf '%s' "$site" | cut -f12)" \
+              "a short cell, masked, carries every field up to AD"
+}
+
+# At minDP 0 nothing is shallow, and a cell with no reads is still not read: the `> 0` here is
+# the zero term the default filter carries as `|| FMT/DP==0`.
+test_mask_depth_does_not_count_a_cell_with_no_reads_at_mindp_zero() {
+    helpers_sandbox
+    mask_example
+    mask_kept 0 3 "$HELPERS_DIR/example.vcf"
+    assert_eq "100 300 400 500" "$MASK_KEPT" "site 200 has two cells with no reads, so two read"
+}
+
+# The called VCF's real cells, at floors no default run tests: across minDP 65 and 70 its sites
+# are read in every number of pools from 1 to 6, and what each minSamples keeps is counted
+# independently, by Python over the same FORMAT/DP.
+test_mask_depth_keeps_what_an_independent_count_keeps() {
+    helpers_sandbox
+    local vcf="$REPO_ROOT/test/data/vcf/called.vcf" floor k counts seen=""
+    for floor in 65 70; do
+        counts=$(python3 - "$vcf" "$floor" <<'PY'
+import sys
+floor = int(sys.argv[2])
+read = []
+for line in open(sys.argv[1]):
+    if line.startswith("#"):
+        continue
+    fields = line.rstrip("\n").split("\t")
+    dp = fields[8].split(":").index("DP")
+    depths = [int(cell.split(":")[dp]) for cell in fields[9:]]
+    read.append(sum(1 for d in depths if d >= floor and d > 0))
+print(" ".join(str(sum(1 for r in read if r >= k)) for k in range(1, 7)))
+print(" ".join(str(n) for n in sorted(set(read))))
+PY
+)
+        for k in 1 2 3 4 5 6; do
+            mask_kept "$floor" "$k" "$vcf"
+            assert_eq "$(printf '%s\n' "$counts" | sed -n 1p | cut -d' ' -f"$k")" \
+                      "$(printf '%s' "$MASK_KEPT" | wc -w | tr -d ' ')" \
+                      "minDP $floor, minSamples $k keeps what the independent count keeps"
+        done
+        seen="$seen $(printf '%s\n' "$counts" | sed -n 2p)"
+    done
+    for k in 1 2 3 4 5 6; do
+        case " $seen " in
+            *" $k "*) ;;
+            *) fail_case "no site is read in exactly $k pools at minDP 65 or 70, so the fixture no longer covers that count" ;;
+        esac
+    done
+}
+
+# Both settings are required: minDP a number, as bcftools takes it, and minSamples a whole one.
+# awk compares a depth against an empty or a non-numeric floor without a word, which would keep or
+# drop sites by string order. A floor of 20.0 is 20, and step 0 lets one through.
+test_mask_depth_refuses_without_its_settings() {
+    helpers_sandbox
+    mask_example
+    local status
+    "$REPO_ROOT/bin/mask_depth.awk" -v minDP=20 < "$HELPERS_DIR/example.vcf" \
+        > /dev/null 2> "$HELPERS_DIR/mask.err"
+    status=$?
+    assert_status 2 "$status" "a mask with no minSamples must stop"
+    assert_contains "$(cat "$HELPERS_DIR/mask.err")" "minSamples" "and say which setting"
+    "$REPO_ROOT/bin/mask_depth.awk" -v minDP=twenty -v minSamples=2 \
+        < "$HELPERS_DIR/example.vcf" > /dev/null 2>&1
+    status=$?
+    assert_status 2 "$status" "and so must one whose floor is not a number"
+    mask_kept 20.0 3 "$HELPERS_DIR/example.vcf"
+    assert_eq "100 500" "$MASK_KEPT" "a floor written 20.0 keeps what 20 keeps"
+    printf '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\nchr1\t5\t.\tA\tG\t50\t.\tAD=5,5\tGT:AD\t./.:5,5\n' \
+        > "$HELPERS_DIR/nodp.vcf"
+    "$REPO_ROOT/bin/mask_depth.awk" -v minDP=20 -v minSamples=1 < "$HELPERS_DIR/nodp.vcf" \
+        > /dev/null 2> "$HELPERS_DIR/mask.err"
+    status=$?
+    assert_status 1 "$status" "a VCF with no FORMAT/DP has nothing to mask by"
+    assert_contains "$(cat "$HELPERS_DIR/mask.err")" "AD and DP" "and the message says so"
 }
 
 # cap_depth.awk: truncate a coordinate-sorted SAM so no reference position is covered more
@@ -2031,7 +2226,8 @@ cp_defaults() {
 params.variantCall.mpileupOptions = '-B -C 100 -q 30 -Q 30 -d 0 -a AD,DP,SP,INFO/AD -Ou'
 params.filterFalsePositives.sampleThreshold = 0.2
 params.vcffilter.minDP = 20
-params.vcffilter.dropZeroDepth = true
+params.vcffilter.keepLowDepthAsZero = false
+params.vcffilter.minSamples = 2
 params.ploidy = 2
 params.poolSize = 100
 params.capBAM.maxDepth = -1

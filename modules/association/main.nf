@@ -40,8 +40,7 @@ def useCompiled(Map settings) {
 // The depth tables of one results directory, by the artifact class the manifest asked for.
 //
 // Every published frequency is a six-significant-digit rendering of a ratio these hold exactly,
-// and a cell with no reads is published there as 0 rather than as missing, so this module reads
-// the depth tables and nothing else.
+// so this module reads the depth tables and nothing else.
 def depthTables(Map target) {
     def spec = target.classes.depths
     def found = file("${spec.dir}/${spec.pattern}")

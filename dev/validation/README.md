@@ -8,7 +8,7 @@ Measurements of whether the numbers the analysis layer publishes mean what they 
 
 This directory answers a different question -- *does the method behave* -- and it cannot be answered by any exact value. A false-positive rate is a rate; a power curve is a curve; the limit at which an assumption stops holding is found by pushing on it until it breaks. So the assertions here are distributional, the replicate counts are in the hundreds of thousands, and a run takes minutes rather than seconds. Mixing the two would make the suite slow and make its failures ambiguous.
 
-Nothing here runs in `run_tests.sh` and nothing here gates a commit. **What ships is the chapter written from these numbers**, not the harness.
+Nothing here gates a commit, and one script runs in `run_tests.sh`: `agree.R`, as a case of association's suite, because it checks a fact rather than measuring a rate -- that the `missing_*` sections still describe the modules that ship. **What ships is the chapter written from these numbers**, not the harness.
 
 ## The discipline that makes it worth running
 
@@ -17,6 +17,8 @@ Nothing here runs in `run_tests.sh` and nothing here gates a commit. **What ship
 This is the whole reason a measurement here is evidence. If the simulation drew its read counts using our own `n_eff`, a wrong `n_eff` would cancel on both sides and the harness would report agreement to twelve figures while being wrong about the world. The library is on trial; it does not get to write the exam.
 
 The same rule holds for every section added later: the truth is constructed from first principles in the harness, and only the thing being judged comes from the library.
+
+**The estimators of the `missing_*` sections are the modules' own functions.** `module_functions()` in `lib.R` parses `association.R` and `mds.R` and evaluates the functions those sections call, so what they judge is the code that ships rather than a description of it, and a function the script no longer defines stops the run. Only the fifteen lines of association's main loop that put those functions in order are restated, in `association_run()`, and `agree.R` holds them to the shipped script.
 
 ## Sections
 
@@ -34,12 +36,23 @@ The same rule holds for every section added later: the truth is constructed from
 | `arity` | Whether the site statistic is fair to sites of different allele counts, against the two alternatives the design rejected |
 | `power` | What the thing can actually see. Every other section measures when it lies, and a test that never rejects never lies |
 | `pools` | The same questions swept over the number of pools, because six is not a general claim |
+| `missing_null` | With cells written as unread, is a site read in m of its units still given the exact m-unit permutation p? Every pattern of read units against a brute-force oracle, the scheme the module rejected as a comparator the gates must see, the sampled path, and units of technical-replicate lanes |
+| `missing_published` | What a run says about itself over unread cells: `lambda_gc` against the null of its own mix of units, which is 1.21 at six and 2.20 at three, and theta, paired fully read against masked, with a failed library among the masks |
+| `missing_informative` | A cell unread because of the allele it carries. Where a depth floor turns allele-linked read loss into false positives, under both of step 7's rules, and whether anything the module publishes shows it |
+| `missing_yield` | What keeping a site on its read cells buys over dropping it, where an effect is planted, and what `minSamples` changes |
+| `missing_mds` | Whether pairwise deletion is unbiased, how the error of a distance falls with the sites it rests on, and where a pool read at few sites lands in the ordination |
 
-## The two scripts
+## The three scripts
 
 `calibrate.R` judges our arithmetic against our own idea of the truth. `external.R` judges it against BayPass, which shares none of our code and none of our statistics -- and scores both against the sites that were planted rather than against each other, since two different statistics on two different scales cannot agree numerically and it would mean nothing if they did.
 
 Both source `lib.R`, which holds every generator and estimator they share. They fit and permute identically or neither result says anything about the other, so nothing is defined twice.
+
+`agree.R` checks that the `missing_*` sections describe the modules at all. It runs the shipped `association.R` and `mds.R` on simulated tables with unread cells, and `bin/mask_depth.awk` on a simulated VCF, and compares each with the harness site by site: `n_observed`, every NA, `perm_p` and `fdr_p` to 1e-12, theta, `lambda_gc` and `depth_phenotype_cor`, every distance and coordinate, every masked cell. It exits 1 on any disagreement, and no `missing_*` number is to be read until it agrees again. It needs jsonlite, which the modules read their inputs with, so it runs with the analysis environment's `Rscript`, and in about 25 seconds:
+
+```
+Rscript dev/validation/agree.R modules /tmp/agree
+```
 
 ```
 Rscript dev/validation/external.R modules/lib /tmp/bp 1200
@@ -62,8 +75,11 @@ Run one section, or all of them:
 Rscript dev/validation/calibrate.R modules/lib
 Rscript dev/validation/calibrate.R modules/lib n_eff
 Rscript dev/validation/calibrate.R modules/lib n_eff 500000
+Rscript dev/validation/calibrate.R modules/lib missing
 ```
 
-The third argument is the replicate count per cell; it defaults low enough to run in seconds and high enough to separate the hypotheses. Every run prints the seed it used and is reproducible from it.
+The third argument is the replicate count per cell; it defaults low enough to run in seconds and high enough to separate the hypotheses. Every run prints the seed it used and is reproducible from it. Each `missing_*` section seeds itself from that seed, so it reads the same alone as inside `all`.
 
-Base R only, like the library -- no packages to install, and it runs under either conda environment or a bare `Rscript`.
+`missing` runs the five `missing_*` sections, about five minutes at the default. They find the modules beside the library directory -- `modules/association/` beside `modules/lib/` -- so they run against one source tree, library and modules together.
+
+Base R only, like the library -- no packages to install, and `calibrate.R` runs under either conda environment or a bare `Rscript`. `agree.R` is the exception, for the reason above.

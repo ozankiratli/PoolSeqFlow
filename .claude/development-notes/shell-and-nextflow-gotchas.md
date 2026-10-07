@@ -15,6 +15,7 @@ The companion notes are `dag-wiring.md` for channel shape and `parameter-resolut
 - **`${var%$pat}` does not glob-expand a pattern held in a variable in zsh.** A sample-ID-stripping test reported "nothing is stripped" while the code was correct. Run anything the pipeline will run with `bash -c`.
 - **zsh does not word-split unquoted parameters.** `$2` holding `-c file` arrives as one argument and the tool reports `Unknown option`. The same rule silently breaks a loop: `FILES="a b c"; for f in $FILES` iterates **once**, with the whole string as the filename. It cost a bulk rename on 2026-08-30 -- `cp` and `sed` both errored on one absurd path, only the command *after* the loop took effect, and the tree was left half renamed.
 - **`grep -rn --include='*.nf'` needs the glob quoted**, or zsh expands it against the cwd and the whole command dies with `no matches found`.
+- **`status` is a read-only variable in zsh.** Added 2026-10-06: `bash test/run_tests.sh > log; status=$?; echo "exit $status" >> log` died at the assignment with `read-only variable: status`, so the wrapper exited 1 after a run that passed, and the exit status of the suite itself was lost. Use another name, `code=$?`.
 
 ---
 
@@ -28,7 +29,7 @@ The companion notes are `dag-wiring.md` for channel shape and `parameter-resolut
 
 **`A || B && continue` is not "skip when either holds".** Bash parses it `(A || B) && continue`, so when neither holds the compound's status is non-zero and `set -e` ends the script rather than falling through. Write `if A || B; then continue; fi`.
 
-**A function called inside `$(...)` runs in a subshell, so anything it assigns is lost.** `out=$(run_launcher ...)` meant the status variable never reached the caller. Assign in the caller (`OUT=$(cd x && cmd)` then `STATUS=$?`), and feed stdin with a herestring (`f <<< "y"`) -- a pipeline is also a subshell. The same rule is why a loud `exit 1` inside a helper that is always called in a command substitution would silently do nothing.
+**A function called inside `$(...)` runs in a subshell, so anything it assigns is lost.** `out=$(run_launcher ...)` meant the status variable never reached the caller. Assign in the caller (`OUT=$(cd x && cmd)` then `STATUS=$?`), and feed stdin with a herestring (`f <<< "y"`) -- a pipeline is also a subshell. The same rule is why a loud `exit 1` inside a helper that is always called in a command substitution would silently do nothing. **It struck again 2026-10-04 and cost five leaked environment pairs before it was seen on 10-06:** `test/run_tests.sh` built its scratch environments with `TEST_CONDA_ENV=$(build_scratch_env ...)`, the function appended each name to the list the exit trap removes, and the append happened in the substitution's child shell. The cleanup removed nothing and printed nothing, so nothing looked wrong. The check written with it set the list by hand, which is how it missed the recording entirely: a check has to go through the call the real code makes.
 
 **`local a="$1" b=".../$a"` dies under `set -u`.** Referencing a name in the same `local` that declares it is unbound. Split the declaration. In a test helper this failed silently mid-case and presented as three unrelated assertion failures.
 
@@ -178,6 +179,8 @@ That escape is written out in words above for the same reason: the first draft o
 **`$$` in a process script is eaten by Groovy and leaves the command without its argument.** A triple-quoted string interpolates `$`, so `kill -TERM $$` reaches `.command.sh` as `kill -TERM` -- a bash usage error, exit 2, which under `set -e` looks exactly like the tool failing. Write `\$\$`. Found 2026-09-29 while testing what survives a signal: two rows of a results table said a design survived SIGKILL when no signal had been sent at all. **Read `.command.sh` in the work directory before believing any result that depends on what a process script actually ran.**
 
 **`.command.log` is the COMBINED stream, so `>&2` is not what keeps a message out of it.** Measured the same day, by restoring the redirect and re-running: a guard's text reaches `Logs/` identically whether it went to stdout or stderr. The choice between them is about which section Nextflow files it under in the terminal -- "Command output:" or "Command error:" -- and nothing else.
+
+**What a task that succeeds writes is not shown at all, unless its process sets `debug true`, and then only its stdout.** Measured 2026-10-06 with two processes each echoing a line to stdout and one to stderr: the one without `debug` showed neither, the one with it showed its stdout and not its stderr. So an R script's `message()` in a module's process never reaches the person running it -- association's warnings are in that state as this is written -- and `mds` routes its warning through `cat()` to stdout under `debug true`. The task's own `.command.log` still holds both streams, as the entry above says.
 
 ---
 

@@ -1045,7 +1045,7 @@ If you are trying to work out why a variant you expected is missing, read this p
 | 4 | Variant calling | Sites | Non-variant sites | `variantCall.callOptions` |
 | 5 | Major-allele normalization | Allele order | Nothing: it rewrites | none |
 | 6 | False-positive filter | Alternate alleles | Alleles without cross-sample support | `poolSize` or `param_poolSize`, `ploidy`, `filterFalsePositives.sampleThreshold` |
-| 7 | Depth & quality filter | Sites | Sites where any sample is under-covered or has no reads at all, and low-QUAL sites | `vcffilter.minDP`, `vcffilter.minQUAL`, `vcffilter.dropZeroDepth` |
+| 7 | Depth & quality filter | Sites, or cells | Sites where any sample is under-covered or has no reads at all, and low-QUAL sites; with `keepLowDepthAsZero`, the under-covered cells instead, and sites left with fewer than `minSamples` cells read | `vcffilter.minDP`, `vcffilter.minQUAL`, `vcffilter.keepLowDepthAsZero`, `vcffilter.minSamples` |
 | 8 | SNP/INDEL split | Sites | Splits into two files; nothing is lost | none |
 | 9 | Frequency conversion | none | Nothing | none |
 
@@ -1324,27 +1324,27 @@ Each pool can be set to get its own row of that table. `param_poolSize` in `meta
 
 The `*` → `X` substitution around the rejoin masks the spanning-deletion allele, which `norm -m+` does not handle in this position. It is restored immediately afterwards.
 
-### 7. Depth and quality filter (step 7)
+### 7. Depth and quality filter (step 7) { #depth-and-quality-filter }
 
 Two commands, both operating on whole sites:
 
 ```bash
-bcftools view -e "FMT/DP<20" -Ov -o <name>_dp.vcf <input>
+bcftools view -e "FMT/DP<20 || FMT/DP==0" -Ov -o <name>_dp.vcf <input>
 vcftools --vcf <name>_dp.vcf --minQ 30 --recode --recode-INFO-all --out <name>_dq
 ```
 
 `bcftools view -e "FMT/DP<20"` (`vcffilter.minDP`)
 : Removes a site if **any** sample falls below the depth. A site survives only when every sample meets the floor, so **the weakest library sets the threshold for the whole cohort**. One under-sequenced pool removes sites for all of them.
 
-`|| FMT/DP==0` (`vcffilter.dropZeroDepth`, on by default)
-: Removes a site where any sample has no reads, whatever `minDP` says. Above `minDP` 1 it changes nothing; it exists for when you lower `minDP` to keep shallow sites. Turn it off and a pool with no reads at a site publishes [`NA` rather than a frequency](#unmeasured-cells), so what you are keeping is a table with holes in it rather than a table of zeros.
+`|| FMT/DP==0`
+: Removes a site where any sample has no reads, whatever `minDP` says. The zero term is what carries that at `minDP` 0, where the floor cannot.
 
 `vcftools --minQ 30` (`vcffilter.minQUAL`)
 : Removes sites whose `QUAL` falls below 30.
 
-The depth test has to be site-level rather than per-sample. Both vcftools and bcftools express a genotype-level verdict by rewriting `FORMAT/GT` and nothing else (`AD` and `DP` survive untouched), and stage 9 reads `AD`. Stage 5 has already set every `GT` to `./.` besides, so a genotype filter would have nothing left to mark.
+**`vcffilter.keepLowDepthAsZero = true` moves the depth test from the site to the cell**, one pool's reads at one site. vcftools and bcftools can express a per-sample verdict only by rewriting `FORMAT/GT`, which major-allele normalization has already set to `./.` everywhere and which frequency conversion does not read, so the first command is replaced by a text pass over the same VCF, `bin/mask_depth.awk`. Every cell below `minDP`, or with no reads, is written as unread: its `AD` becomes zeros and its `DP` 0, which the depth table carries as zeros and the frequency table as [`NA`](#unmeasured-cells). The site is kept when at least `vcffilter.minSamples` of its cells reach the floor. The site's `INFO/AD` and `INFO/DP` are recounted from the cells as written, so `TOTAL_AD` covers only the cells that measured it; every other `INFO` key, `DP4` among them, still counts every read. Major-allele normalization ranked the alleles on every read, before the mask, so at a site where the cells written as unread carried most of the major allele, another allele can outnumber `REF` in `TOTAL_AD`. The false-positive filter has run by then, so every read still counts toward deciding that an allele exists, and only the cells at the floor count toward measuring its frequency. `minQUAL` applies to the whole site either way.
 
-Alternative expressions, what each trades, and how to pick a value: [Depth and quality](#depth-and-quality).
+How to pick a value, and when to keep a site with cells read too shallowly: [Depth and quality](#depth-and-quality).
 
 ### 8. SNP/INDEL split (step 7)
 
@@ -1370,7 +1370,7 @@ Work from the outside in. A variant lost at stage 1 cannot be recovered by loose
 | Low-frequency alleles absent from one pool only | 6 | That pool's `param_poolSize`: a size set too low raises its threshold alone |
 | Alleles present in one pool only, absent from output | 6 | `filterFalsePositives.sampleThreshold` |
 | Whole sites missing despite good depth | 7 | `vcffilter.minQUAL` |
-| Almost every site gone after filtering | 7 | `vcffilter.minDP`: one under-covered sample removes sites for all of them |
+| Almost every site gone after filtering | 7 | `vcffilter.minDP`: one under-covered sample removes sites for all of them, unless `vcffilter.keepLowDepthAsZero` is on |
 | Multiallelic sites reduced to two alleles | 4 | `variantCall.callOptions`: confirm `-A` is still present |
 
 Changing any of these invalidates existing outputs, and step 0 will stop the next run rather than mix results. That is covered in [Design Decisions](#the-change-guard).
@@ -1406,8 +1406,8 @@ CHROM   POS   REF   ALLELE   TOTAL_AD   <sample 1>   <sample 2>   …
 | `POS` | 1-based position |
 | `REF` | The reference allele **for the site**, repeated on every row of that site |
 | `ALLELE` | The allele this row reports on |
-| `TOTAL_AD` | Frequency of `ALLELE` across **all samples combined** |
-| *sample columns* | Frequency of `ALLELE` in that sample, or [`NA`](#unmeasured-cells) where that sample has no reads at the site |
+| `TOTAL_AD` | Frequency of `ALLELE` across **all samples combined**, or with `vcffilter.keepLowDepthAsZero` across the cells read at the site |
+| *sample columns* | Frequency of `ALLELE` in that sample, or [`NA`](#unmeasured-cells) where that sample has no reads at the site, or with `keepLowDepthAsZero` fewer than `minDP` |
 
 Sample columns appear in `metadata.csv` row order. See [Row order decides column order](#row-order-decides-column-order).
 
@@ -1443,7 +1443,7 @@ Every column within one site sums to 1. A zero means the allele was not observed
 
 #### A cell that was never measured reads `NA` { #unmeasured-cells }
 
-A pool with no reads at all at a site has no frequency to report, and the table says `NA` on every allele of that site rather than a number:
+A pool with no reads at all at a site has no frequency to report, and with `vcffilter.keepLowDepthAsZero` on, a cell below `minDP` is written as unread and has none either. The table says `NA` on every allele of that site rather than a number:
 
 ```text
 CHROM  POS   REF  ALLELE  TOTAL_AD  sample1  sample2
@@ -1456,7 +1456,7 @@ chr1   1000  A    T       0.05      0        NA
 
 The depth table is where the distinction comes from and it is unambiguous there: the cell holds `0,0,0`. `NA` is what that becomes once you divide by a total of zero.
 
-**By default no such cell reaches a published table.** `vcffilter.minDP` removes a site where any sample falls below the depth floor, and `vcffilter.dropZeroDepth` removes one where any sample has no reads even if you set `minDP` to zero. You see `NA` only after turning both off, which is a deliberate choice to keep sites that some pools missed. R reads `NA` natively; in Python, `pandas.read_table` gives `NaN`; in awk, test the string.
+**By default no such cell reaches a published table.** `vcffilter.minDP` removes a site where any sample falls below the depth floor or has no reads at all, even with `minDP` at zero. You see `NA` only after turning on `vcffilter.keepLowDepthAsZero`, which keeps such a site when at least `vcffilter.minSamples` of its cells are read, and writes every cell below the floor as unread: a deliberate choice to keep sites that some pools missed or read too shallowly. R reads `NA` natively; in Python, `pandas.read_table` gives `NaN`; in awk, test the string.
 
 #### The depth tables { #depth-tables }
 
@@ -1962,6 +1962,7 @@ There are three directories, and keeping them apart is most of understanding the
 │   ├── filterFalsePositives.sh   # Cross-sample support filter
 │   ├── find_artifact.sh          # Locate an output across the storage tiers
 │   ├── MajorAlleleToRef.py       # Re-encode VCF with the major allele as REF
+│   ├── mask_depth.awk            # Write cells below minDP as unread (keepLowDepthAsZero)
 │   ├── parse_metadata.py         # Read and validate metadata.csv
 │   ├── parse_multirun.py         # Read and validate the run table
 │   └── write_citations.py        # Writes CITATIONS.md and references.bib per run
@@ -2208,7 +2209,7 @@ Change one of these and your output changes. Step 0 records them and **refuses t
 | `filterFalsePositives.sampleThreshold` | Fraction of samples that must support an allele | [Filtering & Frequency](#samplethreshold) |
 | `capBAM.maxDepth` | The depth ceiling put on each BAM. Can be set per sample in `metadata.csv` | [Variant Calling](#capping-each-bam) |
 | `variantCall.*` | Pileup and calling behavior, including a flat depth cap on top of the measured one | [Variant Calling](#variant-calling) |
-| `vcffilter.minDP`, `vcffilter.minQUAL` | Post-call depth and quality filtering | [Filtering & Frequency](#depth-and-quality) |
+| `vcffilter.minDP`, `vcffilter.minQUAL`, `vcffilter.keepLowDepthAsZero`, `vcffilter.minSamples` | Post-call depth and quality filtering | [Filtering & Frequency](#depth-and-quality) |
 | `bwa.minScoreOutput`, `bwa.batchSize`, `bwa.options` | How reads are aligned in the first place, and whether that is reproducible across machines | [Step 3](#step-3-align) |
 | `cleanBAM.filter`, `cleanBAM.required`, `cleanBAM.mapq` | Which alignments reach the pileup | [Alignment & Cleaning](#alignment-cleaning) |
 | `cutadapt.at_gc_error` | Composition tolerance driving the clip points | [Trimming & Clipping](#trimming-clipping) |
@@ -2282,7 +2283,7 @@ What is checked today:
 
 **A setting that merely gives you fewer sites is never flagged.** `minDP 20` against `minDP 5` is your scientific judgment and the pipeline has no opinion on it. The line is whether a setting produces *nothing*, or silently changes what a number *means*.
 
-**An older config is judged on what it will actually do.** A parameter your `parameters.config` does not mention falls back to the pipeline's own default rather than to whatever an unset value happens to mean: `nextflow.config` resolves it below the point your file is read, so a config that never mentions `vcffilter.dropZeroDepth` runs at the shipped `true`, and one that does set it still wins. Running `PoolSeqFlow migrate_config` is what brings a config forward, and it reports every parameter that is new; see [Bring each project's configuration forward](#migrate-config).
+**An older config is judged on what it will actually do.** A parameter your `parameters.config` does not mention falls back to the pipeline's own default rather than to whatever an unset value happens to mean: `nextflow.config` resolves it below the point your file is read, so a config that never mentions `vcffilter.minSamples` runs at the shipped 2, and one that does set it still wins. Running `PoolSeqFlow migrate_config` is what brings a config forward, and it reports every parameter that is new; see [Bring each project's configuration forward](#migrate-config).
 
 **Two things it cannot check**, both because the answer is not in your configuration:
 
@@ -3194,8 +3195,9 @@ The order is fixed (stages 5 to 9 of [The Filter Chain](#the-chain-at-a-glance))
 |---|---|
 | `poolSize`, `ploidy` | Set the smallest allele frequency worth believing, which is what the false-positive filter tests against. Both can be set per sample or per run |
 | `filterFalsePositives.sampleThreshold` | Removes alternate alleles without support across enough samples. The filter that makes the pipeline pool-aware, and the one most worth understanding before changing anything |
-| `vcffilter.minDP`, `vcffilter.minQUAL` | Remove whole sites that are too shallow in any one sample, or too poorly called |
-| `vcffilter.dropZeroDepth` | Removes a site where any sample has no reads at all, independently of `minDP`. On by default, and what keeps a published table free of cells that were never measured |
+| `vcffilter.minDP`, `vcffilter.minQUAL` | Remove whole sites that are too poorly called, or too shallow in any one sample unless `keepLowDepthAsZero` is on |
+| `vcffilter.keepLowDepthAsZero` | Off by default. On, a cell below `minDP` no longer removes its site: it is written as unread, and the site is kept if enough of its cells reach the floor |
+| `vcffilter.minSamples` | With `keepLowDepthAsZero` on, how many of a site's cells must reach `minDP` for it to be kept. 2 by default, from 1 to the number of pools with reads |
 | `vcf.fileName` | Removes nothing; it names the files this step writes |
 
 `filterFalsePositives.sensitivity` is **computed** from `poolSize` and `ploidy` rather than set, and can be overridden per sample in `metadata.csv`; see [Metadata](#metadata) for the per-sample form.
@@ -3272,50 +3274,42 @@ Remember that the denominator is the number of **VCF columns**, which is the num
 
 ```groovy
 vcffilter {
-    minDP   = 20
-    minQUAL = 30
+    minDP              = 20
+    minQUAL            = 30
+    keepLowDepthAsZero = false
+    minSamples         = 2
 }
 ```
 
-Both are **site**-level filters, applied as two commands in sequence:
+By default both are **site**-level filters, applied as two commands in sequence:
 
 ```bash
-bcftools view -e "FMT/DP<20" -Ov -o <name>_dp.vcf <input>
+bcftools view -e "FMT/DP<20 || FMT/DP==0" -Ov -o <name>_dp.vcf <input>
 vcftools --vcf <name>_dp.vcf --minQ 30 --recode --recode-INFO-all --out <name>_dq
 ```
 
-`minDP` → `bcftools view -e "FMT/DP<N"`
-: Removes a site if **any** sample falls below the depth. Read the negation carefully: the site survives only when *every* sample meets the floor.
+`minDP` → `bcftools view -e "FMT/DP<N || FMT/DP==0"`
+: Removes a site if **any** sample falls below the depth or has no reads at all. Read the negation carefully: the site survives only when *every* sample meets the floor.
 
 `minQUAL` → `vcftools --minQ`
 : Removes sites whose `QUAL` falls below the value.
 
+`keepLowDepthAsZero`, `minSamples` → `bin/mask_depth.awk`
+: With `keepLowDepthAsZero = true` the depth test moves from the site to the cell, as [the walkthrough](#depth-and-quality-filter) describes. A cell below `minDP`, or with no reads, is written as unread, and its site is kept when at least `minSamples` of its cells reach `minDP`. `minSamples` runs from 1 to the number of pools with reads, since a pool the metadata names but no reads reach has no column in the VCF, and a run asking for anything else is refused before it starts. While `keepLowDepthAsZero` is false, `minSamples` has no effect, though changing it still counts as a change to a project's parameters.
+
 !!! danger "The weakest library sets the threshold for every site"
 
-    Because the test is "any sample below `minDP`", one under-sequenced pool removes sites for all of them. Three pools at depths 50/15/55, 60/12/28 and 10/12/20, with `minDP = 20`:
+    Because the default test is "any sample below `minDP`", one under-sequenced pool removes sites for all of them. Three pools at depths 50/15/55, 60/12/28 and 10/12/20, with `minDP = 20`:
 
     ```text
-    minDP = 20  ->  0 of 3 sites kept   (poolB is 15/12/12, so it fails everywhere)
-    minDP = 12  ->  2 of 3 sites kept
+    minDP = 20  →  0 of 3 sites kept   (poolB is 15/12/12, so it fails everywhere)
+    minDP = 12  →  2 of 3 sites kept
+    minDP = 20, keepLowDepthAsZero = true, minSamples = 2  →  2 of 3 sites kept, poolB unread at both
     ```
 
     Check `Output/Reports/Coverage/` for your weakest sample before choosing a value, and after the first run compare the site count in `<name>.vcf` against the distinct positions that reached the frequency tables. A near-total wipeout is this filter, not a broken pipeline.
 
-If "every sample" is too strict for your design, the alternatives are one-line swaps in [`7_vcf2freq.nf`](https://github.com/ozankiratli/PoolSeqFlow/blob/main/scripts/7_vcf2freq.nf). Tested against the depths above at `minDP = 20`:
-
-| Expression | Semantics | Sites kept |
-|---|---|---|
-| `-e "FMT/DP<20"` *(current)* | Every sample must pass | 0 of 3 |
-| `-i "COUNT(FMT/DP>=20)>=2"` | At least 2 samples pass | 2 of 3 |
-| `-i "MEAN(FMT/DP)>=20"` | Mean depth across samples | 2 of 3 |
-| `-i "INFO/DP>=20"` | Cohort total depth | 3 of 3 |
-| `-i "FMT/DP>=20"` | **Any one** sample passes, not a depth floor | 3 of 3 |
-
-The last row is worth noting as a trap: `-i "FMT/DP>=20"` reads like the obvious inverse of the current expression and is not, because bcftools evaluates a `FORMAT` condition per sample and keeps the site if it holds for any of them.
-
-!!! note "Genotype-level filtering is not available here"
-
-    A per-sample depth floor (blanking one pool's frequency while keeping the row) cannot be done in the VCF, because vcftools and bcftools both express a genotype-level verdict by rewriting `GT`, and `GT` is set to `./.` throughout by major-allele normalization ([why](#major-allele-normalization)). Frequency conversion reads `AD`. If you need per-sample blanking rather than whole-site removal, it has to happen in `bin/depth2freq.awk`, which already computes each sample's depth as the denominator.
+If "every sample" is too strict for your design, turn on `keepLowDepthAsZero` rather than editing the expression in the step. A site filter alone, such as `-i "COUNT(FMT/DP>=20)>=2"`, keeps the same sites but leaves the shallow cell's reads in the depth table that every analysis module reads, where they count as a measured frequency; the mask writes that cell as unread.
 
 ### Output naming
 
@@ -4223,13 +4217,13 @@ One row per pool per sequence, over the **SNP** table.
 |---|---|
 | `pool`, `chrom` | which pool, which sequence |
 | `sites` | SNP sites on that sequence |
-| `unmeasured` | how many of them this pool has no reads at, and the three columns below therefore leave out. Zero unless you turned [`vcffilter.dropZeroDepth`](#unmeasured-cells) off |
+| `unmeasured` | how many of them this pool has no reads at, and the three columns below therefore leave out. Zero unless you turned on [`vcffilter.keepLowDepthAsZero`](#unmeasured-cells) |
 | `depth_mean`, `depth_median` | the ordinary summaries of that pool's depth |
 | `depth_harmonic` | the harmonic mean, which is the one every effective sample size below is computed from |
 
 **The three depth columns are taken over `sites - unmeasured`, not over `sites`.** A site this pool has no reads at tells you nothing about how deep it was read, so averaging it in as a zero would report a depth nobody measured. The harmonic mean of any set containing a zero is zero, which would take the pool's effective sample size to `NA` on one missed site out of millions. `unmeasured` is published so the denominator is readable rather than assumed.
 
-**A pool's depth at a site is the sum of its cell in the depth table**: the reads supporting any allele there, after step 7's depth, quality and false-positive filters. It is not coverage, and it is not what `Output/Reports/Depth` measured: the sites here are the ones that survived calling, every one of them carries at least `vcffilter.minDP` reads in **every** sample by construction, and mapping and base quality minima applied to the pileup that they did not. The two numbers are not one quantity measured twice, and this one is always the larger.
+**A pool's depth at a site is the sum of its cell in the depth table**: the reads supporting any allele there, after step 7's depth, quality and false-positive filters. It is not coverage, and it is not what `Output/Reports/Depth` measured: the sites here are the ones that survived calling, every one of them carries at least `vcffilter.minDP` reads in **every** sample read there by construction, and mapping and base quality minima applied to the pileup that they did not. The two numbers are not one quantity measured twice, and this one is always the larger.
 
 ### `diversity.tsv`: gene diversity and effective sample size { #basicstats-diversity }
 
@@ -4240,7 +4234,7 @@ One row per pool, over the called SNP sites of the whole project.
 | `pool` | the `RG_Sample` |
 | `n_chrom` | `ploidy × pool_size`, as in [`design.tsv`](#basicstats-design) |
 | `sites` | the called SNP sites |
-| `unmeasured` | how many of them this pool has no reads at. Zero unless you turned [`vcffilter.dropZeroDepth`](#unmeasured-cells) off |
+| `unmeasured` | how many of them this pool has no reads at. Zero unless you turned on [`vcffilter.keepLowDepthAsZero`](#unmeasured-cells) |
 | `segregating` | how many of them are segregating **for this pool**, by the rule below |
 | `depth_harmonic` | the harmonic mean of this pool's depth over `sites - unmeasured` |
 | `n_eff_harmonic` | the pool's effective sample size over them, from `depth_harmonic` |
@@ -4274,7 +4268,7 @@ How many independent chromosomes a frequency read off this data is actually wort
 | `n_chrom`, `n_eff` | the chromosomes sampled, and what they are worth at that depth |
 | `estimate` | `exact`, or `lower_bound` (see below) |
 
-**The two sources are not one quantity measured twice, and `called` is always the larger.** Five things separate them: the histogram is measured before the depth ceiling and the calls after it; `samtools stats` counts every spanning read where the pileup applied a mapping and base quality minimum; a histogram counts positions where the depth table sums `AD`; every called site carries at least `vcffilter.minDP` reads **in every sample** by construction, which censors the low end away; and a site had to be variable to be called at all. Compare a pool's two rows to see how much the filter chain concentrated the data. Do not treat their difference as error.
+**The two sources are not one quantity measured twice, and `called` is always the larger.** Five things separate them: the histogram is measured before the depth ceiling and the calls after it; `samtools stats` counts every spanning read where the pileup applied a mapping and base quality minimum; a histogram counts positions where the depth table sums `AD`; every called site carries at least `vcffilter.minDP` reads **in every sample read there** by construction, which censors the low end away; and a site had to be variable to be called at all. Compare a pool's two rows to see how much the filter chain concentrated the data. Do not treat their difference as error.
 
 **There is no `library` row from the `called` source, and there cannot be.** The published tables carry one column per `RG_Sample`, so a merged pool's libraries are already summed inside them and nothing can separate them again. Per-library figures come from the histograms or from nowhere.
 
@@ -4406,18 +4400,21 @@ That is not an argument from first principles alone. Measured on null sites of t
 
 ### The smallest p your design can reach { #association-floor }
 
-**Before any of the output: a design of *n* units cannot report a p below `2 / n!`, however strong the signal.** Reversing a phenotype negates every slope and leaves the statistic alone, so the reversed arrangement always ties with the observed one and two of the rearrangements are always counted.
+**Before any of the output: a design of *n* units cannot report a p below `1 / n!`, however strong the signal.** The observed arrangement is always among the rearrangements counted, so the smallest p is the one where it beats every other outright.
 
-| units | smallest p | can a site be significant at 0.05? |
+| units | smallest p | under 0.05? |
 |---|---|---|
-| 4 | 0.083 | **no** |
-| 5 | 0.017 | yes |
-| 6 | 0.0028 | yes |
-| 8 | 0.00005 | yes |
+| 3 | 0.17 | **no** |
+| 4 | 0.042 | yes |
+| 5 | 0.0083 | yes |
+| 6 | 0.0014 | yes |
+| 8 | 0.000025 | yes |
 
-At four units the run says so in a sentence and the table is a **ranking of effect sizes, not a test**. That is a true statement about the experiment rather than a fault of the method, and it is the honest answer to a well-known failure of this kind of study: a modestly powered pool-seq scan read as though it were well powered produces scattered genome-wide significance from a single causal variant, which looks like a polygenic architecture and is noise [Long et al. 2026](#ref-long2026polygenicity). A floor is a structural refusal to draw that picture.
+At three units the run says so in a sentence and the table is a **ranking of effect sizes, not a test**. That is a true statement about the experiment rather than a fault of the method, and it is the honest answer to a well-known failure of this kind of study: a modestly powered pool-seq scan read as though it were well powered produces scattered genome-wide significance from a single causal variant, which looks like a polygenic architecture and is noise [Long et al. 2026](#ref-long2026polygenicity). A floor is a structural refusal to draw that picture.
 
-The floor binds hardest when the pools are read to similar depths. Where depths differ a great deal the design carries more information than a bare count of units suggests, and the run can reach further down; `design_floor` and `floor` in [`permutations.tsv`](#association-diagnostics) are those two numbers side by side.
+A site read in fewer units than the design holds is rearranged among the units it was read in, so it has the floor of a design that size: a site read in three of six cannot reach 0.05 either. `n_observed` in [`association.tsv`](#association-sites) is that count, and the run says in a sentence how many tested sites it applies to.
+
+**Ties keep a site above the floor.** It is reached only by a site whose observed arrangement beats every other outright. Where every unit carries the same weight, as equal depths and pool sizes give, some arrangements always tie with the observed one: the reversal of a phenotype symmetric about its mean, and every reshuffle inside a level of a categorical one, with the swap of the two levels when they are the same size. Three cases against three controls read to equal depths cannot go below 0.1. `design_floor` in [`permutations.tsv`](#association-diagnostics) is `1 / n!`, and `floor` beside it is the smallest p this run could report, which differs only when the rearrangements were sampled.
 
 ### `association.tsv`: one row per site { #association-sites }
 
@@ -4427,11 +4424,11 @@ Always complete: every site the module could read has a row, whether or not it p
 |---|---|
 | `phenotype`, `kind`, `chrom`, `pos` | which fit, which table, and where |
 | `k` | how many alleles the site holds, the reference included |
-| `n_observed`, `n_units` | units carrying data here, and units in the design |
+| `n_observed`, `n_units` | units read at this site, and units in the design. With fewer than three read, or none of them differing in the phenotype, the site has no statistic |
 | `S` | the site statistic: the largest \|t\| over **every** allele |
 | `perm_p` | the published p, from the permutation |
 | `fdr_p` | `perm_p` corrected across sites, by default Benjamini-Hochberg [Benjamini & Hochberg 1995](#ref-benjamini1995fdr) |
-| `mean_weight` | the average effective sample size at this site |
+| `mean_weight` | the average weight of the units read at this site: their effective sample size when `dispersion` is 0, and less once a dispersion is estimated |
 | `max_leverage` | how much of the slope one unit is carrying, which at six of them is the question a reader has |
 | `zero_variance` | 1 where an allele had no residual left; see below |
 
@@ -4453,10 +4450,17 @@ A guard that passes tells you nothing. These are published so that someone readi
 |---|---|
 | `permutations`, `exhaustive` | how many rearrangements, and whether that was all of them |
 | `floor`, `design_floor` | the smallest p this run could reach, and the smallest the design can |
-| `dispersion` | the excess variance uneven pooling left behind, in units of `p(1−p)`. Large means the weights absorbed a lot; it is estimated from your data unless you set it. **A published `0` is a floor, not necessarily a measurement**: the method of moments can return a negative excess when the units scatter less than their own sampling variance predicts, which is noise and not a unit measured better than its depth allows, and it is reported as `0` |
+| `dispersion` | the excess variance uneven pooling left behind, in units of `p(1−p)`. Large means the weights absorbed a lot; it is estimated from your data unless you set it. **A published `0` is a floor, not necessarily a measurement**: the method of moments can return a negative excess when the units scatter less than their own sampling variance predicts, which is noise and not a unit measured better than its depth allows, and it is reported as `0`. `NA` where no site was read in two units, which leaves nothing to test either |
 | `depth_phenotype_cor` | depth lined up with the phenotype. This breaks label-based tests badly and is the reason this module does not use one |
-| `lambda_gc` | genomic inflation. If it is 3, nothing in the table is a p-value |
+| `lambda_gc` | the median of `S²` over the tested sites, against a χ² on one degree of freedom. **It is not 1 on a clean table**; what it reads there is below |
 | `arity_mean`, `arity_selected`, `selected` | the allele counts of the sites selected against all sites. **They should agree**; multiallelic sites at the top of a table are a biological claim, and this is how you check it is one |
+
+**`lambda_gc` reads above 1 when nothing is wrong.** `S` is not a one-degree χ² even at a null site: read in *m* units it is a *t* on *m* − 2 degrees of freedom, and at a site of several alleles it is the largest of several. On a perfectly calibrated null it reads:
+
+- 1.21 at six units, 1.29 at five, 1.47 at four and 2.20 at three
+- about 3.8 at three alleles and 6 at four, read in six units
+
+A table mixes these, so read `lambda_gc` against the mix of units and alleles in yours, not against 1. With [`vcffilter.keepLowDepthAsZero`](#depth-and-quality-filter) on, sites move to fewer units and it rises with nothing wrong. None of this touches `perm_p`, which is read against rearrangements of each site's own units, not against a χ².
 
 ### `phenotype.tsv`: the phenotype as it was read { #association-phenotype }
 
@@ -4479,7 +4483,7 @@ Drawn only for the sequences you name in `analysis.modules.association.chromosom
 | Setting | Default | What |
 |---|---|---|
 | `phenotypes` | no default | which `pt_` column to fit. Required |
-| `permutations` | 10000 | the budget. The set is enumerated whole while it fits inside this, and sampled above it |
+| `permutations` | 10000 | the budget. The set is enumerated whole while it fits inside this and the design has eight units or fewer, and sampled otherwise |
 | `fdr` | `BH` | anything `p.adjust` takes |
 | `dispersion` | estimated | the excess variance term. `0` weights by `n_eff` alone |
 | `reportBelow`, `reportTop` | 0.05, 1000 | which sites reach the allele table |
@@ -4555,9 +4559,17 @@ Each pool, the unit it belongs to, its experimental variables, and its coordinat
 
 ### `distance.tsv`: one row per pair { #mds-distance }
 
-The corrected distance, the uncorrected sum beside it, what the correction removed, and how many sites the pair was averaged over.
+The corrected distance, the uncorrected sum beside it, what the correction removed, how many sites the pair was averaged over, and `few_sites`, which is 1 when that was fewer than 30.
 
-**Read the `sites` column.** Every pair is averaged over *its own* sites, not over a count shared across the matrix. A pool with no reads at a site drops that site for its own pairs and leaves every other pair intact, so two distances in one run can rest on different numbers of sites. A pair whose count is much lower than its neighbors' is a pair whose distance is measured less well, and the matrix does not say so anywhere else.
+**Read the `sites` column.** Every pair is averaged over *its own* sites, not over a count shared across the matrix. A pool with no reads at a site drops that site for its own pairs and leaves every other pair intact, so two distances in one run can rest on different numbers of sites. A pair whose count is much lower than its neighbors' is a pair whose distance is measured less well.
+
+**A pair averaged over fewer than 30 sites is flagged**, in three places:
+
+- `few_sites` is 1 in its row here
+- the run names it on the console
+- `mds.png` counts such pairs under the plot
+
+Its distance is rough rather than wrong. In simulation, at a distance near 0.02, the error of one distance was about half the distance at 30 shared sites and a quarter at 100, and real sites, linked along a genome, are noisier than that. A pool read at few sites can land at the edge of the plot for that reason alone.
 
 Two kinds of site drop out for a pair. One is an ordinary missing cell. The other is subtler: **a site where a pool has exactly one read**. Effective sample size is exactly 1 at depth 1 whatever the pool holds, and one gene copy carries no within-pool diversity for the correction to work from, so such a site is dropped rather than guessed at.
 
@@ -4573,7 +4585,7 @@ Negative eigenvalues carrying a few percent of the total are ordinary for pool-s
 
 ### `mds.png`: the pools on the leading two axes { #mds-plot }
 
-Points labeled by pool, on the leading two axes, with each axis label carrying its share of the absolute eigenvalue sum.
+Points labeled by pool, on the leading two axes, with each axis label carrying its share of the absolute eigenvalue sum. When any pair rests on fewer than 30 sites, a line under the plot counts them; [`distance.tsv`](#mds-distance) says which.
 
 **`colorBy` and `shapeBy` each take an `exp_` column, and they compose.** Coloring by the treatment and shaping by the timepoint puts both factors on one plot, which is usually the question (whether the pools group by the thing you set up, or by when you sampled them):
 
@@ -5169,11 +5181,11 @@ A run that would have produced an empty result is stopped rather than allowed to
 |---|---|---|
 | `variant calling produced no records at all` | the pileup reached `bcftools call` with nothing in it | `variantCall.scaleMapQ` against `variantCall.varQualMin` - [below the minimum discards every read](#scalemapq-and-varqualmin) |
 | `no site survived the cross-sample filter` | every allele was seen in too few pools | `filterFalsePositives.sampleThreshold`, `poolSize` |
-| `no site survived the depth and quality filter` | every site had a sample under the floor, or too low a QUAL | `vcffilter.minDP`, `vcffilter.minQUAL`, `vcffilter.dropZeroDepth` |
+| `no site survived the depth and quality filter` | every site had a sample under the floor, or too low a QUAL; with `keepLowDepthAsZero`, fewer than `minSamples` cells at the floor | `vcffilter.minDP`, `vcffilter.minQUAL`, `vcffilter.keepLowDepthAsZero`, `vcffilter.minSamples` |
 
 **Why this is a refusal and not a warning.** Every stage downstream succeeds over no records: `bcftools` writes a well-formed header with no rows, `vcftools --recode` exits 0, and the conversion rewrites the header and never enters its body. Before these checks existed, the result of a run that found nothing was a frequency table holding column names and nothing else, from a run that reported success. Measured through all seven stages.
 
-The depth and quality filter is the most common of the three, and it catches people out because **it is applied to the whole site**: one sample below `minDP` removes that site for every sample, so the shallowest library sets the threshold for the entire cohort. Check `Output/Reports/Coverage/` for your weakest sample before raising it.
+The depth and quality filter is the most common of the three, and it catches people out because **it is applied to the whole site**: one sample below `minDP` removes that site for every sample, so the shallowest library sets the threshold for the entire cohort, unless `vcffilter.keepLowDepthAsZero` is on. Check `Output/Reports/Coverage/` for your weakest sample before raising it.
 
 ### Genotype-based tools find nothing in my VCFs
 

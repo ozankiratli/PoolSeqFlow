@@ -1314,6 +1314,100 @@ PY
     assert_eq "" "$out" "every source file must be reached by some suite:"$'\n'"$out"
 }
 
+# THE SCRATCH ENVIRONMENTS OF A FULL RUN ARE REMOVED BY THE CODE PATH THAT BUILT THEM.
+#
+# From 2026-10-04 to 2026-10-06 the runner called build_scratch_env inside $(...), so the names it
+# recorded for removal were recorded in a child shell and lost: the cleanup removed nothing,
+# printed nothing, and every full run left its pair behind, five pairs before anyone read a run
+# to its end. The check written with the cleanup set SCRATCH_ENVS by hand, which proved the
+# removal and never the recording. This calls build_scratch_pair, the function the runner calls,
+# against a stub conda whose `env create` succeeds and lists nothing - so both builds fail at the
+# probe, which is the case the early recording is for - and reads what the stub was asked to
+# remove.
+#
+# IN A FRESH BASH, NEVER A SUBSHELL. During a full run the runner holds conda's shell function,
+# which a subshell inherits and which PATH cannot override, and a subshell's $$ is the runner's
+# own: the names built here would be the live run's, removed by the real conda. A new process has
+# a pid of its own and no function, and the script refuses to go on unless conda is the stub.
+scratch_envs_in_isolation() {
+    local stub="$1" body="$2"
+    PATH="$stub/bin:$PATH" REPO_ROOT="$REPO_ROOT" TEST_TMPDIR="$stub" bash -c '
+        [ "$(command -v conda)" = "$TEST_TMPDIR/bin/conda" ] || { echo "NOT THE STUB"; exit 99; }
+        source "$REPO_ROOT/test/lib/scratch_envs.sh"
+        echo "pid $$"
+        '"$body"
+}
+
+test_a_full_run_removes_the_environments_it_built() {
+    local stub="$TEST_TMPDIR/scratch-envs" said pid
+    make_stub_conda "$stub"
+    # The analysis environment is left active, as a full run leaves it: its last suites are the
+    # analysis ones, and conda refuses to remove an active environment.
+    said=$(scratch_envs_in_isolation "$stub" '
+        TEST_CONDA_ENV_GIVEN=0 TEST_ANALYSIS_ENV_GIVEN=0
+        build_scratch_pair 2> /dev/null
+        CONDA_PREFIX="/fake/envs/PoolSeqFlow-suite-$$-analysis"
+        remove_scratch_envs')
+    assert_not_contains "$said" "NOT THE STUB" "the case must run against the stub conda alone"
+    pid=$(printf '%s\n' "$said" | sed -n 's/^pid //p')
+    assert_contains "$(cat "$stub/conda.log")" "env remove --name PoolSeqFlow-suite-$pid --yes" \
+                    "the tools environment the pair built must be removed"
+    assert_contains "$(cat "$stub/conda.log")" \
+                    "env remove --name PoolSeqFlow-suite-$pid-analysis --yes" \
+                    "and the analysis one"
+    assert_contains "$said" "removing the scratch environment PoolSeqFlow-suite-$pid" \
+                    "and the run must say so"
+    # The deactivation must come before the removal of the environment it deactivates.
+    local order
+    order=$(grep -nE '^deactivate|^env remove --name PoolSeqFlow-suite-[0-9]+-analysis ' \
+                "$stub/conda.log" | cut -d: -f2 | cut -d' ' -f1 | paste -sd' ')
+    assert_eq "deactivate env" "$order" \
+              "the active analysis environment must be deactivated before it is removed"
+
+    # The two calls in the runner itself, which the lines above cannot see: the build as a
+    # statement of its own, and the removal in the cleanup at exit. Wrapping the first in $(...)
+    # is the defect this case exists for.
+    local runner="$REPO_ROOT/test/run_tests.sh"
+    grep -qE '^[[:space:]]*build_scratch_pair[[:space:]]*$' "$runner" \
+        || fail_case "test/run_tests.sh must call build_scratch_pair as a statement of its own"
+    grep -qE '^[[:space:]]*remove_scratch_envs[[:space:]]*$' "$runner" \
+        || fail_case "test/run_tests.sh must remove the scratch environments at exit"
+    if grep -qE '\$\([[:space:]]*(build_scratch_pair|build_scratch_env)' "$runner"; then
+        fail_case "test/run_tests.sh captures a scratch build in \$(...), whose names are then lost"
+    fi
+}
+
+# AND A FULL RUN SWEEPS UP WHAT A KILLED ONE LEFT. An exit trap cannot run when a run is killed
+# outright, so the next full run removes every PoolSeqFlow-suite-<pid> environment whose run is
+# gone. A pid still running is someone's live run and stays, and nothing of another naming is
+# touched: PoolSeqFlow-<version> is what a user runs, and a name that only begins like a scratch
+# one is not one.
+test_a_full_run_removes_what_an_earlier_run_left() {
+    local stub="$TEST_TMPDIR/scratch-sweep" said log gone
+    # A pid that has certainly finished: one this case started and waited for.
+    sleep 0 &
+    gone=$!
+    wait "$gone"
+    make_stub_conda "$stub" "PoolSeqFlow-suite-$gone" "PoolSeqFlow-suite-$gone-analysis" \
+        "PoolSeqFlow-suite-$$" "PoolSeqFlow-3.2.0" "PoolSeqFlow-3.2.0-analysis" \
+        "PoolSeqFlow-suite-x"
+    said=$(scratch_envs_in_isolation "$stub" 'sweep_scratch_envs')
+    assert_not_contains "$said" "NOT THE STUB" "the case must run against the stub conda alone"
+    log=$(cat "$stub/conda.log")
+    assert_contains "$log" "env remove --name PoolSeqFlow-suite-$gone --yes" \
+                    "an environment whose run is gone must be removed"
+    assert_contains "$log" "env remove --name PoolSeqFlow-suite-$gone-analysis --yes" \
+                    "and its analysis twin"
+    assert_contains "$said" "removing PoolSeqFlow-suite-$gone, left behind by a run" \
+                    "and the run must say so"
+    assert_not_contains "$log" "env remove --name PoolSeqFlow-suite-$$ --yes" \
+                        "a live run's environment must stay"
+    assert_not_contains "$log" "env remove --name PoolSeqFlow-3.2.0" \
+                        "and a release environment is never touched"
+    assert_not_contains "$log" "env remove --name PoolSeqFlow-suite-x" \
+                        "nor a name that only begins like a scratch one"
+}
+
 # A path a suite claims but that is not there any more. The claim then silently covers nothing,
 # and the suite stops being selected for the thing it was written to cover.
 test_every_path_a_suite_claims_exists() {

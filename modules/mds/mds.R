@@ -330,16 +330,33 @@ mds_table <- cbind(
 write.table(mds_table, file.path(out, "mds.tsv"), sep = "\t", quote = FALSE,
             row.names = FALSE, na = "")
 
+# A pair averaged over fewer sites than this is flagged in distance.tsv, named on stdout, and
+# counted under the plot.
+FEW_SITES <- 30L
+
 pairs <- which(upper.tri(corrected), arr.ind = TRUE)
 distance_table <- data.frame(
     pool_a = pool_order[pairs[, 1]], pool_b = pool_order[pairs[, 2]],
     sites = accumulated$sites[pairs],
     distance = corrected[pairs], raw = raw[pairs],
     correction = raw[pairs] - corrected[pairs],
+    few_sites = as.integer(accumulated$sites[pairs] < FEW_SITES),
     stringsAsFactors = FALSE)
 write.table(distance_table[order(distance_table$pool_a, distance_table$pool_b), ],
             file.path(out, "distance.tsv"), sep = "\t", quote = FALSE,
             row.names = FALSE, na = "")
+
+# Written to stdout, which main.nf prints under the target's name. Nextflow shows nothing a
+# task that succeeds wrote to stderr.
+few <- distance_table[distance_table$few_sites == 1, , drop = FALSE]
+if (nrow(few) > 0) {
+    cat(sprintf(paste0("%d of %d pairs of pools rest on fewer than %d shared sites, and their ",
+                       "distances are rough. few_sites in distance.tsv marks them:\n"),
+                nrow(few), nrow(distance_table), FEW_SITES))
+    shown <- head(few[order(few$sites, few$pool_a, few$pool_b), , drop = FALSE], 10)
+    cat(sprintf("    %s and %s: %d sites\n", shown$pool_a, shown$pool_b, shown$sites), sep = "")
+    if (nrow(few) > nrow(shown)) cat(sprintf("    and %d more\n", nrow(few) - nrow(shown)))
+}
 
 eigen_table <- data.frame(
     axis = seq_along(placed$values), eigenvalue = placed$values,
@@ -384,6 +401,11 @@ if (ncol(placed$coords) >= 2) {
     if (nzchar(shape_by)) {
         figure <- figure + ggplot2::labs(shape = shape_by) +
             ggplot2::scale_shape_manual(values = SHAPE_VALUES[seq_len(shape_levels)])
+    }
+    if (nrow(few) > 0) {
+        figure <- figure + ggplot2::labs(caption = sprintf(
+            "%d of %d pairs rest on fewer than %d shared sites: few_sites in distance.tsv",
+            nrow(few), nrow(distance_table), FEW_SITES))
     }
     ggplot2::ggsave(file.path(out, "mds.png"), figure, width = 7, height = 6, dpi = 150)
 }

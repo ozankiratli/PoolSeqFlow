@@ -99,32 +99,34 @@ test_a_changed_parameter_value_fails_the_run() {
     assert_contains "$report" "STATUS=FAIL" "the stage should record a failure"
 }
 
-# vcffilter.dropZeroDepth is the FIRST parameter added since v3.0.0, so it is the first whose
-# tracking had never been exercised. What this asserts is that it is ANALYSIS-AFFECTING: it
-# reaches the recorded manifest and the comparison names it, so a project that flips it is
-# stopped rather than quietly mixing results produced under the other answer.
+# vcffilter.keepLowDepthAsZero is a parameter added since v3.0.0, the second after the
+# dropZeroDepth it replaced, so its tracking had never been exercised. What this asserts is that
+# it is ANALYSIS-AFFECTING: it reaches the recorded manifest and the comparison names it, so a
+# project that flips it is stopped rather than quietly mixing results produced under the other
+# answer.
 #
 # WHAT IT DOES NOT ASSERT, checked rather than assumed: this says nothing about step 7's artifact
 # identity. analysisParams() in 0_verify_environment.nf is an EXCLUSION list -- anything not named
 # in skipKey or skipPrefix counts -- so the guard fires whether or not the parameter appears in
-# stepParameterMap(). Measured: deleting it from scripts/variants.nf:44 leaves this case passing.
-# The declaration is 00_static's business; what the toggle DOES is the expression case in
-# 04_pipeline.
+# stepParameterMap(). Measured on dropZeroDepth: deleting it from scripts/variants.nf left this
+# case passing. The declaration is 00_static's business; what the toggle DOES is the expression
+# case in 04_pipeline.
 #
 # So the thing that would break this is an edit to that exclusion list -- `vcffilter.` added to
 # skipPrefix, or this key added to skipKey. capBAM.histogramMax is already excluded on exactly
 # that reasoning, which is why the list is a plausible place for a wrong entry.
-test_flipping_dropzerodepth_fails_the_run() {
+test_flipping_keeplowdepthaszero_fails_the_run() {
     guards_ready || return
-    write_sandbox_config "$GUARD_SB" 's|^        dropZeroDepth .*|        dropZeroDepth   = false|'
+    write_sandbox_config "$GUARD_SB" \
+        's|^        keepLowDepthAsZero .*|        keepLowDepthAsZero = true|'
     local status report
     status=$(run_verify_only "$GUARD_SB")
     report=$(guard_report)
-    assert_status 1 "$status" "flipping dropZeroDepth should fail the run"
+    assert_status 1 "$status" "flipping keepLowDepthAsZero should fail the run"
     assert_contains "$report" "parameters.config has CHANGED" "should name the file that moved"
-    assert_contains "$report" "dropZeroDepth" "should name the parameter"
-    assert_contains "$report" "was  true" "should show the recorded value"
-    assert_contains "$report" "now  false" "should show the new value"
+    assert_contains "$report" "keepLowDepthAsZero" "should name the parameter"
+    assert_contains "$report" "was  false" "should show the recorded value"
+    assert_contains "$report" "now  true" "should show the new value"
 }
 
 # THE EXECUTION DEFAULTS A PROJECT MAY REPLACE, and until E6g it could replace none of them.
@@ -176,31 +178,92 @@ OVERRIDE
         "a project must not be able to move the work directory out of mainDir"
 }
 
-# A DEFAULT HAS TO SURVIVE THE PARAMETER BEING ABSENT, or it is not a default. Step 7 reads
-# vcffilter.dropZeroDepth in a ternary and Nextflow resolves an absent key to null, which a
-# ternary reads as false -- so a config written before the parameter existed ran as `false`
-# where the template ships `true`, with nothing saying so. Measured through the real engine
-# before nextflow.config resolved it: RAW=[null], and the expression came out without the zero
-# term.
+# A DEFAULT HAS TO SURVIVE THE PARAMETER BEING ABSENT, or it is not a default. Nextflow resolves
+# an absent key to null, and it was found on vcffilter.dropZeroDepth: step 7 read it in a
+# ternary, which reads null as false, so a config written before the parameter existed ran as
+# `false` where the template shipped `true`, with nothing saying so. Measured through the real
+# engine before nextflow.config resolved it: RAW=[null], and the expression came out without the
+# zero term. Its replacements resolve the same way, and minSamples as null would hand the mask
+# no count at all.
 #
 # The second half is what keeps the fix from being worse than the hole: the resolution sits
-# below the include and tests containsKey, so a project that says false still gets false. A
-# plain assignment there would win silently over every project on the machine.
+# below the include and tests containsKey, so a project that sets a value still gets it. A plain
+# assignment there would win silently over every project on the machine.
 test_an_absent_parameter_resolves_to_its_default() {
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
     local sb flat
     sb=$(make_pipeline_sandbox "absent-default")
 
-    write_sandbox_config "$sb" '/dropZeroDepth/d'
+    write_sandbox_config "$sb" '/keepLowDepthAsZero/d' '/minSamples/d'
     flat=$(sandbox_config_flat "$sb")
     [ -n "$flat" ] || { fail_case "nextflow config produced nothing for $sb"; return; }
-    assert_contains "$flat" "params.vcffilter.dropZeroDepth = true" \
+    assert_contains "$flat" "params.vcffilter.keepLowDepthAsZero = false" \
         "a config that never sets it must resolve to the shipped default"
+    assert_contains "$flat" "params.vcffilter.minSamples = 2" "and so must the count"
 
-    write_sandbox_config "$sb" 's|^        dropZeroDepth .*|        dropZeroDepth   = false|'
+    write_sandbox_config "$sb" \
+        's|^        keepLowDepthAsZero .*|        keepLowDepthAsZero = true|' \
+        's|^        minSamples .*|        minSamples      = 3|'
     flat=$(sandbox_config_flat "$sb")
-    assert_contains "$flat" "params.vcffilter.dropZeroDepth = false" \
+    assert_contains "$flat" "params.vcffilter.keepLowDepthAsZero = true" \
         "and a project that sets it must still win"
+    assert_contains "$flat" "params.vcffilter.minSamples = 3" "and the count with it"
+}
+
+# minSamples COUNTS A SITE'S CELLS, one per pool with reads, and step 0 is where that number is
+# known. With keepLowDepthAsZero on, a count above it keeps no site -- found at step 7, hours in --
+# and one below 1 keeps sites no cell measured, so both are refused before anything runs. With it
+# off the count has no effect, and is not judged.
+#
+# Fresh projects, never the shared baseline, and one per verdict. A project with a recorded
+# manifest fails any change at the change guard first, which passes a refusal that never fired:
+# measured, with the refusal's STATUS line removed, an off-then-on sequence in one project still
+# ended in status 1. The multi-run project judges four runs in one step 0 -- below 1, the pool
+# count itself, one above it, and masking off -- so it also proves each run is judged on its own
+# settings and named in the message.
+#
+# The single-run project names a seventh pool in its metadata that has no reads. Step 0 only
+# notes such a row, and the VCF has no column for it, so a site has six cells at most: counting
+# the metadata's pools would let 7 through to keep no site at step 7. A verification pass over
+# the mask found that, and this half is what stops it coming back.
+test_minsamples_outside_the_pool_count_is_refused() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status report
+
+    sb=$(make_pipeline_sandbox "minsamples-single")
+    write_sandbox_config "$sb" \
+        's|^        keepLowDepthAsZero .*|        keepLowDepthAsZero = true|' \
+        's|^        minSamples .*|        minSamples      = 7|'
+    printf 'TestSample7,TestSample7,Lib1,ILLUMINA,Unit1,Pop4,T1\n' >> "$sb/main/metadata.csv"
+    status=$(run_verify_only "$sb")
+    report=$(cat "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)
+    assert_status 1 "$status" "seven cells asked of six pools with reads must stop the run"
+    assert_contains "$report" "has a row for 'TestSample7', which has no reads" \
+        "the seventh pool is in the metadata and has no reads"
+    assert_contains "$report" "vcffilter.minSamples is 7 with keepLowDepthAsZero on" \
+        "naming the setting and its value"
+    assert_contains "$report" "this run has 6: set it from 1 to 6" \
+        "and the range it has to be in, counted from the pools with reads"
+
+    sb=$(make_pipeline_sandbox "minsamples-runs")
+    write_sandbox_config "$sb" 's|^    multiRun .*|    multiRun        = true|'
+    cat > "$sb/main/runs.csv" <<'CSV'
+RunID,vcffilter.keepLowDepthAsZero,vcffilter.minSamples
+low,true,0
+top,true,6
+over,true,7
+off,false,99
+CSV
+    status=$(run_verify_only "$sb")
+    report=$(cat "$sb"/store/Output/*/Reports/0_verify_environment.txt \
+                 "$sb/store/Output/Reports/0_verify_environment.txt" 2>/dev/null)
+    assert_status 1 "$status" "two runs out of range must stop the run"
+    assert_contains "$report" "vcffilter.minSamples is 0 for run low" \
+        "below 1 is refused, and the run named"
+    assert_contains "$report" "vcffilter.minSamples is 7 for run over" "and one above the pools"
+    assert_not_contains "$report" "for run top" "the pool count itself is allowed"
+    assert_not_contains "$report" "for run off" "and with masking off the count is not judged"
 }
 
 # THE HELPERS' OWN DEPENDENCIES ARE VERIFIED LIKE ANY OTHER TOOL. bin/atomic_mv.sh copies an

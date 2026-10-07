@@ -45,7 +45,9 @@ dev/scripts/prep-version.sh <new-version>
  - reads what each environment requires of its host and exports both files
  - then proves the files it wrote: `check-exported-floor.sh` solves each from nothing and reads its floor, and `check-module-packages.sh` puts the module pins through a baseline built from the new file
 
-The scratch environments are removed on every exit. `--no-cleanup` keeps them, to reproduce a failure against. The conda package cache is left alone.
+The scratch environments are removed on every exit. The conda package cache is left alone.
+
+**Run it with `--no-cleanup`**, and the pair survives for step 5 to reuse. Three full suite runs in a cycle otherwise means three solves of the same two files, and the second of them proves nothing the first did not. It prints the two `export` lines to use; keep them in the shell you carry through to step 5.
 
 Then read `dev/logs/prep-<version>-<timestamp>/`, including the per-environment table of what moved.
 
@@ -133,14 +135,40 @@ dev/scripts/bump-analysis-version.sh module <name>
 bash test/run_tests.sh
 ```
 
-A full run solves **both** `install/environment.yml` and `install/environment-analysis.yml` into a scratch pair, runs against those, and removes them on the way out. 
+A full run solves **both** `install/environment.yml` and `install/environment-analysis.yml` into a scratch pair, runs against those, and removes them on the way out. **Its last lines must name both as they go**, `removing the scratch environment PoolSeqFlow-suite-<pid>` and the same with `-analysis`. A run that ends without them left the pair installed, which `conda env list` shows; the next full run removes it, and any other pair whose run is no longer running, before it builds its own.
 
 Only a full run does this. `--fast` and `--suite` resolve this tree's exact version and skip what is not installed, so they stay cheap, and neither ever borrows another release's environment.
 
+**Reuse step 2's pair rather than solving a third one.** If step 2 ran with `--no-cleanup`, it printed two `export` lines; with those set, this run uses them and starts testing at once:
+
+```
+export TEST_CONDA_ENV=<the prefix step 2 printed>
+export TEST_ANALYSIS_ENV=<the other one>
+bash test/run_tests.sh
+```
+
+Nothing is lost by it: the files have not changed since step 2 exported them, so a fresh solve would produce the same pair. What this step is actually re-checking is whatever steps 3 and 4 changed.
+
+**Then remove them**, because `prep-version.sh` refuses to start while they exist:
+
+```
+conda env remove -n PoolSeqFlow-update -y
+conda env remove -n PoolSeqFlow-update-analysis -y
+```
+
 ## 6. Merge to `main`
+
+
+```
+git add -A && git commit -m "Prep for vX.X.X"
+```
 
 Open the merge request, review the diff as a whole, merge.
 
+```
+git switch main
+git pull
+```
 
 ## 7. Bump the version
 
@@ -150,11 +178,18 @@ dev/scripts/bump-version.sh <new-version>
 
 Abandoning the cycle after this: `dev/scripts/bump-version.sh --revert` undoes the bump and the CHANGELOG section it added. It refuses once the version has been tagged.
 
-**Then raise the environment floor of every module step 2 named.** A moved pin names a package version only this release's environment holds, so those modules require this release and nothing earlier -- and `environment` in their manifests is what tells a user on the older release to upgrade, instead of letting the install reach conda and fail there.
+**Then raise the environment floor of everything this release republishes** -- libraries as well as modules:
 
 ```
-"environment": "<new-version>"      in each modules/<name>/manifest.json
+dev/scripts/raise-module-floors.sh --dry-run      # what it would change
+dev/scripts/raise-module-floors.sh
 ```
+
+Republished means its manifest version moved since the previous tag, which is the same set `publish-module.sh --list` acts on at step 11. Anything in it was proven only against this release's environment, and `environment` is what tells an older installation to upgrade instead of letting the install reach conda and be refused there with nothing explained.
+
+**Libraries are in it for a reason beyond their own pins.** The catalogue resolves a module and its libraries **independently**, each taking the newest row whose floor the installation clears. A republished library left at an old floor could therefore be paired with the *previous* release's module on an older installation. Giving everything republished the same floor makes the release the unit: an installation gets the whole of one or the whole of the other.
+
+`moved-modules.txt` from step 2 is read as a check, not as the list -- anything step 2 recorded moving a pin in must be in the republished set, and a disagreement stops the script.
 
 **It has to be here and not at step 2.** `analysis/lib/nf/modules.nf` refuses at run time any module whose floor is above the running release, so setting it before the bump makes every one of those modules unrunnable in its own repository:
 
@@ -162,25 +197,41 @@ Abandoning the cycle after this: `dev/scripts/bump-version.sh --revert` undoes t
 'mds' v20261004.001 needs the analysis environment of PoolSeqFlow 3.3.0 or newer, and this is 3.2.0.
 ```
 
+which is six failures across the three module suites. The script refuses a version above the one the tree declares, for the same reason.
+
 No second version bump is needed -- the module's version already moved at step 2 and nothing is committed yet, and the gate compares committed state.
 
 ## 8. Run the full suite
 
-**Install the new version first**, and here that is the point rather than a prerequisite: this step is the only one that measures the environments a user actually receives, instead of a scratch solve of the files that describe them.
+On `main`, at the new version. **Two different questions, and the suite no longer answers the second one.**
+
+### The suite, which brings its own environments
+
+```
+bash test/run_tests.sh
+```
+
+A full run builds a scratch pair from `install/environment.yml` and `install/environment-analysis.yml` and removes them, so it neither needs an installation nor touches one. Expect minutes before the first case. Nothing has to be installed for this.
+
+**`0 skipped` and `0 failed` are the numbers that matter.**
+
+### The installation, which is the other question
 
 ```
 ./PoolSeqFlow install
 ./PoolSeqFlow analysis install
 dev/scripts/check-host-floor.sh
-
-bash test/run_tests.sh
 ```
 
-On `main`, at the new version. The suite resolves both environments and runs tests on them.
+Whether an install of the new version works, and what the environment it creates requires of a host. `install` verifies itself and fails if anything is missing, so there is nothing to read but its exit.
 
-**`0 skipped` and `O failed` are the numbers that matter.** 
+Order between the two does not matter, because neither reaches the other. If you run the suite first you can skip installing until you need the commands.
 
-If it fails, nothing is published yet: undo the bump, remove what you just installed, and triage on `dev`.
+Note for step 10: having `PoolSeqFlow-<version>` installed is what makes `check-release-archive.sh` reuse the environment rather than create one, which its own header records as a limit. Installing here is not free of consequence further down.
+
+### If it fails
+
+Nothing is published yet: undo the bump, remove what you installed, and triage on `dev`.
 
 ```
 dev/scripts/bump-version.sh --revert

@@ -187,6 +187,18 @@ def metadataChecks(Map plan) {
                 guardLines  : metadataGuardLines(variant),
                 adapterOverrides: samplesWithAdapterOverrides(variant),
                 optionsPinned: trimOptionsArePinned(variant),
+                // The step 7 settings of every run below this variant, for the one rule that
+                // needs the number of pools: minSamples counts a site's cells, one per pool with
+                // reads. Which pool each sample is, for counting those; the metadata's own count
+                // for when no sample's reads are listed.
+                poolCount   : pools.size(),
+                samplePools : variant.metadata.collect { row ->
+                                  "${row.SampleID}\t${row.RG_Sample}".toString() },
+                masking     : filtered.collect { child ->
+                                  [ run       : child.runId == null ? ''
+                                                : child.members.collect { m -> runToken(m) }.join('+'),
+                                    keep      : "${child.vcffilter.keepLowDepthAsZero}".toLowerCase() == 'true',
+                                    minSamples: "${child.vcffilter.minSamples}".toString() ] },
                 dataDir     : "${variant.dir.data}".toString(),
                 readPattern : "${variant.readPattern}".toString(),
                 samtools    : "${variant.software.samtools}".toString(),
@@ -468,6 +480,24 @@ process CheckMetadataFile {
            ['    log_message "METADATA CHECK:        Remove the pin, or remove the adapter columns."',
             '    STATUS="FAIL"']).join('\n')
         : '    :'
+    // With keepLowDepthAsZero on, minSamples counts a site's cells, one per pool with reads,
+    // which the script counts as READ_POOLS. A value that is no whole number is refused without
+    // being written into the script, and one too long for a shell number is above any count.
+    samplePoolsBlock = check.samplePools.join('\n')
+    maskBlock = check.masking
+        .findAll { m -> m.keep }
+        .collect { m ->
+            def who = m.run ? " for run ${m.run}" : ''
+            def shown = m.minSamples ==~ /\d+/ ? m.minSamples : 'not a whole number'
+            def outside = m.minSamples ==~ /\d{1,9}/
+                ? "[ ${m.minSamples} -lt 1 ] || [ ${m.minSamples} -gt \"\$READ_POOLS\" ]"
+                : 'true'
+            ["        if ${outside}; then",
+             "            log_message \"METADATA CHECK:        vcffilter.minSamples is ${shown}${who} with keepLowDepthAsZero on, but a site\"",
+             "            log_message \"METADATA CHECK:        has one cell per pool with reads, and this run has \$READ_POOLS: set it from 1 to \$READ_POOLS.\"",
+             '            STATUS="FAIL"',
+             '        fi'].join('\n') }
+        .join('\n') ?: '        :'
     dir_log = checkLogDir(check)
     log_file = checkLogFile(check, 's4_CheckMetadata')
 
@@ -490,6 +520,11 @@ METADATA
     cat > metadata_ids.txt <<'SAMPLEIDS'
 ${idsBlock}
 SAMPLEIDS
+
+    # Each sample's pool, for counting the pools that have reads.
+    cat > sample_pools.txt <<'SAMPLEPOOLS'
+${samplePoolsBlock}
+SAMPLEPOOLS
 
     # Check previous verification
     if [ ! -f ${verify} ]; then
@@ -652,6 +687,16 @@ ${sizeBlock}
 ${disagreeBlock}
 
 ${adapterBlock}
+
+        # keepLowDepthAsZero's minSamples, against the pools the VCF will hold a column for: those
+        # with a sample that has reads. With no reads listed, the pools the metadata names.
+        READ_POOLS=${check.poolCount}
+        if [ -n "\$sample_ids" ]; then
+            READ_POOLS=\$(awk -F'\\t' 'NR == FNR { read[\$1] = 1; next }
+                (\$1 in read) && !(\$2 in seen) { seen[\$2] = 1; n++ }
+                END { print n + 0 }' read_ids.txt sample_pools.txt)
+        fi
+${maskBlock}
 
         # Detect edits made after the file was already consumed.
         any_exists() {

@@ -117,12 +117,17 @@ cleanup() {
     if [ "$NO_CLEANUP" -eq 1 ]; then
         printf 'Scratch environments kept, --no-cleanup:\n' >&2
         if [ -n "${ENV_PREFIX:-}" ] && [ -n "${ANALYSIS_PREFIX:-}" ]; then
-            printf '    TEST_CONDA_ENV=%s \\\n' "$ENV_PREFIX" >&2
-            printf '    TEST_ANALYSIS_ENV=%s \\\n' "$ANALYSIS_PREFIX" >&2
-            printf '        ./test/run_tests.sh --suite <name>\n' >&2
+            printf '    export TEST_CONDA_ENV=%s\n' "$ENV_PREFIX" >&2
+            printf '    export TEST_ANALYSIS_ENV=%s\n' "$ANALYSIS_PREFIX" >&2
+            printf '\n' >&2
+            printf 'Named that way, a run uses these instead of building its own - which is how\n' >&2
+            printf 'the full suite later in the release reuses this pair rather than solving a\n' >&2
+            printf 'second one, and how one suite is re-run against them to chase a failure:\n' >&2
+            printf '    ./test/run_tests.sh\n' >&2
+            printf '    ./test/run_tests.sh --suite <name>\n' >&2
             printf '\n' >&2
         fi
-        printf 'Remove them when you are done:\n' >&2
+        printf 'Remove them before preparing a version again - this refuses with leftovers:\n' >&2
         for e in $CREATED; do printf '    conda env remove -n %s\n' "$e" >&2; done
         exit "$status"
     fi
@@ -379,14 +384,16 @@ else
         #   'mds' v... needs the analysis environment of PoolSeqFlow 3.3.0 or newer, and this is 3.2.0.
         #
         # So the pin moves here, where the solve decides it, and the floor moves after the bump.
-        say "      AFTER dev/scripts/bump-version.sh, raise the environment floor in each:"
-        for NAME in $MOVED; do
-            say "          modules/$NAME/manifest.json      \"environment\": \"$NEW\""
-        done
+        # Recorded as well as printed, because the step that acts on it runs after the bump and
+        # after a merge. One name per line, which is what raise-module-floors.sh reads.
+        printf '%s\n' $MOVED > "$LOGDIR/moved-modules.txt"
+        say "      Their environment floor has to follow, and cannot be written yet: the frame"
+        say "      refuses a module whose floor is above the running release, and that is still"
+        say "      the old version until the bump. AFTER dev/scripts/bump-version.sh:"
         say ""
-        say "      Not now: the frame refuses a module whose floor is above the running release,"
-        say "      and that is still the old version until the bump. Each module is republished"
-        say "      at the end of the release, which is when the floor has to be true."
+        say "          dev/scripts/raise-module-floors.sh"
+        say ""
+        say "      which reads $LOGDIR/moved-modules.txt."
     fi
 fi
 say ""

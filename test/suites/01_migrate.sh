@@ -252,25 +252,26 @@ test_the_sample_table_note_is_absent_for_a_current_config() {
         "a config already using metadata.csv should not see the note"
 }
 
-# vcffilter.dropZeroDepth is the first parameter ADDED since the storageDir marker, so it is the
-# first whose arrival a migration has to explain rather than carry. A config that never set it
-# now holds a default nobody chose, and the report line says only `NEW ... true`.
+# vcffilter.keepLowDepthAsZero is a parameter ADDED since the storageDir marker, so its arrival is
+# one a migration has to explain rather than carry. A config that never set it now holds a default
+# nobody chose, and the report line says only `NEW ... false`.
 #
 # THE SHAPE IS THE TEMPLATE FOR EVERY LATER ADDITION: state the default behavior, and say what to
 # write for the other one. It does not describe what the user had, which is what keeps it true for
-# every project rather than only the ones a change of behavior reaches.
+# every project rather than only the ones a change of behavior reaches. The first addition was
+# vcffilter.dropZeroDepth, replaced by this one before any release carried it.
 test_a_new_parameter_states_its_default() {
-    migrate_config_with -e '/dropZeroDepth/d'
-    assert_contains "$MIGRATE_OUTPUT" "vcffilter.dropZeroDepth IS NEW" \
+    migrate_config_with -e '/keepLowDepthAsZero/d' -e '/minSamples/d'
+    assert_contains "$MIGRATE_OUTPUT" "vcffilter.keepLowDepthAsZero IS NEW" \
         "the arrival should be called out"
-    assert_contains "$MIGRATE_OUTPUT" "The default is true" "stating the default behavior"
-    assert_contains "$MIGRATE_OUTPUT" "set it to false" "and what to write for the other one"
+    assert_contains "$MIGRATE_OUTPUT" "The default is false" "stating the default behavior"
+    assert_contains "$MIGRATE_OUTPUT" "set it to true" "and what to write for the other one"
 }
 
 # A config that already sets it chose its own value, so there is no default to announce.
 test_the_new_parameter_note_is_absent_when_it_was_set() {
-    migrate_config_with -e 's|^        dropZeroDepth   = true|        dropZeroDepth   = false|'
-    assert_not_contains "$MIGRATE_OUTPUT" "vcffilter.dropZeroDepth IS NEW" \
+    migrate_config_with -e 's|^        keepLowDepthAsZero = false|        keepLowDepthAsZero = true|'
+    assert_not_contains "$MIGRATE_OUTPUT" "vcffilter.keepLowDepthAsZero IS NEW" \
         "a config that already sets it saw no arrival"
-    assert_eq "false" "$(migrated_value dropZeroDepth)" "and its own value is carried"
+    assert_eq "true" "$(migrated_value keepLowDepthAsZero)" "and its own value is carried"
 }
