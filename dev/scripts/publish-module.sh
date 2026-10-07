@@ -4,11 +4,33 @@
 #
 # Usage: dev/scripts/publish-module.sh <name> [ref]
 #          ref defaults to HEAD
+#        dev/scripts/publish-module.sh --list
+#          every module and library in the tree, published or not
+#        dev/scripts/publish-module.sh --all-pending
+#          publish every one --list calls UNPUBLISHED, from HEAD
 #
 # Writes modules/repo/<name>-<version>.tar.gz, appends a row to modules/repo/index.tsv, and
 # bumps the catalogue's #!index-version. It does not commit or push. The site deploys
 # modules/repo/ wholesale, so the tarball and the row that advertises it go out together -
 # which is why they are written in one step and not two.
+#
+# --ALL-PENDING IS THE SINGLE PUBLISH, RUN ONCE PER MODULE
+# ---------------------------------------------------------
+# Each module goes through `publish-module.sh <name> HEAD` in a child process, so there is one
+# path that writes a tarball or a row, and a release publishing six modules gets exactly the six
+# artifacts six single publishes would have made. Each of them bumps #!index-version as a single
+# publish does, so the counter moves once per module.
+#
+# The pending set is the one --list prints, read from the working tree, while a publish reads
+# HEAD. A module whose source differs from HEAD would therefore be listed with one version and
+# published with another, or published without the change in the tree, so the batch refuses
+# before writing anything while any pending source is uncommitted. `test/` is left out of that
+# comparison because the tarball drops it, the same rule check-analysis-versions.sh applies.
+#
+# It stops at the first module that fails, and reads the catalogue back to say what this run
+# published and what is still pending: a publish can fail after its row is written, so counting
+# along the loop would name the wrong module. Nothing is undone. A published module leaves the
+# pending set, so fixing the failure and running it again picks up where it stopped.
 #
 # WHY A TARBALL IS A FILE HERE AND NOT SOMETHING GENERATED
 # --------------------------------------------------------
@@ -36,9 +58,14 @@ NAME="${1-}"
 REF="${2:-HEAD}"
 if [ -z "$NAME" ]; then
     echo "Usage: $0 <name> [ref]" >&2
-    echo "       $0 --list        what is in the tree and not yet in the catalogue" >&2
+    echo "       $0 --list          what is in the tree and not yet in the catalogue" >&2
+    echo "       $0 --all-pending   publish all of that, from HEAD" >&2
     exit 1
 fi
+
+# This script, absolute, for --all-pending to run once per module. Resolved before the cd below,
+# which would break a relative path.
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
@@ -73,32 +100,104 @@ catalogue_has() {   # name version
     ' "$INDEX"
 }
 
-# Every module and library in the tree against the catalogue. Reads the working tree rather than a
-# ref, because this answers what is left to publish; publishing itself refuses an uncommitted
-# source and says so.
-if [ "$NAME" = "--list" ]; then
-    LEFT=0
+# Every module and library in the tree against the catalogue, one line each: state, name, version
+# and directory, where the state is published, UNPUBLISHED or NOMANIFEST. Reads the working tree
+# rather than a ref, because this answers what is left to publish. A single publish refuses a
+# module HEAD does not have; --all-pending refuses any pending source that differs from HEAD.
+catalogue_states() {
+    local dir m_name m_version
     for dir in modules/*/ modules/lib/*/; do
         [ -f "$dir/manifest.json" ] || continue
         read -r m_name m_version <<EOF
 $(python3 -c "import json;m=json.load(open('$dir/manifest.json'));print(m.get('name',''), m.get('version',''))")
 EOF
         [ -n "$m_name" ] && [ -n "$m_version" ] || {
-            printf '  %-14s %s\n' "NO MANIFEST" "$dir"; continue; }
+            printf 'NOMANIFEST - - %s\n' "$dir"; continue; }
         case "$(catalogue_has "$m_name" "$m_version")" in
             BADHEADER) echo "ERROR: $INDEX has no header row naming 'name' and 'version'" >&2
                        exit 1 ;;
-            DUPLICATE) printf '  %-14s %s %s\n' "published" "$m_name" "$m_version" ;;
-            *)         printf '  %-14s %s %s\n' "UNPUBLISHED" "$m_name" "$m_version"
-                       LEFT=$((LEFT + 1)) ;;
+            DUPLICATE) printf 'published %s %s %s\n' "$m_name" "$m_version" "$dir" ;;
+            *)         printf 'UNPUBLISHED %s %s %s\n' "$m_name" "$m_version" "$dir" ;;
         esac
     done
+}
+
+if [ "$NAME" = "--list" ]; then
+    STATES=$(catalogue_states)
+    LEFT=0
+    while read -r state m_name m_version dir; do
+        case $state in
+            NOMANIFEST)  printf '  %-14s %s\n' "NO MANIFEST" "$dir" ;;
+            published)   printf '  %-14s %s %s\n' "published" "$m_name" "$m_version" ;;
+            UNPUBLISHED) printf '  %-14s %s %s\n' "UNPUBLISHED" "$m_name" "$m_version"
+                         LEFT=$((LEFT + 1)) ;;
+        esac
+    done <<< "$STATES"
     echo ""
     if [ "$LEFT" -eq 0 ]; then
         echo "Everything in the tree is in the catalogue."
     else
-        echo "$LEFT to publish, each with:  $0 <name>"
+        echo "$LEFT to publish, all of them with:  $0 --all-pending"
+        echo "or one at a time with:  $0 <name>"
     fi
+    exit 0
+fi
+
+# Everything --list calls UNPUBLISHED, each through the single publish below in a child process.
+if [ "$NAME" = "--all-pending" ]; then
+    [ "$#" -eq 1 ] || { echo "ERROR: --all-pending publishes from HEAD and takes no ref" >&2
+                        exit 1; }
+    STATES=$(catalogue_states)
+    mapfile -t PENDING < <(printf '%s\n' "$STATES" | awk '$1 == "UNPUBLISHED" { print $4 }')
+    if [ "${#PENDING[@]}" -eq 0 ]; then
+        echo "Everything in the tree is in the catalogue."
+        exit 0
+    fi
+
+    UNCOMMITTED=()
+    for dir in "${PENDING[@]}"; do
+        [ -z "$(git status --porcelain -- "$dir" ":(exclude)${dir}test")" ] || UNCOMMITTED+=("$dir")
+    done
+    if [ "${#UNCOMMITTED[@]}" -gt 0 ]; then
+        echo "REFUSED: a publish builds from HEAD, and these differ from it:" >&2
+        printf '    %s\n' "${UNCOMMITTED[@]}" >&2
+        echo "Commit them first. Nothing was published." >&2
+        exit 1
+    fi
+
+    names() { local d; for d in "$@"; do printf ' %s' "$(basename "$d")"; done; }
+
+    echo "Publishing ${#PENDING[@]} from HEAD, $(git log -1 --format='%h %s')"
+    echo ""
+    for src in "${PENDING[@]}"; do
+        name=$(basename "$src")
+        if ! PUBLISH_MODULE_BATCH=1 bash "$SELF" "$name" HEAD; then
+            # Read back from the catalogue, because a publish can fail after its row is written:
+            # in the index bump, or printing to a closed pipe.
+            STILL=$(catalogue_states | awk '$1 == "UNPUBLISHED" { print $4 }')
+            DONE=()
+            for dir in "${PENDING[@]}"; do
+                grep -qxF -- "$dir" <<< "$STILL" || DONE+=("$dir")
+            done
+            echo "" >&2
+            echo "STOPPED at $name." >&2
+            [ "${#DONE[@]}" -eq 0 ] \
+                || echo "Published by this run, and uncommitted:$(names "${DONE[@]}")" >&2
+            if [ -n "$STILL" ]; then
+                mapfile -t REST <<< "$STILL"
+                echo "Still pending:$(names "${REST[@]}")" >&2
+            fi
+            echo "Fix what it names and run --all-pending again, which starts from what is still" >&2
+            echo "pending." >&2
+            exit 1
+        fi
+        echo ""
+    done
+
+    echo "Published ${#PENDING[@]}:$(names "${PENDING[@]}")"
+    echo ""
+    echo "Nothing is committed. The site deploys $REPO_DIR/ on a push to main, so the tarballs"
+    echo "and the rows that advertise them have to land in the same commit."
     exit 0
 fi
 
@@ -212,6 +311,8 @@ echo "  tarball : $TARBALL  ($(stat -c%s "$TARBALL") bytes)"
 echo "  sha256  : $SHA"
 echo "  url     : $URL"
 echo "  index   : row added, #!index-version bumped"
+# --all-pending says the rest once, after its last module.
+[ -z "${PUBLISH_MODULE_BATCH:-}" ] || exit 0
 echo ""
 echo "Nothing is committed. The site deploys $REPO_DIR/ on a push to main, so the tarball"
 echo "and the row that advertises it have to land in the same commit."

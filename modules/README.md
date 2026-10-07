@@ -190,6 +190,8 @@ dev/scripts/publish-module.sh <name> [ref]
 
 It builds the tarball into `modules-repo/`, reads `contract`, `frame`, `environment` and `summary` out of the module's own manifest at that ref, appends the row, and bumps `#!index-version`. It refuses to overwrite a version that is already published -- somebody may have installed it, and its checksum is in the catalogue -- so a change means bumping the module's version and publishing that.
 
+`dev/scripts/publish-module.sh --list` shows every module and library whose version the catalogue does not carry yet, and `--all-pending` publishes all of them from `HEAD`, one at a time through the same path. It refuses to start while any of them differs from `HEAD`.
+
 **The tarball is built from the extracted tree rather than piped straight out of `git archive`, and that is not fussiness.** `git archive <ref>:modules/<name>` reads a subtree, and `.gitattributes` patterns are anchored at the repository root -- so a rule written for `modules/` does not match `test/` inside that subtree, and the module's own cases would ship where a release tarball excludes them. Archiving a tree also stamps `mtime` as *now*, so two builds of one ref would not match. The script drops `test/` and repacks with the commit's timestamp, which makes republishing the same ref produce the same bytes.
 
 The tarballs are committed and served from the site alongside the catalogue, so **a published row and the file it names go out in one commit** -- otherwise the row advertises a download that 404s until the next deploy.

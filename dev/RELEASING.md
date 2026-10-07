@@ -51,7 +51,7 @@ The scratch environments are removed on every exit. The conda package cache is l
 
 Then read `dev/logs/prep-<version>-<timestamp>/`, including the per-environment table of what moved.
 
-**A moved pin is a module change.** There is one version a pin may name -- whatever the shared analysis environment holds -- so when the update moves a package, `prep-version.sh` rewrites the pin in every manifest declaring it and bumps that module's version. Read those edits in the diff with the environment files: they are uncommitted like everything else here, and every module whose version moved is republished at step 11. A package version that changes what a module computes is the thing to look for.
+**A moved pin is a module change.** There is one version a pin may name -- whatever the shared analysis environment holds -- so when the update moves a package, `prep-version.sh` rewrites the pin in every manifest declaring it and bumps that module's version. Read those edits in the diff with the environment files: they are uncommitted like everything else here, and every module whose version moved is republished at step 10. A package version that changes what a module computes is the thing to look for.
 
 **Raising the host floor takes three things together**: a line in the manual's Requirements, a move of `HOST_GLIBC_FLOOR` in `export-environment.sh` (`2.28`), and a CHANGELOG entry naming the machines that lose support. The floor is never raised to make a solve pass.
 
@@ -185,7 +185,7 @@ dev/scripts/raise-module-floors.sh --dry-run      # what it would change
 dev/scripts/raise-module-floors.sh
 ```
 
-Republished means its manifest version moved since the previous tag, which is the same set `publish-module.sh --list` acts on at step 11. Anything in it was proven only against this release's environment, and `environment` is what tells an older installation to upgrade instead of letting the install reach conda and be refused there with nothing explained.
+Republished means its manifest version moved since the previous tag, which is the same set `publish-module.sh --list` acts on at step 10. Anything in it was proven only against this release's environment, and `environment` is what tells an older installation to upgrade instead of letting the install reach conda and be refused there with nothing explained.
 
 **Libraries are in it for a reason beyond their own pins.** The catalogue resolves a module and its libraries **independently**, each taking the newest row whose floor the installation clears. A republished library left at an old floor could therefore be paired with the *previous* release's module on an older installation. Giving everything republished the same floor makes the release the unit: an installation gets the whole of one or the whole of the other.
 
@@ -227,7 +227,7 @@ Whether an install of the new version works, and what the environment it creates
 
 Order between the two does not matter, because neither reaches the other. If you run the suite first you can skip installing until you need the commands.
 
-Note for step 10: having `PoolSeqFlow-<version>` installed is what makes `check-release-archive.sh` reuse the environment rather than create one, which its own header records as a limit. Installing here is not free of consequence further down.
+Note for step 11: having `PoolSeqFlow-<version>` installed is what makes `check-release-archive.sh` reuse the environment rather than create one, which its own header records as a limit. Installing here is not free of consequence further down.
 
 ### If it fails
 
@@ -253,17 +253,46 @@ What the notes owe a reader, beyond the commits:
 Then check the section extracts, because `release.yml` refuses to publish a version the CHANGELOG does not describe. Cheaper here than as a deleted tag:
 
 ```bash
-dev/scripts/changelog-section.sh 3.1.2
+dev/scripts/changelog-section.sh X.X.X
+git add -A && git commit -m "Version bump vX.X.X"
+git push
 ```
 
-## 10. Finish the release
+## 10. Publish the modules and libraries this release runs
+
+`publish-module.sh` builds each tarball from a commit, `HEAD` unless told otherwise, so commit the bump, the raised floors and the CHANGELOG first:
+
+What the tree has that the catalogue does not:
+
+```
+dev/scripts/publish-module.sh --list
+```
+
+Then all of it, modules and libraries alike:
+
+```
+dev/scripts/publish-module.sh --all-pending
+```
+
+It must end with `Published N:` and the names. It publishes from `HEAD` and refuses to start while any pending module differs from it. If one fails it stops, says what it published and what is still pending, and the next run starts from what is still pending, so fix what it names and run it again.
+
+Each publish writes the tarball and the catalogue row together and commits neither. **Commit them together** -- the site deploys `modules/repo/` wholesale, so a row without its file advertises a download that 404s until the next deploy. Step 11's push to `main` is what deploys them.
+
+```bash
+git add modules/repo && git commit -m "Publish modules for vX.X.X"
+```
+
+Every row published here carries the floor step 7 raised. The wrapper installs the newest row whose floor an installation clears, so everyone on an earlier release keeps the row they were already running and sees the new one as `needs PoolSeqFlow <version>`.
+
+**Read what the moved pin does to the result.** A package version is an input to what a module computes. Step 2 moves the pin because there is only one version it may name, not because the new version is known to compute the same numbers -- so a module whose pin moved is worth a look before it is published, and worth a CHANGELOG line if the answer changed.
+
+## 11. Finish the release
 
 **Pushing the tag is the release.** 
 - `release.yml` fires on `v*`, rebuilds and verifies the archive, uses this version's CHANGELOG section as the release body, and publishes with both tarballs and `SHA256SUMS` attached. 
 - Nothing to assemble by hand.
 
 ```bash
-git add -A && git commit -m "Version bump vX.X.X"
 git push origin main
 git tag vX.X.X
 git push origin vX.X.X
@@ -281,28 +310,6 @@ dev/scripts/check-release-archive.sh
 - **does not re-create the conda environment when one is already there**, because the name comes from the version alone.
 - answers whether the archive is complete and deployable. 
 - not whether the environment files solve (done with `check-exported-floor.sh` at step 2)
-
-## 11. Publish the modules and libraries this release runs
-
-No module ships inside a release, so a release on its own leaves users with an empty store.
-
-What the tree has that the catalogue does not:
-
-```
-dev/scripts/publish-module.sh --list
-```
-
-Then each one it names, module or library alike:
-
-```
-dev/scripts/publish-module.sh <name>
-```
-
-It writes the tarball and the catalogue row together and commits neither. **Commit them together** -- the site deploys `modules/repo/` wholesale, so a row without its file advertises a download that 404s until the next deploy -- and push, which is what deploys.
-
-**This is after the release, and a pin move is why it cannot move earlier.** A module whose pin step 2 moved names a package version only this release's environment holds, so its `environment` floor is this release, and that floor cannot be written before the version exists. The catalogue carries a row per module version and the wrapper installs the newest row whose floor an installation clears, so everyone on an earlier release keeps the row they were already running and sees the new one as `needs PoolSeqFlow <version>`.
-
-**Read what the moved pin does to the result.** A package version is an input to what a module computes. Step 2 moves the pin because there is only one version it may name, not because the new version is known to compute the same numbers -- so a module whose pin moved is worth a look before it is published, and worth a CHANGELOG line if the answer changed.
 
 ## 12. Return to `dev`
 

@@ -468,6 +468,166 @@ test_a_committed_module_change_without_a_version_bump_is_caught() {
         "a committed library change with a stale version must be caught too:"$'\n'"$out"
 }
 
+# A repository of its own for publish-module.sh, which takes its root from `git rev-parse`, builds
+# from HEAD and writes into modules/repo/. Three modules and a library: beta is in the catalogue
+# already, and alpha, delta and the library gamma are pending, in that order, which is the order
+# --list prints them. bump-analysis-version.sh comes along because every publish calls it.
+publish_sandbox() {   # path
+    local sb="$1" m
+    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/modules/repo" "$sb/modules/alpha/test" \
+                           "$sb/modules/beta" "$sb/modules/delta" "$sb/modules/lib/gamma"
+    cp "$REPO_ROOT/dev/scripts/publish-module.sh" "$REPO_ROOT/dev/scripts/bump-analysis-version.sh" \
+       "$sb/dev/scripts/"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules/repo/index.tsv"
+    printf 'name\tkind\tversion\tcontract\tframe\tenvironment\turl\tsha256\tsummary\n' \
+        >> "$sb/modules/repo/index.tsv"
+    printf 'beta\tmodule\t20260101.001\tfreq-1\t20260101.001\t3.0.0\thttps://example.invalid/beta-20260101.001.tar.gz\t%064d\tbeta\n' 0 \
+        >> "$sb/modules/repo/index.tsv"
+    for m in alpha beta delta; do
+        printf '{"name": "%s", "kind": "module", "version": "20260101.001", "contract": "freq-1", "frame": "20260101.001", "environment": "3.0.0", "summary": "%s"}\n' \
+            "$m" "$m" > "$sb/modules/$m/manifest.json"
+        printf 'workflow {}\n' > "$sb/modules/$m/main.nf"
+        printf '{}\n' > "$sb/modules/$m/citations.json"
+    done
+    printf 'echo case\n' > "$sb/modules/alpha/test/alpha.sh"
+    printf '{"name": "gamma", "kind": "library", "version": "20260101.002", "frame": "20260101.001", "environment": "3.0.0", "summary": "gamma"}\n' \
+        > "$sb/modules/lib/gamma/manifest.json"
+    printf 'g <- function() 1\n' > "$sb/modules/lib/gamma/gamma.R"
+    (cd "$sb" && git init -q . && git add -A \
+        && git -c user.email=t@t -c user.name=t commit -qm base) > /dev/null 2>&1
+}
+
+# How many catalogue rows name a module.
+catalogue_rows() {   # index name
+    awk -F'\t' -v n="$2" '$1 == n' "$1" | wc -l | tr -d ' '
+}
+
+# --all-pending publishes what --list calls UNPUBLISHED, each through the single publish, and
+# nothing else. Run from a subdirectory by a relative path, because the script changes to the
+# repository root before it calls itself once per module, and a path taken from $0 stops
+# resolving there.
+test_publish_all_pending_publishes_what_list_names() {
+    local sb out status before m batch_sha single_sha
+    sb=$(guard_path "$TEST_TMPDIR/publish-all-pending")
+    publish_sandbox "$sb" || { skip_case "could not build a repository to publish from"; return; }
+
+    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --list 2>&1)
+    assert_contains "$out" "UNPUBLISHED    alpha 20260101.001" "--list names alpha as pending:"$'\n'"$out"
+    assert_contains "$out" "published      beta 20260101.001" "and beta as published"
+    assert_contains "$out" "UNPUBLISHED    gamma 20260101.002" "and the library under modules/lib/"
+    assert_contains "$out" "3 to publish" "and counts what is left"
+    assert_contains "$out" "--all-pending" "and says how to publish all of it"
+
+    status=0
+    out=$(cd "$sb/modules" && bash ../dev/scripts/publish-module.sh --all-pending 2>&1) || status=$?
+    assert_status 0 "$status" "--all-pending should publish all three:"$'\n'"$out"
+    for m in alpha-20260101.001 delta-20260101.001 gamma-20260101.002; do
+        assert_file "$sb/modules/repo/$m.tar.gz" "a tarball for $m"
+    done
+    assert_no_file "$sb/modules/repo/beta-20260101.001.tar.gz" "and none for what was published already"
+    for m in alpha beta delta gamma; do
+        assert_count 1 "$(catalogue_rows "$sb/modules/repo/index.tsv" "$m")" "catalogue rows naming $m"
+    done
+    assert_contains "$out" "Published 3: alpha delta gamma" "the summary names all three"
+    assert_count 1 "$(grep -c '^Nothing is committed' <<< "$out")" \
+        "the closing note is said once, not once per module"
+
+    # Nothing is left, so a second run publishes nothing and changes nothing.
+    before=$(cat "$sb/modules/repo/index.tsv")
+    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending 2>&1) || true
+    assert_contains "$out" "Everything in the tree is in the catalogue" \
+        "a second run finds nothing pending:"$'\n'"$out"
+    assert_eq "$before" "$(cat "$sb/modules/repo/index.tsv")" "and leaves the catalogue alone"
+
+    # The batch exists to make what single publishes make, so the bytes are compared: the same
+    # module published alone, from the same commit, after the batch's work is put back.
+    batch_sha=$(sha256sum "$sb/modules/repo/alpha-20260101.001.tar.gz" | awk '{print $1}')
+    (cd "$sb" && git checkout -q -- modules/repo/index.tsv && rm -f modules/repo/*.tar.gz)
+    out=$(cd "$sb" && bash dev/scripts/publish-module.sh alpha 2>&1) || true
+    single_sha=$(sha256sum "$sb/modules/repo/alpha-20260101.001.tar.gz" 2>/dev/null | awk '{print $1}')
+    assert_eq "$batch_sha" "$single_sha" "the batch should build the tarball a single publish builds"
+    assert_contains "$out" "Nothing is committed" "and a single publish still closes with the note"
+
+    # Always HEAD, because the pending set is read from the working tree and only HEAD matches it.
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending HEAD 2>&1) || status=$?
+    assert_status 1 "$status" "--all-pending takes no ref:"$'\n'"$out"
+    assert_contains "$out" "takes no ref" "and says so"
+}
+
+# A publish builds from HEAD while --list reads the working tree, so a pending source that differs
+# from HEAD would be listed with one content and published with another. Refused before anything
+# is written, whether the difference is changed, staged or untracked. A change under test/ alone
+# is not the module, because the tarball drops test/.
+test_publish_all_pending_refuses_a_source_that_differs_from_head() {
+    local sb out status before
+    sb=$(guard_path "$TEST_TMPDIR/publish-all-pending-dirty")
+    publish_sandbox "$sb" || { skip_case "could not build a repository to publish from"; return; }
+    printf 'process P {}\n' >> "$sb/modules/alpha/main.nf"
+    printf 'h <- function() 2\n' >> "$sb/modules/lib/gamma/gamma.R"
+    (cd "$sb" && git add modules/lib/gamma/gamma.R)
+    mkdir -p "$sb/modules/epsilon"
+    printf '{"name": "epsilon", "version": "20260101.001"}\n' > "$sb/modules/epsilon/manifest.json"
+    before=$(cat "$sb/modules/repo/index.tsv")
+
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending 2>&1) || status=$?
+    assert_status 1 "$status" "a pending source that differs from HEAD must be refused:"$'\n'"$out"
+    assert_contains "$out" "modules/alpha/" "naming the changed one"
+    assert_contains "$out" "modules/lib/gamma/" "the staged one"
+    assert_contains "$out" "modules/epsilon/" "and the one HEAD does not have"
+    assert_not_contains "$out" "modules/delta/" "but not the one that matches HEAD"
+    assert_eq "$before" "$(cat "$sb/modules/repo/index.tsv")" "nothing may reach the catalogue"
+    assert_eq "" "$(find "$sb/modules/repo" -name '*.tar.gz')" "and no tarball may be written"
+
+    (cd "$sb" && git checkout -q HEAD -- modules/alpha modules/lib/gamma && rm -rf modules/epsilon)
+    printf 'echo another case\n' >> "$sb/modules/alpha/test/alpha.sh"
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending 2>&1) || status=$?
+    assert_status 0 "$status" "a change under test/ alone is not the module changing:"$'\n'"$out"
+}
+
+# It stops at the first module that fails and says what this run published, read back from the
+# catalogue. Two failures, one on each side of the row. delta refuses before it writes anything,
+# because a tarball for its version is already on disk. alpha fails after its row is in, because
+# the index bump that follows refuses a 999th change in one day. Counting along the loop reports
+# that second one as still pending, which is the wrong module to restart from.
+test_publish_all_pending_stops_and_reads_back_what_it_published() {
+    local sb out status
+    sb=$(guard_path "$TEST_TMPDIR/publish-all-pending-stop")
+    publish_sandbox "$sb" || { skip_case "could not build a repository to publish from"; return; }
+
+    : > "$sb/modules/repo/delta-20260101.001.tar.gz"
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending 2>&1) || status=$?
+    assert_status 1 "$status" "a module that refuses stops the batch:"$'\n'"$out"
+    assert_contains "$out" "STOPPED at delta." "naming it"
+    assert_contains "$out" "Published by this run, and uncommitted: alpha" "and what it published first"
+    assert_contains "$out" "Still pending: delta gamma" "and what is left"
+    assert_no_file "$sb/modules/repo/gamma-20260101.002.tar.gz" "nothing after it is attempted"
+
+    # Fixed, the next run starts from what is still pending, so alpha is not published twice.
+    rm -f "$sb/modules/repo/delta-20260101.001.tar.gz"
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending 2>&1) || status=$?
+    assert_status 0 "$status" "the rerun should publish the rest:"$'\n'"$out"
+    assert_contains "$out" "Published 2: delta gamma" "and only the rest"
+    assert_count 1 "$(catalogue_rows "$sb/modules/repo/index.tsv" alpha)" "catalogue rows naming alpha"
+
+    # The day is read twice, here and by the bump, so a run straddling midnight UTC would see
+    # the bump succeed and this half fail.
+    (cd "$sb" && git checkout -q -- modules/repo/index.tsv && rm -f modules/repo/*.tar.gz)
+    sed -i "s/^#!index-version: .*/#!index-version: $(date -u +%Y%m%d).999/" "$sb/modules/repo/index.tsv"
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending 2>&1) || status=$?
+    assert_status 1 "$status" "a refused index bump stops the batch:"$'\n'"$out"
+    assert_contains "$out" "STOPPED at alpha." "at alpha"
+    assert_count 1 "$(catalogue_rows "$sb/modules/repo/index.tsv" alpha)" "with alpha's row written"
+    assert_contains "$out" "Published by this run, and uncommitted: alpha" \
+        "so alpha is reported published, read back from the catalogue"
+    assert_contains "$out" "Still pending: delta gamma" "and only what follows it as pending"
+}
+
 test_release_archive_carries_the_runtime() {
     local listing
     listing=$(working_tree_archive)
