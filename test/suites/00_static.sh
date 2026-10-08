@@ -352,6 +352,76 @@ test_the_analysis_version_scripts_are_there_and_runnable() {
     assert_contains "$out" "frame" "usage should name the frame target"
     assert_contains "$out" "index" "and the index target"
     assert_contains "$out" "module" "and the module target"
+    assert_contains "$out" "--pending" "and the way to bump all of them"
+}
+
+# EVERYTHING BEHIND, BUMPED AT ONCE. Step 4 of a release named six targets behind on 2026-10-08,
+# one bump command each; Z asked for one command. --pending takes its list from the gate's own
+# "bump it:" lines, so it cannot bump something the gate did not name or miss something it did,
+# and it runs the gate again before it says it is done.
+#
+# In a repository of its own holding both scripts, as the gate reads the tree around it. A module,
+# a library, the frame and a catalogue row are each changed without a bump; one --pending must move
+# all four and leave the gate passing, a second must change nothing, and a gate that cannot run
+# must stop it before it bumps anything.
+test_every_pending_analysis_version_is_bumped_at_once() {
+    local sb out status today
+    sb=$(guard_path "$TEST_TMPDIR/version-pending")
+    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/nf" "$sb/modules/demo" \
+                           "$sb/modules/lib/shared" "$sb/modules/repo"
+    cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$REPO_ROOT/dev/scripts/bump-analysis-version.sh" \
+       "$sb/dev/scripts/"
+    printf 'frame {}\n' > "$sb/analysis/frame.config"
+    printf '20260101.001\n' > "$sb/analysis/frame.version"
+    printf 'def one() { 1 }\n' > "$sb/analysis/lib/nf/thing.nf"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules/repo/index.tsv"
+    printf '{"name": "demo", "version": "20260101.001"}\n' > "$sb/modules/demo/manifest.json"
+    printf 'workflow {}\n' > "$sb/modules/demo/main.nf"
+    printf '{"name": "shared", "kind": "library", "version": "20260101.001"}\n' \
+        > "$sb/modules/lib/shared/manifest.json"
+    printf 'shared <- function() 1\n' > "$sb/modules/lib/shared/shared.R"
+    (cd "$sb" && git init -q . && git add -A \
+        && GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
+           git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm base \
+               --date='2026-01-01T00:00:00Z') > /dev/null 2>&1 \
+        || { fail_case "could not build a repository to bump in"; return; }
+
+    printf 'process P {}\n' >> "$sb/modules/demo/main.nf"
+    printf 'shared <- function() 2\n' >> "$sb/modules/lib/shared/shared.R"
+    printf 'def two() { 2 }\n' >> "$sb/analysis/lib/nf/thing.nf"
+    printf 'demo\tmodule\t20260101.001\n' >> "$sb/modules/repo/index.tsv"
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
+    assert_eq "4" "$(grep -c 'bump it:' <<< "$out")" "the gate names all four behind:"$'\n'"$out"
+
+    today=$(date -u +%Y%m%d)
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/bump-analysis-version.sh --pending 2>&1) || status=$?
+    assert_status 0 "$status" "one --pending bumps them all and the gate then passes:"$'\n'"$out"
+    assert_contains "$out" "module demo: 20260101.001 -> $today.001" "the module, named as it moved"
+    assert_contains "$out" "module shared: 20260101.001 -> $today.001" "the library"
+    assert_contains "$out" "frame: 20260101.001 -> $today.001" "the frame"
+    assert_contains "$out" "index: 20260101.001 -> $today.001" "and the catalogue's header"
+    assert_contains "$out" "up to date" "and says the gate passes"
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1) \
+        || fail_case "the gate does not pass after --pending:"$'\n'"$out"
+
+    local before; before=$(cd "$sb" && cat analysis/frame.version modules/*/manifest.json \
+                                             modules/lib/*/manifest.json modules/repo/index.tsv)
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/bump-analysis-version.sh --pending 2>&1) || status=$?
+    assert_status 0 "$status" "a second --pending succeeds"
+    assert_contains "$out" "Nothing is behind" "having nothing to do"
+    assert_eq "$before" "$(cd "$sb" && cat analysis/frame.version modules/*/manifest.json \
+                                         modules/lib/*/manifest.json modules/repo/index.tsv)" \
+        "and changes nothing"
+
+    printf 'process Q {}\n' >> "$sb/modules/demo/main.nf"
+    rm "$sb/dev/scripts/check-analysis-versions.sh"
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/bump-analysis-version.sh --pending 2>&1) || status=$?
+    assert_status 1 "$status" "with no gate to ask it stops"
+    assert_contains "$out" "named nothing to bump" "saying the gate gave it nothing"
+    assert_contains "$(cat "$sb/modules/demo/manifest.json")" "\"$today.001\"" "and bumps nothing"
 }
 
 # THE FRAME VERSION MOVES WITH A CHANGE AND NEVER WITH THE CALENDAR.
@@ -1336,6 +1406,124 @@ YAML
     out=$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$sb/refused.yml" 2>&1 >/dev/null) || status=$?
     assert_status 1 "$status" "a file that is not UTF-8 is refused"
     assert_contains "$out" "refused.yml: not UTF-8 text" "by name, not with a traceback"
+}
+
+# dev/scripts/clean-release-scratch.sh run from a copy in the sandbox repository $1, with its
+# stand-ins first on PATH and its working directories searched for under $1/../tmp and
+# $1/../shm. Sets RS_STATUS and RS_OUT.
+RS_STATUS=0
+RS_OUT=""
+release_scratch_run() {
+    local repo="$1"; shift
+    RS_STATUS=0
+    RS_OUT=$(cd "$repo/.." && PATH="$repo/../bin:$PATH" RELEASE_SCRATCH_ROOTS="$repo/../tmp $repo/../shm" \
+             bash "$repo/dev/scripts/clean-release-scratch.sh" "$@" 2>&1) || RS_STATUS=$?
+}
+
+# THE RELEASE CLEANUP REMOVES WHAT A RELEASE LEFT, AND NOTHING ELSE. Z asked for it on 2026-10-08,
+# after a release cycle had left seven working directories and an orphaned scratch environment
+# across /tmp and /dev/shm, the oldest four days old.
+#
+# Run against a sandbox and stand-ins only: a copy of the script in a repository of its own, so
+# its .tmp/release-review is the sandbox's; roots of the sandbox's own; and a ps and a conda on
+# PATH, so no real process is read and no real environment is listed or removed. The case first
+# proves PATH finds the stand-ins, and stops if it does not.
+#
+# Asked: a dry run removes nothing; a release script still running stops it before anything goes;
+# then it removes each working directory, one holding a read-only directory included, the step 1
+# scratch, and each scratch environment whose run is over, and leaves every decoy beside them: a
+# name one character short, a file where a directory would be, another directory, the installed
+# environments and base, a scratch environment whose run is still going, and a name that only
+# begins like one.
+test_the_release_cleanup_removes_what_a_release_left_and_nothing_else() {
+    local sb repo removed
+    sb=$(guard_path "$TEST_TMPDIR/release-scratch")
+    rm -rf "$sb"
+    repo="$sb/repo"
+    mkdir -p "$sb/bin" "$sb/tmp" "$sb/shm" "$repo/dev/scripts" "$repo/.tmp/release-review" "$repo/.tmp/other"
+    cp "$REPO_ROOT/dev/scripts/clean-release-scratch.sh" "$repo/dev/scripts/"
+
+    cat > "$sb/bin/ps" <<'PS'
+#!/usr/bin/env bash
+# The process table is ps.table beside this, "pid args" a line. No process has a parent.
+table="$(dirname "$0")/ps.table"
+case "$*" in
+    "-eo pid=,args=") cat "$table" ;;
+    "-o ppid= -p "*) ;;
+    "-p "*) awk -v p="$2" '$1 == p { found = 1 } END { exit !found }' "$table" ;;
+    *) echo "stand-in ps cannot answer: $*" >&2; exit 2 ;;
+esac
+PS
+    cat > "$sb/bin/conda" <<'CONDA'
+#!/usr/bin/env bash
+# The environments are conda.envs beside this, a name a line. A removal takes one out of it and
+# adds it to conda.removed.
+dir="$(dirname "$0")"
+case "$1 $2" in
+    "env list")
+        printf '# conda environments:\n#\n'
+        awk '{ printf "%-32s /envs/%s\n", $1, $1 }' "$dir/conda.envs" ;;
+    "env remove")
+        grep -vxF "$4" "$dir/conda.envs" > "$dir/conda.envs.new"
+        mv "$dir/conda.envs.new" "$dir/conda.envs"
+        echo "$4" >> "$dir/conda.removed" ;;
+    *) echo "stand-in conda cannot answer: $*" >&2; exit 2 ;;
+esac
+CONDA
+    chmod +x "$sb/bin/ps" "$sb/bin/conda"
+    if [ "$(PATH="$sb/bin:$PATH" bash -c 'command -v conda; command -v ps' | tr '\n' ' ')" \
+         != "$sb/bin/conda $sb/bin/ps " ]; then
+        fail_case "PATH does not find the stand-in conda and ps first; nothing was run"
+        return
+    fi
+    printf '%s\n' base PoolSeqFlow-3.2.0 PoolSeqFlow-3.2.0-analysis poolseqflow-validation \
+        PoolSeqFlow-update PoolSeqFlow-update-analysis PoolSeqFlow-update-old PoolSeqFlow-floorcheck \
+        PoolSeqFlow-modulecheck-111 PoolSeqFlow-modulecheck-222 \
+        PoolSeqFlow-suite-333 PoolSeqFlow-suite-333-analysis PoolSeqFlow-suite-444 > "$sb/bin/conda.envs"
+    printf '222 sleep 600\n444 sleep 600\n' > "$sb/bin/ps.table"
+
+    mkdir -p "$sb/tmp/poolseqflow-test.AbC123/ro" "$sb/shm/poolseqflow-test-xdev.XyZ789" \
+             "$sb/tmp/poolseqflow-test.AbC12" "$sb/tmp/keep-me"
+    : > "$sb/tmp/poolseqflow-test.AbC123/ro/f"
+    chmod a-w "$sb/tmp/poolseqflow-test.AbC123/ro"
+    : > "$sb/tmp/poolseqflow-test.DeF456"
+    : > "$repo/.tmp/release-review/notes.txt"
+    : > "$repo/.tmp/other/keep.txt"
+
+    release_scratch_run "$repo" --dry-run
+    assert_status 0 "$RS_STATUS" "a dry run succeeds:"$'\n'"$RS_OUT"
+    assert_contains "$RS_OUT" "would remove $sb/tmp/poolseqflow-test.AbC123" "and names a working directory"
+    assert_contains "$RS_OUT" "would remove the conda environment PoolSeqFlow-update-analysis" "and an environment"
+    assert_dir "$sb/tmp/poolseqflow-test.AbC123" "while removing nothing"
+    assert_no_file "$sb/bin/conda.removed" "not an environment either"
+
+    printf '555 bash test/run_tests.sh --suite 00_static\n' >> "$sb/bin/ps.table"
+    release_scratch_run "$repo"
+    assert_status 1 "$RS_STATUS" "a suite run still going stops it"
+    assert_contains "$RS_OUT" "555  bash test/run_tests.sh" "naming the process"
+    assert_dir "$sb/shm/poolseqflow-test-xdev.XyZ789" "before anything is removed"
+    assert_no_file "$sb/bin/conda.removed" "environments included"
+    sed -i '/^555 /d' "$sb/bin/ps.table"
+
+    release_scratch_run "$repo"
+    assert_status 0 "$RS_STATUS" "with nothing running it removes what it found:"$'\n'"$RS_OUT"
+    assert_no_file "$sb/tmp/poolseqflow-test.AbC123" "the working directory, read-only directory and all"
+    assert_no_file "$sb/shm/poolseqflow-test-xdev.XyZ789" "and its second filesystem"
+    assert_no_file "$repo/.tmp/release-review" "and the step 1 scratch"
+    assert_dir "$sb/tmp/poolseqflow-test.AbC12" "but not a name one character short"
+    assert_file "$sb/tmp/poolseqflow-test.DeF456" "nor a file under a working directory's name"
+    assert_dir "$sb/tmp/keep-me" "nor any other directory"
+    assert_file "$repo/.tmp/other/keep.txt" "nor the rest of .tmp"
+    removed=$(sort "$sb/bin/conda.removed" 2>/dev/null | tr '\n' ' ')
+    assert_eq "PoolSeqFlow-floorcheck PoolSeqFlow-modulecheck-111 PoolSeqFlow-suite-333 PoolSeqFlow-suite-333-analysis PoolSeqFlow-update PoolSeqFlow-update-analysis " \
+        "$removed" "exactly the scratch environments whose runs are over"
+
+    release_scratch_run "$repo"
+    assert_status 0 "$RS_STATUS" "a second run succeeds"
+    assert_contains "$RS_OUT" "Nothing to remove." "having nothing left to do"
+
+    release_scratch_run "$repo" --everything
+    assert_status 2 "$RS_STATUS" "an unknown argument is a usage mistake"
 }
 
 # A case that could not run fails the run, except under --fast, which leaves cases out on purpose.

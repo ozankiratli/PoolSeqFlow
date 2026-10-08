@@ -1,6 +1,6 @@
 {
   "name": "nei_distance",
-  "version": "20261004.001",
+  "version": "20261008.001",
   "kind": "library",
   "contract": "freq-1",
   "license": "GPL-3.0-or-later",

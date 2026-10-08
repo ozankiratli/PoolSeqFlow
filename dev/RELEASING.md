@@ -121,13 +121,13 @@ dev/scripts/check-analysis-versions.sh --release
 
 **Must pass.** Commit anything outstanding under `analysis/` first, and not on a shallow clone: `--release` treats a question it could not answer as a failure rather than a skip.
 
-Bump whatever it names behind:
+Bump whatever it names behind, all at once:
 
 ```
-dev/scripts/bump-analysis-version.sh frame
-dev/scripts/bump-analysis-version.sh index
-dev/scripts/bump-analysis-version.sh module <name>
+dev/scripts/bump-analysis-version.sh --pending
 ```
+
+It bumps exactly what the gate names, prints each version it moved, and runs the gate again, failing unless it now passes. Commit, then run the gate with `--release` once more. One at a time is `frame`, `index` or `module <name>` in place of `--pending`.
 
 ## 5. Run the full suite
 
@@ -161,6 +161,7 @@ conda env remove -n PoolSeqFlow-update-analysis -y
 
 ```
 git add -A && git commit -m "Prep for vX.X.X"
+git push
 ```
 
 Open the merge request, review the diff as a whole, merge.
@@ -328,6 +329,14 @@ Sync `dev` with `main` so the version bump and the CHANGELOG come back, then car
 git checkout dev
 git merge --ff-only main
 ```
+
+Then remove what the cycle left behind:
+
+```
+dev/scripts/clean-release-scratch.sh
+```
+
+It names everything it removes: the suite's kept working directories under `/tmp` and `/dev/shm`, the scratch conda environments of steps 2 and 5 and of any run that was interrupted, and `.tmp/release-review/`. It keeps `dev/logs/` and every installed `PoolSeqFlow-<version>` environment. **It refuses, and removes nothing, while any suite run or release script is still going**; let them finish and run it again. `--dry-run` lists what it would remove.
 
 ---
 

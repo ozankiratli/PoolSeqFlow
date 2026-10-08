@@ -52,7 +52,7 @@ dependencies:
   - grep=3.12=h09507ce_2
   - gsl=2.6=he838d99_2
   - gzip=1.14=hb9d3cd8_0
-  - harfbuzz=14.6.0=ha770c72_0
+  - harfbuzz=14.6.0=ha770c72_1
   - htslib=1.24=ha79157c_0
   - icu=78.3=h54a6638_2
   - isa-l=2.32.1=hb03c661_0
@@ -68,7 +68,7 @@ dependencies:
   - libcups=2.3.3=h7a8fb5f_6
   - libcurl=8.22.0=ha042cf0_0
   - libdeflate=1.25=hd45a770_1
-  - libedit=3.1.20250104=pl5321h373387f_1
+  - libedit=3.1.20260512=pl5321h373387f_0
   - libev=4.33=h280c20c_3
   - libexpat=2.8.5=hd2095e1_0
   - libffi=3.7.0=h81df57d_1
@@ -81,8 +81,8 @@ dependencies:
   - libgfortran5=16.2.0=h6b99dfc_7
   - libglib=2.90.0=h569388d_0
   - libgomp=16.2.0=he0feb66_7
-  - libharfbuzz=14.6.0=h23af247_0
-  - libharfbuzz-devel=14.6.0=h23af247_0
+  - libharfbuzz=14.6.0=h23af247_1
+  - libharfbuzz-devel=14.6.0=h23af247_1
   - libiconv=1.18=h0cb94f2_3
   - libjpeg-turbo=3.2.0=hb03c661_1
   - liblzma=5.8.3=hb03c661_1
@@ -117,7 +117,7 @@ dependencies:
   - pixman=0.46.4=h54a6638_3
   - popt=1.19=hcfc3c73_2
   - pthread-stubs=0.4=h7cc23a3_1004
-  - pycparser=3.0=pyhcf101f3_0
+  - pycparser=3.1=pyh5ded981_0
   - python=3.11.11=h9e4cc4f_2_cpython
   - python-isal=1.8.0=py311h0d48ccd_3
   - python-zlib-ng=1.0.0=py311haf77c50_3
