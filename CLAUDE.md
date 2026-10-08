@@ -70,7 +70,7 @@ Z, 2026-09-08: *"We keep everything but abandoned ideas. They carry a different 
 ## Other standing rules
 
 - **`dev/RELEASING.md` is a living procedure, not a record.** Correct it when a release teaches you something; it carries no date and describes no particular version. It holds only what a person does: a command, what it must show, and what to do when it does not. Everything else belongs in `.claude/development-notes/` or in the script's own header, and a step must never point into a dated note -- that is how it came to promise an audit that did not exist.
-- **Several release gates live in the suite rather than in that document**: the release archive (`verify-archive.sh`), the docs and citation gates (`build_docs.py --check`, `bib2citations.py --check`), the analysis versions (`check-analysis-versions.sh`) and the version-consistency case all run inside `00_static`. A green suite is how they report. Do not add a step for one.
+- **Several release gates live in the suite rather than in that document**: the release archive (`verify-archive.sh`), the docs and citation gates (`build_docs.py --check`, `bib2citations.py --check`) and the version-consistency case all run inside `00_static`. A green suite is how they report. Do not add a step for one. **`check-analysis-versions.sh` is the exception**: a module is legitimately behind between releases, so the suite tests the script only, and the real tree is checked at steps 4 and 11 of `dev/RELEASING.md` and by `release.yml`. This line used to list it with the others, and nothing ran it between the floors being raised at step 7 and the tag, which is where v3.3.0 failed.
 - **The manual keeps real typographic characters. Everything else in the repository is ASCII.** `manual/PoolSeqFlow-manual.md` is rendered to a website and read as prose, so an arrow is `→`, a reverse arrow `←`, a product `×`, an ellipsis `…`, a negative `−`, a comparison `≥`. **Never ASCII-ify the manual**, and never let a sweep do it: a pass asked to remove em dashes has twice taken 53 arrows, 29 products and 16 ellipses with them. Two carve-outs inside the manual, and only two. **Em dashes are out on style** -- rewrite the sentence, do not substitute `--`. And **a command someone copies and runs stays ASCII**: that is the test, not whether something sits in a fenced block, because the manual fences its diagrams and formulas too. `distance = (J_A + J_B) / 2 − J_AB` and the labels inside a ```mermaid block keep their glyphs. Every other file, including the templates, the notes and this one, is ASCII as the global rule says.
 
 - **A ```mermaid diagram exists on the site only.** `mkdocs.yml` carries the custom fence for it and material loads the renderer from a CDN, so the diagram needs a network to draw and the shipped `manual/PoolSeqFlow-manual.md` shows its `graph TD` source. Use it for what ASCII cannot draw. Anything a reader must have in the tarball stays as text, or as an `.svg` under `manual/assets/` like the five depth-histogram figures.
@@ -89,7 +89,7 @@ Z, 2026-09-08: *"We keep everything but abandoned ideas. They carry a different 
 
 Not one line of code may change. Per file, diff the non-comment lines against `HEAD`. For Python, a docstring is not a `#` comment and the line count misleads -- prove it with an AST comparison that strips docstrings.
 
-Then lint and `bash test/run_tests.sh --fast`, which is under a minute. Check both counts -- files linted, cases passed -- against the run before it rather than only the exit status: a filter that matches nothing also reports success. Neither number is written down here, because both move with every file added.
+Then lint and `bash test/run_tests.sh --fast`, which is under a minute. Check both counts -- files linted, cases passed -- against the run before it rather than only the exit status: a filter that matches nothing now stops the run, but one narrower than you meant still reports success. Neither number is written down here, because both move with every file added.
 
 **Lint through the suite, at zero errors and zero warnings.** Seven seconds:
 
@@ -109,7 +109,7 @@ The two cases behind that filter are `nextflow lint is clean`, which lints the t
 bash test/run_tests.sh --suite 07_analysis --case citation
 ```
 
-`--case` matches any part of a case name and filters at dispatch, so the suite's fixtures are still built by the cases that define them. Three cases in under a minute against ten for the suite they live in -- which is the difference between checking a change and avoiding checking it.
+`--case` matches any part of a case's function name, so it takes underscores (`all_pending`, never `"all pending"`), and filters at dispatch, so the suite's fixtures are still built by the cases that define them. **A case that cannot run fails the run, except under `--fast`**: outside it, a missing environment is a red run, not a skip. Three cases in under a minute against ten for the suite they live in -- which is the difference between checking a change and avoiding checking it.
 
 **The full suite belongs to a release**, not to a step. `--fast` is the cheap sweep when a change reaches beyond its own step -- the wrapper, packaging, a shared library -- and a whole `--suite <name>` is for when the step *is* that suite.
 
@@ -130,7 +130,7 @@ bash test/run_tests.sh --suite 07_analysis --case citation
 
 **`bash test/run_tests.sh --changed` picks the suites for you**, from what each suite declares it runs expanded through the include graph. `dev/scripts/select-tests.py <file>` shows the reasoning without running anything. It errs wide -- a change to `test/lib/` or to the selector selects everything -- so a narrow answer is trustworthy and a wide one is only expensive.
 
-**Every suite declares what it may cost** -- `static`, `jvm` or `pipeline` -- in a `# cost:` line in its own header. `--cost static` is the set that completes with nothing installed: `00_static`, `01_migrate`, `02_launcher`, `03_helpers`, `07_analysis_rlib`. `--fast` is a different axis and still a case-level switch, so the two compose.
+**Every suite declares what it may cost** -- `static`, `jvm` or `pipeline` -- in a `# cost:` line in its own header. `--cost static` is the set that builds nothing: `00_static`, `01_migrate`, `02_launcher`, `03_helpers`, `07_analysis_rlib`. `--fast` is a different axis and still a case-level switch, so the two compose: with nothing installed, `--cost static --fast` completes, while `--cost static` alone fails the cases that want a tool.
 
 **`--suite` and `--case` accumulate and match by name, not by number.** `--suite analysis_time --suite analysis_series` runs both, and `--suite analysis` runs all nine. Every run prints the scope it selected, so a narrowed run cannot be mistaken for a full one; renumbering a suite therefore costs nothing, because nothing addresses one by its number.
 

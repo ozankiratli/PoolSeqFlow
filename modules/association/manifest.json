@@ -1,10 +1,10 @@
 {
   "name": "association",
-  "version": "20261006.001",
+  "version": "20261008.002",
   "contract": "freq-1",
   "license": "GPL-3.0-or-later",
   "frame": "20260910.001",
-  "environment": "3.3.0",
+  "environment": "3.0.0",
   "summary": "each allele's frequency regressed on a phenotype measured per pool, with a permutation p",
   "needs": [
     "depths"
@@ -28,15 +28,16 @@
     "bin/cap_depth.awk keeps reads in coordinate order until the cap rather than subsampling, so at a capped position the retained reads are biased toward those mapping earliest. That is an allele-frequency bias and not only a depth truncation.",
     "filterFalsePositives.sh admits an allele that clears half of one chromosome's frequency in a fraction of the samples, and MajorAlleleToRef.py re-polarizes on cohort totals. Both depend on which pools were in the run, so a result from six pools is not the same quantity as one from twelve and the two are not comparable across targets."
   ],
+  "report": "report.Rmd",
   "outputs": [
     {
-      "file": "association.tsv",
-      "summary": "one row per site, always complete: how many alleles and units it held, the site statistic, its permutation p, the adjusted p, and the leverage of the unit carrying most of the slope",
+      "file": "association_*.tsv",
+      "summary": "one per phenotype, named after it, with a row for every site of the sequences fitted: how many alleles and units it held, the site statistic, its permutation p, the adjusted p, and the leverage of the unit carrying most of the slope",
       "anchor": "association-sites"
     },
     {
-      "file": "association_alleles.tsv",
-      "summary": "one row per allele for the sites reportBelow and reportTop select: the slope, its standard error, and the parametric t and p as diagnostics",
+      "file": "alleles_*.tsv",
+      "summary": "one per phenotype, with a row per allele of the sites reportBelow and reportTop select from that phenotype's: the slope, its standard error, and the parametric t and p as diagnostics",
       "anchor": "association-alleles"
     },
     {
@@ -72,6 +73,7 @@
     }
   ],
   "packages": [
+    "r-data.table=1.18.6.1",
     "r-dofuture=1.4.0",
     "r-foreach=1.5.2",
     "r-future=1.76.0",

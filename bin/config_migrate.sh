@@ -78,6 +78,13 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
         return (k == "fastqc.memory" || k == "variantCall.maxDepth")
     }
 
+    # A value of yours where the template computes one, kept as written: vcf.fileName in a config
+    # that already has outputPrefix, whatever it holds, and an expression in one that does not.
+    # A literal in a config without outputPrefix is the old name, and outputPrefix takes it.
+    function pinned(k) {
+        return (k == "vcf.fileName" && (("outputPrefix" in oldval) || !literal(oldval[k])))
+    }
+
     # Parameters renamed in this release, keyed by their CURRENT name and returning the name
     # they had before. Needs a line per rename: without one, a rename reads as one DROPPED plus
     # one NEW. A rename that also changed the meaning goes in reformatted() too, which runs
@@ -87,6 +94,10 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
         if (k == "vcffilter.minQUAL") return "vcftools.minQUAL"
         if (k == "storageDir")        return "projectDir"
         if (k == "ploidy")            return "diploidy"
+        # vcf.fileName stays, and the template now derives it from outputPrefix. Only a name
+        # moves: an expression stays where it is.
+        if (k == "outputPrefix")
+            return (("vcf.fileName" in oldval) && literal(oldval["vcf.fileName"])) ? "vcf.fileName" : ""
         # Whole-scope renames: every field follows its prefix, so none is listed by name.
         old = k
         if (sub(/^cleanBAM\./, "samtools.", old))    return old
@@ -146,14 +157,14 @@ awk -v OLDF="$OLD" -v REPORT="$REPORT" '
 
             if (src in oldval) {
                 used[src] = 1
-                if (!literal(val)) {
+                if (!literal(val) && !(pinned(full) && oldval[src] != val)) {
                     # this release computes it - the template wins
                     if (literal(oldval[src]) && oldval[src] != val)
                         printf "COMPUTED\t%s\t%s\t%s\n", full, val, oldval[src] >> REPORT
                 } else if (reformatted(full)) {
                     if (oldval[src] != val)
                         printf "REFORMAT\t%s\t%s\t%s\n", full, val, oldval[src] >> REPORT
-                } else if (literal(oldval[src])) {
+                } else if (literal(oldval[src]) || pinned(full)) {
                     if (was_renamed)
                         printf "RENAMED\t%s\t%s\t%s\n", full, oldval[src], src >> REPORT
                     else if (oldval[src] != val)
@@ -366,6 +377,34 @@ if [ -n "$NEW_KEEPLOW" ]; then
     echo "  The default is $NEW_KEEPLOW: a site with any cell below minDP, or with no reads at all,"
     echo "  is dropped. To keep such a site and write those cells as unread, set it to true;"
     echo "  vcffilter.minSamples then says how many of a site's cells must reach minDP."
+    echo
+fi
+
+# Read back from the report, so this fires exactly when outputPrefix took the old vcf.fileName.
+NEW_PREFIX=$(awk -F'\t' '$1 == "RENAMED" && $2 == "outputPrefix" { print $3 }' "$REPORT")
+NEW_PREFIX=${NEW_PREFIX//[\'\"]/}
+if [ -n "$NEW_PREFIX" ]; then
+    note_heading
+    echo "  outputPrefix IS NEW, and it took your vcf.fileName, $NEW_PREFIX."
+    echo
+    echo "  It starts the name of the files a run writes. vcf.fileName now follows it, so your"
+    echo "  VCF and its frequency and depth tables keep the names they have. What changes is the"
+    echo "  analysis layer: every file an analysis publishes now starts with it, so mds.tsv is"
+    echo "  ${NEW_PREFIX}_mds.tsv, and each report is named ${NEW_PREFIX}_<module>_report_<date>-<time>.pdf."
+    echo
+fi
+
+# The same arrival with nothing to take: the old vcf.fileName was an expression, kept as written,
+# or the config had none.
+ADDED_PREFIX=$(awk -F'\t' '$1 == "NEW" && $2 == "outputPrefix" { print $3 }' "$REPORT")
+ADDED_PREFIX=${ADDED_PREFIX//[\'\"]/}
+if [ -n "$ADDED_PREFIX" ]; then
+    note_heading
+    echo "  outputPrefix IS NEW, and your config now has the template's $ADDED_PREFIX."
+    echo
+    echo "  Every file an analysis publishes now starts with it, so mds.tsv is"
+    echo "  ${ADDED_PREFIX}_mds.tsv. A vcf.fileName you wrote is kept as it was, so your VCF and"
+    echo "  its tables keep their names. Set outputPrefix to name the analysis files yourself."
     echo
 fi
 

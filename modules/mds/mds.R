@@ -68,12 +68,20 @@ if (OPTS$workers > 1) {
 # it is named here rather than left to surface hundreds of lines later as a comparison against
 # nothing. `colorBy` and `shapeBy` are absent from this list because an empty string is the
 # documented value of each and means the points carry no such key.
-for (needed in c("dimensions", "includeIndels", "binSize", "workers", "usecpp")) {
+for (needed in c("dimensions", "labels", "includeIndels", "binSize", "workers", "usecpp")) {
     if (is.null(OPTS[[needed]])) {
         stop("mds.R: options.json carries no '", needed, "'. It is written from ",
              "analysis.modules.mds by this module's main.nf, which sends every setting the ",
              "module declares.")
     }
+}
+if (!isTRUE(OPTS$labels) && !isFALSE(OPTS$labels)) {
+    stop("mds.R: analysis.modules.mds.labels is ", deparse(OPTS$labels), ", and it is true, to ",
+         "name each pool on the plot, or false.")
+}
+if (isTRUE(OPTS$labels) && !requireNamespace("ggrepel", quietly = TRUE)) {
+    stop("mds.R: analysis.modules.mds.labels is true and ggrepel is not installed. It is one of ",
+         "the packages this module declares: install the module again, or set labels to false.")
 }
 
 # ----------------------------------------------------------------------------------------
@@ -362,7 +370,8 @@ eigen_table <- data.frame(
     axis = seq_along(placed$values), eigenvalue = placed$values,
     share = shares$signed, share_absolute = shares$absolute,
     cumulative = cumsum(shares$signed), cumulative_absolute = cumsum(shares$absolute),
-    plotted = as.integer(seq_along(placed$values) <= ncol(placed$coords)),
+    # The axes mds.png draws: the leading two, and none when fewer than two were written.
+    plotted = as.integer(seq_along(placed$values) <= 2 & ncol(placed$coords) >= 2),
     stringsAsFactors = FALSE)
 write.table(eigen_table, file.path(out, "eigenvalues.tsv"), sep = "\t", quote = FALSE,
             row.names = FALSE, na = "")
@@ -389,8 +398,18 @@ if (ncol(placed$coords) >= 2) {
         ggplot2::aes()
     }
     figure <- ggplot2::ggplot(frame, ggplot2::aes(x = x, y = y)) +
-        ggplot2::geom_point(mapping, size = 3) +
-        ggplot2::geom_text(ggplot2::aes(label = pool), vjust = -1, size = 3) +
+        ggplot2::geom_point(mapping, size = 3)
+    # Each name is moved off its point and off every other name, with a line back to the point
+    # when it had to go far. A fixed seed and a fixed number of iterations place the names the
+    # same way on every machine, unless the time limit stops them first.
+    if (isTRUE(OPTS$labels)) {
+        figure <- figure +
+            ggrepel::geom_text_repel(ggplot2::aes(label = pool), size = 3, seed = 1,
+                                     max.overlaps = Inf, max.iter = 3e5, max.time = 60)
+    }
+    figure <- figure +
+        ggplot2::scale_x_continuous(expand = ggplot2::expansion(mult = 0.12)) +
+        ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = 0.12)) +
         ggplot2::coord_fixed() +
         ggplot2::labs(x = label(1), y = label(2),
                       title = "Nei's minimum distance, classical MDS") +

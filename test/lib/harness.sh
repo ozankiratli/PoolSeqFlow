@@ -29,11 +29,17 @@ fail_case() {
     CASE_MESSAGES+=("$1")
 }
 
-# Mark the case as not applicable here (a missing tool, no conda environment, and so on).
-# A skip is neither a pass nor a failure and does not affect the exit status.
+# Mark the case as unable to run here (a missing tool, no conda environment, and so on).
+#
+# OUTSIDE --fast A CASE THAT COULD NOT RUN FAILS THE RUN. A skip is a check nobody made, and a
+# run that reported PASS over one said the tree was checked when part of it was not: the release
+# gate read "0 skipped" off the summary by eye, and a fixture whose commit failed on a machine
+# that signs by default skipped every case built on it while the run stayed green. --fast is the
+# one run that leaves cases out on purpose, so there a skip stays a skip. A fixture that cannot
+# be built is not a skip at all: it calls fail_case.
 skip_case() {
     CASE_SKIPPED=1
-    CASE_MESSAGES+=("$1")
+    CASE_SKIP_REASON="$1"
 }
 
 assert_eq() {          # expected actual [label]
@@ -88,21 +94,21 @@ run_case() {
     CASE_NAME="$label"
     CASE_FAILED=0
     CASE_SKIPPED=0
+    CASE_SKIP_REASON=""
     CASE_MESSAGES=()
 
     "$fn"
 
-    if [ "$CASE_SKIPPED" -eq 1 ]; then
-        local why=""
+    # A case that failed before it skipped is reported as the failure, under --fast too.
+    if [ "$CASE_SKIPPED" -eq 1 ] && [ "$CASE_FAILED" -eq 0 ] && [ "${TEST_FAST:-0}" = "1" ]; then
         TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
-        if [ ${#CASE_MESSAGES[@]} -gt 0 ]; then
-            why=" (${CASE_MESSAGES[0]})"
-        fi
-        SKIPPED_CASES+=("$CURRENT_SUITE / $label$why")
-        printf '  %sSKIP%s %s' "$C_SKIP" "$C_OFF" "$label"
-        [ -n "$why" ] && printf ' %s%s%s' "$C_DIM" "${why# }" "$C_OFF"
-        printf '\n'
+        SKIPPED_CASES+=("$CURRENT_SUITE / $label ($CASE_SKIP_REASON)")
+        printf '  %sSKIP%s %s %s(%s)%s\n' "$C_SKIP" "$C_OFF" "$label" "$C_DIM" "$CASE_SKIP_REASON" "$C_OFF"
         return 0
+    fi
+    if [ "$CASE_SKIPPED" -eq 1 ]; then
+        CASE_FAILED=1
+        CASE_MESSAGES+=("could not run: $CASE_SKIP_REASON")
     fi
 
     TESTS_RUN=$((TESTS_RUN + 1))

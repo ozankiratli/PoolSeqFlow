@@ -40,6 +40,7 @@ def derivedParameterNames() {
         'reference', 'gff', 'reads',
         'filterFalsePositives.sensitivity',
         'snpEff.db',
+        'vcf.fileName',
     ]
 }
 
@@ -157,7 +158,7 @@ def setDotted(Map p, String dotted, Object value) {
     else                                 scope[leaf] = value
 }
 
-// The three values parameters.config derives that are not paths, for one parameter map.
+// The four values parameters.config derives that are not paths, for one parameter map.
 def derivedSensitivity(Map p) {
     return 1.0 / (2 * p.ploidy * p.poolSize)
 }
@@ -168,6 +169,10 @@ def derivedReferenceFa(Map p) {
 
 def derivedSnpEffDb(Map p) {
     return p.gffFile.replace('.gz', '')
+}
+
+def derivedVcfFileName(Map p) {
+    return p.outputPrefix
 }
 
 // Whether the project wrote one of them by hand instead of leaving parameters.config to compute
@@ -189,10 +194,17 @@ def snpEffDbIsPinned() {
     return params.snpEff.db != derivedSnpEffDb(params)
 }
 
+// Compared as text: the config writes the name as a string, and a prefix written unquoted is a
+// number.
+def vcfFileNameIsPinned() {
+    return "${params.vcf.fileName}".toString() != "${derivedVcfFileName(params)}".toString()
+}
+
 // The derivations that live in parameters.config, recomputed for one run: config interpolation
 // runs once at parse time, against one set of values.
 def deriveRunPaths(Map p) {
     if (!referenceFaIsPinned()) p.referenceFa = derivedReferenceFa(p)
+    if (!vcfFileNameIsPinned()) p.vcf.fileName = derivedVcfFileName(p)
 
     p.dir.data         = "${p.mainDir}/${p.dataSource}"
     p.dir.references   = "${p.mainDir}/Reference"

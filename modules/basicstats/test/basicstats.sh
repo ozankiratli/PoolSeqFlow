@@ -5,6 +5,7 @@
 # covers: modules/basicstats/ modules/lib/
 # covers: test/tools/freq_corpus.py
 # covers: analysis.nf modules/basicstats/main.nf
+# covers: analysis/lib/rmd/
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
@@ -79,17 +80,130 @@ test_basicstats_publishes_a_row_for_every_pool() {
     assert_status 0 "$BASICSTATS_STATUS" "basicstats should run; see $ANALYSIS_SB/run.out"
 
     local folder="$BASICSTATS_PUBLISHED"
-    assert_file "$folder/design.tsv" "the design table is published"
-    assert_file "$folder/basicstats.R" "and the script that produced it"
+    assert_file "$folder/Test_design.tsv" "the design table is published, under the outputPrefix"
+    assert_file "$folder/basicstats.R" "and the script that produced it, under its own name"
     assert_file "$folder/CITATIONS.md" "and what to cite for it"
 
-    local table; table=$(cat "$folder/design.tsv" 2>/dev/null)
+    local table; table=$(cat "$folder/Test_design.tsv" 2>/dev/null)
     assert_eq 7 "$(printf '%s\n' "$table" | wc -l)" "a header and one row per pool"
     assert_contains "$table" "pool	libraries	n_libraries	exp_population	exp_time	pool_size	ploidy	n_chrom	detection_limit" \
         "every experimental variable gets a column of its own, between the pool and its size"
     # 100 individuals at ploidy 2 is 200 chromosomes and a detection limit of 1/(2*2*100).
     assert_contains "$table" "TestSample1	TestSample1	1	Pop1	T1	100	2	200	0.0025" \
         "and each row carries the design and the figures it was produced under"
+}
+
+# THE REPORT LAYS OUT THE RESULTS, not the list of files. basicstats declares a report of its
+# own, and the frame knits it under its header: the sections are the module's, and what fills
+# them is read back out of the tables it published.
+test_basicstats_reports_its_results() {
+    basicstats_published || return
+    if ! have_report_tools; then
+        skip_case "the analysis environment has no pandoc and typst"; return
+    fi
+    if ! command -v pdftotext > /dev/null 2>&1; then
+        skip_case "no pdftotext to read the report back"; return
+    fi
+
+    local report; report=$(analysis_published_report "$BASICSTATS_PUBLISHED" basicstats)
+    [ -n "$report" ] || { fail_case "the report should be built; see $ANALYSIS_SB/run.out"; return; }
+    local text; text=$(pdf_text "$report")
+    assert_contains "$text" "Produced by PoolSeqFlow $(analysis_release)," \
+        "under the frame's header, naming the release"
+    local section
+    for section in "Gene diversity" "Depth and effective sample size" "Depth by sequence" \
+                   "Called sites by sequence" "Design"; do
+        assert_contains "$text" "$section" "the report has its '$section' section"
+    done
+    assert_contains "$text" "Figure 2" "and draws its figures"
+    assert_contains "$text" "TestSample6" "with every pool in it"
+    assert_contains "$text" "Pop1" "and the experimental variables beside them"
+    # One pool's pi, as the table prints it: four significant digits of diversity.tsv's value.
+    local pi; pi=$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "pi_per_called_site") c = i; next }
+                               $1 == "TestSample1" { printf "%.4g", $c }' "$BASICSTATS_PUBLISHED/Test_diversity.tsv")
+    [ -n "$pi" ] || fail_case "diversity.tsv should give TestSample1 a pi to look for"
+    assert_contains "$text" "$pi" "and the numbers are the ones the tables hold"
+    assert_contains "$text" "Test_diversity.tsv" "under the names the tables are published as"
+    assert_eq "" "$(pdf_overlapping_words "$report")" \
+        "and no word is printed over another"
+}
+
+# THE REPORT'S OWN ARITHMETIC, read out of the typst it is drawn with: no Nextflow and no PDF.
+#
+# Twenty-three sequences with distinct SNP counts, so the three with the fewest are the ones added
+# up in one row; a merged pool, whose genome-wide figures are lower bounds; and unmeasured sites,
+# which "Sites read" leaves out. The expected depth of the added-up row is computed here, by awk,
+# from depth.tsv's per-sequence harmonic means and the sites each was taken over.
+test_basicstats_report_adds_up_and_marks_what_it_should() {
+    have_analysis_r || { skip_case "no analysis environment"; return; }
+    local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-report-md")
+    rm -rf "$sb"; mkdir -p "$sb/folder"
+    local f="$sb/folder" i
+    printf 'pool\tlibraries\tn_libraries\tpool_size\tploidy\tn_chrom\tdetection_limit\n' > "$f/design.tsv"
+    printf 'P1\tP1\t1\t100\t2\t200\t0.0025\nP2\tP2a;P2b\t2\t100\t2\t200\t0.0025\n' >> "$f/design.tsv"
+    printf 'chrom\tkind\tsites\talleles\n' > "$f/sites.tsv"
+    printf 'pool\tchrom\tsites\tunmeasured\tdepth_mean\tdepth_median\tdepth_harmonic\n' > "$f/depth.tsv"
+    for i in $(seq 1 23); do
+        printf 'chr%d\tsnp\t%d\t%d\n' "$i" "$((i + 5))" "$((2 * (i + 5)))" >> "$f/sites.tsv"
+        printf 'P1\tchr%d\t%d\t%d\t30\t30\t%d.5\n' "$i" "$((i + 5))" "$((i % 3))" "$((20 + i))" >> "$f/depth.tsv"
+        printf 'P2\tchr%d\t%d\t0\t40\t40\t%d.25\n' "$i" "$((i + 5))" "$((30 + 2 * i))" >> "$f/depth.tsv"
+    done
+    printf 'pool\tn_chrom\tsites\tunmeasured\tsegregating\tdepth_harmonic\tn_eff_harmonic\th_sum\tpi_per_called_site\n' > "$f/diversity.tsv"
+    printf 'P1\t200\t391\t24\t300\t28.1\t24.6\t90.5\t0.2459\nP2\t200\t391\t0\t310\t40.2\t33.4\t95.1\t0.2432\n' >> "$f/diversity.tsv"
+    printf 'level\tid\tpool\tsource\tpositions\tdepth_harmonic\tn_chrom\tn_eff\testimate\n' > "$f/neff.tsv"
+    printf 'library\tP1\tP1\thistogram\t1000\t7.0\t200\t6.8\texact\n' >> "$f/neff.tsv"
+    printf 'pool\tP1\tP1\thistogram\t1000\t7.0\t200\t6.8\texact\n' >> "$f/neff.tsv"
+    printf 'library\tP2a\tP2\thistogram\t1000\t6.0\t200\t5.8\texact\n' >> "$f/neff.tsv"
+    printf 'library\tP2b\tP2\thistogram\t1000\t7.0\t200\t6.8\texact\n' >> "$f/neff.tsv"
+    printf 'pool\tP2\tP2\thistogram\t1000\t13.0\t200\t12.3\tlower_bound\n' >> "$f/neff.tsv"
+    # A depth plot, empty: report.md places it without reading it.
+    : > "$f/depth_chr2.png"
+
+    analysis_render_report "$f" "$sb/out" "$REPO_ROOT/modules/basicstats/report.Rmd" md \
+        || { fail_case "the report should knit: $(cat "$sb/out/report_knit.log")"; return; }
+    local md; md=$(cat "$sb/out/report.md")
+
+    # The plot is placed under its sequence, which the report reads back out of the published name
+    # with the prefix taken off; read with it on, chr2 is no sequence and the caption names the file.
+    assert_contains "$md" 'Depth at the called SNP sites along chr2, one panel per pool (Test\_depth\_chr2\.png).' \
+        "a depth plot is placed under its sequence's name"
+
+    # chr1 to chr3 hold 6, 7 and 8 SNP sites, the fewest, and are the ones added up.
+    local p1 p2
+    p1=$(awk -F'\t' '$1 == "P1" && ($2 == "chr1" || $2 == "chr2" || $2 == "chr3") {
+                         n = $3 - $4; s += n; r += n / $7 } END { printf "%.1f", s / r }' "$f/depth.tsv")
+    p2=$(awk -F'\t' '$1 == "P2" && ($2 == "chr1" || $2 == "chr2" || $2 == "chr3") {
+                         n = $3 - $4; s += n; r += n / $7 } END { printf "%.1f", s / r }' "$f/depth.tsv")
+    assert_contains "$md" "\"3 other sequences\", \"21\", \"$p1\", \"$p2\"," \
+        "the added-up row: the sequences counted, their SNP sites, and each pool's recombined depth"
+    assert_contains "$md" "\"3 other sequences\", \"21\", \"3\", \"0\"," \
+        "and its unmeasured sites summed, 1 + 2 + 0 for P1"
+    # The sign is written by its code point here: it reaches the file as UTF-8 from R's escape.
+    local bound=$'\u2265'
+    assert_contains "$md" "\"P2\", \"0\", \"40.2\", \"33.4\", \"1,000\", \"$bound 13.0\", \"$bound 12.3\"," \
+        "the merged pool's genome-wide figures are marked as lower bounds"
+    assert_contains "$md" "\"P1\", \"24\", \"28.1\", \"24.6\", \"1,000\", \"7.0\", \"6.8\"," \
+        "and an exact pool's are not"
+    assert_contains "$md" "\"P1\", \"200\", \"367\", \"300\", \"90.50\"," \
+        "sites read are the sites less the unmeasured ones, 391 - 24"
+}
+
+# A project where no indel survived publishes an indel depth table holding only its header.
+# Until 2026-10-08 basicstats stopped on it, so such a project got no results and no report.
+test_basicstats_runs_when_no_indel_survived() {
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
+    local sb; sb=$(guard_path "$TEST_TMPDIR/basicstats-no-indel")
+    rm -rf "$sb"; mkdir -p "$sb"
+    CORPUS_DIR="$sb"
+    python3 "$REPO_ROOT/test/tools/freq_corpus.py" "$sb" "$sb"
+    local table="$sb/Frequencies/Test_indel_depth.tsv"
+    head -1 "$table" > "$table.header" && mv "$table.header" "$table"
+
+    basicstats_direct "$sb/out" '{"minReads":2,"binSize":100000,"workers":1,"usecpp":false}' "$sb"
+    assert_file "$sb/out/diversity.tsv" "the module should run: $(cat "$sb/out/out.txt" 2>/dev/null)"
+    assert_not_contains "$(cat "$sb/out/sites.tsv" 2>/dev/null)" "indel" "counting no indel"
+    assert_eq "$(corpus_expects sites.chr1.snp.sites)" \
+        "$(published_cell2 "$sb/out/sites.tsv" chr1 snp sites)" "and the SNPs as ever"
 }
 
 # THE METHODS ARE CITED, NOT ONLY THE SOFTWARE. A diversity estimate a reader cannot trace to a
@@ -127,10 +241,10 @@ test_basicstats_publishes_what_it_measured() {
     assert_status 0 "$BASICSTATS_STATUS" "basicstats should run; see $ANALYSIS_SB/run.out"
 
     local folder="$BASICSTATS_PUBLISHED"
-    assert_file "$folder/sites.tsv" "the site counts are published"
-    assert_file "$folder/depth.tsv" "and the depth summaries"
-    assert_file "$folder/diversity.tsv" "and the diversity"
-    assert_file "$folder/site_diversity.cpp" "and the compiled path, used or not"
+    assert_file "$folder/Test_sites.tsv" "the site counts are published"
+    assert_file "$folder/Test_depth.tsv" "and the depth summaries"
+    assert_file "$folder/Test_diversity.tsv" "and the diversity"
+    assert_file "$folder/site_diversity.cpp" "and the compiled path, used or not, under its own name"
 
     # THE DEFAULT, END TO END. No flag was given, so the compiled path is what must have run -
     # and the published script's header is the only record of which one did.
@@ -141,21 +255,22 @@ test_basicstats_publishes_what_it_measured() {
     # chr2, which would misorder every genome whose sequences are numbered.
     assert_eq "chr1 chr2 chr10" \
         "$(awk -F'\t' 'NR > 1 && $2 == "snp" { printf "%s%s", sep, $1; sep = " " }' \
-             "$folder/sites.tsv" 2>/dev/null)" \
+             "$folder/Test_sites.tsv" 2>/dev/null)" \
         "the sequences keep the order the depth table gave them"
 
     # One number out of each table, against the corpus's own arithmetic.
-    assert_close "$(published_cell2 "$folder/sites.tsv" chr2 snp alleles)" \
+    assert_close "$(published_cell2 "$folder/Test_sites.tsv" chr2 snp alleles)" \
         "$(corpus_expects sites.chr2.snp.alleles)" "chr2 holds a triallelic and a tetrallelic site"
-    assert_close "$(published_cell2 "$folder/depth.tsv" TestSample1 chr1 depth_harmonic)" \
+    assert_close "$(published_cell2 "$folder/Test_depth.tsv" TestSample1 chr1 depth_harmonic)" \
         "$(corpus_expects depth.TestSample1.chr1.harmonic)" "the harmonic depth on chr1"
-    assert_close "$(published_cell "$folder/diversity.tsv" TestSample1 h_sum)" \
+    assert_close "$(published_cell "$folder/Test_diversity.tsv" TestSample1 h_sum)" \
         "$(corpus_expects pool.TestSample1.h_sum)" "the diversity summed over the called sites"
 
-    # The README the frame renders has to name every file, or a reader of the folder has no
-    # account of one of them.
+    # The README the frame renders has to name every file as the folder holds it, or a reader of
+    # the folder has no account of one of them.
     local readme; readme=$(cat "$folder/README.md" 2>/dev/null)
-    for name in design.tsv sites.tsv depth.tsv diversity.tsv basicstats.R site_diversity.cpp; do
+    for name in Test_design.tsv Test_sites.tsv Test_depth.tsv Test_diversity.tsv Test_neff.tsv \
+                basicstats.R site_diversity.cpp; do
         assert_contains "$readme" "\`$name\`" "the README accounts for $name"
     done
 }

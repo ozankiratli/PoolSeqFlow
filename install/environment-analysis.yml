@@ -50,7 +50,7 @@ dependencies:
   - gsl=2.7=he838d99_0
   - gxx_impl_linux-64=16.2.0=h0d273dc_7
   - gxx_linux-64=16.2.0=h23aca61_2
-  - harfbuzz=14.6.0=ha770c72_0
+  - harfbuzz=14.6.0=ha770c72_1
   - htslib=1.24=ha79157c_0
   - icu=78.3=py310h44b86e0_2
   - kernel-headers_linux-64=3.10.0=he073ed8_18
@@ -64,7 +64,7 @@ dependencies:
   - libcups=2.3.3=h7a8fb5f_6
   - libcurl=8.22.0=ha042cf0_0
   - libdeflate=1.25=hd45a770_1
-  - libedit=3.1.20250104=pl5321h373387f_1
+  - libedit=3.1.20260512=pl5321h373387f_0
   - libev=4.33=h280c20c_3
   - libexpat=2.8.5=hd2095e1_0
   - libffi=3.7.0=h81df57d_1
@@ -78,8 +78,8 @@ dependencies:
   - libgfortran5=16.2.0=h6b99dfc_7
   - libglib=2.90.0=h569388d_0
   - libgomp=16.2.0=he0feb66_7
-  - libharfbuzz=14.6.0=h23af247_0
-  - libharfbuzz-devel=14.6.0=h23af247_0
+  - libharfbuzz=14.6.0=h23af247_1
+  - libharfbuzz-devel=14.6.0=h23af247_1
   - libiconv=1.18=h0cb94f2_3
   - libjpeg-turbo=3.2.0=hb03c661_1
   - liblapack=3.11.0=11_h47877c9_openblas
@@ -90,7 +90,7 @@ dependencies:
   - libopenblas=0.3.34=pthreads_hf13c14d_2
   - libpng=1.6.59=h922cc85_0
   - libpsl=0.23.1=hd9e3e90_1
-  - libpython=3.14.8=hdc7f604_100_cp314
+  - libpython=3.14.8=hdc7f604_101_cp314
   - libsanitizer=16.2.0=h3048135_7
   - libsqlite=3.53.4=h0737f62_102
   - libssh2=1.11.1=h6154650_1
@@ -110,7 +110,7 @@ dependencies:
   - nextflow=26.04.6=h2a3209d_1
   - openjdk=25.0.2=h1602c4f_26
   - openssl=3.6.5=h781a0a9_0
-  - pandoc=3.12=ha770c72_0
+  - pandoc=3.12.1=ha770c72_0
   - pango=1.58.2=h7bb47b9_1
   - pcre2=10.47=h8b3dc9c_1
   - perl=5.44.0=1_h7cc23a3_perl5
@@ -118,7 +118,7 @@ dependencies:
   - pixman=0.46.4=h54a6638_3
   - popt=1.19=hcfc3c73_2
   - pthread-stubs=0.4=h7cc23a3_1004
-  - python=3.14.8=hcd007b5_100_cp314
+  - python=3.14.8=hcd007b5_101_cp314
   - python_abi=3.14=9_cp314
   - qpdf=12.4.1=h8a1fb3d_0
   - r-base=4.5.3=h502d0c9_3
@@ -143,6 +143,7 @@ dependencies:
   - r-future.apply=1.20.2=r45hc72bb7e_0
   - r-getopt=1.21.1=r45ha770c72_0
   - r-ggplot2=4.0.3=r45h785f33e_0
+  - r-ggrepel=0.9.8=r45h3697838_0
   - r-globals=0.19.1=r45hc72bb7e_0
   - r-glue=1.8.1=r45h54b55ab_0
   - r-gtable=0.3.6=r45hc72bb7e_1

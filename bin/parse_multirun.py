@@ -26,6 +26,11 @@ NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
 RUN_ID = "RunID"
 
+# The parameters a file name starts with, checked in a cell as bin/check_parameters.sh checks them
+# in parameters.config: letters, digits, dot, dash and underscore, the first a letter or a digit.
+FILE_NAMES = ("outputPrefix", "vcf.fileName")
+FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
 
 def rows_of(path):
     """Every non-blank, non-comment row, paired with the line it came from.
@@ -132,6 +137,22 @@ def check(path):
                 f"A value containing a comma must be quoted."
             )
             continue
+        for column in FILE_NAMES:
+            if column not in header:
+                continue
+            # A blank cell takes parameters.config's value, which step 0 checks.
+            value = fields[header.index(column)]
+            if value == "null":
+                errors.append(
+                    f"line {lineno}: {column} is 'null', which names nothing. Leave the cell "
+                    f"blank to take the value in parameters.config, or write a name"
+                )
+            elif value and not FILE_NAME.match(value):
+                errors.append(
+                    f"line {lineno}: {column} '{value}' starts the name of the files this run "
+                    f"writes; use letters, digits, dot, dash or underscore, starting with a "
+                    f"letter or a digit"
+                )
         if id_at is None:
             continue
         run_id = fields[id_at]

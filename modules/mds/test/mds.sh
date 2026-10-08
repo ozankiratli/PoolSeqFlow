@@ -5,6 +5,7 @@
 # covers: modules/mds/ modules/lib/
 # covers: test/tools/freq_corpus.py
 # covers: analysis.nf modules/mds/main.nf
+# covers: analysis/lib/rmd/
 #
 # The fixtures and helpers every analysis suite shares are in test/lib/analysis.sh.
 #
@@ -156,7 +157,7 @@ pair_cell() {
 # The options a case uses unless it is testing one of them. Every key main.nf sends, because the
 # module refuses one that is missing and a fixture that quietly omits half the contract is not
 # testing the thing that ships.
-MDS_OPTIONS='{"dimensions":2,"colorBy":"","shapeBy":"","includeIndels":false,"chromosomes":[],"binSize":100000,"workers":1,"usecpp":false}'
+MDS_OPTIONS='{"dimensions":2,"colorBy":"","shapeBy":"","labels":true,"includeIndels":false,"chromosomes":[],"binSize":100000,"workers":1,"usecpp":false}'
 
 # ---------------------------------------------------------------------------------------
 
@@ -309,6 +310,18 @@ test_the_eigenvalues_are_published_whole() {
               "two axes plotted at the default dimensions"
     assert_close "1" "$(awk -F'\t' 'NR > 1 { s += $3 } END { print s }' \
                         "$sb/run/eigenvalues.tsv")" "the signed shares sum to one"
+
+    # plotted is what mds.png draws, not what mds.tsv holds: a third axis written is not drawn,
+    # and one axis draws no plot at all. It marked every written axis until 2026-10-08.
+    local plotted='NR == 1 { for (i = 1; i <= NF; i++) h[$i] = i; next }
+                   $(h["plotted"]) == 1 { n++ } END { print n + 0 }'
+    mds_direct "$sb/three" "${MDS_OPTIONS/\"dimensions\":2/\"dimensions\":3}"
+    assert_contains "$(head -1 "$sb/three/mds.tsv")" "dim3" "three axes are written"
+    assert_eq "2" "$(awk -F'\t' "$plotted" "$sb/three/eigenvalues.tsv")" "and two of them plotted"
+    mds_direct "$sb/one" "${MDS_OPTIONS/\"dimensions\":2/\"dimensions\":1}"
+    assert_file "$sb/one/mds.tsv" "one axis is written"$'\n'"$(cat "$sb/one/out.txt")"
+    assert_no_file "$sb/one/mds.png" "and draws no plot"
+    assert_eq "0" "$(awk -F'\t' "$plotted" "$sb/one/eigenvalues.tsv")" "so no axis is plotted"
 }
 
 # THE POINTS ARE POOLS AND CARRY THE UNIT THEY BELONG TO, so a reader can see which of them
@@ -397,6 +410,45 @@ test_the_points_can_carry_a_color_and_a_shape() {
                         "a color and a shape key changed the distances"
     assert_tables_agree "$sb/run/mds.tsv" "$sb/plain/mds.tsv" \
                         "a color and a shape key changed the coordinates"
+}
+
+# THE NAMES CAN BE LEFT OFF THE PLOT, and nothing else moves when they are: a name is
+# presentation. ggrepel places each name with a fixed seed, so two runs draw the same picture;
+# without the seed it takes R's random state, which differs from run to run.
+test_the_names_can_be_left_off_the_plot() {
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
+    local sb; sb=$(guard_path "$TEST_TMPDIR/mds-labels")
+    mds_corpus "$sb"
+    mds_direct "$sb/named" "$MDS_OPTIONS"
+    mds_direct "$sb/again" "$MDS_OPTIONS"
+    mds_direct "$sb/bare" "${MDS_OPTIONS/\"labels\":true/\"labels\":false}"
+
+    local run
+    for run in named again bare; do
+        if [ ! -s "$sb/$run/mds.png" ]; then
+            fail_case "the $run run drew no plot"$'\n'"$(cat "$sb/$run/out.txt")"
+            return
+        fi
+        assert_not_contains "$(cat "$sb/$run/out.txt")" "Warning" "the $run run draws without warning"
+    done
+    cmp -s "$sb/named/mds.png" "$sb/again/mds.png" \
+        || fail_case "the names must land in the same places on every run"
+    cmp -s "$sb/named/mds.png" "$sb/bare/mds.png" \
+        && fail_case "labels = false must draw the plot without the names"
+    assert_tables_agree "$sb/named/mds.tsv" "$sb/bare/mds.tsv" \
+                        "leaving the names off moved the coordinates"
+}
+
+# A labels SETTING THAT IS NOT TRUE OR FALSE IS REFUSED. Written as the string 'false' it would
+# otherwise read as false, and the names would be gone with nothing said.
+test_a_labels_setting_that_is_not_true_or_false_is_refused() {
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
+    local sb; sb=$(guard_path "$TEST_TMPDIR/mds-labels-word")
+    mds_corpus "$sb"
+    mds_direct "$sb/run" "${MDS_OPTIONS/\"labels\":true/\"labels\":\"false\"}"
+    assert_contains "$(cat "$sb/run/out.txt")" 'analysis.modules.mds.labels is "false"' \
+                    "the refusal names the setting and what it was given"
+    assert_no_file "$sb/run/distance.tsv" "and nothing is published"
 }
 
 # SIX SHAPES AND NO MORE. ggplot2 assigns none to a seventh level and leaves those pools off the
@@ -566,10 +618,11 @@ test_mds_runs_through_the_frame() {
     assert_status 0 "$status" "mds should run; see $ANALYSIS_SB/run.out"
 
     local dir="$ANALYSIS_SB/main/Analysis/Results/mds"
-    assert_file "$dir/distance.tsv" "the distances"
-    assert_file "$dir/eigenvalues.tsv" "the eigenvalues"
-    assert_file "$dir/mds.tsv" "the coordinates"
-    assert_file "$dir/mds.R" "the script that produced them"
+    assert_file "$dir/Test_distance.tsv" "the distances, under the outputPrefix"
+    assert_file "$dir/Test_eigenvalues.tsv" "the eigenvalues"
+    assert_file "$dir/Test_mds.tsv" "the coordinates"
+    assert_file "$dir/Test_mds.png" "the plot"
+    assert_file "$dir/mds.R" "the script that produced them, under its own name"
     assert_file "$dir/allele_frequencies.cpp" "the compiled parse, shipped either way"
     assert_file "$dir/nei_distance.cpp" "and the compiled distance"
     assert_contains "$(cat "$dir/mds.R")" "nei_distance <- function" \
@@ -582,4 +635,163 @@ test_mds_runs_through_the_frame() {
     assert_contains "$(cat "$ANALYSIS_SB/run.out")" \
                     "15 of 15 pairs of pools rest on fewer than 30 shared sites" \
                     "the warning on thin pairs must reach the console of the run"
+
+    # mds lays out its own report, and the frame knits it under its header.
+    if ! have_report_tools; then
+        skip_case "the analysis environment has no pandoc and typst"; return
+    fi
+    if ! command -v pdftotext > /dev/null 2>&1 || ! command -v pdfimages > /dev/null 2>&1; then
+        skip_case "no pdftotext and pdfimages to read the report back"; return
+    fi
+    local report; report=$(analysis_published_report "$dir" mds)
+    [ -n "$report" ] || { fail_case "the report should be built; see $ANALYSIS_SB/run.out"; return; }
+    local text section; text=$(pdf_text "$report")
+    for section in "The pools on the leading axes" "How much each axis carries" \
+                   "Distances between pools" "What each distance rests on"; do
+        assert_contains "$text" "$section" "the report has its '$section' section"
+    done
+    assert_contains "$text" "Test_distance.tsv" "and names the tables as they are published"
+    assert_eq "4" "$(pdf_figures "$report")" "mds.png and the report's own three figures"
+    assert_eq "" "$(pdf_overlapping_words "$report")" "and no word is printed over another"
+    assert_eq "" "$(pdf_missing_words "$report" Eigenvalue Cumulative Drawn Pool)" \
+              "or into its neighbor"
+}
+
+# THE REPORT'S MATRIX, read out of the typst it is drawn with: no Nextflow and no PDF.
+#
+# A row of the distance matrix is that pool's pairs from distance.tsv, in mds.tsv's pool order,
+# with its own cell left empty. The expected rows are assembled here by awk from the two tables,
+# each distance to three significant digits as `%#.3g` prints it. Every row is checked, because
+# distance.tsv holds each pair once and the rows below the first are mostly the other half.
+test_mds_report_lays_out_the_distance_matrix() {
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
+    local sb; sb=$(guard_path "$TEST_TMPDIR/mds-report-md")
+    mds_corpus "$sb"
+    mds_direct "$sb/run" "$MDS_OPTIONS"
+    [ -s "$sb/run/distance.tsv" ] || { fail_case "nothing published: $(cat "$sb/run/out.txt")"; return; }
+    analysis_render_report "$sb/run" "$sb/report" "$REPO_ROOT/modules/mds/report.Rmd" md \
+        || { fail_case "the report should knit: $(cat "$sb/report/report_knit.log")"; return; }
+    local md; md=$(cat "$sb/report/report.md")
+
+    local rows row
+    rows=$(awk -F'\t' '
+        FNR == 1 { split("", c); for (i = 1; i <= NF; i++) c[$i] = i; next }
+        FILENAME ~ /mds[.]tsv$/ { order[++n] = $(c["pool"]); next }
+        { a = $(c["pool_a"]); b = $(c["pool_b"]); d[a, b] = d[b, a] = $(c["distance"]) }
+        END {
+            for (r = 1; r <= n; r++) {
+                line = "    \"" order[r] "\""
+                for (i = 1; i <= n; i++) {
+                    cell = (i == r) ? "" : sprintf("%#.3g", d[order[r], order[i]])
+                    line = line ", \"" cell "\""
+                }
+                print line ","
+            }
+        }' "$sb/run/mds.tsv" "$sb/run/distance.tsv")
+    assert_eq "6" "$(printf '%s\n' "$rows" | grep -c .)" "the corpus's six pools give six rows"
+    while IFS= read -r row; do
+        assert_contains "$md" "$row" "a pool's row is its distances in pool order: $row"
+    done <<< "$rows"
+    # The corpus's fourteen sites are every pair's, and under 30: said once rather than drawn as a
+    # matrix of one number or listed pair by pair.
+    assert_contains "$md" "**Every pair is averaged over 14 sites, fewer than 30**" \
+        "pairs that all rest on one count, under 30, are said to"
+    assert_not_contains "$md" "Shared sites" "with no matrix of the one count"
+    assert_not_contains "$md" "The pairs averaged over fewer than 30 sites" "and no list of the pairs"
+
+    # One pair on 40 sites and the last eigenvalue a rounding zero below 0, as an eigensolver
+    # leaves it about half the time.
+    local mixed="$sb/mixed"
+    cp -r "$sb/run" "$mixed"
+    awk -F'\t' -v OFS='\t' '
+        NR == 1 { for (i = 1; i <= NF; i++) h[$i] = i; print; next }
+        $(h["pool_a"]) == "TestSample1" && $(h["pool_b"]) == "TestSample2" {
+            $(h["sites"]) = 40; $(h["few_sites"]) = 0
+        }
+        { print }' "$sb/run/distance.tsv" > "$mixed/distance.tsv"
+    awk -F'\t' -v OFS='\t' 'NR == 1 { for (i = 1; i <= NF; i++) h[$i] = i; print; next }
+                            { line[NR] = $0 } END {
+                                for (r = 2; r < NR; r++) print line[r]
+                                $0 = line[NR]; $(h["eigenvalue"]) = "-3.14e-18"; print }' \
+        "$sb/run/eigenvalues.tsv" > "$mixed/eigenvalues.tsv"
+    analysis_render_report "$mixed" "$sb/mixed-report" "$REPO_ROOT/modules/mds/report.Rmd" md \
+        || { fail_case "the mixed report should knit: $(cat "$sb/mixed-report/report_knit.log")"; return; }
+    md=$(cat "$sb/mixed-report/report.md")
+    assert_contains "$md" '    "TestSample1", "", "40", "14", "14", "14", "14",' \
+        "pairs on different counts get the matrix, the 40 in its row"
+    assert_contains "$md" '    "TestSample2", "40", "", "14", "14", "14", "14",' "and in its column"
+    assert_contains "$md" "The pairs averaged over fewer than 30 sites" "and the pairs under 30 a list"
+    assert_not_contains "$md" "Every pair is averaged over" "rather than a sentence about all of them"
+    assert_contains "$md" "No eigenvalue is negative beyond rounding: -3.14e-18 is zero." \
+        "and an eigenvalue of -3.14e-18 is zero, not negative"
+}
+
+# THE REST OF THE REPORT, read back against the published tables by awk: the opening sentence,
+# every row of the coordinates and of the eigenvalues, and the figures placed. Three axes are
+# written and two drawn, so the Drawn column and the opening sentence's share are of the two.
+#
+# And 25 pools, which make four tables of columns: 7, 6, 6 and 6. Cut eight at a time and the last
+# took the remainder, 7, 7, 7 and 4, under a comment that said the tables were of even size.
+test_mds_report_reads_back_its_tables() {
+    if ! have_analysis_r; then skip_case "no analysis environment"; return; fi
+    local sb; sb=$(guard_path "$TEST_TMPDIR/mds-report-tables")
+    mds_corpus "$sb"
+    mds_direct "$sb/run" "${MDS_OPTIONS/\"dimensions\":2/\"dimensions\":3}"
+    [ -s "$sb/run/mds.tsv" ] || { fail_case "nothing published: $(cat "$sb/run/out.txt")"; return; }
+    analysis_render_report "$sb/run" "$sb/report" "$REPO_ROOT/modules/mds/report.Rmd" md \
+        || { fail_case "the report should knit: $(cat "$sb/report/report_knit.log")"; return; }
+    local md; md=$(cat "$sb/report/report.md")
+
+    local expected
+    expected=$(awk -F'\t' "$REPORT_NUMBER_AWK"'
+        NR == 1 { for (i = 1; i <= NF; i++) h[$i] = i; next }
+        $(h["plotted"]) == 1 { drawn += $(h["share_absolute"]) }
+        END {
+            printf "6 pools from 6 units. Each distance is averaged over the sites both of its "
+            printf "pools were read at, 14 a pair, and the two axes drawn carry %s of the ", rpct(drawn)
+            printf "absolute eigenvalue sum."
+        }' "$sb/run/eigenvalues.tsv")
+    assert_contains "$md" "$expected" "the opening sentence: $expected"
+
+    while IFS= read -r expected; do
+        assert_contains "$md" "$expected" "an axis as eigenvalues.tsv holds it: $expected"
+    done < <(awk -F'\t' "$REPORT_NUMBER_AWK"'
+        NR == 1 { for (i = 1; i <= NF; i++) h[$i] = i; next }
+        {
+            printf "    \"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%s\",\n", $(h["axis"]),
+                   rnum($(h["eigenvalue"]), 3), rpct($(h["share"])), rpct($(h["share_absolute"])),
+                   rpct($(h["cumulative_absolute"])), ($(h["plotted"]) == 1 ? "yes" : "")
+        }' "$sb/run/eigenvalues.tsv")
+
+    while IFS= read -r expected; do
+        assert_contains "$md" "$expected" "a pool as mds.tsv holds it: $expected"
+    done < <(awk -F'\t' "$REPORT_NUMBER_AWK"'
+        NR == 1 { for (i = 1; i <= NF; i++) { h[$i] = i; name[i] = $i }; next }
+        {
+            line = "    \"" $(h["pool"]) "\", \"" $(h["unit"]) "\""
+            for (i = 1; i <= NF; i++) {
+                if (name[i] != "pool" && name[i] != "unit" && name[i] !~ /^dim[0-9]+$/) {
+                    line = line ", \"" $i "\""
+                }
+            }
+            for (i = 1; i <= NF; i++) if (name[i] ~ /^dim[0-9]+$/) line = line ", \"" rnum($i, 3) "\""
+            print line ","
+        }' "$sb/run/mds.tsv")
+    assert_eq "4" "$(grep -c '^!\[' <<< "$md")" \
+        "mds.png and the report's own three figures are placed"
+    # A caption names the file as it is published: plain in a table's, which typst sets as text,
+    # and escaped in a figure's, which is markdown.
+    assert_contains "$md" "every axis the run wrote (Test_mds.tsv)." "a table's caption names its file"
+    assert_contains "$md" '(Test\_mds\.png, drawn from Test\_mds\.tsv and Test\_eigenvalues\.tsv)' \
+        "and so does a figure's"
+
+    mds_wide_cohort "$sb/wide" 25
+    mds_on_cohort "$sb/wide" "${MDS_OPTIONS/\"labels\":true/\"labels\":false}" "$sb/wide-run"
+    analysis_render_report "$sb/wide-run" "$sb/wide-report" "$REPO_ROOT/modules/mds/report.Rmd" md \
+        || { fail_case "the wide report should knit: $(cat "$sb/wide-report/report_knit.log")"; return; }
+    md=$(cat "$sb/wide-report/report.md")
+    local range
+    for range in "1 to 7" "8 to 13" "14 to 19" "20 to 25"; do
+        assert_contains "$md" "Pools $range of 25 as columns." "25 pools make tables of 7, 6, 6 and 6"
+    done
 }

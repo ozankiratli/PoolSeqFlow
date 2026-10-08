@@ -208,6 +208,24 @@ test_an_absent_parameter_resolves_to_its_default() {
     assert_contains "$flat" "params.vcffilter.keepLowDepthAsZero = true" \
         "and a project that sets it must still win"
     assert_contains "$flat" "params.vcffilter.minSamples = 3" "and the count with it"
+
+    # outputPrefix, for a config from before it: the VCF name it already has becomes the prefix,
+    # so nothing it publishes is renamed.
+    write_sandbox_config "$sb" '/^    outputPrefix /d' \
+        "s|^        fileName .*|        fileName        = 'Calls'|"
+    flat=$(sandbox_config_flat "$sb")
+    assert_contains "$flat" "params.outputPrefix = 'Calls'" "a config with only a VCF name is prefixed by it"
+    assert_contains "$flat" "params.vcf.fileName = 'Calls'" "and keeps the name"
+    # Neither, which the 3.0 configs never were but a hand-written one can be.
+    write_sandbox_config "$sb" '/^    outputPrefix /d' '/^    vcf {/,/^    }/d'
+    flat=$(sandbox_config_flat "$sb")
+    assert_contains "$flat" "params.outputPrefix = 'Test'" "a config with neither takes the template's"
+    assert_contains "$flat" "params.vcf.fileName = 'Test'" "and names the VCF after it"
+    write_sandbox_config "$sb" "s|^    outputPrefix .*|    outputPrefix    = 'Pfx'|" \
+        "s|^        fileName .*|        fileName        = 'Calls'|"
+    flat=$(sandbox_config_flat "$sb")
+    assert_contains "$flat" "params.outputPrefix = 'Pfx'" "and one that sets both keeps both"
+    assert_contains "$flat" "params.vcf.fileName = 'Calls'" "each as written"
 }
 
 # minSamples COUNTS A SITE'S CELLS, one per pool with reads, and step 0 is where that number is
@@ -883,7 +901,7 @@ test_the_resolver_reproduces_what_the_config_computed() {
 # It is silent when it goes wrong. The run carries 1/(2*ploidy*poolSize) while the config beside
 # the results says 0.001, and both look like ordinary numbers.
 #
-# All three of the values it derives, in one project: they are the whole set that is not a path,
+# All four of the values it derives, in one project: they are the whole set that is not a path,
 # and the paths cannot be pinned at all - dir.outputs and dir.logs carry the run id.
 test_a_pinned_derived_value_survives_the_resolver() {
     if ! have_tools; then skip_case "no conda environment"; return; fi
@@ -893,7 +911,8 @@ test_a_pinned_derived_value_survives_the_resolver() {
     write_sandbox_config "$sb" \
         's|^        sensitivity .*|        sensitivity     = 0.001|' \
         's|^    referenceFa .*|    referenceFa     = "unpacked.fasta"|' \
-        's|^        db .*|        db              = "custom.gff"|'
+        's|^        db .*|        db              = "custom.gff"|' \
+        "s|^        fileName .*|        fileName        = 'Calls'|"
     status=$(run_definitions_only "$sb")
     assert_status 0 "$status" "a pinned derived value should resolve; see $sb/run.out"
     out=$(cat "$sb/run.out")
@@ -906,6 +925,9 @@ test_a_pinned_derived_value_survives_the_resolver() {
     assert_contains "$out" "AGREE referenceFa" "which the config also states"
     assert_contains "$out" "RUN null snpEff.db=custom.gff" "and for the database name"
     assert_contains "$out" "AGREE snpEff.db" "which the config also states"
+    assert_contains "$out" "RUN null vcf.fileName=Calls" "and for the VCF's name"
+    assert_contains "$out" "RUN null outputPrefix=Test" "which leaves the prefix as it was"
+    assert_contains "$out" "AGREE vcf.fileName" "and the config states the same"
 }
 
 # The other half of the same property: a project that pins nothing must still have every one of
@@ -915,9 +937,9 @@ test_an_unpinned_derived_value_is_still_derived_per_run() {
     if ! have_tools; then skip_case "no conda environment"; return; fi
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
     local sb status out
-    sb=$(multirun_sandbox "rundefs-unpinned" 'RunID,poolSize,referenceFile,gffFile
-base,,,
-other,25,other.fasta.gz,other.gff.gz
+    sb=$(multirun_sandbox "rundefs-unpinned" 'RunID,poolSize,referenceFile,gffFile,outputPrefix
+base,,,,
+other,25,other.fasta.gz,other.gff.gz,Other
 ')
     status=$(run_definitions_only "$sb")
     assert_status 0 "$status" "the table should resolve; see $sb/run.out"
@@ -929,6 +951,31 @@ other,25,other.fasta.gz,other.gff.gz
     assert_contains "$out" "RUN other referenceFa=other.fasta" \
         "a row setting referenceFile re-derives the decompressed name"
     assert_contains "$out" "RUN other snpEff.db=other.gff" "and the database name follows its GFF"
+    assert_contains "$out" "RUN other vcf.fileName=Other" \
+        "a row setting outputPrefix names its VCF after it"
+    assert_contains "$out" "RUN base vcf.fileName=Test" "and the other run keeps the template's"
+}
+
+# A PREFIX WRITTEN WITHOUT QUOTES IS A NUMBER, and the template's VCF name, built by interpolating
+# it, is text. Compared as values the two never agreed, so the VCF name read as pinned and a row's
+# own prefix never reached its VCF, while its analysis files took it: two names for one run.
+# Found by a review on 2026-10-08, from Groovy's equality rules. The rows are numbers too: a row's
+# cell takes the type of the config's value, and text does not convert to a number.
+test_a_prefix_written_as_a_number_still_names_each_runs_vcf() {
+    if ! have_tools; then skip_case "no conda environment"; return; fi
+    if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return; fi
+    local sb status out
+    sb=$(multirun_sandbox "rundefs-numeric" 'RunID,outputPrefix
+base,
+other,2027
+')
+    write_sandbox_config "$sb" 's|^    multiRun .*|    multiRun        = true|' \
+        's|^    outputPrefix .*|    outputPrefix    = 2026|'
+    status=$(run_definitions_only "$sb")
+    assert_status 0 "$status" "the table should resolve; see $sb/run.out"
+    out=$(cat "$sb/run.out")
+    assert_contains "$out" "RUN base vcf.fileName=2026" "the run without a prefix of its own takes the number"
+    assert_contains "$out" "RUN other vcf.fileName=2027" "and a row's own prefix still names its VCF"
 }
 
 # Step 1 writes to mainDir, which every run shares, so two runs naming one reference resolve

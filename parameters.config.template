@@ -1,6 +1,11 @@
 // PoolSeqFlow parameters. The manual explains every setting: https://ozankiratli.github.io/PoolSeqFlow/
 
 params {
+    // The start of your results' names: the VCF, its frequency and depth tables, and every table,
+    // figure and report an analysis publishes. Letters, digits, '.', '_' and '-', starting with a
+    // letter or a digit.
+    outputPrefix    = 'Test'
+
     //main parameters
     threads         =  8                 // cores per task
     memory          = '24 GB'            // memory ceiling per task
@@ -110,7 +115,9 @@ params {
 
     // VCF parameters
     vcf {
-        fileName        = 'Test'
+        // The VCF's name, which its frequency and depth tables carry: outputPrefix, unless you
+        // write a name of its own here.
+        fileName        = "${params.outputPrefix}"
     }
 
     // vcf Filtering parameters

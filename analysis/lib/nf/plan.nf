@@ -94,6 +94,26 @@ def directoryLabel(Map variant) {
     return "${variant.dir.outputs}".tokenize('/').last()
 }
 
+// The outputPrefix the files published from one results directory start with. Every run sharing
+// the directory has the same one, as it is part of what step 7 shares on. Held to the rule
+// bin/check_parameters.sh applies, 'null' included.
+def targetPrefix(String label, List covered) {
+    def prefixes = covered.collect { run -> "${run.outputPrefix}".toString() }.unique()
+    if (prefixes.size() != 1) {
+        throw new IllegalStateException(
+            "the runs that share ${label} have ${prefixes.size()} outputPrefix values: " +
+            "${prefixes.join(', ')}. The plan and the run table disagree about which runs share work.")
+    }
+    def prefix = prefixes.first()
+    if (!(prefix ==~ /[A-Za-z0-9][A-Za-z0-9._-]*/) || prefix == 'null') {
+        throw new IllegalArgumentException(
+            "the outputPrefix of ${label} is '${prefix}', and it starts the name of every file " +
+            "an analysis publishes there. It may hold letters, digits, '.', '_' and '-', and " +
+            "starts with a letter or a digit.")
+    }
+    return prefix
+}
+
 // One entry per results directory the selected runs produced, and where each artifact class sits
 // inside it. Two runs whose tables are the same file share a directory and are covered once.
 // `needs` names the classes the module cannot run without.
@@ -126,6 +146,7 @@ def resultsTargets(Map plan, List runDefs, List selected, String module, List ne
             checkTargetDesign(label, rows)
             return [ label   : label,
                      module  : module,
+                     prefix  : targetPrefix(label, covered),
                      dir     : "${variant.dir.outputs}".toString(),
                      members : variant.members.collect { member -> runToken(member) },
                      selected: variant.members.findAll { member -> wanted.contains(member) }

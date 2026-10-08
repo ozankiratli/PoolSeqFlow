@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Version: 3.3.0
+# Version: 3.2.0
 # Author : Ozan L. Z. Kiratli
 # email  : ozankiratli@protonmail.com
 #
@@ -43,7 +43,7 @@
 set -e
 eval "$(conda shell.bash hook)"
 
-VERSION="3.3.0"
+VERSION="3.2.0"
 
 usage() {
     echo "Usage: $0 {install|init [multi]|check <target>|run|dryrun|dryclean|migrate_config|clean|reset|analysis <command>|version|cite|list|uninstall [all]}"
@@ -59,7 +59,7 @@ usage_analysis() {
 
 # The module store's own words.
 usage_modules() {
-    echo "Usage: $0 analysis modules {list|available|install <module> [version]|uninstall <module>}"
+    echo "Usage: $0 analysis modules {list|available|install <module> [version]|install all|uninstall <module>}"
     exit 1
 }
 
@@ -339,6 +339,12 @@ deploy_payload() {
         # analysis environment comes out first, while the manifests declaring it still exist.
         # After this the store and the environment are both back to what the release ships.
         gone=$(store_packages "$dest/analysis/modules" | cut -d= -f1 | sort -u)
+        # Less the release's own baseline, as a module uninstall leaves it: what a module
+        # declares overlaps it by design, and removing that strips the environment the release
+        # built. Read from the copy being replaced, which is what built it.
+        gone=$(printf '%s\n' "$gone" \
+               | grep -vxF "$(ANALYSIS_ENV_FILE="$dest/install/environment-analysis.yml" \
+                              baseline_packages)" || true)
         if [ -n "$gone" ] && env_exists "$ANALYSIS_ENV"; then
             echo "Removing what the installed modules added to '$ANALYSIS_ENV':"
             printf '    %s\n' $gone
@@ -354,6 +360,18 @@ deploy_payload() {
         for item in $PAYLOAD_ITEMS; do
             cp -r "$INSTALL/$item" "$dest"/
         done
+        # From a checkout, the copy also carries what git ignores inside the payload: the
+        # checkout's own module store and compiled Python, neither of which a release holds.
+        # Taken back out, so the store starts empty. Only for a checkout of its own: a release
+        # unpacked inside some other repository is not judged by that repository's rules.
+        if [ "$(git -C "$INSTALL" rev-parse --show-toplevel 2>/dev/null)" = "$here" ]; then
+            # shellcheck disable=SC2086
+            git -C "$INSTALL" ls-files -z --others --ignored --exclude-standard --directory \
+                -- $PAYLOAD_ITEMS | while IFS= read -r -d '' ignored; do
+                rm -rf "${dest:?}/$ignored"
+                echo "  left out, ignored by git here: $ignored"
+            done
+        fi
         # Stamps each copy with its own location.
         for item in $WRAPPERS; do
             sed -i "s|^POOLSEQFLOW_INSTALLED_HOME=\"\"$|POOLSEQFLOW_INSTALLED_HOME=\"$dest\"|" \
@@ -683,8 +701,51 @@ module_index_names() {
         $2 == "" || $2 == "module" { print $1 }' | sort -u
 }
 
+# One module as this installation sees it: the version `install <name>` would take, that row's
+# contract and summary, and a state that is empty when it can be installed, otherwise "installed"
+# or why this release cannot run it. One line, fields separated by MODULE_INDEX_SEP. `available`
+# and `install all` both read it, so what one lists and the other installs cannot drift.
+#
+# Nothing runnable falls back to the NEWEST row, so the state can say why rather than leaving the
+# module out. A module published for a later release is the case this exists for: being told to
+# upgrade is an answer, and a blank is not.
+module_state() {   # index name contract frame_here
+    local index="$1" name="$2" contract="$3" frame_here="$4"
+    local row best="" newest_row="" _n _k _v version row_contract row_frame row_env url sha summary
+    local state
+    while IFS= read -r row; do
+        [ -n "$row" ] || continue
+        [ -n "$newest_row" ] || newest_row="$row"
+        IFS="$MODULE_INDEX_SEP" read -r _n _k _v row_contract row_frame row_env url sha summary <<ROW
+$row
+ROW
+        if [ "$row_contract" = "$contract" ] \
+           && version_at_most "$row_frame" "$frame_here" \
+           && version_at_most "$row_env" "$VERSION"; then
+            best="$row"
+            break
+        fi
+    done < <(module_index_candidates "$index" "$name")
+    IFS="$MODULE_INDEX_SEP" read -r _n _k version row_contract row_frame row_env url sha summary <<ROW
+${best:-$newest_row}
+ROW
+    if [ -n "$contract" ] && [ "$row_contract" != "$contract" ]; then
+        state="reads $row_contract - not this release"
+    elif ! version_at_most "$row_frame" "$frame_here"; then
+        state="needs analysis frame $row_frame"
+    elif ! version_at_most "$row_env" "$VERSION"; then
+        state="needs PoolSeqFlow $row_env"
+    elif [ -d "$MODULE_STORE/$name" ]; then
+        state="installed"
+    else
+        state=""
+    fi
+    printf '%s%s%s%s%s%s%s\n' "$version" "$MODULE_INDEX_SEP" "$row_contract" "$MODULE_INDEX_SEP" \
+        "$summary" "$MODULE_INDEX_SEP" "$state"
+}
+
 available_modules() {
-    local index contract name version row_contract row_frame row_env url sha summary rows=0 state
+    local index contract name version row_contract summary rows=0 state
     index=$(mktemp)
     trap 'rm -f "$index"' RETURN
     get_module_index "$index"
@@ -710,42 +771,12 @@ available_modules() {
     # with every publish and says nothing a reader can act on. What is shown is the version
     # `install <name>` would take, asked with the same helper install_module asks with, so the
     # two cannot come to different answers.
-    local row best newest_row _n _k _v
     while IFS= read -r name; do
         [ -n "$name" ] || continue
         rows=$((rows + 1))
-        best=""; newest_row=""
-        while IFS= read -r row; do
-            [ -n "$row" ] || continue
-            [ -n "$newest_row" ] || newest_row="$row"
-            IFS="$MODULE_INDEX_SEP" read -r _n _k _v row_contract row_frame row_env url sha summary <<ROW
-$row
-ROW
-            if [ "$row_contract" = "$contract" ] \
-               && version_at_most "$row_frame" "$frame_here" \
-               && version_at_most "$row_env" "$VERSION"; then
-                best="$row"
-                break
-            fi
-        done < <(module_index_candidates "$index" "$name")
-
-        # Nothing runnable falls back to the NEWEST row, so the line can say why rather than
-        # leaving the module out. A module published for a later release is the case this
-        # exists for: being told to upgrade is an answer, and a blank is not.
-        IFS="$MODULE_INDEX_SEP" read -r _n _k version row_contract row_frame row_env url sha summary <<ROW
-${best:-$newest_row}
-ROW
-        if [ -n "$contract" ] && [ "$row_contract" != "$contract" ]; then
-            state="reads $row_contract - not this release"
-        elif ! version_at_most "$row_frame" "$frame_here"; then
-            state="needs analysis frame $row_frame"
-        elif ! version_at_most "$row_env" "$VERSION"; then
-            state="needs PoolSeqFlow $row_env"
-        elif [ -d "$MODULE_STORE/$name" ]; then
-            state="installed"
-        else
-            state=""
-        fi
+        IFS="$MODULE_INDEX_SEP" read -r version row_contract summary state <<STATE
+$(module_state "$index" "$name" "$contract" "$frame_here")
+STATE
         printf '    %-16s %-10s %-12s %s\n' "$name" "$version" "$row_contract" "$state"
         [ -z "$summary" ] || printf '    %-16s %s\n' "" "$summary"
     done < <(module_index_names "$index")
@@ -825,6 +856,77 @@ install_library() {
         "$(module_index_header "$index" index-version)" > "$(library_store)/$lib/.source"
     rm -rf "$tmp"
     return 0
+}
+
+# Every module the catalogue publishes that this release can run and that is not installed yet,
+# each through `analysis modules install <name>` in a process of its own: install_module ends the
+# script on a refusal, and one module that will not install must not stop the others. What this
+# release cannot run is named and passed over with the reason `available` gives. A module already
+# in the store is left as it is whatever the catalogue says, as install_module leaves it.
+install_every_module() {
+    local index contract frame_here name version row_contract summary state
+    local installed="" already="" refused="" passed=""
+    index=$(mktemp)
+    trap 'rm -f "$index"' RETURN
+    get_module_index "$index"
+    require_module_index_format "$index"
+    contract=$(module_contract)
+    if [ -z "$contract" ]; then
+        echo "ERROR: cannot tell which table contract this release speaks." >&2
+        echo "  Expected to read it from $INSTALL/analysis/lib/nf/modules.nf." >&2
+        echo "  This installation is incomplete; install it again." >&2
+        exit 1
+    fi
+    frame_here=$(installed_frame_version)
+
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        if [ -d "$MODULE_STORE/$name" ]; then
+            already="$already $name"
+            continue
+        fi
+        IFS="$MODULE_INDEX_SEP" read -r version row_contract summary state <<STATE
+$(module_state "$index" "$name" "$contract" "$frame_here")
+STATE
+        case $state in
+            "")
+                echo ""
+                echo "=== $name v$version"
+                if bash "$INSTALL/PoolSeqFlow" analysis modules install "$name"; then
+                    installed="$installed $name"
+                else
+                    refused="$refused $name"
+                fi
+                ;;
+            *) passed="$passed$name: $state"$'\n' ;;
+        esac
+    done < <(module_index_names "$index")
+
+    echo ""
+    if [ -z "$installed$already$refused$passed" ]; then
+        echo "The catalogue is empty. No module has been published yet."
+        return 0
+    fi
+    [ -z "$installed" ] || echo "Installed:$installed"
+    [ -z "$already" ] || echo "Already installed, left as they are:$already"
+    if [ -n "$passed" ]; then
+        echo "Published, but not for this release, so passed over:"
+        printf '%s' "$passed" | sed 's/^/    /'
+    fi
+    if [ -n "$refused" ]; then
+        echo "Not installed, for the reasons given above:$refused" >&2
+        exit 1
+    fi
+}
+
+# Takes back out the libraries one module install put in the store, when that install fails.
+# Only names it installed itself are given, so no other module can be using them.
+remove_new_libraries() {
+    local lib
+    for lib in "$@"; do
+        rm -rf "$(library_store)/${lib:?}"
+        echo "    library $lib taken back out" >&2
+    done
 }
 
 install_module() {
@@ -980,7 +1082,7 @@ ROW
     #
     # A library already in the store is left alone: it is shared, another module may be using it,
     # and every version of it published for this frame computes the same thing.
-    local libs lib
+    local libs lib added=""
     libs=$(module_libraries "$unpacked/$name/manifest.json")
     if [ -n "$libs" ]; then
         mkdir -p "$(library_store)"
@@ -990,11 +1092,14 @@ ROW
                 continue
             fi
             if ! install_library "$lib" "$index"; then
+                # shellcheck disable=SC2086
+                remove_new_libraries $added
                 echo "" >&2
                 echo "ERROR: $name v$version needs the library '$lib', which could not be" >&2
-                echo "  installed. The module was not installed." >&2
+                echo "  installed. The module was not installed, nor any library it brought." >&2
                 exit 1
             fi
+            added="$added $lib"
         done
     fi
 
@@ -1028,10 +1133,12 @@ ROW
         # shellcheck disable=SC2086
         if ! conda_install_packages "$ANALYSIS_ENV" $specs; then
             rm -rf "$dest"
+            # shellcheck disable=SC2086
+            remove_new_libraries $added
             echo "" >&2
             echo "ERROR: $name v$version needs packages this release's analysis environment" >&2
             echo "  cannot take without moving something already in it. The module was not" >&2
-            echo "  installed and the environment was not changed." >&2
+            echo "  installed, nor any library it brought, and the environment was not changed." >&2
             echo "" >&2
             echo "  That is a compatibility question between this release and this module," >&2
             echo "  not something to solve here: install a build of $name published for" >&2
@@ -1406,24 +1513,47 @@ populate_project() {
 # Every PoolSeqFlow environment and installation on the machine. A function rather than an arm
 # of its own: `uninstall all` is one command with a word after it, and the arm list has to stay
 # the same set as the usage line.
+# The wrapper links in $PREFIX/bin that point into an installation under $PREFIX/opt, whether or
+# not that installation is still there. One path a line.
+poolseqflow_links() {
+    local prefix="$1" link
+    for link in "$prefix/bin/PoolSeqFlow" "$prefix/bin/PoolSeqFlow-"*; do
+        [ -L "$link" ] || continue
+        case "$(readlink "$link")" in
+            "$prefix/opt/PoolSeqFlow-"*) printf '%s\n' "$link" ;;
+        esac
+    done
+}
+
 uninstall_every_version() {
     INSTALLED=$(poolseqflow_envs)
-    if [ -z "$INSTALLED" ]; then
-        echo "No PoolSeqFlow conda environments are installed. Nothing to do."
-        exit 0
-    fi
     PREFIX=$(install_prefix)
     PAYLOADS=$(installed_payload_versions "$PREFIX")
+    LINKS=$(poolseqflow_links "$PREFIX")
+    # Each of the three can outlive the others, and any one of them is something to remove.
+    if [ -z "$INSTALLED" ] && [ -z "$PAYLOADS" ] && [ -z "$LINKS" ]; then
+        echo "No PoolSeqFlow environment, installation or wrapper is here. Nothing to do."
+        exit 0
+    fi
     echo ""
-    echo "This removes every PoolSeqFlow conda environment on this machine:"
-    echo "$INSTALLED" | sed 's/^/    /'
+    echo "This removes everything PoolSeqFlow installed on this machine:"
+    if [ -n "$INSTALLED" ]; then
+        echo ""
+        echo "  every PoolSeqFlow conda environment:"
+        echo "$INSTALLED" | sed 's/^/    /'
+    fi
     if [ -n "$PAYLOADS" ]; then
         echo ""
-        echo "and every installed pipeline under $PREFIX/opt:"
+        echo "  every installed pipeline under $PREFIX/opt:"
         for v in $PAYLOADS; do echo "    v$v"; done
-        echo ""
-        echo "including the symlinks in $PREFIX/bin."
     fi
+    if [ -n "$LINKS" ]; then
+        echo ""
+        echo "  every wrapper in $PREFIX/bin:"
+        echo "$LINKS" | sed 's/^/    /'
+    fi
+    echo ""
+    echo "  and the tab completions."
     echo ""
     echo "Only the software goes. Your project directories - parameters.config, Data/,"
     echo "Reference/ - and everything in storageDir are untouched: none of them live"
@@ -1446,20 +1576,36 @@ uninstall_every_version() {
     esac
     # An active environment has to be stepped out of first; there may be none.
     conda deactivate 2>/dev/null || true
-    # A plain `for`, not `... | while read`: a piped loop is a subshell, where `set -e`
-    # would not stop the script. Environment names cannot contain whitespace.
+    # Every removal is attempted whatever the one before it did, so one refusal cannot leave
+    # the rest installed. Environment names cannot contain whitespace.
     for env in $INSTALLED; do
         echo "Removing $env..."
-        conda env remove -n "$env" -y
+        if ! said=$(conda env remove -n "$env" -y 2>&1); then
+            echo "  could not remove $env. conda said:" >&2
+            printf '%s\n' "$said" | grep -v '^[[:space:]]*$' | tail -n 3 | sed 's/^/    /' >&2
+        fi
     done
-    # remove_payload re-points the plain wrapper each time and removes it with the last
-    # version, so nothing is left on PATH pointing at a directory that has gone.
     for v in $PAYLOADS; do
         remove_payload "$v" || true
     done
+    # The links remove_payload could not reach: those whose installation was already gone.
+    poolseqflow_links "$PREFIX" | while IFS= read -r link; do
+        rm -f "$link" && echo "Removed $link"
+    done
     remove_completion
     echo ""
-    echo "All PoolSeqFlow environments and installations removed."
+    # What is left, read back from conda and the prefix.
+    LEFT_ENVS=$(poolseqflow_envs)
+    LEFT=$(installed_payload_versions "$PREFIX")
+    LEFT_LINKS=$(poolseqflow_links "$PREFIX")
+    if [ -n "$LEFT_ENVS$LEFT$LEFT_LINKS" ]; then
+        echo "Not everything is gone, for the reasons given above:" >&2
+        for env in $LEFT_ENVS; do echo "    conda environment $env" >&2; done
+        for v in $LEFT; do echo "    $PREFIX/opt/PoolSeqFlow-$v" >&2; done
+        [ -z "$LEFT_LINKS" ] || printf '%s\n' "$LEFT_LINKS" | sed 's/^/    /' >&2
+        exit 1
+    fi
+    echo "Everything PoolSeqFlow installed is removed."
 }
 
 case $COMMAND in
@@ -1878,8 +2024,14 @@ EOF
                             *) usage_modules ;;
                         esac
                         require_analysis_env
-                        install_module "${ANALYSIS_ARGS[1]}" "${ANALYSIS_ARGS[2]:-}"
-                        conda deactivate
+                        if [ "${ANALYSIS_ARGS[1]}" = all ]; then
+                            [ "${#ANALYSIS_ARGS[@]}" -eq 2 ] || usage_modules
+                            conda deactivate
+                            install_every_module
+                        else
+                            install_module "${ANALYSIS_ARGS[1]}" "${ANALYSIS_ARGS[2]:-}"
+                            conda deactivate
+                        fi
                         ;;
                     uninstall)
                         [ "${#ANALYSIS_ARGS[@]}" -eq 2 ] || usage_modules

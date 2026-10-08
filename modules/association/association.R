@@ -313,6 +313,17 @@ if (length(unknown) > 0) {
     stop("association.R: no phenotype called ", paste(unknown, collapse = ", "),
          ". This project declares ", paste(declared, collapse = ", "), ".")
 }
+# Each phenotype is published as association_<stem>.tsv and alleles_<stem>.tsv, the stem its name
+# with every character outside [A-Za-z0-9._-] made _.
+fitted_phenotypes <- declared[declared %in% chosen]
+stems <- gsub("[^A-Za-z0-9._-]", "_", fitted_phenotypes)
+if (anyDuplicated(stems)) {
+    shared <- stems[duplicated(stems)][1]
+    stop("association.R: the phenotypes ",
+         paste0("'", fitted_phenotypes[stems == shared], "'", collapse = " and "),
+         " would be published under one name, association_", shared, ".tsv. Rename one of ",
+         "them in the metadata.")
+}
 
 # One row per unit, in design order, so a unit's pools index the published columns rather than
 # being re-derived from the metadata.
@@ -439,11 +450,12 @@ for (entry in design$phenotypes[declared %in% chosen]) {
         if (nrow(table) == 0) next
 
         parsed <- parse_columns(as.list(table[pool_order]))
-        # Named: a unit holds the NAMES of its pools and indexes the columns with them.
-        weight <- vapply(seq_along(pool_order),
-                         function(i) n_eff(n_chrom[i], parsed$depth[, i]),
-                         numeric(nrow(parsed$depth)))
-        colnames(weight) <- pool_order
+        # Named: a unit holds the NAMES of its pools and indexes the columns with them. A matrix
+        # whatever the site count: vapply returns a bare vector for a table of one site.
+        weight <- matrix(vapply(seq_along(pool_order),
+                                function(i) n_eff(n_chrom[i], parsed$depth[, i]),
+                                numeric(nrow(parsed$depth))),
+                         nrow = nrow(parsed$depth), dimnames = list(NULL, pool_order))
 
         held <- roll_up(parsed$freq, weight, parsed$site, unit_pools)
         sites <- nrow(held$weight)
@@ -530,7 +542,9 @@ for (entry in design$phenotypes[declared %in% chosen]) {
                 message("association.R: ", short, " tested site(s) of ", entry$column, " (",
                         kind, ") were read in too few units to reach 0.05. A site read in m ",
                         "units is rearranged among those m alone and has the floor of an m-unit ",
-                        "design, 1/m!; n_observed in association.tsv says which sites these are. ",
+                        "design, 1/m!; n_observed in association_",
+                        gsub("[^A-Za-z0-9._-]", "_", entry$column), ".tsv says which sites ",
+                        "these are. ",
                         "Their p ranks them and cannot make them significant.")
             }
         }
@@ -559,24 +573,36 @@ for (entry in design$phenotypes[declared %in% chosen]) {
 sites_table <- do.call(rbind, site_rows)
 alleles_table <- do.call(rbind, allele_rows)
 
-write.table(sites_table, file.path(out, "association.tsv"), sep = "\t", quote = FALSE,
-            row.names = FALSE, na = "NA")
-
-# The allele table is a SELECTION and the site table is not. What selected it is printed in the
-# published header, so a filtered table cannot be read as the whole one.
+# Two files per phenotype: association_<stem>.tsv, every site of the sequences fitted, and
+# alleles_<stem>.tsv, the alleles of a SELECTION of them. The selection is printed in the published
+# header: the sites at perm_p reportBelow or under, and the first reportTop by perm_p, ties to the
+# larger S with every flagged site first, which is the order the report ranks them in.
 below <- if (is.null(OPTS$reportBelow)) 0.05 else as.numeric(OPTS$reportBelow)
 top <- if (is.null(OPTS$reportTop)) 1000L else as.integer(OPTS$reportTop)
-
-key <- paste(sites_table$phenotype, sites_table$kind, sites_table$chrom, sites_table$pos)
-ranked <- order(sites_table$perm_p, na.last = NA)
-keep <- unique(c(key[!is.na(sites_table$perm_p) & sites_table$perm_p <= below],
-                 key[head(ranked, top)]))
-selected <- paste(alleles_table$phenotype, alleles_table$kind,
-                  alleles_table$chrom, alleles_table$pos) %in% keep
-
-write.table(alleles_table[selected, , drop = FALSE],
-            file.path(out, "association_alleles.tsv"), sep = "\t", quote = FALSE,
-            row.names = FALSE, na = "NA")
+site_columns <- c("kind", "chrom", "pos", "k", "n_observed", "n_units", "S", "perm_p", "fdr_p",
+                  "mean_weight", "max_leverage", "zero_variance")
+allele_columns <- c("kind", "chrom", "pos", "allele", "b1", "se", "t", "p")
+# A phenotype with no site read still gets both files, as a header.
+rows_of <- function(table, phenotype, columns) {
+    if (is.null(table)) {
+        return(stats::setNames(data.frame(matrix(nrow = 0, ncol = length(columns))), columns))
+    }
+    table[table$phenotype == phenotype, columns, drop = FALSE]
+}
+for (i in seq_along(fitted_phenotypes)) {
+    sites <- rows_of(sites_table, fitted_phenotypes[i], site_columns)
+    alleles <- rows_of(alleles_table, fitted_phenotypes[i], allele_columns)
+    tested <- which(!is.na(sites$perm_p))
+    flagged <- !is.na(sites$zero_variance[tested]) & sites$zero_variance[tested] == 1
+    ranked <- tested[order(sites$perm_p[tested], -ifelse(flagged, Inf, abs(sites$S[tested])))]
+    key <- paste(sites$kind, sites$chrom, sites$pos, sep = "\r")
+    keep <- unique(c(key[tested[sites$perm_p[tested] <= below]], key[head(ranked, top)]))
+    selected <- paste(alleles$kind, alleles$chrom, alleles$pos, sep = "\r") %in% keep
+    write.table(sites, file.path(out, paste0("association_", stems[i], ".tsv")), sep = "\t",
+                quote = FALSE, row.names = FALSE, na = "NA")
+    write.table(alleles[selected, , drop = FALSE], file.path(out, paste0("alleles_", stems[i], ".tsv")),
+                sep = "\t", quote = FALSE, row.names = FALSE, na = "NA")
+}
 
 write.table(do.call(rbind, report), file.path(out, "permutations.tsv"), sep = "\t",
             quote = FALSE, row.names = FALSE, na = "NA")
@@ -610,7 +636,7 @@ write.table(do.call(rbind, lapply(design$phenotypes[declared %in% chosen], pheno
 drawable <- requireNamespace("ggplot2", quietly = TRUE)
 if (!drawable) {
     message("association.R: ggplot2 is not installed, so no figures were drawn. Every number ",
-            "they would have shown is in association.tsv and permutations.tsv.")
+            "they would have shown is in the association_ tables and permutations.tsv.")
 }
 
 # Drawn when no site was tested as well: qq.png is a declared output, and the frame refuses a

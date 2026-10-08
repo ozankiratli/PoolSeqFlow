@@ -126,11 +126,14 @@ _PoolSeqFlow() {
                             fi
                             ;;
                         4)
-                            # `modules install <name>` offers nothing: those names come from the
-                            # catalogue, over the network, and a keystroke may not fetch it.
+                            # `modules install` offers `all` and no module name: those names come
+                            # from the catalogue, over the network, and a keystroke may not fetch it.
                             if [[ $words[2] == modules && $words[3] == uninstall ]]; then
                                 modules=(${(f)"$(_poolseqflow_modules "$cmdname")"})
                                 (( $#modules )) && { _describe -t modules 'installed module' modules && ret=0 }
+                            elif [[ $words[2] == modules && $words[3] == install ]]; then
+                                _describe -t targets 'install target' \
+                                    '(all:every module published for this release)' && ret=0
                             fi
                             ;;
                     esac

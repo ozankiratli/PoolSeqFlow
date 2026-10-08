@@ -61,7 +61,7 @@ check_install_fixture() {
     rm -rf "$sb"; mkdir -p "$sb/$CHECK_ENV_NAME/bin" "$sb/system"
     # The canonical list out of the script itself, so this cannot drift from what it checks.
     local tools; tools=$(sed -n 's/^CANONICAL="\(.*\)"$/\1/p' "$REPO_ROOT/bin/check_install.sh")
-    [ -n "$tools" ] || { skip_case "could not read CANONICAL out of check_install.sh"; return 1; }
+    [ -n "$tools" ] || { fail_case "could not read CANONICAL out of check_install.sh"; return 1; }
     local t
     for t in $tools nextflow python3 awk; do
         printf '#!/bin/bash\necho "%s 1.0"\n' "$t" > "$sb/$CHECK_ENV_NAME/bin/$t"
@@ -512,6 +512,185 @@ test_uninstall_all_aborts_without_a_terminal() {
     assert_status 1 "$LAUNCHER_STATUS" "no confirmation should exit non-zero"
     assert_contains "$LAUNCHER_OUTPUT" "no confirmation received" "should say why it stopped"
     assert_not_contains "$(cat "$LAUNCHER_CONDA_LOG")" "env remove" "must remove nothing"
+}
+
+# Runs the wrapper again in the sandbox run_launcher_with_envs built, without rebuilding it, so
+# what the first run installed is still there for the second to act on.
+rerun_launcher() {
+    local sb
+    sb=$(guard_path "$TEST_TMPDIR/launcher")
+    LAUNCHER_OUTPUT=$(cd "$sb" && PATH="$sb/stub/bin:$PATH" \
+                      POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" XDG_DATA_HOME="$LAUNCHER_XDG" \
+                      ./PoolSeqFlow "$@" 2>&1)
+    LAUNCHER_STATUS=$?
+}
+
+# An installation can outlive its environment, removed by hand or never created, and it is still
+# on PATH. uninstall all used to find no environment, say "Nothing to do", and leave it there.
+test_uninstall_all_removes_an_installation_left_without_its_environment() {
+    local sb
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    assert_status 0 "$LAUNCHER_STATUS" "the install should succeed:"$'\n'"$LAUNCHER_OUTPUT"
+    sb=$(guard_path "$TEST_TMPDIR/launcher")
+    make_stub_conda "$sb/stub" base
+    rerun_launcher uninstall all <<< "y"
+    assert_status 0 "$LAUNCHER_STATUS" "uninstall all should succeed:"$'\n'"$LAUNCHER_OUTPUT"
+    assert_not_contains "$LAUNCHER_OUTPUT" "Nothing to do" "an installation is something to do"
+    assert_no_file "$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION" "the installation should be gone"
+    [ ! -L "$LAUNCHER_PREFIX/bin/PoolSeqFlow" ] || fail_case "and so should its link on PATH"
+}
+
+# What it could not remove it names, and exits non-zero, instead of closing on "All ... removed"
+# over a directory that is still there. The installation's parent is made read-only, so the
+# directory itself cannot be unlinked; root is not stopped by that, so the case cannot run as
+# root.
+test_uninstall_all_says_what_it_could_not_remove() {
+    if [ "$(id -u)" = 0 ]; then skip_case "running as root, which permissions do not stop"; return; fi
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    chmod a-w "$LAUNCHER_PREFIX/opt"
+    rerun_launcher uninstall all <<< "y"
+    chmod u+w "$LAUNCHER_PREFIX/opt"
+    assert_status 1 "$LAUNCHER_STATUS" "a removal that left something must fail:"$'\n'"$LAUNCHER_OUTPUT"
+    assert_contains "$LAUNCHER_OUTPUT" "Not everything is gone" "and say so"
+    assert_contains "$LAUNCHER_OUTPUT" "PoolSeqFlow-$PSF_VERSION" "naming what is left"
+    assert_not_contains "$LAUNCHER_OUTPUT" "Everything PoolSeqFlow installed is removed" \
+        "rather than claiming otherwise"
+}
+
+# A wrapper link whose installation is already gone, removed by hand or left by an older release,
+# is still on PATH, and it goes too. uninstall all found no environment and no installation and
+# said "Nothing to do".
+test_uninstall_all_removes_a_wrapper_whose_installation_is_gone() {
+    local sb
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    sb=$(guard_path "$TEST_TMPDIR/launcher")
+    rm -rf "$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION"
+    make_stub_conda "$sb/stub" base
+    rerun_launcher uninstall all <<< "y"
+    assert_status 0 "$LAUNCHER_STATUS" "uninstall all should succeed:"$'\n'"$LAUNCHER_OUTPUT"
+    [ ! -L "$LAUNCHER_PREFIX/bin/PoolSeqFlow" ] || fail_case "the plain wrapper should be gone"
+    [ ! -L "$LAUNCHER_PREFIX/bin/PoolSeqFlow-$PSF_VERSION" ] || fail_case "and the versioned one"
+    assert_contains "$LAUNCHER_OUTPUT" "Everything PoolSeqFlow installed is removed" "and it says so"
+}
+
+# A conda that keeps its environments in a list, removes from it, and refuses one name the way it
+# refuses the environment a shell is in.
+stateful_conda() {   # dir refused-name environment...
+    local dir="$1" refused="$2"; shift 2
+    mkdir -p "$dir/bin"
+    : > "$dir/conda.log"
+    printf '%s\n' "$@" > "$dir/envs"
+    cat > "$dir/bin/conda" <<STUB
+#!/bin/bash
+echo "\$*" >> "$dir/conda.log"
+case "\$1 \$2" in
+    "shell.bash hook") exit 0 ;;
+    "env list")
+        echo "# conda environments:"
+        while read -r e; do printf '%-24s /fake/envs/%s\n' "\$e" "\$e"; done < "$dir/envs"
+        exit 0 ;;
+    "env remove")
+        if [ "\$4" = "$refused" ]; then
+            echo "CondaEnvironmentError: Cannot remove current environment. Deactivate and run conda remove again" >&2
+            exit 1
+        fi
+        grep -vx -- "\$4" "$dir/envs" > "$dir/envs.new"; mv "$dir/envs.new" "$dir/envs"
+        exit 0 ;;
+esac
+exit 0
+STUB
+    chmod +x "$dir/bin/conda"
+}
+
+# One environment conda refuses does not stop the rest. Under set -e the first refusal used to
+# end the command, so the environments after it, the installation and its wrappers all stayed.
+# The refused one sorts first here, so everything else comes after it.
+test_uninstall_all_goes_on_past_an_environment_it_cannot_remove() {
+    local sb
+    run_launcher_with_envs "base $VERSIONED_ENV" install
+    sb=$(guard_path "$TEST_TMPDIR/launcher")
+    stateful_conda "$sb/stub" PoolSeqFlow-0.1.0 base PoolSeqFlow-0.1.0 "$VERSIONED_ENV"
+    rerun_launcher uninstall all <<< "y"
+    assert_status 1 "$LAUNCHER_STATUS" "a refusal must fail the command:"$'\n'"$LAUNCHER_OUTPUT"
+    assert_contains "$LAUNCHER_OUTPUT" "could not remove PoolSeqFlow-0.1.0" "naming the refusal"
+    assert_contains "$LAUNCHER_OUTPUT" "Cannot remove current environment" "with conda's reason"
+    assert_contains "$(cat "$sb/stub/conda.log")" "env remove -n $VERSIONED_ENV" \
+        "the environment after it is still removed"
+    assert_no_file "$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION" "and the installation"
+    [ ! -L "$LAUNCHER_PREFIX/bin/PoolSeqFlow" ] || fail_case "and its wrapper"
+    assert_contains "$LAUNCHER_OUTPUT" "conda environment PoolSeqFlow-0.1.0" \
+        "and the read-back names the one left"
+    assert_not_contains "$LAUNCHER_OUTPUT" "conda environment $VERSIONED_ENV" \
+        "and only that one"
+}
+
+# Reinstalling over an installation that has modules takes out of the analysis environment what
+# those modules added, and only that: a package the release's own environment carries stays,
+# though a module declares it too, as a module uninstall leaves it. The cleanup used to remove
+# every package the installed modules named, which for this release's modules is ggplot2,
+# future and the rest of what the environment was built with.
+test_reinstalling_leaves_the_release_baseline_in_the_analysis_environment() {
+    local dest calls
+    run_launcher_with_envs "base $VERSIONED_ENV ${VERSIONED_ENV}-analysis" install
+    assert_status 0 "$LAUNCHER_STATUS" "the first install should succeed:"$'\n'"$LAUNCHER_OUTPUT"
+    dest="$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION"
+    mkdir -p "$dest/analysis/modules/probe"
+    printf '{"name":"probe","packages":["r-ggplot2=4.0.3","r-poolfstat=3.0.0"]}\n' \
+        > "$dest/analysis/modules/probe/manifest.json"
+    printf 'name: stub\ndependencies:\n  - r-base=4.4.3=h1\n  - r-ggplot2=4.0.3=r44h1\n' \
+        > "$dest/install/environment-analysis.yml"
+    : > "$LAUNCHER_CONDA_LOG"
+    rerun_launcher install
+    assert_status 0 "$LAUNCHER_STATUS" "the reinstall should succeed:"$'\n'"$LAUNCHER_OUTPUT"
+    calls=$(grep '^remove ' "$LAUNCHER_CONDA_LOG")
+    assert_contains "$calls" "r-poolfstat" "what the module added is removed:"$'\n'"$calls"
+    assert_not_contains "$calls" "r-ggplot2" "what the release's own environment carries is not"
+}
+
+# From a checkout, install leaves out what git ignores inside the payload: the checkout's own
+# module store, where a module installed from the checkout itself lands, and compiled Python. A
+# release tarball holds neither. On 2026-10-07 a fresh install from the checkout arrived holding
+# the mds that checkout had kept since 2026-09-10, and its pins were then refused by the new
+# analysis environment.
+test_install_from_a_checkout_leaves_out_what_git_ignores() {
+    local sb dest
+    run_launcher_with_envs "base $VERSIONED_ENV" list
+    sb=$(guard_path "$TEST_TMPDIR/launcher")
+    mkdir -p "$sb/analysis/modules/stale" "$sb/bin/__pycache__"
+    printf '{"name": "stale"}\n' > "$sb/analysis/modules/stale/manifest.json"
+    : > "$sb/bin/__pycache__/helper.cpython-312.pyc"
+    printf 'analysis/modules/\n__pycache__/\n' > "$sb/.gitignore"
+    git -C "$sb" init -q || { fail_case "could not make the sandbox a checkout"; return; }
+    rerun_launcher install
+    assert_status 0 "$LAUNCHER_STATUS" "install should succeed:"$'\n'"$LAUNCHER_OUTPUT"
+    dest="$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION"
+    assert_file "$dest/poolseqflow.nf" "the pipeline should be deployed"
+    assert_no_file "$dest/analysis/modules/stale" "but not the checkout's own module store"
+    assert_no_file "$dest/bin/__pycache__" "nor its compiled Python"
+    assert_contains "$LAUNCHER_OUTPUT" "left out, ignored by git here: analysis/modules/" \
+        "and it says what it left out"
+}
+
+# A release unpacked inside some other repository installs whole: that repository's ignore rules
+# are not the release's. The outer repository here ignores analysis/ outright, which would take
+# the frame config with it.
+test_install_inside_another_repository_installs_the_whole_payload() {
+    local sb outer dest
+    run_launcher_with_envs "base $VERSIONED_ENV" list
+    sb=$(guard_path "$TEST_TMPDIR/launcher")
+    outer=$(guard_path "$TEST_TMPDIR/outer-repository")
+    rm -rf "$outer"; mkdir -p "$outer"
+    git -C "$outer" init -q || { fail_case "could not make an outer repository"; return; }
+    printf 'analysis/\n' > "$outer/.gitignore"
+    cp -a "$sb" "$outer/release"
+    LAUNCHER_OUTPUT=$(cd "$outer/release" && PATH="$outer/release/stub/bin:$PATH" \
+                      POOLSEQFLOW_PREFIX="$LAUNCHER_PREFIX" XDG_DATA_HOME="$LAUNCHER_XDG" \
+                      ./PoolSeqFlow install 2>&1)
+    LAUNCHER_STATUS=$?
+    assert_status 0 "$LAUNCHER_STATUS" "install should succeed:"$'\n'"$LAUNCHER_OUTPUT"
+    dest="$LAUNCHER_PREFIX/opt/PoolSeqFlow-$PSF_VERSION"
+    assert_file "$dest/analysis/frame.config" "the payload's analysis/ is installed whole"
+    assert_not_contains "$LAUNCHER_OUTPUT" "left out" "and nothing is left out"
 }
 
 # Four subcommands take a word of their own -- `analysis`, `check`, `init multi`, `uninstall all`.
@@ -1196,6 +1375,43 @@ test_modules_install_refuses_a_pin_over_a_version_already_installed() {
     assert_no_file "$LAUNCHER_STORE/probe/main.nf" "and the module rolled back out of the store"
 }
 
+# A module refused at its packages takes back out the libraries it installed on the way in. They
+# go in before the module and used to stay, in a store the message called unchanged: on
+# 2026-10-07 a refused association left n_eff, allele_frequencies and chunk_ranges behind, and
+# the next module installed found them "already installed" at the old version.
+test_modules_install_takes_back_its_libraries_when_refused() {
+    local dir sha_lib sha_mod
+    dir=$(guard_path "$TEST_TMPDIR/module-catalogue-library-rollback")
+    rm -rf "$dir"; mkdir -p "$dir/src/lib_probe" "$dir/src/probe"
+    printf '{"name":"lib_probe","kind":"library","version":"1.0.0"}\n' > "$dir/src/lib_probe/manifest.json"
+    printf 'probe_lib <- function() 1\n' > "$dir/src/lib_probe/lib_probe.R"
+    printf '{"name":"probe","version":"0.1.0","contract":"freq-1","packages":["r-poolfstat=3.0.0"],"libraries":["lib_probe"],"summary":"planted"}\n' \
+        > "$dir/src/probe/manifest.json"
+    printf 'nextflow.enable.dsl=2\nworkflow { println "probe ran" }\n' > "$dir/src/probe/main.nf"
+    printf '{}\n' > "$dir/src/probe/citations.json"
+    tar -czf "$dir/lib_probe-1.0.0.tar.gz" -C "$dir/src" lib_probe
+    tar -czf "$dir/probe-0.1.0.tar.gz" -C "$dir/src" probe
+    sha_lib=$(sha256sum "$dir/lib_probe-1.0.0.tar.gz" | awk '{print $1}')
+    sha_mod=$(sha256sum "$dir/probe-0.1.0.tar.gz" | awk '{print $1}')
+    {
+        printf 'name\tkind\tversion\tcontract\tframe\tenvironment\turl\tsha256\tsummary\n'
+        printf 'lib_probe\tlibrary\t1.0.0\t\t\t\t%s\t%s\tplanted library\n' \
+            "$dir/lib_probe-1.0.0.tar.gz" "$sha_lib"
+        printf 'probe\tmodule\t0.1.0\tfreq-1\t\t\t%s\t%s\tplanted probe\n' \
+            "$dir/probe-0.1.0.tar.gz" "$sha_mod"
+    } > "$dir/index.tsv"
+    LAUNCHER_MODULE_INDEX="$dir/index.tsv"
+    LAUNCHER_STORE_MODULE=""
+    STUB_CONDA_INSTALLED='r-poolfstat=2.0.0=r44h1'
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install probe
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE STUB_CONDA_INSTALLED
+    assert_status 1 "$LAUNCHER_STATUS" "a pin over a different installed version should fail"
+    assert_contains "$LAUNCHER_OUTPUT" "library lib_probe v1.0.0" "the library was installed on the way in"
+    assert_no_file "$LAUNCHER_STORE/probe" "the module is rolled back"
+    assert_no_file "$LAUNCHER_STORE/lib/lib_probe" "and so is the library it brought"
+    assert_contains "$LAUNCHER_OUTPUT" "library lib_probe taken back out" "and it says so"
+}
+
 # The same pin twice is not a disagreement: two modules may need one package at one version,
 # which is the whole reason the environment is shared.
 test_modules_install_accepts_a_pin_the_environment_already_matches() {
@@ -1236,6 +1452,75 @@ test_modules_install_asks_conda_only_for_what_is_missing() {
     # installed is the same defect wearing different clothes.
     assert_not_contains "$LAUNCHER_OUTPUT" "    r-have=1.0.0" \
         "and it is not listed as something being installed"
+}
+
+# ---------------------------------------------------------------------------------------
+# `install all` takes every module this release can run and names the rest. It reads each one
+# through module_state, the helper `available` lists with, and installs it through `install
+# <name>` in a process of its own, so neither the version chosen nor the install can differ.
+
+# `kept` is in the store, and its only row needs a newer release: a module already installed is
+# left as it is whatever the catalogue says, the order `install <name>` checks in. Listing it
+# under "passed over" would tell the user they do not have a module they do.
+test_modules_install_all_installs_what_this_release_can_run() {
+    local dir; dir=$(guard_path "$TEST_TMPDIR/module-catalogue-all")
+    rm -rf "$dir"; mkdir -p "$dir"
+    make_module_release "$dir" probe 0.1.0 > /dev/null
+    make_module_release "$dir" probe 0.2.0 > /dev/null
+    make_module_release "$dir" future 9.0.0 freq-2 > /dev/null
+    MODULE_RELEASE_ENV="99.0.0" make_module_release "$dir" later 1.0.0 > /dev/null
+    MODULE_RELEASE_ENV="99.0.0" make_module_release "$dir" kept 1.0.0 > /dev/null
+    LAUNCHER_MODULE_INDEX="$dir/index.tsv"
+    LAUNCHER_STORE_MODULE=kept
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install all
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE MODULE_RELEASE_ENV
+    assert_status 0 "$LAUNCHER_STATUS" "installing every module should work: $LAUNCHER_OUTPUT"
+    assert_contains "$(cat "$LAUNCHER_STORE/probe/.source" 2>/dev/null)" "0.2.0" \
+        "the module this release can run is installed, at the version install <name> takes"
+    assert_no_file "$LAUNCHER_STORE/future" "a module for another contract is not"
+    assert_no_file "$LAUNCHER_STORE/later" "nor one that needs a newer release"
+    assert_contains "$LAUNCHER_OUTPUT" "Installed: probe" "the summary names what it installed"
+    assert_contains "$LAUNCHER_OUTPUT" "future: reads freq-2 - not this release" \
+        "and each module passed over, with the reason available gives"
+    assert_contains "$LAUNCHER_OUTPUT" "later: needs PoolSeqFlow 99.0.0" "whichever reason it is"
+    assert_contains "$LAUNCHER_OUTPUT" "Already installed, left as they are: kept" \
+        "a module already in the store is named as installed"
+    assert_not_contains "$LAUNCHER_OUTPUT" "kept: needs PoolSeqFlow" "and not as passed over"
+    assert_contains "$(cat "$LAUNCHER_STORE/kept/manifest.json")" '"version":"0.0.1"' \
+        "and is left at the version it had"
+}
+
+# ONE MODULE THAT WILL NOT INSTALL DOES NOT STOP THE OTHERS, and the run still fails, naming it.
+# `alpha` sorts first and is refused at its packages, so `beta` is installed only if the loop
+# carries on past the refusal.
+test_modules_install_all_goes_on_past_a_module_it_cannot_install() {
+    local dir; dir=$(guard_path "$TEST_TMPDIR/module-catalogue-all-refused")
+    rm -rf "$dir"; mkdir -p "$dir"
+    make_module_release "$dir" alpha 0.1.0 freq-1 "r-poolfstat=3.0.0" > /dev/null
+    make_module_release "$dir" beta 0.1.0 > /dev/null
+    LAUNCHER_MODULE_INDEX="$dir/index.tsv"
+    LAUNCHER_STORE_MODULE=""
+    STUB_CONDA_INSTALLED='r-poolfstat=2.0.0=r44h1'
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install all
+    unset LAUNCHER_MODULE_INDEX LAUNCHER_STORE_MODULE STUB_CONDA_INSTALLED
+    assert_status 1 "$LAUNCHER_STATUS" "a module that could not be installed fails the run"
+    assert_contains "$LAUNCHER_OUTPUT" "already holds" "with the refusal itself shown"
+    assert_no_file "$LAUNCHER_STORE/alpha" "the refused module is not in the store"
+    assert_file "$LAUNCHER_STORE/beta/main.nf" "and the one after it was still installed"
+    assert_contains "$LAUNCHER_OUTPUT" "Installed: beta" "the summary names what was installed"
+    assert_contains "$LAUNCHER_OUTPUT" "Not installed, for the reasons given above: alpha" \
+        "and what was not"
+}
+
+# A version after `all` is refused rather than dropped: installing everything at the newest
+# version is not what someone who named one asked for.
+test_modules_install_all_takes_no_version() {
+    LAUNCHER_MODULE_INDEX=$(modules_catalogue)
+    run_analysis_launcher_with_envs "base ${VERSIONED_ENV}-analysis" modules install all 0.1.0
+    unset LAUNCHER_MODULE_INDEX
+    assert_status 1 "$LAUNCHER_STATUS" "a version after all should be refused"
+    assert_contains "$LAUNCHER_OUTPUT" "Usage:" "with the usage"
+    assert_no_file "$LAUNCHER_STORE/probe" "and nothing installed"
 }
 
 # The environment is shared, so what leaves with a module is its own list minus whatever the
@@ -1505,7 +1790,10 @@ test_analysis_usage_and_implementation_agree() {
 test_modules_usage_and_implementation_agree() {
     local wrapper="$REPO_ROOT/PoolSeqFlow" usage_line advertised implemented
     usage_line=$(sed -n 's/.*Usage: \$0 analysis modules {\(.*\)}.*/\1/p' "$wrapper" | head -1)
-    advertised=$(printf '%s' "$usage_line" | tr '|' '\n' | awk '{print $1}' | sort)
+    # Unique on the advertised side only: one verb may be advertised in more than one form,
+    # `install <module> [version]` and `install all`, and is still one arm. The arms stay a plain
+    # sort, so an arm written twice still fails.
+    advertised=$(printf '%s' "$usage_line" | tr '|' '\n' | awk '{print $1}' | sort -u)
     implemented=$(sed -n 's/^                    \([a-z_|]*\))$/\1/p' "$wrapper" | tr '|' '\n' | sort)
     [ -n "$advertised" ] || fail_case "could not read the modules usage line out of the wrapper"
     [ -n "$implemented" ] || fail_case "could not read any modules arm out of the wrapper"

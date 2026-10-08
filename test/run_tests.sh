@@ -507,6 +507,7 @@ fi
 SUITES_RUN=0
 CURRENT_SUITE=""
 ACTIVE_ENV="none"
+CASES_DISPATCHED=0
 for suite in "${SUITES[@]}"; do
     name=$(basename "$suite" .sh)
     matches_any "$name" "${SUITE_FILTERS[@]+"${SUITE_FILTERS[@]}"}" || continue
@@ -545,10 +546,19 @@ for suite in "${SUITES[@]}"; do
         if ! matches_any "$fn" "${CASE_FILTERS[@]+"${CASE_FILTERS[@]}"}"; then
             unset -f "$fn"; continue
         fi
+        CASES_DISPATCHED=$((CASES_DISPATCHED + 1))
         run_case "$fn"
         unset -f "$fn"
     done < <(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))
 done
+
+# A --case that matched no case ran nothing, and would otherwise report PASS with 0 passed. It
+# matches the function name, so `--case "all pending"` matches nothing where all_pending would.
+if [ "${#CASE_FILTERS[@]}" -gt 0 ] && [ "${CASES_DISPATCHED:-0}" -eq 0 ]; then
+    printf 'no case matches %s; --case matches the function name, with underscores\n' \
+        "${CASE_FILTERS[*]}" >&2
+    exit 2
+fi
 
 print_summary
 [ "$TESTS_FAILED" -eq 0 ]

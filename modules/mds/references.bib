@@ -14,7 +14,8 @@
 % defined once across the whole manual, and this module's own citation is the ordination it
 % makes of that distance.
 %
-% ggplot2 and jsonlite are credited in analysis/references.bib for the same reason.
+% ggplot2 and jsonlite are credited in analysis/references.bib for the same reason. ggrepel is
+% this module's alone, and its version is asked of R at run time.
 
 @article{gower1966mds,
   group   = {The statistics PoolSeqFlow computes},
@@ -29,4 +30,14 @@
   year    = {1966},
   doi     = {10.2307/2333639},
   note    = {The ordination this module draws: a matrix of squared distances double centered into a Gram matrix, whose leading eigenvectors are the coordinates. It is what R's own cmdscale cites and implements, and the source of the negative eigenvalues this module publishes rather than hides - they are what a distance matrix that no flat space holds exactly produces.},
+}
+
+@misc{rggrepel,
+  id        = {ggrepel},
+  name      = {ggrepel},
+  r_package = {ggrepel},
+  authors   = {Slowikowski, Kamil},
+  title     = {ggrepel: Automatically Position Non-Overlapping Text Labels with 'ggplot2'},
+  url       = {https://CRAN.R-project.org/package=ggrepel},
+  note      = {Places each pool's name in mds.png off its point and off every other name.},
 }

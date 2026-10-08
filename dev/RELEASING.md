@@ -121,13 +121,13 @@ dev/scripts/check-analysis-versions.sh --release
 
 **Must pass.** Commit anything outstanding under `analysis/` first, and not on a shallow clone: `--release` treats a question it could not answer as a failure rather than a skip.
 
-Bump whatever it names behind:
+Bump whatever it names behind, all at once:
 
 ```
-dev/scripts/bump-analysis-version.sh frame
-dev/scripts/bump-analysis-version.sh index
-dev/scripts/bump-analysis-version.sh module <name>
+dev/scripts/bump-analysis-version.sh --pending
 ```
+
+It bumps exactly what the gate names, prints each version it moved, and runs the gate again, failing unless it now passes. Commit, then run the gate with `--release` once more. One at a time is `frame`, `index` or `module <name>` in place of `--pending`.
 
 ## 5. Run the full suite
 
@@ -137,7 +137,7 @@ bash test/run_tests.sh
 
 A full run solves **both** `install/environment.yml` and `install/environment-analysis.yml` into a scratch pair, runs against those, and removes them on the way out. **Its last lines must name both as they go**, `removing the scratch environment PoolSeqFlow-suite-<pid>` and the same with `-analysis`. A run that ends without them left the pair installed, which `conda env list` shows; the next full run removes it, and any other pair whose run is no longer running, before it builds its own.
 
-Only a full run does this. `--fast` and `--suite` resolve this tree's exact version and skip what is not installed, so they stay cheap, and neither ever borrows another release's environment.
+Only a full run does this. `--fast` and `--suite` resolve this tree's exact version and never borrow another release's environment. A case that cannot run because something is not installed fails a `--suite` run, and is skipped only under `--fast`.
 
 **Reuse step 2's pair rather than solving a third one.** If step 2 ran with `--no-cleanup`, it printed two `export` lines; with those set, this run uses them and starts testing at once:
 
@@ -161,6 +161,7 @@ conda env remove -n PoolSeqFlow-update-analysis -y
 
 ```
 git add -A && git commit -m "Prep for vX.X.X"
+git push
 ```
 
 Open the merge request, review the diff as a whole, merge.
@@ -199,7 +200,7 @@ Republished means its manifest version moved since the previous tag, which is th
 
 which is six failures across the three module suites. The script refuses a version above the one the tree declares, for the same reason.
 
-No second version bump is needed -- the module's version already moved at step 2 and nothing is committed yet, and the gate compares committed state.
+**It also moves the version of every manifest whose floor it raises**, and prints each one. Those are the versions step 10 publishes, and the ones the release notes give if they name a module's version.
 
 ## 8. Run the full suite
 
@@ -213,7 +214,7 @@ bash test/run_tests.sh
 
 A full run builds a scratch pair from `install/environment.yml` and `install/environment-analysis.yml` and removes them, so it neither needs an installation nor touches one. Expect minutes before the first case. Nothing has to be installed for this.
 
-**`0 skipped` and `0 failed` are the numbers that matter.**
+**It must end in `PASS`.** A case that could not run fails the run, so a `PASS` means every case ran and passed.
 
 ### The installation, which is the other question
 
@@ -231,15 +232,18 @@ Note for step 11: having `PoolSeqFlow-<version>` installed is what makes `check-
 
 ### If it fails
 
-Nothing is published yet: undo the bump, remove what you installed, and triage on `dev`.
+Nothing is published yet: undo the bump and the floors and versions step 7 wrote into the manifests, remove what you installed, and triage on `dev`. `bump-version.sh --revert` does not touch a manifest, so the `git restore` is what puts them back.
 
 ```
 dev/scripts/bump-version.sh --revert
+git restore modules/
 PoolSeqFlow uninstall
 git switch dev
 ```
 
 ## 9. Write the CHANGELOG
+
+**Read what the moved pin does to the result.** A package version is an input to what a module computes. Step 2 moves the pin because there is only one version it may name, not because the new version is known to compute the same numbers -- so a module whose pin moved is worth a look before it is published, and worth a line in these notes if the answer changed.
 
 - `bump-version.sh` already generated the commit list under `### Commits`. 
 - **Write the release notes ABOVE that heading**.
@@ -260,13 +264,15 @@ git push
 
 ## 10. Publish the modules and libraries this release runs
 
-`publish-module.sh` builds each tarball from a commit, `HEAD` unless told otherwise, so commit the bump, the raised floors and the CHANGELOG first:
+`publish-module.sh` builds each tarball from a commit, `HEAD` unless told otherwise, so step 9's commit comes first.
 
-What the tree has that the catalogue does not:
+Every module and library, and whether the catalogue has its version:
 
 ```
 dev/scripts/publish-module.sh --list
 ```
+
+Its `UNPUBLISHED` names should be the ones step 7 printed. Anything else is a version moved since the last release that was never published, and `--all-pending` publishes that too: look at it before going on.
 
 Then all of it, modules and libraries alike:
 
@@ -274,17 +280,13 @@ Then all of it, modules and libraries alike:
 dev/scripts/publish-module.sh --all-pending
 ```
 
-It must end with `Published N:` and the names. It publishes from `HEAD` and refuses to start while any pending module differs from it. If one fails it stops, says what it published and what is still pending, and the next run starts from what is still pending, so fix what it names and run it again.
+On success it prints `Published N:` with the names, then the reminder to commit. With nothing pending it prints only `Everything in the tree is in the catalogue.`, and there is nothing to commit. Before writing anything it refuses a pending module that differs from `HEAD`, a manifest it cannot read, and a name two directories share. If a publish fails it stops and says what it published, what is still pending, and what is in the way of the next run. Fix what it names and run it again; it starts from what is still pending.
 
-Each publish writes the tarball and the catalogue row together and commits neither. **Commit them together** -- the site deploys `modules/repo/` wholesale, so a row without its file advertises a download that 404s until the next deploy. Step 11's push to `main` is what deploys them.
+Each publish writes the tarball and the catalogue row together and commits neither. **Commit them together** -- the site deploys `modules/repo/` wholesale, so a row without its file advertises a download that 404s until the next deploy. Nothing reaches the site before `release.yml` succeeds at step 11.
 
 ```bash
 git add modules/repo && git commit -m "Publish modules for vX.X.X"
 ```
-
-Every row published here carries the floor step 7 raised. The wrapper installs the newest row whose floor an installation clears, so everyone on an earlier release keeps the row they were already running and sees the new one as `needs PoolSeqFlow <version>`.
-
-**Read what the moved pin does to the result.** A package version is an input to what a module computes. Step 2 moves the pin because there is only one version it may name, not because the new version is known to compute the same numbers -- so a module whose pin moved is worth a look before it is published, and worth a CHANGELOG line if the answer changed.
 
 ## 11. Finish the release
 
@@ -292,13 +294,21 @@ Every row published here carries the floor step 7 raised. The wrapper installs t
 - `release.yml` fires on `v*`, rebuilds and verifies the archive, uses this version's CHANGELOG section as the release body, and publishes with both tarballs and `SHA256SUMS` attached. 
 - Nothing to assemble by hand.
 
+First the analysis version gate, which `release.yml` runs before it builds anything:
+
+```bash
+dev/scripts/check-analysis-versions.sh --release
+```
+
+It must print `Every analysis version is up to date with what it covers.` If it does not, stop here and fix what it names: failing it here costs a commit, failing it after the tag costs the tag. Only then:
+
 ```bash
 git push origin main
 git tag vX.X.X
 git push origin vX.X.X
 ```
 
-Watch it at <https://github.com/ozankiratli/PoolSeqFlow/actions>.
+Watch it at <https://github.com/ozankiratli/PoolSeqFlow/actions>. When it succeeds, the Documentation workflow follows on its own and deploys the site from the released commit. When it fails, the site stays as it was: no push and no merge before this point deploys anything.
 
 Once the workflow has finished, verify what it published:
 
@@ -319,6 +329,14 @@ Sync `dev` with `main` so the version bump and the CHANGELOG come back, then car
 git checkout dev
 git merge --ff-only main
 ```
+
+Then remove what the cycle left behind:
+
+```
+dev/scripts/clean-release-scratch.sh
+```
+
+It names everything it removes: the suite's kept working directories under `/tmp` and `/dev/shm`, the scratch conda environments of steps 2 and 5 and of any run that was interrupted, and `.tmp/release-review/`. It keeps `dev/logs/` and every installed `PoolSeqFlow-<version>` environment. **It refuses, and removes nothing, while any suite run or release script is still going**; let them finish and run it again. `--dry-run` lists what it would remove.
 
 ---
 

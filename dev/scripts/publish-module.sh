@@ -26,11 +26,26 @@
 # published with another, or published without the change in the tree, so the batch refuses
 # before writing anything while any pending source is uncommitted. `test/` is left out of that
 # comparison because the tarball drops it, the same rule check-analysis-versions.sh applies.
+# git status is asked for untracked files outright. Under status.showUntrackedFiles=no a plain
+# one hid a new module, which the batch reached only after publishing the ones before it, and a
+# new file in a tracked one, which it published from HEAD without. A git status that fails is
+# refused too, because its empty output reads as clean.
 #
-# It stops at the first module that fails, and reads the catalogue back to say what this run
-# published and what is still pending: a publish can fail after its row is written, so counting
-# along the loop would name the wrong module. Nothing is undone. A published module leaves the
-# pending set, so fixing the failure and running it again picks up where it stopped.
+# It also refuses, before writing anything, a manifest it cannot read a name and version from,
+# which a single publish would refuse and the pending set would otherwise skip without a word,
+# and a pending directory whose name another directory shares: a publish is asked for by name
+# and finds modules/<name> before modules/lib/<name>, so the library could never be reached and
+# the module would be attempted twice.
+#
+# Whether it stops or finishes, it reads the catalogue back to say what this run published and
+# what is still pending. A publish can fail after its row is written, so counting along the loop
+# would name the wrong module, and a run that reports success is read back as well, so a success
+# with no row behind it is reported rather than counted. A catalogue that cannot be read back
+# stops it with that said, rather than with a guess. Nothing is undone. A published module
+# leaves the pending set, so fixing the failure and running it again picks up where it stopped.
+# The report also names what would stop that: an uncommitted tarball with no row, which a
+# publish refuses to overwrite, and, once nothing is left pending, rows added without
+# #!index-version moving, which no later run would move.
 #
 # WHY A TARBALL IS A FILE HERE AND NOT SOMETHING GENERATED
 # --------------------------------------------------------
@@ -58,14 +73,17 @@ NAME="${1-}"
 REF="${2:-HEAD}"
 if [ -z "$NAME" ]; then
     echo "Usage: $0 <name> [ref]" >&2
-    echo "       $0 --list          what is in the tree and not yet in the catalogue" >&2
-    echo "       $0 --all-pending   publish all of that, from HEAD" >&2
+    echo "       $0 --list          every module and library, and whether it is published" >&2
+    echo "       $0 --all-pending   publish every one that is not, from HEAD" >&2
     exit 1
 fi
 
-# This script, absolute, for --all-pending to run once per module. Resolved before the cd below,
-# which would break a relative path.
-SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
+# This script as an absolute path, for --all-pending to run once per module. Taken before the cd
+# below, which would break a relative one, and without a cd of its own, which an exported CDPATH
+# could send to another directory. Read from standard input there is no file, which only
+# --all-pending needs, and it refuses that.
+SELF="${BASH_SOURCE[0]:-$0}"
+case $SELF in /*) ;; *) SELF="$PWD/$SELF" ;; esac
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
@@ -86,7 +104,9 @@ INDEX="$REPO_DIR/index.tsv"
 # "module" or "library", so it never matched and the check passed over everything.
 #
 # The outcome is printed rather than carried in the exit status: a header naming neither column
-# has to be told apart from a row that is simply absent, and both are non-zero.
+# has to be told apart from a row that is simply absent, and both are non-zero. A catalogue with
+# no header row at all is BADHEADER too, because read as one with no rows it would call every
+# module unpublished.
 catalogue_has() {   # name version
     awk -F'\t' -v n="$1" -v v="$2" '
         /^[[:space:]]*(#|$)/ { next }
@@ -97,48 +117,72 @@ catalogue_has() {   # name version
             next
         }
         $(at["name"]) == n && $(at["version"]) == v { print "DUPLICATE"; exit }
+        END { if (!header) print "BADHEADER" }
     ' "$INDEX"
 }
 
-# Every module and library in the tree against the catalogue, one line each: state, name, version
-# and directory, where the state is published, UNPUBLISHED or NOMANIFEST. Reads the working tree
-# rather than a ref, because this answers what is left to publish. A single publish refuses a
-# module HEAD does not have; --all-pending refuses any pending source that differs from HEAD.
+# Every module and library in the tree against the catalogue, one tab-separated line each: state,
+# name, version and directory. The state is published, UNPUBLISHED, or NOMANIFEST for a manifest
+# with no name or version to read, whether a field is missing or the JSON does not parse. Reads
+# the working tree rather than a ref, because this answers what is left to publish. A single
+# publish refuses a module HEAD does not have; --all-pending refuses any pending source that
+# differs from HEAD.
 catalogue_states() {
     local dir m_name m_version
     for dir in modules/*/ modules/lib/*/; do
         [ -f "$dir/manifest.json" ] || continue
-        read -r m_name m_version <<EOF
-$(python3 -c "import json;m=json.load(open('$dir/manifest.json'));print(m.get('name',''), m.get('version',''))")
+        IFS=$'\t' read -r m_name m_version <<EOF
+$(python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); print(m.get("name", ""), m.get("version", ""), sep="\t")' "$dir/manifest.json")
 EOF
         [ -n "$m_name" ] && [ -n "$m_version" ] || {
-            printf 'NOMANIFEST - - %s\n' "$dir"; continue; }
+            printf 'NOMANIFEST\t-\t-\t%s\n' "$dir"; continue; }
         case "$(catalogue_has "$m_name" "$m_version")" in
             BADHEADER) echo "ERROR: $INDEX has no header row naming 'name' and 'version'" >&2
                        exit 1 ;;
-            DUPLICATE) printf 'published %s %s %s\n' "$m_name" "$m_version" "$dir" ;;
-            *)         printf 'UNPUBLISHED %s %s %s\n' "$m_name" "$m_version" "$dir" ;;
+            DUPLICATE) printf 'published\t%s\t%s\t%s\n' "$m_name" "$m_version" "$dir" ;;
+            *)         printf 'UNPUBLISHED\t%s\t%s\t%s\n' "$m_name" "$m_version" "$dir" ;;
         esac
+    done
+}
+
+# The directories a catalogue_states listing on stdin puts in one state, one per line.
+dirs_in() { awk -F'\t' -v s="$1" '$1 == s { print $4 }'; }
+
+# The pending directories of a catalogue_states listing whose name another directory in it
+# shares, one per line.
+shared_names() {   # listing
+    local all dir
+    all=$(printf '%s\n' "$1" | awk -F'\t' '{ d = $4; sub(/\/$/, "", d); sub(/.*\//, "", d); print d }')
+    printf '%s\n' "$1" | dirs_in UNPUBLISHED | while IFS= read -r dir; do
+        [ "$(grep -cxF -- "$(basename "$dir")" <<< "$all")" -le 1 ] || printf '%s\n' "$dir"
     done
 }
 
 if [ "$NAME" = "--list" ]; then
     STATES=$(catalogue_states)
     LEFT=0
-    while read -r state m_name m_version dir; do
+    UNREAD=0
+    while IFS=$'\t' read -r state m_name m_version dir; do
         case $state in
-            NOMANIFEST)  printf '  %-14s %s\n' "NO MANIFEST" "$dir" ;;
+            NOMANIFEST)  printf '  %-14s %s\n' "NO MANIFEST" "$dir"
+                         UNREAD=$((UNREAD + 1)) ;;
             published)   printf '  %-14s %s %s\n' "published" "$m_name" "$m_version" ;;
             UNPUBLISHED) printf '  %-14s %s %s\n' "UNPUBLISHED" "$m_name" "$m_version"
                          LEFT=$((LEFT + 1)) ;;
         esac
     done <<< "$STATES"
     echo ""
-    if [ "$LEFT" -eq 0 ]; then
-        echo "Everything in the tree is in the catalogue."
-    else
+    [ "$UNREAD" -eq 0 ] \
+        || echo "$UNREAD with no name or version to read, which nothing publishes until it is fixed."
+    if [ "$LEFT" -gt 0 ] && [ "$UNREAD" -eq 0 ] && [ -z "$(shared_names "$STATES")" ]; then
         echo "$LEFT to publish, all of them with:  $0 --all-pending"
         echo "or one at a time with:  $0 <name>"
+    elif [ "$LEFT" -gt 0 ]; then
+        echo "$LEFT to publish, one at a time with:  $0 <name>"
+        echo "--all-pending refuses until every manifest can be read and no two directories share"
+        echo "a name, and says which."
+    elif [ "$UNREAD" -eq 0 ]; then
+        echo "Everything in the tree is in the catalogue."
     fi
     exit 0
 fi
@@ -147,16 +191,47 @@ fi
 if [ "$NAME" = "--all-pending" ]; then
     [ "$#" -eq 1 ] || { echo "ERROR: --all-pending publishes from HEAD and takes no ref" >&2
                         exit 1; }
+    [ -f "$SELF" ] || { echo "ERROR: --all-pending runs this script once per module, so it has to" >&2
+                        echo "  be run from its file rather than from standard input." >&2
+                        exit 1; }
     STATES=$(catalogue_states)
-    mapfile -t PENDING < <(printf '%s\n' "$STATES" | awk '$1 == "UNPUBLISHED" { print $4 }')
+
+    # A directory's version as the listing read it.
+    version_of() { printf '%s\n' "$STATES" | awk -F'\t' -v d="$1" '$4 == d { print $3 }'; }
+    names() { local d; for d in "$@"; do printf ' %s' "$(basename "$d")"; done; }
+
+    UNREAD=$(printf '%s\n' "$STATES" | dirs_in NOMANIFEST)
+    if [ -n "$UNREAD" ]; then
+        echo "REFUSED: no name or version can be read from the manifest in:" >&2
+        sed 's/^/    /' <<< "$UNREAD" >&2
+        echo "A single publish of each would refuse it. Nothing was published." >&2
+        exit 1
+    fi
+
+    PENDING=()
+    PENDING_LIST=$(printf '%s\n' "$STATES" | dirs_in UNPUBLISHED)
+    [ -z "$PENDING_LIST" ] || mapfile -t PENDING <<< "$PENDING_LIST"
     if [ "${#PENDING[@]}" -eq 0 ]; then
         echo "Everything in the tree is in the catalogue."
         exit 0
     fi
 
+    SHARED=$(shared_names "$STATES")
+    if [ -n "$SHARED" ]; then
+        echo "REFUSED: another directory has the name of each of these, and a publish asked for" >&2
+        echo "that name finds modules/<name> before modules/lib/<name>:" >&2
+        sed 's/^/    /' <<< "$SHARED" >&2
+        echo "Rename one of each pair. Nothing was published." >&2
+        exit 1
+    fi
+
     UNCOMMITTED=()
     for dir in "${PENDING[@]}"; do
-        [ -z "$(git status --porcelain -- "$dir" ":(exclude)${dir}test")" ] || UNCOMMITTED+=("$dir")
+        changed=$(git status --porcelain --untracked-files=all -- "$dir" ":(exclude)${dir}test") || {
+            echo "ERROR: git status failed for $dir, so whether it matches HEAD is unknown." >&2
+            echo "Nothing was published." >&2
+            exit 1; }
+        [ -z "$changed" ] || UNCOMMITTED+=("$dir")
     done
     if [ "${#UNCOMMITTED[@]}" -gt 0 ]; then
         echo "REFUSED: a publish builds from HEAD, and these differ from it:" >&2
@@ -165,39 +240,82 @@ if [ "$NAME" = "--all-pending" ]; then
         exit 1
     fi
 
-    names() { local d; for d in "$@"; do printf ' %s' "$(basename "$d")"; done; }
+    # The pending directories the catalogue still has no row for. Fails when the catalogue cannot
+    # be read, which an empty answer would report as everything published.
+    still_pending() {
+        local listing left dir
+        listing=$(catalogue_states) || return 1
+        left=$(printf '%s\n' "$listing" | dirs_in UNPUBLISHED)
+        for dir in "${PENDING[@]}"; do
+            grep -qxF -- "$dir" <<< "$left" && printf '%s\n' "$dir"
+        done
+        return 0
+    }
+    unreadable_now() {
+        echo "The catalogue could not be read back, so what this run published is unknown. Look at" >&2
+        echo "$INDEX before committing anything." >&2
+        exit 1
+    }
+
+    # What this run published and what is still pending, read back from the catalogue, and what
+    # would stop the next run from finishing the job.
+    read_back() {
+        local left dir tarball index_diff got=() rest=() stray=()
+        left=$(still_pending) || unreadable_now
+        for dir in "${PENDING[@]}"; do
+            if grep -qxF -- "$dir" <<< "$left"; then
+                rest+=("$dir")
+                tarball="$REPO_DIR/$(basename "$dir")-$(version_of "$dir").tar.gz"
+                if [ -e "$tarball" ] && ! git cat-file -e "HEAD:$tarball" 2> /dev/null; then
+                    stray+=("$tarball")
+                fi
+            else
+                got+=("$dir")
+            fi
+        done
+        [ "${#got[@]}" -eq 0 ] || echo "Published by this run, and uncommitted:$(names "${got[@]}")" >&2
+        [ "${#rest[@]}" -eq 0 ] || echo "Still pending:$(names "${rest[@]}")" >&2
+        if [ "${#stray[@]}" -gt 0 ]; then
+            echo "Left uncommitted with no catalogue row, so nothing advertises them, and a publish" >&2
+            echo "will not overwrite them. Delete them first:" >&2
+            printf '    %s\n' "${stray[@]}" >&2
+        fi
+        # With modules left, the run asked for below moves #!index-version as it publishes them.
+        index_diff=$(git diff HEAD -- "$INDEX" 2> /dev/null || true)
+        if [ "${#got[@]}" -gt 0 ] && [ "${#rest[@]}" -eq 0 ] \
+           && ! grep -q '^+#![[:space:]]*index-version:' <<< "$index_diff"; then
+            echo "Rows were added and #!index-version did not move, and no later run will move it:" >&2
+            echo "    dev/scripts/bump-analysis-version.sh index" >&2
+        fi
+        [ "${#rest[@]}" -eq 0 ] || {
+            echo "Fix what it names and run --all-pending again, which starts from what is still" >&2
+            echo "pending." >&2; }
+    }
 
     echo "Publishing ${#PENDING[@]} from HEAD, $(git log -1 --format='%h %s')"
     echo ""
-    for src in "${PENDING[@]}"; do
-        name=$(basename "$src")
+    for dir in "${PENDING[@]}"; do
+        name=$(basename "$dir")
         if ! PUBLISH_MODULE_BATCH=1 bash "$SELF" "$name" HEAD; then
-            # Read back from the catalogue, because a publish can fail after its row is written:
-            # in the index bump, or printing to a closed pipe.
-            STILL=$(catalogue_states | awk '$1 == "UNPUBLISHED" { print $4 }')
-            DONE=()
-            for dir in "${PENDING[@]}"; do
-                grep -qxF -- "$dir" <<< "$STILL" || DONE+=("$dir")
-            done
             echo "" >&2
             echo "STOPPED at $name." >&2
-            [ "${#DONE[@]}" -eq 0 ] \
-                || echo "Published by this run, and uncommitted:$(names "${DONE[@]}")" >&2
-            if [ -n "$STILL" ]; then
-                mapfile -t REST <<< "$STILL"
-                echo "Still pending:$(names "${REST[@]}")" >&2
-            fi
-            echo "Fix what it names and run --all-pending again, which starts from what is still" >&2
-            echo "pending." >&2
+            read_back
             exit 1
         fi
         echo ""
     done
 
+    STILL=$(still_pending) || unreadable_now
+    if [ -n "$STILL" ]; then
+        echo "Every publish reported success, but the catalogue has no row for some of them." >&2
+        read_back
+        exit 1
+    fi
     echo "Published ${#PENDING[@]}:$(names "${PENDING[@]}")"
     echo ""
-    echo "Nothing is committed. The site deploys $REPO_DIR/ on a push to main, so the tarballs"
-    echo "and the rows that advertise them have to land in the same commit."
+    echo "Nothing is committed. The site deploys $REPO_DIR/ whole, after a release or when the"
+    echo "Documentation workflow is run by hand, so the tarballs and the rows that advertise them"
+    echo "have to land in the same commit."
     exit 0
 fi
 
@@ -219,8 +337,17 @@ field() {
     git show "$REF:$SRC/manifest.json" \
         | python3 -c "import json,sys; print(json.load(sys.stdin).get('$1',''))"
 }
+MANIFEST_NAME=$(field name)
 VERSION=$(field version)
 KIND=$(field kind); [ -n "$KIND" ] || KIND="module"
+
+# Published under its directory's name. --list looks a row up by the manifest's name, and the
+# frame refuses to run a module whose two names differ.
+[ "$MANIFEST_NAME" = "$NAME" ] || {
+    echo "ERROR: $SRC/manifest.json calls it '$MANIFEST_NAME', but it is published as '$NAME'," >&2
+    echo "  its directory. The catalogue row takes the directory's name while --list looks for the" >&2
+    echo "  manifest's, and the frame refuses a module whose two names differ." >&2
+    exit 1; }
 CONTRACT=$(field contract)
 FRAME=$(field frame)
 ENVIRONMENT=$(field environment)
@@ -239,13 +366,31 @@ case "$SUMMARY$VERSION$CONTRACT$FRAME$ENVIRONMENT" in
     *$'\t'*) echo "ERROR: a manifest field contains a tab" >&2; exit 1 ;;
 esac
 
+# The catalogue's header, checked before anything is written: the row below is written in this
+# column order, so the header has to declare the same one.
+HEADER=$(grep -v '^#' "$INDEX" | grep -v '^[[:space:]]*$' | head -1 || true)
+EXPECTED=$'name\tkind\tversion\tcontract\tframe\tenvironment\turl\tsha256\tsummary'
+[ "$HEADER" = "$EXPECTED" ] || {
+    echo "ERROR: $INDEX's header is not the layout this script writes:" >&2
+    printf '  found:    %s\n  expected: %s\n' "$HEADER" "$EXPECTED" >&2
+    exit 1; }
+
+# A tarball with a row, or one already committed, may have been deployed and installed. Only one
+# with neither is a publish that stopped before its row.
 TARBALL="$REPO_DIR/$NAME-$VERSION.tar.gz"
 if [ -e "$TARBALL" ]; then
     echo "ERROR: $TARBALL already exists." >&2
     echo "" >&2
-    echo "A published version is never rewritten: somebody may have installed it, and its" >&2
-    echo "checksum is in the catalogue. Bump the module's version and publish that:" >&2
-    echo "    dev/scripts/bump-analysis-version.sh module $NAME" >&2
+    if [ "$(catalogue_has "$NAME" "$VERSION")" = "DUPLICATE" ] \
+       || git cat-file -e "HEAD:$TARBALL" 2> /dev/null; then
+        echo "A published version is never rewritten: somebody may have installed it." >&2
+        echo "Bump the module's version and publish that:" >&2
+        echo "    dev/scripts/bump-analysis-version.sh module $NAME" >&2
+    else
+        echo "It has no catalogue row and was never committed, so nothing advertised it and no" >&2
+        echo "installation can have taken it: it is left over from a publish that did not finish." >&2
+        echo "Delete it and publish again." >&2
+    fi
     exit 1
 fi
 
@@ -292,15 +437,8 @@ tar --sort=name --format=gnu --owner=0 --group=0 --numeric-owner \
 SHA=$(sha256sum "$TARBALL" | awk '{print $1}')
 URL="https://ozankiratli.github.io/PoolSeqFlow/$PUBLISHED_PATH/$(basename "$TARBALL")"
 
-# Appended in the header's column order, which is the order the file declares and not one this
-# script decides. Read back and compared before anything else is written.
-HEADER=$(grep -v '^#' "$INDEX" | grep -v '^[[:space:]]*$' | head -1)
-EXPECTED=$'name\tkind\tversion\tcontract\tframe\tenvironment\turl\tsha256\tsummary'
-[ "$HEADER" = "$EXPECTED" ] || {
-    echo "ERROR: $INDEX's header is not the layout this script writes:" >&2
-    printf '  found:    %s\n  expected: %s\n' "$HEADER" "$EXPECTED" >&2
-    exit 1; }
-
+# A last line without its newline would put this row on the end of the one before it.
+[ -z "$(tail -c 1 "$INDEX")" ] || echo >> "$INDEX"
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$NAME" "$KIND" "$VERSION" "$CONTRACT" "$FRAME" "$ENVIRONMENT" "$URL" "$SHA" "$SUMMARY" >> "$INDEX"
 
@@ -314,5 +452,6 @@ echo "  index   : row added, #!index-version bumped"
 # --all-pending says the rest once, after its last module.
 [ -z "${PUBLISH_MODULE_BATCH:-}" ] || exit 0
 echo ""
-echo "Nothing is committed. The site deploys $REPO_DIR/ on a push to main, so the tarball"
-echo "and the row that advertises it have to land in the same commit."
+echo "Nothing is committed. The site deploys $REPO_DIR/ whole, after a release or when the"
+echo "Documentation workflow is run by hand, so the tarball and the row that advertises it have"
+echo "to land in the same commit."

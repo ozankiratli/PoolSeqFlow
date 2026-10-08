@@ -5,6 +5,7 @@
 # covers: analysis/citations.json citations/citations.json citations/references.bib
 # covers: analysis/references.bib manual/references.bib
 # covers: parameters.config.template metadata.csv.template multi-run.csv.example
+# covers: .github/workflows/docs.yml .github/workflows/release.yml
 
 # `nextflow lint` was brought to zero warnings during the post-2.2.0 audit. Held there
 # deliberately: once the count is zero a new warning is a signal rather than noise.
@@ -79,6 +80,88 @@ test_python_helpers_compile() {
     done < <(find "$REPO_ROOT/bin" "$REPO_ROOT/test/tools" -name '*.py' -type f 2>/dev/null)
 }
 
+# EVERY PYTHON THE SUITE RUNS IMPORTS THE STANDARD LIBRARY AND THE REPOSITORY'S OWN SCRIPTS, AND
+# NOTHING ELSE. The static suites run on whichever python3 the shell finds, which is the active
+# conda environment's when there is one, and neither PoolSeqFlow environment carries a Python
+# package the pipeline does not need. The site case imported PyYAML, passed every run made with
+# the system Python, which has it, and failed the 3.3.0 prep run on 2026-10-08, launched with the
+# analysis environment active; this is the case that would have caught it first.
+#
+# Read: every .py under bin/, test/tools/ and dev/scripts/, and the Python each suite and module
+# test hands python3 in a heredoc or with -c, in single or double quotes. A snippet the shell's
+# quoting leaves unparsable is read for its import lines instead of skipped. The scan is first shown
+# one planted import of each form, and has to find at least twenty snippets, so one that stopped
+# reading what it looks at fails here. The double-quoted form was missing until a review on
+# 2026-10-08 planted one and the case passed.
+test_every_python_the_suite_runs_imports_the_standard_library_alone() {
+    local out
+    out=$(cd "$REPO_ROOT" && python3 - 2>&1 <<'PY'
+import ast, glob, pathlib, re, sys
+
+if not hasattr(sys, "stdlib_module_names"):
+    print("python3 is %s, and the scan needs 3.10 or later" % sys.version.split()[0])
+    sys.exit(0)
+STANDARD = set(sys.stdlib_module_names)
+OWN = {p.stem for d in ("bin", "test/tools", "dev/scripts") for p in pathlib.Path(d).glob("*.py")}
+HEREDOC = re.compile(r"python3?\b[^\n]*<<-?\s*['\"]?(\w+)['\"]?\n(.*?)\n\s*\1\n", re.S)
+DASH_C = re.compile(r"python3?\s+-c\s+'([^']*)'", re.S)
+DASH_C_DOUBLE = re.compile(r'python3?\s+-c\s+"((?:[^"\\]|\\.)*)"', re.S)
+IMPORT_LINE = re.compile(r"^\s*(?:import\s+([\w.]+(?:\s*,\s*[\w.]+)*)|from\s+(\w+)[\w.]*\s+import\b)", re.M)
+
+def imports(source):
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        names = set()
+        for listed, origin in IMPORT_LINE.findall(source):
+            names |= {origin} if origin else {n.strip().split(".")[0] for n in listed.split(",")}
+        return names - STANDARD - OWN
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names |= {alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            names.add(node.module.split(".")[0])
+    return names - STANDARD - OWN
+
+def embedded(text):
+    for match in HEREDOC.finditer(text):
+        yield match.group(2)
+    for match in DASH_C.finditer(text):
+        yield match.group(1)
+    for match in DASH_C_DOUBLE.finditer(text):
+        yield match.group(1).replace('\\"', '"')
+
+# Spelled with a placeholder, or the scan of this very file would find the planted import in it.
+planted = ("x=$(PYTHON - <<'PY'\nimport yaml\nPY\n)\n"
+           "y=$(PYTHON -c 'from numpy import x; f(\"$z\")')\n"
+           "z=$(PYTHON -c \"import requests; print(\\\"$z\\\")\")\n").replace("PYTHON", "python3")
+seen = set()
+for source in embedded(planted):
+    seen |= imports(source)
+if seen != {"yaml", "numpy", "requests"}:
+    print("the scan found %s in three planted imports, not yaml, numpy and requests" % sorted(seen))
+    sys.exit(0)
+
+problems, snippets = [], 0
+for path in sorted(glob.glob("bin/*.py") + glob.glob("test/tools/*.py") + glob.glob("dev/scripts/*.py")):
+    for name in sorted(imports(open(path).read())):
+        problems.append("%s imports %s" % (path, name))
+for path in sorted(glob.glob("test/suites/*.sh") + glob.glob("test/lib/*.sh")
+                   + glob.glob("modules/*/test/*.sh")):
+    for source in embedded(open(path).read()):
+        snippets += 1
+        for name in sorted(imports(source)):
+            problems.append("%s runs Python importing %s" % (path, name))
+if snippets < 20:
+    problems.append("only %d Python snippets found in the suites; the scan has stopped reading them"
+                    % snippets)
+print("\n".join(problems) if problems else "OK")
+PY
+)
+    assert_eq "OK" "$out" "nothing the suite runs needs a Python package the environments lack"
+}
+
 # bin/__pycache__ was tracked, and shipped inside the release tarball, until it was caught.
 # Checked against the index rather than the archive, because test/ is export-ignore'd and
 # bytecode committed there would never show up in a tarball listing.
@@ -119,7 +202,7 @@ working_tree_archive() {
 test_release_archive_excludes_development_material() {
     local listing
     listing=$(working_tree_archive)
-    [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
+    [ -n "$listing" ] || { fail_case "git archive produced nothing"; return; }
     local unwanted
     for unwanted in "test/" "dev/" "docs/" ".github/" "mkdocs.yml" "__pycache__" \
                     ".claude/" "CLAUDE.md"; do
@@ -162,7 +245,7 @@ test_glob_loops_publishing_artifacts_are_guarded() {
 # missing for exactly as long as it is under review.
 test_the_release_archive_gate_passes() {
     local tree out log status
-    tree=$(working_tree_tree) || { skip_case "could not write a working tree object"; return; }
+    tree=$(working_tree_tree) || { fail_case "could not write a working tree object"; return; }
     out=$(guard_path "$TEST_TMPDIR/gate-dist")
     rm -rf "$out"
     log=$(cd "$REPO_ROOT" && bash dev/scripts/verify-archive.sh "$tree" "$out" 2>&1)
@@ -180,7 +263,7 @@ test_the_module_catalogue_never_reaches_a_release() {
     # now, and check-attr reports `unspecified` for a file inside one even though git archive
     # excludes it - `test/run_tests.sh` answers the same way. What matters is the tarball.
     local listing; listing=$(working_tree_archive)
-    [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
+    [ -n "$listing" ] || { fail_case "git archive produced nothing"; return; }
     assert_not_contains "$listing" "modules/repo" \
         "the catalogue and the tarballs beside it must not reach a release"
     # And the release must not be able to fall back to a copy of its own: a frozen catalogue
@@ -269,6 +352,76 @@ test_the_analysis_version_scripts_are_there_and_runnable() {
     assert_contains "$out" "frame" "usage should name the frame target"
     assert_contains "$out" "index" "and the index target"
     assert_contains "$out" "module" "and the module target"
+    assert_contains "$out" "--pending" "and the way to bump all of them"
+}
+
+# EVERYTHING BEHIND, BUMPED AT ONCE. Step 4 of a release named six targets behind on 2026-10-08,
+# one bump command each; Z asked for one command. --pending takes its list from the gate's own
+# "bump it:" lines, so it cannot bump something the gate did not name or miss something it did,
+# and it runs the gate again before it says it is done.
+#
+# In a repository of its own holding both scripts, as the gate reads the tree around it. A module,
+# a library, the frame and a catalogue row are each changed without a bump; one --pending must move
+# all four and leave the gate passing, a second must change nothing, and a gate that cannot run
+# must stop it before it bumps anything.
+test_every_pending_analysis_version_is_bumped_at_once() {
+    local sb out status today
+    sb=$(guard_path "$TEST_TMPDIR/version-pending")
+    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/nf" "$sb/modules/demo" \
+                           "$sb/modules/lib/shared" "$sb/modules/repo"
+    cp "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$REPO_ROOT/dev/scripts/bump-analysis-version.sh" \
+       "$sb/dev/scripts/"
+    printf 'frame {}\n' > "$sb/analysis/frame.config"
+    printf '20260101.001\n' > "$sb/analysis/frame.version"
+    printf 'def one() { 1 }\n' > "$sb/analysis/lib/nf/thing.nf"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules/repo/index.tsv"
+    printf '{"name": "demo", "version": "20260101.001"}\n' > "$sb/modules/demo/manifest.json"
+    printf 'workflow {}\n' > "$sb/modules/demo/main.nf"
+    printf '{"name": "shared", "kind": "library", "version": "20260101.001"}\n' \
+        > "$sb/modules/lib/shared/manifest.json"
+    printf 'shared <- function() 1\n' > "$sb/modules/lib/shared/shared.R"
+    (cd "$sb" && git init -q . && git add -A \
+        && GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
+           git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm base \
+               --date='2026-01-01T00:00:00Z') > /dev/null 2>&1 \
+        || { fail_case "could not build a repository to bump in"; return; }
+
+    printf 'process P {}\n' >> "$sb/modules/demo/main.nf"
+    printf 'shared <- function() 2\n' >> "$sb/modules/lib/shared/shared.R"
+    printf 'def two() { 2 }\n' >> "$sb/analysis/lib/nf/thing.nf"
+    printf 'demo\tmodule\t20260101.001\n' >> "$sb/modules/repo/index.tsv"
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
+    assert_eq "4" "$(grep -c 'bump it:' <<< "$out")" "the gate names all four behind:"$'\n'"$out"
+
+    today=$(date -u +%Y%m%d)
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/bump-analysis-version.sh --pending 2>&1) || status=$?
+    assert_status 0 "$status" "one --pending bumps them all and the gate then passes:"$'\n'"$out"
+    assert_contains "$out" "module demo: 20260101.001 -> $today.001" "the module, named as it moved"
+    assert_contains "$out" "module shared: 20260101.001 -> $today.001" "the library"
+    assert_contains "$out" "frame: 20260101.001 -> $today.001" "the frame"
+    assert_contains "$out" "index: 20260101.001 -> $today.001" "and the catalogue's header"
+    assert_contains "$out" "up to date" "and says the gate passes"
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1) \
+        || fail_case "the gate does not pass after --pending:"$'\n'"$out"
+
+    local before; before=$(cd "$sb" && cat analysis/frame.version modules/*/manifest.json \
+                                             modules/lib/*/manifest.json modules/repo/index.tsv)
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/bump-analysis-version.sh --pending 2>&1) || status=$?
+    assert_status 0 "$status" "a second --pending succeeds"
+    assert_contains "$out" "Nothing is behind" "having nothing to do"
+    assert_eq "$before" "$(cd "$sb" && cat analysis/frame.version modules/*/manifest.json \
+                                         modules/lib/*/manifest.json modules/repo/index.tsv)" \
+        "and changes nothing"
+
+    printf 'process Q {}\n' >> "$sb/modules/demo/main.nf"
+    rm "$sb/dev/scripts/check-analysis-versions.sh"
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/bump-analysis-version.sh --pending 2>&1) || status=$?
+    assert_status 1 "$status" "with no gate to ask it stops"
+    assert_contains "$out" "named nothing to bump" "saying the gate gave it nothing"
+    assert_contains "$(cat "$sb/modules/demo/manifest.json")" "\"$today.001\"" "and bumps nothing"
 }
 
 # THE FRAME VERSION MOVES WITH A CHANGE AND NEVER WITH THE CALENDAR.
@@ -303,9 +456,9 @@ test_the_frame_version_moves_with_a_change_and_not_with_the_calendar() {
     # commit date and this fixture would otherwise say the frame changed today.
     (cd "$sb" && git init -q . && git add -A \
         && GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
-           git -c user.email=t@t -c user.name=t commit -qm base \
+           git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm base \
                --date='2026-01-01T00:00:00Z') > /dev/null 2>&1 \
-        || { skip_case "could not build a repository to check in"; return; }
+        || { fail_case "could not build a repository to check in"; return; }
 
     local out
     out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1)
@@ -368,14 +521,14 @@ test_the_release_gate_refuses_what_it_cannot_check() {
     # Two commits, because a shallow clone of a one-commit repository is not shallow.
     (cd "$sb/origin" && git init -q . && git add -A \
         && GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
-           git -c user.email=t@t -c user.name=t commit -qm base --date='2026-01-01T00:00:00Z' \
+           git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm base --date='2026-01-01T00:00:00Z' \
         && printf 'def two() { 2 }\n' >> analysis/lib/nf/thing.nf \
         && printf '20260102.001\n' > analysis/frame.version \
         && git add -A \
         && GIT_COMMITTER_DATE='2026-01-02T00:00:00Z' \
-           git -c user.email=t@t -c user.name=t commit -qm second --date='2026-01-02T00:00:00Z') \
+           git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm second --date='2026-01-02T00:00:00Z') \
         > /dev/null 2>&1 \
-        || { skip_case "could not build a repository to check in"; return; }
+        || { fail_case "could not build a repository to check in"; return; }
 
     # The control: with history and a clean tree it answers, and answers yes.
     out=$(cd "$sb/origin" && bash dev/scripts/check-analysis-versions.sh --release 2>&1)
@@ -384,7 +537,7 @@ test_the_release_gate_refuses_what_it_cannot_check() {
 
     # A shallow clone: every check would pass by having asked nothing.
     if ! git clone -q --depth 1 "file://$sb/origin" "$sb/shallow" > /dev/null 2>&1; then
-        skip_case "could not make a shallow clone"
+        fail_case "could not make a shallow clone"
     else
         out=$(cd "$sb/shallow" && bash dev/scripts/check-analysis-versions.sh --release 2>&1 || true)
         assert_contains "$out" "REFUSED" "a shallow clone must be refused:"$'\n'"$out"
@@ -424,14 +577,14 @@ test_a_committed_module_change_without_a_version_bump_is_caught() {
     printf 'h <- function() 1\n' > "$sb/modules/lib/helper/helper.R"
     (cd "$sb" && git init -q . && git add -A \
         && GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
-           git -c user.email=t@t -c user.name=t commit -qm base --date='2026-01-01T00:00:00Z') \
+           git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm base --date='2026-01-01T00:00:00Z') \
         > /dev/null 2>&1 \
-        || { skip_case "could not build a repository to check in"; return; }
+        || { fail_case "could not build a repository to check in"; return; }
 
     # Commit a change to what the module computes, and do not move its version.
     (cd "$sb" && printf 'process P {}\n' >> modules/demo/main.nf && git add -A \
         && GIT_COMMITTER_DATE='2026-01-02T00:00:00Z' \
-           git -c user.email=t@t -c user.name=t commit -qm 'change demo' \
+           git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm 'change demo' \
                --date='2026-01-02T00:00:00Z') > /dev/null 2>&1
     out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
     assert_contains "$out" "module 'demo'" \
@@ -442,7 +595,7 @@ test_a_committed_module_change_without_a_version_bump_is_caught() {
         && printf '{"name": "demo", "version": "20260103.001"}\n' > modules/demo/manifest.json \
         && git add -A \
         && GIT_COMMITTER_DATE='2026-01-03T00:00:00Z' \
-           git -c user.email=t@t -c user.name=t commit -qm 'change demo and bump' \
+           git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm 'change demo and bump' \
                --date='2026-01-03T00:00:00Z') > /dev/null 2>&1
     out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
     assert_not_contains "$out" "module 'demo'" \
@@ -452,7 +605,7 @@ test_a_committed_module_change_without_a_version_bump_is_caught() {
     # so nothing there reaches a published module.
     (cd "$sb" && printf 'echo more\n' >> modules/demo/test/demo.sh && git add -A \
         && GIT_COMMITTER_DATE='2026-01-04T00:00:00Z' \
-           git -c user.email=t@t -c user.name=t commit -qm 'a case only' \
+           git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm 'a case only' \
                --date='2026-01-04T00:00:00Z') > /dev/null 2>&1
     out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
     assert_not_contains "$out" "module 'demo'" \
@@ -461,7 +614,7 @@ test_a_committed_module_change_without_a_version_bump_is_caught() {
     # The same question of a LIBRARY, which is the half of the glob a module never exercises.
     (cd "$sb" && printf 'i <- function() 2\n' >> modules/lib/helper/helper.R && git add -A \
         && GIT_COMMITTER_DATE='2026-01-05T00:00:00Z' \
-           git -c user.email=t@t -c user.name=t commit -qm 'change helper' \
+           git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm 'change helper' \
                --date='2026-01-05T00:00:00Z') > /dev/null 2>&1
     out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh 2>&1 || true)
     assert_contains "$out" "helper" \
@@ -471,18 +624,26 @@ test_a_committed_module_change_without_a_version_bump_is_caught() {
 # A repository of its own for publish-module.sh, which takes its root from `git rev-parse`, builds
 # from HEAD and writes into modules/repo/. Three modules and a library: beta is in the catalogue
 # already, and alpha, delta and the library gamma are pending, in that order, which is the order
-# --list prints them. bump-analysis-version.sh comes along because every publish calls it.
+# --list prints them. alpha also has a row for an older version, so a catalogue matched on the
+# name alone would call it published. Both alpha and gamma carry a test/ directory, which no
+# tarball ships. bump-analysis-version.sh comes along because every publish calls it.
+#
+# Two commits a day apart, the second touching only delta. HEAD's time is then not the time alpha
+# last changed, which is what alpha's tarball is stamped with, so a batch that stamped with HEAD's
+# time would build a different tarball than a single publish does. The first commit alone could
+# not tell the two apart.
 publish_sandbox() {   # path
     local sb="$1" m
     rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/modules/repo" "$sb/modules/alpha/test" \
-                           "$sb/modules/beta" "$sb/modules/delta" "$sb/modules/lib/gamma"
+                           "$sb/modules/beta" "$sb/modules/delta" "$sb/modules/lib/gamma/test"
     cp "$REPO_ROOT/dev/scripts/publish-module.sh" "$REPO_ROOT/dev/scripts/bump-analysis-version.sh" \
        "$sb/dev/scripts/"
-    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules/repo/index.tsv"
-    printf 'name\tkind\tversion\tcontract\tframe\tenvironment\turl\tsha256\tsummary\n' \
-        >> "$sb/modules/repo/index.tsv"
-    printf 'beta\tmodule\t20260101.001\tfreq-1\t20260101.001\t3.0.0\thttps://example.invalid/beta-20260101.001.tar.gz\t%064d\tbeta\n' 0 \
-        >> "$sb/modules/repo/index.tsv"
+    {
+        printf '#!index-format: 1\n#!index-version: 20260101.001\n'
+        printf 'name\tkind\tversion\tcontract\tframe\tenvironment\turl\tsha256\tsummary\n'
+        printf 'alpha\tmodule\t20251231.001\tfreq-1\t20251231.001\t3.0.0\thttps://example.invalid/alpha-20251231.001.tar.gz\t%064d\talpha\n' 0
+        printf 'beta\tmodule\t20260101.001\tfreq-1\t20260101.001\t3.0.0\thttps://example.invalid/beta-20260101.001.tar.gz\t%064d\tbeta\n' 0
+    } > "$sb/modules/repo/index.tsv"
     for m in alpha beta delta; do
         printf '{"name": "%s", "kind": "module", "version": "20260101.001", "contract": "freq-1", "frame": "20260101.001", "environment": "3.0.0", "summary": "%s"}\n' \
             "$m" "$m" > "$sb/modules/$m/manifest.json"
@@ -493,13 +654,35 @@ publish_sandbox() {   # path
     printf '{"name": "gamma", "kind": "library", "version": "20260101.002", "frame": "20260101.001", "environment": "3.0.0", "summary": "gamma"}\n' \
         > "$sb/modules/lib/gamma/manifest.json"
     printf 'g <- function() 1\n' > "$sb/modules/lib/gamma/gamma.R"
-    (cd "$sb" && git init -q . && git add -A \
-        && git -c user.email=t@t -c user.name=t commit -qm base) > /dev/null 2>&1
+    printf 'echo case\n' > "$sb/modules/lib/gamma/test/gamma.sh"
+    (cd "$sb" && git init -q . && git add -A && sandbox_commit base 2026-01-01 \
+        && printf 'process P {}\n' >> modules/delta/main.nf && git add -A \
+        && sandbox_commit 'change delta' 2026-01-02) > /dev/null 2>&1
 }
 
-# How many catalogue rows name a module.
-catalogue_rows() {   # index name
-    awk -F'\t' -v n="$2" '$1 == n' "$1" | wc -l | tr -d ' '
+# Commits what is staged in the current repository, dated to the given day. Signing is turned off
+# because a machine that signs by default, with no signer to hand, would fail the commit and skip
+# every case built on it.
+sandbox_commit() {   # message day
+    GIT_COMMITTER_DATE="$2T00:00:00Z" \
+        git -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+            commit -qm "$1" --date="$2T00:00:00Z"
+}
+
+# How many catalogue rows name a module, at one version when one is given.
+catalogue_rows() {   # index name [version]
+    awk -F'\t' -v n="$2" -v v="${3-}" '$1 == n && (v == "" || $3 == v)' "$1" | wc -l | tr -d ' '
+}
+
+# Runs a sandbox's publish-module.sh from the given directory with its two streams kept apart:
+# PM_OUT, PM_ERR and PM_STATUS. PM_SCRIPT is the script's path from that directory.
+publish_run() {   # dir args...
+    local dir="$1"; shift
+    PM_STATUS=0
+    (cd "$dir" && bash "${PM_SCRIPT:-dev/scripts/publish-module.sh}" "$@") \
+        > "$TEST_TMPDIR/publish.out" 2> "$TEST_TMPDIR/publish.err" || PM_STATUS=$?
+    PM_OUT=$(cat "$TEST_TMPDIR/publish.out")
+    PM_ERR=$(cat "$TEST_TMPDIR/publish.err")
 }
 
 # --all-pending publishes what --list calls UNPUBLISHED, each through the single publish, and
@@ -507,131 +690,956 @@ catalogue_rows() {   # index name
 # repository root before it calls itself once per module, and a path taken from $0 stops
 # resolving there.
 test_publish_all_pending_publishes_what_list_names() {
-    local sb out status before m batch_sha single_sha
+    local sb index before m batch_sha single_sha
     sb=$(guard_path "$TEST_TMPDIR/publish-all-pending")
-    publish_sandbox "$sb" || { skip_case "could not build a repository to publish from"; return; }
+    publish_sandbox "$sb" || { fail_case "could not build a repository to publish from"; return; }
+    index="$sb/modules/repo/index.tsv"
 
-    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --list 2>&1)
-    assert_contains "$out" "UNPUBLISHED    alpha 20260101.001" "--list names alpha as pending:"$'\n'"$out"
-    assert_contains "$out" "published      beta 20260101.001" "and beta as published"
-    assert_contains "$out" "UNPUBLISHED    gamma 20260101.002" "and the library under modules/lib/"
-    assert_contains "$out" "3 to publish" "and counts what is left"
-    assert_contains "$out" "--all-pending" "and says how to publish all of it"
+    publish_run "$sb" --list
+    assert_status 0 "$PM_STATUS" "--list should succeed:"$'\n'"$PM_ERR"
+    assert_contains "$PM_OUT" "UNPUBLISHED    alpha 20260101.001" \
+        "a row for an older version leaves alpha pending:"$'\n'"$PM_OUT"
+    assert_contains "$PM_OUT" "published      beta 20260101.001" "beta is published"
+    assert_contains "$PM_OUT" "UNPUBLISHED    gamma 20260101.002" "the library under modules/lib/ is listed"
+    assert_contains "$PM_OUT" "3 to publish" "it counts what is left"
+    assert_contains "$PM_OUT" "--all-pending" "and says how to publish all of it"
 
-    status=0
-    out=$(cd "$sb/modules" && bash ../dev/scripts/publish-module.sh --all-pending 2>&1) || status=$?
-    assert_status 0 "$status" "--all-pending should publish all three:"$'\n'"$out"
+    PM_SCRIPT=../dev/scripts/publish-module.sh publish_run "$sb/modules" --all-pending
+    assert_status 0 "$PM_STATUS" "--all-pending should publish all three:"$'\n'"$PM_OUT"$'\n'"$PM_ERR"
+    assert_eq "" "$PM_ERR" "and say nothing on stderr when nothing went wrong"
+    assert_contains "$PM_OUT" "Publishing 3 from HEAD" "it says how many it is about to publish"
     for m in alpha-20260101.001 delta-20260101.001 gamma-20260101.002; do
         assert_file "$sb/modules/repo/$m.tar.gz" "a tarball for $m"
     done
     assert_no_file "$sb/modules/repo/beta-20260101.001.tar.gz" "and none for what was published already"
-    for m in alpha beta delta gamma; do
-        assert_count 1 "$(catalogue_rows "$sb/modules/repo/index.tsv" "$m")" "catalogue rows naming $m"
+    assert_count 1 "$(catalogue_rows "$index" alpha 20260101.001)" "catalogue rows for alpha's new version"
+    assert_count 1 "$(catalogue_rows "$index" alpha 20251231.001)" "and its old row is left alone"
+    for m in beta delta gamma; do
+        assert_count 1 "$(catalogue_rows "$index" "$m")" "catalogue rows naming $m"
     done
-    assert_contains "$out" "Published 3: alpha delta gamma" "the summary names all three"
-    assert_count 1 "$(grep -c '^Nothing is committed' <<< "$out")" \
+    assert_contains "$PM_OUT" "Published 3: alpha delta gamma" "the summary names all three"
+    assert_count 1 "$(grep -c '^Nothing is committed' <<< "$PM_OUT")" \
         "the closing note is said once, not once per module"
+    assert_contains "$PM_OUT" "Published module alpha 20260101.001" "each publish's own report reaches stdout"
+    assert_contains "$PM_OUT" "tarball : modules/repo/alpha-20260101.001.tar.gz" "with its tarball"
+    assert_count 0 "$(grep -c '^$' "$index")" "and the catalogue gains no blank line"
+    # What the tarball holds: no test/, and every member stamped with the day alpha last changed,
+    # which is not HEAD's day.
+    assert_count 0 "$(tar -tzf "$sb/modules/repo/alpha-20260101.001.tar.gz" | grep -c '/test')" \
+        "alpha's tarball leaves out its test/"
+    assert_eq "2026-01-01" \
+        "$(TZ=UTC tar --full-time -tvzf "$sb/modules/repo/alpha-20260101.001.tar.gz" | awk '{ print $4 }' | sort -u)" \
+        "and is stamped with the commit that last touched alpha"
 
-    # Nothing is left, so a second run publishes nothing and changes nothing.
-    before=$(cat "$sb/modules/repo/index.tsv")
-    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending 2>&1) || true
-    assert_contains "$out" "Everything in the tree is in the catalogue" \
-        "a second run finds nothing pending:"$'\n'"$out"
-    assert_eq "$before" "$(cat "$sb/modules/repo/index.tsv")" "and leaves the catalogue alone"
+    # Nothing is left, so a second run publishes nothing, changes nothing and succeeds.
+    before=$(cat "$index")
+    publish_run "$sb" --all-pending
+    assert_status 0 "$PM_STATUS" "a run with nothing pending succeeds:"$'\n'"$PM_ERR"
+    assert_eq "Everything in the tree is in the catalogue." "$PM_OUT" "and says only that"
+    assert_eq "$before" "$(cat "$index")" "and leaves the catalogue alone"
 
     # The batch exists to make what single publishes make, so the bytes are compared: the same
     # module published alone, from the same commit, after the batch's work is put back.
     batch_sha=$(sha256sum "$sb/modules/repo/alpha-20260101.001.tar.gz" | awk '{print $1}')
     (cd "$sb" && git checkout -q -- modules/repo/index.tsv && rm -f modules/repo/*.tar.gz)
-    out=$(cd "$sb" && bash dev/scripts/publish-module.sh alpha 2>&1) || true
+    publish_run "$sb" alpha
     single_sha=$(sha256sum "$sb/modules/repo/alpha-20260101.001.tar.gz" 2>/dev/null | awk '{print $1}')
     assert_eq "$batch_sha" "$single_sha" "the batch should build the tarball a single publish builds"
-    assert_contains "$out" "Nothing is committed" "and a single publish still closes with the note"
+    assert_contains "$PM_OUT" "Nothing is committed" "and a single publish still closes with the note"
 
     # Always HEAD, because the pending set is read from the working tree and only HEAD matches it.
-    status=0
-    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending HEAD 2>&1) || status=$?
-    assert_status 1 "$status" "--all-pending takes no ref:"$'\n'"$out"
-    assert_contains "$out" "takes no ref" "and says so"
+    publish_run "$sb" --all-pending HEAD
+    assert_status 1 "$PM_STATUS" "--all-pending takes no ref:"$'\n'"$PM_OUT"
+    assert_contains "$PM_ERR" "takes no ref" "and says so on stderr"
 }
 
 # A publish builds from HEAD while --list reads the working tree, so a pending source that differs
 # from HEAD would be listed with one content and published with another. Refused before anything
-# is written, whether the difference is changed, staged or untracked. A change under test/ alone
-# is not the module, because the tarball drops test/.
+# is written, whether the difference is changed, staged or untracked, and with the repository set
+# to status.showUntrackedFiles=no, under which a plain git status shows no untracked file at all.
+# One differing source is refused as surely as several. A module already published is not
+# pending, so its own uncommitted change blocks nothing. A directory whose name holds a space is
+# checked under its whole name, which a listing split on spaces would cut. A change under test/
+# alone is not the module, for a module or a library, because the tarball drops test/. And a git
+# status that fails is refused, since its empty output would read as clean.
 test_publish_all_pending_refuses_a_source_that_differs_from_head() {
-    local sb out status before
+    local sb before
     sb=$(guard_path "$TEST_TMPDIR/publish-all-pending-dirty")
-    publish_sandbox "$sb" || { skip_case "could not build a repository to publish from"; return; }
+    publish_sandbox "$sb" || { fail_case "could not build a repository to publish from"; return; }
+    git -C "$sb" config status.showUntrackedFiles no
     printf 'process P {}\n' >> "$sb/modules/alpha/main.nf"
     printf 'h <- function() 2\n' >> "$sb/modules/lib/gamma/gamma.R"
-    (cd "$sb" && git add modules/lib/gamma/gamma.R)
-    mkdir -p "$sb/modules/epsilon"
+    git -C "$sb" add modules/lib/gamma/gamma.R
+    printf 'process Q {}\n' > "$sb/modules/delta/extra.nf"
+    mkdir -p "$sb/modules/epsilon" "$sb/modules/zeta draft"
     printf '{"name": "epsilon", "version": "20260101.001"}\n' > "$sb/modules/epsilon/manifest.json"
+    printf '{"name": "zeta draft", "version": "20260101.001"}\n' > "$sb/modules/zeta draft/manifest.json"
+    printf 'process R {}\n' >> "$sb/modules/beta/main.nf"
     before=$(cat "$sb/modules/repo/index.tsv")
 
-    status=0
-    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending 2>&1) || status=$?
-    assert_status 1 "$status" "a pending source that differs from HEAD must be refused:"$'\n'"$out"
-    assert_contains "$out" "modules/alpha/" "naming the changed one"
-    assert_contains "$out" "modules/lib/gamma/" "the staged one"
-    assert_contains "$out" "modules/epsilon/" "and the one HEAD does not have"
-    assert_not_contains "$out" "modules/delta/" "but not the one that matches HEAD"
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" \
+        "a pending source that differs from HEAD must be refused:"$'\n'"$PM_OUT"$'\n'"$PM_ERR"
+    assert_contains "$PM_ERR" "modules/alpha/" "naming the changed one, on stderr"
+    assert_contains "$PM_ERR" "modules/lib/gamma/" "the staged one"
+    assert_contains "$PM_ERR" "modules/delta/" "the one holding a file git does not track"
+    assert_contains "$PM_ERR" "modules/epsilon/" "the one HEAD does not have"
+    assert_contains "$PM_ERR" "modules/zeta draft/" "and the one whose name holds a space, whole"
+    assert_not_contains "$PM_ERR" "modules/beta/" "but not the published one"
+    assert_eq "" "$PM_OUT" "with nothing on stdout"
     assert_eq "$before" "$(cat "$sb/modules/repo/index.tsv")" "nothing may reach the catalogue"
     assert_eq "" "$(find "$sb/modules/repo" -name '*.tar.gz')" "and no tarball may be written"
 
-    (cd "$sb" && git checkout -q HEAD -- modules/alpha modules/lib/gamma && rm -rf modules/epsilon)
+    (cd "$sb" && git checkout -q HEAD -- modules/lib/gamma \
+        && rm -rf modules/epsilon "modules/zeta draft" modules/delta/extra.nf)
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "one differing source is refused too:"$'\n'"$PM_OUT"$'\n'"$PM_ERR"
+    assert_contains "$PM_ERR" "modules/alpha/" "naming it"
+    assert_not_contains "$PM_ERR" "modules/delta/" "and only it"
+
+    git -C "$sb" checkout -q HEAD -- modules/alpha
     printf 'echo another case\n' >> "$sb/modules/alpha/test/alpha.sh"
-    status=0
-    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending 2>&1) || status=$?
-    assert_status 0 "$status" "a change under test/ alone is not the module changing:"$'\n'"$out"
+    printf 'echo another case\n' >> "$sb/modules/lib/gamma/test/gamma.sh"
+    publish_run "$sb" --all-pending
+    assert_status 0 "$PM_STATUS" \
+        "test/ alone, and a published module's change, block nothing:"$'\n'"$PM_ERR"
+
+    (cd "$sb" && git checkout -q -- modules/repo/index.tsv && rm -f modules/repo/*.tar.gz)
+    head -c 20 "$sb/.git/index" > "$sb/index.cut" && mv "$sb/index.cut" "$sb/.git/index"
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "a git status that fails must be refused:"$'\n'"$PM_OUT"$'\n'"$PM_ERR"
+    assert_contains "$PM_ERR" "git status failed" "saying so"
+    assert_eq "" "$(find "$sb/modules/repo" -name '*.tar.gz')" "before anything is written"
 }
 
-# It stops at the first module that fails and says what this run published, read back from the
-# catalogue. Two failures, one on each side of the row. delta refuses before it writes anything,
-# because a tarball for its version is already on disk. alpha fails after its row is in, because
-# the index bump that follows refuses a 999th change in one day. Counting along the loop reports
-# that second one as still pending, which is the wrong module to restart from.
+# It stops at the first module that fails and says what this run published and what is still
+# pending, read back from the catalogue, on stderr beneath the failing publish's own reason.
+# Failures on both sides of the row. A tarball already on disk for a version with no row makes a
+# publish refuse before it writes anything, and the report names the file, which nothing else
+# would ever remove. A refused index bump fails a publish after its row is written, and counting
+# along the loop would report that module as still pending. When that bump was the last thing a
+# run did, with #!index-version as HEAD has it, no later run would move the version, so the
+# report says to. The bump is made to refuse by setting the day's counter to 999, past which
+# bump-analysis-version.sh refuses another change.
 test_publish_all_pending_stops_and_reads_back_what_it_published() {
-    local sb out status
+    local sb index today
     sb=$(guard_path "$TEST_TMPDIR/publish-all-pending-stop")
-    publish_sandbox "$sb" || { skip_case "could not build a repository to publish from"; return; }
+    publish_sandbox "$sb" || { fail_case "could not build a repository to publish from"; return; }
+    index="$sb/modules/repo/index.tsv"
 
+    # In the middle: alpha is published, delta refuses, gamma is not reached.
     : > "$sb/modules/repo/delta-20260101.001.tar.gz"
-    status=0
-    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending 2>&1) || status=$?
-    assert_status 1 "$status" "a module that refuses stops the batch:"$'\n'"$out"
-    assert_contains "$out" "STOPPED at delta." "naming it"
-    assert_contains "$out" "Published by this run, and uncommitted: alpha" "and what it published first"
-    assert_contains "$out" "Still pending: delta gamma" "and what is left"
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "a module that refuses stops the batch:"$'\n'"$PM_OUT"$'\n'"$PM_ERR"
+    assert_contains "$PM_ERR" "delta-20260101.001.tar.gz already exists" \
+        "the refusing publish's own reason reaches stderr"
+    assert_contains "$PM_ERR" "STOPPED at delta." "the batch names where it stopped"
+    assert_contains "$PM_ERR" "Published by this run, and uncommitted: alpha" "what it published first"
+    assert_contains "$PM_ERR" "Still pending: delta gamma" "what is left"
+    assert_contains "$PM_ERR" "Delete them first:"$'\n'"    modules/repo/delta-20260101.001.tar.gz" \
+        "the file in the way"
+    assert_contains "$PM_ERR" "run --all-pending again" "and what to do next"
     assert_no_file "$sb/modules/repo/gamma-20260101.002.tar.gz" "nothing after it is attempted"
 
     # Fixed, the next run starts from what is still pending, so alpha is not published twice.
     rm -f "$sb/modules/repo/delta-20260101.001.tar.gz"
-    status=0
-    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending 2>&1) || status=$?
-    assert_status 0 "$status" "the rerun should publish the rest:"$'\n'"$out"
-    assert_contains "$out" "Published 2: delta gamma" "and only the rest"
-    assert_count 1 "$(catalogue_rows "$sb/modules/repo/index.tsv" alpha)" "catalogue rows naming alpha"
+    publish_run "$sb" --all-pending
+    assert_status 0 "$PM_STATUS" "the rerun should publish the rest:"$'\n'"$PM_ERR"
+    assert_contains "$PM_OUT" "Published 2: delta gamma" "and only the rest"
+    assert_count 1 "$(catalogue_rows "$index" alpha 20260101.001)" "catalogue rows for alpha's version"
 
-    # The day is read twice, here and by the bump, so a run straddling midnight UTC would see
-    # the bump succeed and this half fail.
+    # At the first module, nothing was published by this run.
     (cd "$sb" && git checkout -q -- modules/repo/index.tsv && rm -f modules/repo/*.tar.gz)
-    sed -i "s/^#!index-version: .*/#!index-version: $(date -u +%Y%m%d).999/" "$sb/modules/repo/index.tsv"
-    status=0
-    out=$(cd "$sb" && bash dev/scripts/publish-module.sh --all-pending 2>&1) || status=$?
-    assert_status 1 "$status" "a refused index bump stops the batch:"$'\n'"$out"
-    assert_contains "$out" "STOPPED at alpha." "at alpha"
-    assert_count 1 "$(catalogue_rows "$sb/modules/repo/index.tsv" alpha)" "with alpha's row written"
-    assert_contains "$out" "Published by this run, and uncommitted: alpha" \
+    : > "$sb/modules/repo/alpha-20260101.001.tar.gz"
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "the first module refusing stops the batch:"$'\n'"$PM_ERR"
+    assert_not_contains "$PM_ERR" "Published by this run" "with nothing published by this run"
+    assert_contains "$PM_ERR" "Still pending: alpha delta gamma" "and everything still pending"
+
+    # The same file committed may have been deployed and installed, so it is not offered for
+    # deletion.
+    (cd "$sb" && git add modules/repo/alpha-20260101.001.tar.gz \
+        && sandbox_commit 'a tarball once committed' 2026-01-03) > /dev/null 2>&1
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "a committed tarball in the way stops the batch:"$'\n'"$PM_ERR"
+    assert_contains "$PM_ERR" "Bump the module's version" "as a published version"
+    assert_not_contains "$PM_ERR" "Delete them first" "and is not offered for deletion"
+    (cd "$sb" && git rm -q modules/repo/alpha-20260101.001.tar.gz \
+        && sandbox_commit 'and removed' 2026-01-03) > /dev/null 2>&1
+
+    # After the row. The day is read twice, here and by the bump, so a run straddling midnight UTC
+    # would see the bump succeed and this half fail.
+    (cd "$sb" && git checkout -q -- modules/repo/index.tsv && rm -f modules/repo/*.tar.gz)
+    today=$(date -u +%Y%m%d)
+    sed -i "s/^#!index-version: .*/#!index-version: $today.999/" "$index"
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "a refused index bump stops the batch:"$'\n'"$PM_ERR"
+    assert_contains "$PM_ERR" "STOPPED at alpha." "at alpha"
+    assert_count 1 "$(catalogue_rows "$index" alpha 20260101.001)" "with alpha's row written"
+    assert_contains "$PM_ERR" "Published by this run, and uncommitted: alpha" \
         "so alpha is reported published, read back from the catalogue"
-    assert_contains "$out" "Still pending: delta gamma" "and only what follows it as pending"
+    assert_contains "$PM_ERR" "Still pending: delta gamma" "and only what follows it as pending"
+
+    # The same, with HEAD itself at the 999th change, so #!index-version has not moved at all. With
+    # delta and gamma left, the rerun moves it as it publishes them, so the report does not send
+    # anyone to move it by hand.
+    local sb2
+    sb2=$(guard_path "$TEST_TMPDIR/publish-all-pending-stop-999")
+    publish_sandbox "$sb2" || { fail_case "could not build a second repository"; return; }
+    sed -i "s/^#!index-version: .*/#!index-version: $today.999/" "$sb2/modules/repo/index.tsv"
+    (cd "$sb2" && git add -A && sandbox_commit 'the day at its 999th change' 2026-01-03) > /dev/null 2>&1
+    publish_run "$sb2" --all-pending
+    assert_status 1 "$PM_STATUS" "the bump refused at the first module stops the batch:"$'\n'"$PM_ERR"
+    assert_contains "$PM_ERR" "Still pending: delta gamma" "with two left"
+    assert_not_contains "$PM_ERR" "bump-analysis-version.sh index" \
+        "so moving the version by hand is not the advice"
+    assert_contains "$PM_ERR" "run --all-pending again" "running it again is"
+
+    # After the row of the last module pending, with HEAD at the 999th change: the row is in,
+    # nothing is left for a rerun to do, and the version has not moved.
+    (cd "$sb" && git checkout -q -- modules/repo/index.tsv && rm -f modules/repo/*.tar.gz)
+    publish_run "$sb" alpha
+    publish_run "$sb" delta
+    sed -i "s/^#!index-version: .*/#!index-version: $today.999/" "$index"
+    (cd "$sb" && git add -A && sandbox_commit 'alpha and delta published' 2026-01-03) > /dev/null 2>&1
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "the last module's bump refused stops the batch:"$'\n'"$PM_ERR"
+    assert_contains "$PM_OUT" "Publishing 1 from HEAD" "with one module pending"
+    assert_contains "$PM_ERR" "Published by this run, and uncommitted: gamma" "which is published"
+    assert_not_contains "$PM_ERR" "Still pending" "with nothing left pending"
+    assert_not_contains "$PM_ERR" "run --all-pending again" "so a rerun is not the advice"
+    assert_contains "$PM_ERR" "dev/scripts/bump-analysis-version.sh index" "moving the version is"
+}
+
+# What it cannot read, it refuses before writing anything. A manifest with no version is one
+# --list shows as NO MANIFEST and a single publish refuses, so a batch that passed over it would
+# report everything published. A directory with no manifest at all is not a module and is not
+# read. A catalogue with no header row, or one without a name column, cannot say what is
+# published, and read as empty it would call every module pending.
+test_publish_all_pending_refuses_what_it_cannot_read() {
+    local sb index before
+    sb=$(guard_path "$TEST_TMPDIR/publish-all-pending-unreadable")
+    publish_sandbox "$sb" || { fail_case "could not build a repository to publish from"; return; }
+    index="$sb/modules/repo/index.tsv"
+    mkdir -p "$sb/modules/zeta" "$sb/modules/eta" "$sb/modules/notes"
+    printf '{"name": "zeta"}\n' > "$sb/modules/zeta/manifest.json"
+    printf '{"name": "eta", "vers\n' > "$sb/modules/eta/manifest.json"
+    printf 'not a module\n' > "$sb/modules/notes/README"
+    (cd "$sb" && git add -A && sandbox_commit 'zeta, eta and notes' 2026-01-03) > /dev/null 2>&1
+    before=$(cat "$index")
+
+    publish_run "$sb" --list
+    assert_status 0 "$PM_STATUS" "--list still lists:"$'\n'"$PM_ERR"
+    assert_contains "$PM_OUT" "NO MANIFEST    modules/zeta/" "the manifest with no version:"$'\n'"$PM_OUT"
+    assert_contains "$PM_OUT" "NO MANIFEST    modules/eta/" "the one that does not parse"
+    assert_contains "$PM_OUT" "2 with no name or version to read" "counted apart from what is left"
+    assert_contains "$PM_OUT" "3 to publish, one at a time" "which counts only the readable ones"
+    assert_not_contains "$PM_OUT" "all of them with" "and does not offer the batch that would refuse"
+    assert_not_contains "$PM_OUT" "modules/notes" "and nothing for a directory with no manifest"
+
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "an unreadable manifest must stop the batch:"$'\n'"$PM_OUT"$'\n'"$PM_ERR"
+    assert_contains "$PM_ERR" "modules/zeta/" "naming it"
+    assert_contains "$PM_ERR" "modules/eta/" "and the one that does not parse"
+    assert_not_contains "$PM_ERR" "modules/notes" "and only those"
+    assert_eq "$before" "$(cat "$index")" "nothing may reach the catalogue"
+    assert_eq "" "$(find "$sb/modules/repo" -name '*.tar.gz')" "and no tarball may be written"
+
+    # Everything else published, it is still not everything.
+    publish_run "$sb" alpha; publish_run "$sb" delta; publish_run "$sb" gamma
+    publish_run "$sb" --list
+    assert_not_contains "$PM_OUT" "Everything in the tree is in the catalogue" \
+        "--list must not call the tree published while a manifest cannot be read:"$'\n'"$PM_OUT"
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "and neither may --all-pending:"$'\n'"$PM_OUT"
+
+    (cd "$sb" && git checkout -q -- modules/repo/index.tsv && rm -f modules/repo/*.tar.gz \
+        && rm -rf modules/zeta modules/eta)
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$index"
+    publish_run "$sb" --list
+    assert_status 1 "$PM_STATUS" "--list must refuse a catalogue with no header row:"$'\n'"$PM_OUT"
+    assert_contains "$PM_ERR" "no header row naming 'name' and 'version'" "and say why"
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "so must --all-pending:"$'\n'"$PM_OUT"
+    publish_run "$sb" alpha
+    assert_status 1 "$PM_STATUS" "and a single publish:"$'\n'"$PM_OUT"
+    assert_contains "$PM_ERR" "not the layout this script writes" "saying why rather than stopping silently"
+    assert_eq "" "$(find "$sb/modules/repo" -name '*.tar.gz')" "all of them before writing anything"
+
+    printf '#!index-format: 1\n#!index-version: 20260101.001\nkind\tversion\n' > "$index"
+    publish_run "$sb" --list
+    assert_status 1 "$PM_STATUS" "--list must refuse a header row without a name column:"$'\n'"$PM_OUT"
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "and so must --all-pending:"$'\n'"$PM_OUT"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\nname\tkind\n' > "$index"
+    publish_run "$sb" --list
+    assert_status 1 "$PM_STATUS" "and a header row without a version column:"$'\n'"$PM_OUT"
+}
+
+# A publish is asked for by name and finds modules/<name> before modules/lib/<name>, so a pending
+# library that shares a module's name could never be published, and the batch would publish the
+# module twice. Refused before anything is written.
+test_publish_all_pending_refuses_a_name_two_directories_share() {
+    local sb before
+    sb=$(guard_path "$TEST_TMPDIR/publish-all-pending-shared")
+    publish_sandbox "$sb" || { fail_case "could not build a repository to publish from"; return; }
+    mkdir -p "$sb/modules/lib/delta"
+    printf '{"name": "delta", "kind": "library", "version": "20260101.003", "frame": "20260101.001", "environment": "3.0.0", "summary": "a library called delta"}\n' \
+        > "$sb/modules/lib/delta/manifest.json"
+    (cd "$sb" && git add -A && sandbox_commit 'a library called delta' 2026-01-03) > /dev/null 2>&1
+    before=$(cat "$sb/modules/repo/index.tsv")
+
+    publish_run "$sb" --list
+    assert_not_contains "$PM_OUT" "all of them with" \
+        "--list must not offer the batch that would refuse:"$'\n'"$PM_OUT"
+    assert_contains "$PM_OUT" "no two directories share" "and says what it is waiting for"
+
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "a shared name must stop the batch:"$'\n'"$PM_OUT"$'\n'"$PM_ERR"
+    assert_contains "$PM_ERR" "modules/delta/" "naming the module"
+    assert_contains "$PM_ERR" "modules/lib/delta/" "and the library"
+    assert_not_contains "$PM_ERR" "modules/alpha/" "and nothing else"
+    assert_eq "$before" "$(cat "$sb/modules/repo/index.tsv")" "nothing may reach the catalogue"
+    assert_eq "" "$(find "$sb/modules/repo" -name '*.tar.gz')" "and no tarball may be written"
+}
+
+# Every publish reporting success is not taken as every row being there: the catalogue is read
+# back after the last one. Nothing in a sound tree produces a success without a row any more, so
+# the fixture makes one. Its bump-analysis-version.sh, which every publish calls once its row is
+# appended, deletes that row instead.
+test_publish_all_pending_reads_back_what_it_reports_published() {
+    local sb
+    sb=$(guard_path "$TEST_TMPDIR/publish-all-pending-readback")
+    publish_sandbox "$sb" || { fail_case "could not build a repository to publish from"; return; }
+    cat > "$sb/dev/scripts/bump-analysis-version.sh" <<'STUB'
+#!/usr/bin/env bash
+sed -i '$d' "$(git rev-parse --show-toplevel)/modules/repo/index.tsv"
+STUB
+
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "a success with no row behind it must be caught:"$'\n'"$PM_OUT"$'\n'"$PM_ERR"
+    assert_not_contains "$PM_OUT" "Published 3" "and not reported as published"
+    assert_contains "$PM_ERR" "the catalogue has no row for some of them" "it says what it found"
+    assert_contains "$PM_ERR" "Still pending: alpha delta gamma" "and what is still pending"
+
+    # A catalogue that cannot be read back at all: this stand-in deletes the header row, so the
+    # next publish stops and the read-back has nothing to read. An empty answer would have called
+    # every module published.
+    publish_sandbox "$sb" || { fail_case "could not rebuild the repository"; return; }
+    cat > "$sb/dev/scripts/bump-analysis-version.sh" <<'STUB'
+#!/usr/bin/env bash
+sed -i '/^name\tkind/d' "$(git rev-parse --show-toplevel)/modules/repo/index.tsv"
+STUB
+    publish_run "$sb" --all-pending
+    assert_status 1 "$PM_STATUS" "an unreadable catalogue stops the batch:"$'\n'"$PM_OUT"$'\n'"$PM_ERR"
+    assert_contains "$PM_ERR" "could not be read back" "saying what it does not know"
+    assert_not_contains "$PM_ERR" "Published by this run" "rather than calling anything published"
+}
+
+# The batch runs this script once per module, so it has to find itself however it was started.
+# With CDPATH exported, a `cd dev/scripts` goes to the first directory on CDPATH that holds one,
+# so a decoy there catches a script that finds itself with cd. Read from standard input there is
+# no file to run, which --all-pending refuses while --list carries on as it always did.
+test_publish_all_pending_finds_itself_however_it_is_run() {
+    local sb out err status
+    sb=$(guard_path "$TEST_TMPDIR/publish-all-pending-self")
+    publish_sandbox "$sb" || { fail_case "could not build a repository to publish from"; return; }
+    mkdir -p "$sb/decoy/dev/scripts"
+
+    CDPATH="$sb/decoy" publish_run "$sb" --all-pending
+    assert_status 0 "$PM_STATUS" "an exported CDPATH must not send it astray:"$'\n'"$PM_OUT"$'\n'"$PM_ERR"
+    assert_contains "$PM_OUT" "Published 3: alpha delta gamma" "and it publishes all three"
+
+    status=0
+    out=$(cd "$sb" && bash -s -- --list < dev/scripts/publish-module.sh 2>&1) || status=$?
+    assert_status 0 "$status" "--list read from standard input still works:"$'\n'"$out"
+    assert_contains "$out" "Everything in the tree is in the catalogue" "and lists"
+    status=0
+    err=$(cd "$sb" && bash -s -- --all-pending < dev/scripts/publish-module.sh 2>&1 > /dev/null) || status=$?
+    assert_status 1 "$status" "--all-pending read from standard input must refuse:"$'\n'"$err"
+    assert_contains "$err" "from its file" "saying why"
+}
+
+# A single publish refuses what it cannot finish before it writes anything, and says what a file
+# in its way is. A catalogue header it does not write used to be found after the tarball was
+# written, leaving one that every later publish refused as already published. A tarball with no
+# row is named as left over, not as published. A manifest whose name is not its directory's is
+# refused, because the frame would refuse the module. And a catalogue whose last line has no
+# newline gets one, so the new row does not land on the end of a published one.
+test_publish_writes_nothing_it_cannot_finish() {
+    local sb index
+    sb=$(guard_path "$TEST_TMPDIR/publish-single")
+    publish_sandbox "$sb" || { fail_case "could not build a repository to publish from"; return; }
+    index="$sb/modules/repo/index.tsv"
+
+    sed -i 's/\tsummary$/\tsummary\tlicense/' "$index"
+    publish_run "$sb" alpha
+    assert_status 1 "$PM_STATUS" "a header it does not write must be refused:"$'\n'"$PM_OUT"
+    assert_contains "$PM_ERR" "not the layout this script writes" "saying so"
+    assert_no_file "$sb/modules/repo/alpha-20260101.001.tar.gz" "before any tarball is written"
+    git -C "$sb" checkout -q -- modules/repo/index.tsv
+
+    : > "$sb/modules/repo/alpha-20260101.001.tar.gz"
+    publish_run "$sb" alpha
+    assert_status 1 "$PM_STATUS" "a tarball already on disk is refused"
+    assert_contains "$PM_ERR" "left over from a publish that did not finish" "and with no row it is left over"
+    assert_not_contains "$PM_ERR" "Bump the module's version" "not published"
+    rm -f "$sb/modules/repo/alpha-20260101.001.tar.gz"
+    : > "$sb/modules/repo/beta-20260101.001.tar.gz"
+    publish_run "$sb" beta
+    assert_contains "$PM_ERR" "Bump the module's version" "while one with its row is published"
+    rm -f "$sb/modules/repo/beta-20260101.001.tar.gz"
+    publish_run "$sb" beta
+    assert_status 1 "$PM_STATUS" "a row with no tarball beside it is refused too"
+    assert_contains "$PM_ERR" "already has a row for beta 20260101.001" "as already published"
+
+    # Committed and then taken out of the catalogue, a tarball may have been installed.
+    : > "$sb/modules/repo/alpha-20260101.001.tar.gz"
+    (cd "$sb" && git add modules/repo && sandbox_commit 'a tarball once committed' 2026-01-03) > /dev/null 2>&1
+    publish_run "$sb" alpha
+    assert_contains "$PM_ERR" "Bump the module's version" "a committed tarball with no row is published"
+    assert_not_contains "$PM_ERR" "left over" "not left over"
+    (cd "$sb" && git rm -q modules/repo/alpha-20260101.001.tar.gz \
+        && sandbox_commit 'and removed' 2026-01-03) > /dev/null 2>&1
+
+    printf '%s' "$(cat "$index")" > "$index.tmp" && mv "$index.tmp" "$index"
+    publish_run "$sb" alpha
+    assert_status 0 "$PM_STATUS" "a catalogue with no final newline still takes a row:"$'\n'"$PM_ERR"
+    assert_eq 9 "$(awk -F'\t' '$1 == "beta" { print NF }' "$index")" "and the row before it keeps nine columns"
+    assert_count 1 "$(catalogue_rows "$index" alpha 20260101.001)" "with alpha's own row after it"
+
+    (cd "$sb" && sed -i 's/"name": "delta"/"name": "omega"/' modules/delta/manifest.json \
+        && sed -i 's/"name": "gamma"/"name": "kappa"/' modules/lib/gamma/manifest.json \
+        && git add -A && sandbox_commit 'delta and gamma call themselves something else' 2026-01-03) \
+        > /dev/null 2>&1
+    publish_run "$sb" delta
+    assert_status 1 "$PM_STATUS" "a manifest naming another module must be refused:"$'\n'"$PM_OUT"
+    assert_contains "$PM_ERR" "calls it 'omega'" "naming both"
+    assert_no_file "$sb/modules/repo/delta-20260101.001.tar.gz" "and writing nothing"
+    publish_run "$sb" gamma
+    assert_status 1 "$PM_STATUS" "and so must a library's:"$'\n'"$PM_OUT"
+    assert_contains "$PM_ERR" "calls it 'kappa'" "naming both"
+
+    # The refusals a single publish has always had, each before anything is written.
+    publish_run "$sb" nosuch
+    assert_contains "$PM_ERR" "no module or library 'nosuch'" "an unknown name"
+    (cd "$sb" && sed -i 's/"frame": "20260101.001", //' modules/beta/manifest.json \
+        && printf '{"name": "alpha", "kind": "module", "version": "20260101.002", "contract": "freq-1", "frame": "20260101.001", "environment": "3.0.0", "summary": "with\\ta tab"}\n' \
+            > modules/alpha/manifest.json \
+        && git add -A && sandbox_commit 'beta loses frame, alpha gains a tab' 2026-01-04) > /dev/null 2>&1
+    publish_run "$sb" beta
+    assert_contains "$PM_ERR" "beta's manifest has no frame" "a missing field"
+    publish_run "$sb" alpha
+    assert_contains "$PM_ERR" "a manifest field contains a tab" "a tab in a field"
+    (cd "$sb" && git rm -q modules/alpha/main.nf \
+        && sed -i 's/with\\ta tab/alpha/' modules/alpha/manifest.json \
+        && git add -A && sandbox_commit 'alpha loses main.nf' 2026-01-05) > /dev/null 2>&1
+    publish_run "$sb" alpha
+    assert_contains "$PM_ERR" "alpha has no main.nf" "a module without main.nf"
+    assert_eq "modules/repo/alpha-20260101.001.tar.gz" "$(cd "$sb" && find modules/repo -name '*.tar.gz')" \
+        "none of them writing a tarball: the only one is alpha's, from the newline check"
+}
+
+# The site deploys only for a released version: after release.yml publishes one, or when the
+# workflow is run by hand on main, and either way only once the version the commit declares has a
+# published release. A push to main and a pull request build and deploy nothing, so a release
+# that fails at its tag leaves the site as it was. The v3.3.0 tag failed release.yml on
+# 2026-10-07 after the merge had already deployed its manual and CHANGELOG.
+#
+# Asked twice: of the workflow's structure, every path to the deploy; and of the release check's
+# own script, run against a stand-in gh answering published, draft and missing, which also records
+# what it was asked. Every job is read for the Pages actions, not only the two named ones, and the
+# build's gate is compared whole. A review on 2026-10-08 found four edits this case passed: the
+# gate's && made ||, a second job deploying Pages ungated, the release looked up without its v,
+# and draft read from another field, so that a draft release would deploy.
+#
+# The workflows are read by test/tools/workflow_yaml.py and asked as JSON. This case imported
+# PyYAML until the 3.3.0 prep run on 2026-10-08, which failed it with ModuleNotFoundError: the
+# suite runs on whichever python3 the shell finds, that shell had the analysis environment active,
+# and neither PoolSeqFlow environment carries PyYAML. Every earlier run had used a system Python
+# that happened to have it.
+test_the_site_deploys_only_for_a_released_version() {
+    local out sb answer status workflow
+    sb=$(guard_path "$TEST_TMPDIR/site-release-check")
+    rm -rf "$sb"; mkdir -p "$sb/bin" "$sb/tree"
+    for workflow in docs release; do
+        python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$REPO_ROOT/.github/workflows/$workflow.yml" \
+            > "$sb/$workflow.json" 2> "$sb/$workflow.err" \
+            || { fail_case "$workflow.yml could not be read: $(cat "$sb/$workflow.err")"; return; }
+    done
+    out=$(python3 - "$sb/docs.json" "$sb/release.json" 2>&1 <<'PY'
+import json, sys
+docs = json.load(open(sys.argv[1]))
+release = json.load(open(sys.argv[2]))
+on = docs["on"]
+build, deploy = docs["jobs"]["build"], docs["jobs"]["deploy"]
+problems = []
+def need(ok, message):
+    if not ok:
+        problems.append(message)
+need(deploy.get("if") == "needs.build.outputs.deploy == 'true'",
+     "the deploy job runs on something besides the build's decision: %r" % deploy.get("if"))
+need(deploy.get("needs") == "build", "the deploy job does not wait for the build")
+need(build.get("outputs", {}).get("deploy") == "${{ steps.released.outputs.deploy }}",
+     "the build's deploy output does not come from the release check")
+check = [s for s in build["steps"] if s.get("id") == "released"]
+need(len(check) == 1, "no single step with id 'released'")
+if check:
+    need(check[0].get("if") == "github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'",
+         "the release check runs for other events: %r" % check[0].get("if"))
+for name, job in docs["jobs"].items():
+    for step in job.get("steps") or []:
+        uses = str(step.get("uses", ""))
+        if uses.startswith("actions/deploy-pages"):
+            need(name == "deploy", "%s runs in the job %r, which is not the gated deploy" % (uses, name))
+        if uses.startswith(("actions/upload-pages-artifact", "actions/configure-pages")):
+            need(name == "build" and step.get("if") == "steps.released.outputs.deploy == 'true'",
+                 "%s runs in the job %r without the release check" % (uses, name))
+gate = " ".join((build.get("if") or "").split())
+need(gate == "github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == "
+             "'success' && github.event.workflow_run.event == 'push')",
+     "a failed release.yml, or one run by hand, reaches the build: %r" % gate)
+need(on.get("workflow_run", {}).get("workflows") == [release["name"]],
+     "workflow_run does not follow release.yml by its name, %r" % release["name"])
+print("\n".join(problems) if problems else "OK")
+PY
+)
+    assert_eq "OK" "$out" "every path to the deploy goes through the release check"
+
+    python3 -c 'import json, sys
+steps = json.load(open(sys.argv[1]))["jobs"]["build"]["steps"]
+print([s for s in steps if s.get("id") == "released"][0]["run"])' \
+        "$sb/docs.json" > "$sb/check.sh" 2>&1
+    printf 'VERSION="9.9.9"\n' > "$sb/tree/PoolSeqFlow"
+    : > "$sb/gh.args"
+    for answer in false true missing; do
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf 'printf "%%s\\n" "$*" >> %q\n' "$sb/gh.args"
+            if [ "$answer" = missing ]; then
+                printf 'echo "release not found" >&2\nexit 1\n'
+            else
+                printf 'echo %s\n' "$answer"
+            fi
+        } > "$sb/bin/gh"
+        chmod +x "$sb/bin/gh"
+        : > "$sb/output"
+        status=0
+        (cd "$sb/tree" && PATH="$sb/bin:$PATH" GITHUB_OUTPUT="$sb/output" GITHUB_REPOSITORY=o/r \
+            bash -eo pipefail "$sb/check.sh") > /dev/null 2>&1 || status=$?
+        if [ "$answer" = false ]; then
+            assert_status 0 "$status" "a published release deploys"
+            assert_eq "deploy=true" "$(cat "$sb/output")" "and says so"
+        else
+            assert_status 1 "$status" "a release that is $answer must not deploy"
+            assert_eq "" "$(cat "$sb/output")" "and says nothing to deploy"
+        fi
+    done
+    assert_eq "release view v9.9.9 --repo o/r --json isDraft --jq .isDraft" "$(sort -u "$sb/gh.args")" \
+        "every time, gh is asked whether this version's tag is a draft"
+}
+
+# THE READER THE CASE ABOVE RESTS ON. Every construct the workflows use, with the value each must
+# come back as: the folded `if:` with a line indented past the others, which keeps its line break;
+# a literal `run:` holding a blank line, a `#` line and a `: ` that are all script, ended by a
+# comment indented between the step's keys and the script; a sequence of mappings; a sequence at
+# its key's own indentation; flow sequences, empty and quoted; both quoted styles and a quoted key;
+# two keys with no value in a row; a comment after a value; an empty item and a block item; and a
+# folded block opening on an empty line and holding a line indented past the others. A second
+# file, written by printf so no line of this one ends in spaces an editor could strip, holds a
+# white-space-only line wider than its block, whose spaces past the block are text, and a block
+# ending the file with no line break, which gains none.
+#
+# The expected values are YAML's: PyYAML read both files the same way on 2026-10-08, as it read
+# all three workflow files. Then each kind of syntax the reader does not take, refused at the line
+# and for the reason named: a refusal for some other reason, or at another line, would hide that
+# the rule it names had stopped working.
+#
+# The first version of this case passed with 42 of the reader's own rules mutated away, among them
+# two keys in a row read as one inside the other and a comment after a value read into it; its
+# refusals asserted only that something was refused somewhere. A review found it on 2026-10-08.
+test_the_workflow_reader_reads_what_the_workflows_use_and_refuses_the_rest() {
+    local sb out want
+    sb=$(guard_path "$TEST_TMPDIR/workflow-reader")
+    rm -rf "$sb"; mkdir -p "$sb"
+    cat > "$sb/sample.yml" <<'YAML'
+# a comment
+name: Sample flow
+"quoted key": value
+escaped: "say \"hi\" \\ to a\/b\tand\n"
+empty: |
+on:
+  push:
+    branches: [main, "dev", 'v*']
+    tags: []
+  pull_request:
+  workflow_dispatch:
+jobs:
+  build:
+    if: >-
+      a ||
+      (b &&
+       c)
+    runs-on: ubuntu-latest   # a comment after a value
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - name: 'It''s quoted'
+        id: released
+        run: |
+          echo "a: b"   # not a comment
+
+          # a script comment
+          exit 0
+         # a comment between the step's keys and its script, which ends the script
+      - plain item
+      -
+      - |
+        a block item
+    list:
+    - same-indent item
+    strip: |-
+      no newline
+    folded: >
+
+      one
+      two
+        spaced
+
+      three
+YAML
+    out=$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$sb/sample.yml" 2>&1 \
+          | python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin), sort_keys=True))' 2>&1)
+    want=$(python3 -c 'import json; print(json.dumps({
+        "name": "Sample flow",
+        "quoted key": "value",
+        "escaped": "say \"hi\" \\ to a/b\tand\n",
+        "empty": "",
+        "on": {"push": {"branches": ["main", "dev", "v*"], "tags": []},
+               "pull_request": None, "workflow_dispatch": None},
+        "jobs": {"build": {
+            "if": "a || (b &&\n c)",
+            "runs-on": "ubuntu-latest",
+            "steps": [
+                {"uses": "actions/checkout@v7", "with": {"ref": "${{ github.sha }}"}},
+                {"name": "It'"'"'s quoted", "id": "released",
+                 "run": "echo \"a: b\"   # not a comment\n\n# a script comment\nexit 0\n"},
+                "plain item",
+                None,
+                "a block item\n"],
+            "list": ["same-indent item"],
+            "strip": "no newline",
+            "folded": "\none two\n  spaced\n\nthree\n"}}}, sort_keys=True))')
+    assert_eq "$want" "$out" "every construct the workflows use comes back as YAML reads it"
+
+    printf 'spaced: |\n    x\n      \n    y\nend: |\n    last' > "$sb/edges.yml"
+    out=$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$sb/edges.yml" 2>&1 \
+          | python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin), sort_keys=True))' 2>&1)
+    assert_eq '{"end": "last", "spaced": "x\n  \ny\n"}' "$out" \
+        "spaces past a block's indentation are text, and a block ending the file gains no line break"
+    printf 'a: |\n  x\n  ' > "$sb/edges.yml"
+    assert_eq '{"a": "x\n"}' "$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$sb/edges.yml" 2>&1 \
+          | python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin)))' 2>&1)" \
+        "a block whose text ended before a last line of spaces keeps its line break"
+    printf '# nothing but a comment\n' > "$sb/edges.yml"
+    assert_eq "null" "$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$sb/edges.yml" 2>&1)" \
+        "a document holding nothing is null"
+    out=$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" 2>&1); status=$?
+    assert_status 2 "$status" "no file to read is a usage mistake"
+    assert_contains "$out" "usage: workflow_yaml.py" "and says how to call it"
+
+    # what|line|the reason, as the refusal words it|the document, as printf %b writes it
+    local -a refused=(
+        "anchor|1|a value starting with '&'|a: &x 1"
+        "alias|1|a value starting with '*'|a: *x"
+        "tag|1|a value starting with '!'|a: !tag x"
+        "flow mapping|1|a value starting with '{'|a: {}"
+        "value starting with a dash|1|a value starting with '-'|needs: - build"
+        "tab in the indentation|2|a tab in the indentation|a:\n\tb: 1"
+        "tab on a white-space line of a block|3|a line of nothing but white space holding a tab|a: |\n  x\n\t\n  y"
+        "document marker|1|a document marker|---\na: 1"
+        "continued plain value|2|a value continued onto a second line|a: one\n  two"
+        "repeated key|2|the key 'a' given twice|a: 1\na: 2"
+        "keep chomping|1|a block scalar header this reader does not take|a: |+\n  x"
+        "indentation indicator|1|a block scalar header this reader does not take|a: |2\n  x"
+        "content after the document|2|content after the end of the document|- b\na: 1"
+        "block line indented less|3|a block scalar line indented less than its first line|a: >\n   a\n  b"
+        "sequence on one line|1|a sequence item holding a sequence on the same line|- - a"
+        "key among sequence items|3|indented further than the mapping it belongs to|a:\n  - x\n  b: 1"
+        "flow anchor|1|a flow sequence item starting with '&'|x: [&a b]"
+        "flow alias|1|a flow sequence item starting with '*'|paths: [*.md]"
+        "flow tag|1|a flow sequence item starting with '!'|paths: [!docs/**]"
+        "flow pair|1|a flow sequence item holding ': '|x: [a: b]"
+        "flow comment|1|a comment inside a flow sequence|x: [a #b, c]"
+        "flow trailing comma|1|an empty item in a flow sequence|x: [a, b,]"
+        "escape|1|an escape this reader does not take|a: \"\\\\z\""
+        "character outside ASCII|1|a character outside printable ASCII, U+00E9|a: caf\xc3\xa9"
+        "form feed|1|a character outside printable ASCII, U+000C|a: x\fy"
+        "key inside a plain value|1|a plain value holding ': '|a: b: c"
+        "unclosed quote|1|a quoted value that does not close on its line|a: \"x"
+        "text after a quoted value|1|text after a quoted value|a: \"x\" y"
+        "unclosed flow sequence|1|a flow sequence that does not close on its line|a: [x, "
+        "flow sequence in a flow sequence|1|a flow sequence holding a collection|a: [x, [y]]"
+        "flow item followed by text|1|a flow sequence item followed by something other than|a: [\"x\" y]"
+        "flow item starting with a block indicator|1|a flow sequence item starting with '>'|a: [>x]"
+        "line that is no key|2|expected a key|a: 1\nplain"
+        "item among a mapping's keys|2|a sequence item among the keys of a mapping|a: 1\n- b"
+        "item continued|2|a sequence item continued onto a second line|- a\n  b"
+        "line inside a sequence's items|2|indented further than the sequence it belongs to|- a: 1\n b: 2"
+        "wide white space before a block's text|2|a line of white space before the block scalar's first line|a: |\n      \n  x"
+        "indented document|1|the document starts indented|  a: 1"
+    )
+    local entry what line reason status
+    for entry in "${refused[@]}"; do
+        what=${entry%%|*}; entry=${entry#*|}
+        line=${entry%%|*}; entry=${entry#*|}
+        reason=${entry%%|*}
+        printf '%b\n' "${entry#*|}" > "$sb/refused.yml"
+        status=0
+        out=$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$sb/refused.yml" 2>&1 >/dev/null) || status=$?
+        assert_status 1 "$status" "a $what is refused"
+        assert_contains "$out" "refused.yml:$line: $reason" "at line $line, for what it is: $what"
+    done
+    printf '%b' 'name: caf\xe9\n' > "$sb/refused.yml"
+    status=0
+    out=$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$sb/refused.yml" 2>&1 >/dev/null) || status=$?
+    assert_status 1 "$status" "a file that is not UTF-8 is refused"
+    assert_contains "$out" "refused.yml: not UTF-8 text" "by name, not with a traceback"
+}
+
+# dev/scripts/clean-release-scratch.sh run from a copy in the sandbox repository $1, with its
+# stand-ins first on PATH and its working directories searched for under $1/../tmp and
+# $1/../shm. Sets RS_STATUS and RS_OUT.
+RS_STATUS=0
+RS_OUT=""
+release_scratch_run() {
+    local repo="$1"; shift
+    RS_STATUS=0
+    RS_OUT=$(cd "$repo/.." && PATH="$repo/../bin:$PATH" RELEASE_SCRATCH_ROOTS="$repo/../tmp $repo/../shm" \
+             bash "$repo/dev/scripts/clean-release-scratch.sh" "$@" 2>&1) || RS_STATUS=$?
+}
+
+# THE RELEASE CLEANUP REMOVES WHAT A RELEASE LEFT, AND NOTHING ELSE. Z asked for it on 2026-10-08,
+# after a release cycle had left seven working directories and an orphaned scratch environment
+# across /tmp and /dev/shm, the oldest four days old.
+#
+# Run against a sandbox and stand-ins only: a copy of the script in a repository of its own, so
+# its .tmp/release-review is the sandbox's; roots of the sandbox's own; and a ps and a conda on
+# PATH, so no real process is read and no real environment is listed or removed. The case first
+# proves PATH finds the stand-ins, and stops if it does not.
+#
+# Asked: a dry run removes nothing; a release script still running stops it before anything goes;
+# then it removes each working directory, one holding a read-only directory included, the step 1
+# scratch, and each scratch environment whose run is over, and leaves every decoy beside them: a
+# name one character short, a file where a directory would be, another directory, the installed
+# environments and base, a scratch environment whose run is still going, and a name that only
+# begins like one.
+test_the_release_cleanup_removes_what_a_release_left_and_nothing_else() {
+    local sb repo removed
+    sb=$(guard_path "$TEST_TMPDIR/release-scratch")
+    rm -rf "$sb"
+    repo="$sb/repo"
+    mkdir -p "$sb/bin" "$sb/tmp" "$sb/shm" "$repo/dev/scripts" "$repo/.tmp/release-review" "$repo/.tmp/other"
+    cp "$REPO_ROOT/dev/scripts/clean-release-scratch.sh" "$repo/dev/scripts/"
+
+    cat > "$sb/bin/ps" <<'PS'
+#!/usr/bin/env bash
+# The process table is ps.table beside this, "pid args" a line. No process has a parent.
+table="$(dirname "$0")/ps.table"
+case "$*" in
+    "-eo pid=,args=") cat "$table" ;;
+    "-o ppid= -p "*) ;;
+    "-p "*) awk -v p="$2" '$1 == p { found = 1 } END { exit !found }' "$table" ;;
+    *) echo "stand-in ps cannot answer: $*" >&2; exit 2 ;;
+esac
+PS
+    cat > "$sb/bin/conda" <<'CONDA'
+#!/usr/bin/env bash
+# The environments are conda.envs beside this, a name a line. A removal takes one out of it and
+# adds it to conda.removed.
+dir="$(dirname "$0")"
+case "$1 $2" in
+    "env list")
+        printf '# conda environments:\n#\n'
+        awk '{ printf "%-32s /envs/%s\n", $1, $1 }' "$dir/conda.envs" ;;
+    "env remove")
+        grep -vxF "$4" "$dir/conda.envs" > "$dir/conda.envs.new"
+        mv "$dir/conda.envs.new" "$dir/conda.envs"
+        echo "$4" >> "$dir/conda.removed" ;;
+    *) echo "stand-in conda cannot answer: $*" >&2; exit 2 ;;
+esac
+CONDA
+    chmod +x "$sb/bin/ps" "$sb/bin/conda"
+    if [ "$(PATH="$sb/bin:$PATH" bash -c 'command -v conda; command -v ps' | tr '\n' ' ')" \
+         != "$sb/bin/conda $sb/bin/ps " ]; then
+        fail_case "PATH does not find the stand-in conda and ps first; nothing was run"
+        return
+    fi
+    printf '%s\n' base PoolSeqFlow-3.2.0 PoolSeqFlow-3.2.0-analysis poolseqflow-validation \
+        PoolSeqFlow-update PoolSeqFlow-update-analysis PoolSeqFlow-update-old PoolSeqFlow-floorcheck \
+        PoolSeqFlow-modulecheck-111 PoolSeqFlow-modulecheck-222 \
+        PoolSeqFlow-suite-333 PoolSeqFlow-suite-333-analysis PoolSeqFlow-suite-444 > "$sb/bin/conda.envs"
+    printf '222 sleep 600\n444 sleep 600\n' > "$sb/bin/ps.table"
+
+    mkdir -p "$sb/tmp/poolseqflow-test.AbC123/ro" "$sb/shm/poolseqflow-test-xdev.XyZ789" \
+             "$sb/tmp/poolseqflow-test.AbC12" "$sb/tmp/keep-me"
+    : > "$sb/tmp/poolseqflow-test.AbC123/ro/f"
+    chmod a-w "$sb/tmp/poolseqflow-test.AbC123/ro"
+    : > "$sb/tmp/poolseqflow-test.DeF456"
+    : > "$repo/.tmp/release-review/notes.txt"
+    : > "$repo/.tmp/other/keep.txt"
+
+    release_scratch_run "$repo" --dry-run
+    assert_status 0 "$RS_STATUS" "a dry run succeeds:"$'\n'"$RS_OUT"
+    assert_contains "$RS_OUT" "would remove $sb/tmp/poolseqflow-test.AbC123" "and names a working directory"
+    assert_contains "$RS_OUT" "would remove the conda environment PoolSeqFlow-update-analysis" "and an environment"
+    assert_dir "$sb/tmp/poolseqflow-test.AbC123" "while removing nothing"
+    assert_no_file "$sb/bin/conda.removed" "not an environment either"
+
+    printf '555 bash test/run_tests.sh --suite 00_static\n' >> "$sb/bin/ps.table"
+    release_scratch_run "$repo"
+    assert_status 1 "$RS_STATUS" "a suite run still going stops it"
+    assert_contains "$RS_OUT" "555  bash test/run_tests.sh" "naming the process"
+    assert_dir "$sb/shm/poolseqflow-test-xdev.XyZ789" "before anything is removed"
+    assert_no_file "$sb/bin/conda.removed" "environments included"
+    sed -i '/^555 /d' "$sb/bin/ps.table"
+
+    release_scratch_run "$repo"
+    assert_status 0 "$RS_STATUS" "with nothing running it removes what it found:"$'\n'"$RS_OUT"
+    assert_no_file "$sb/tmp/poolseqflow-test.AbC123" "the working directory, read-only directory and all"
+    assert_no_file "$sb/shm/poolseqflow-test-xdev.XyZ789" "and its second filesystem"
+    assert_no_file "$repo/.tmp/release-review" "and the step 1 scratch"
+    assert_dir "$sb/tmp/poolseqflow-test.AbC12" "but not a name one character short"
+    assert_file "$sb/tmp/poolseqflow-test.DeF456" "nor a file under a working directory's name"
+    assert_dir "$sb/tmp/keep-me" "nor any other directory"
+    assert_file "$repo/.tmp/other/keep.txt" "nor the rest of .tmp"
+    removed=$(sort "$sb/bin/conda.removed" 2>/dev/null | tr '\n' ' ')
+    assert_eq "PoolSeqFlow-floorcheck PoolSeqFlow-modulecheck-111 PoolSeqFlow-suite-333 PoolSeqFlow-suite-333-analysis PoolSeqFlow-update PoolSeqFlow-update-analysis " \
+        "$removed" "exactly the scratch environments whose runs are over"
+
+    release_scratch_run "$repo"
+    assert_status 0 "$RS_STATUS" "a second run succeeds"
+    assert_contains "$RS_OUT" "Nothing to remove." "having nothing left to do"
+
+    release_scratch_run "$repo" --everything
+    assert_status 2 "$RS_STATUS" "an unknown argument is a usage mistake"
+}
+
+# A case that could not run fails the run, except under --fast, which leaves cases out on purpose.
+# A case that failed before it skipped is reported as the failure even there. And a --case that
+# matches no case stops the run, where it used to report PASS over nothing. The harness is driven
+# in a shell of its own, so its counters are not this run's.
+test_a_case_that_cannot_run_fails_the_run() {
+    local out status
+    out=$(bash -c '
+        source "$1/test/lib/harness.sh"
+        CURRENT_SUITE=probe
+        test_skips() { skip_case "no such environment"; }
+        test_fails_then_skips() { fail_case "broke"; skip_case "--fast"; }
+        TEST_FAST=0 run_case test_skips
+        echo "outside: failed=$TESTS_FAILED skipped=$TESTS_SKIPPED"
+        TESTS_FAILED=0; TESTS_SKIPPED=0
+        TEST_FAST=1 run_case test_skips
+        echo "fast: failed=$TESTS_FAILED skipped=$TESTS_SKIPPED"
+        TESTS_FAILED=0; TESTS_SKIPPED=0
+        TEST_FAST=1 run_case test_fails_then_skips
+        echo "fast after a failure: failed=$TESTS_FAILED skipped=$TESTS_SKIPPED"
+    ' _ "$REPO_ROOT" 2>&1)
+    assert_contains "$out" "could not run: no such environment" \
+        "outside --fast a skip is reported as a failure:"$'\n'"$out"
+    assert_contains "$out" "outside: failed=1 skipped=0" "and counted as one"
+    assert_contains "$out" "fast: failed=0 skipped=1" "under --fast it stays a skip"
+    assert_contains "$out" "fast after a failure: failed=1 skipped=0" "unless the case had already failed"
+
+    status=0
+    out=$(bash "$REPO_ROOT/test/run_tests.sh" --suite 00_static --case no_case_is_called_this 2>&1) \
+        || status=$?
+    assert_status 2 "$status" "a --case that matches nothing stops the run:"$'\n'"$out"
+    assert_contains "$out" "no case matches" "saying so"
+}
+
+# A manifest as the repository writes them, one key a line, which is what the release gate reads:
+# it asks whether a commit's diff adds a version line, so a manifest on one line would show one
+# for any change at all.
+floor_manifest() {   # name version environment [kind]
+    printf '{\n  "name": "%s",\n' "$1"
+    [ -z "${4-}" ] || printf '  "kind": "%s",\n' "$4"
+    printf '  "version": "%s",\n  "environment": "%s"\n}\n' "$2" "$3"
+}
+
+# raise-module-floors.sh moves the version of every manifest whose floor it raises, so the
+# version-bump commit that carries the floors passes the release gate. It did not, and the v3.3.0
+# tag failed release.yml on 2026-10-07: step 2's version bumps had been committed and merged by
+# then, so the floors were six module changes in a commit that moved no version. Built as a
+# release is: a tag, step 2's bumps committed after it, the release version written, the floors
+# raised and committed, and the gate asked what release.yml asks it.
+test_raising_a_floor_moves_the_version_and_passes_the_release_gate() {
+    local sb out status
+    sb=$(guard_path "$TEST_TMPDIR/raise-floors")
+    rm -rf "$sb"; mkdir -p "$sb/dev/scripts" "$sb/analysis/lib/nf" "$sb/modules/repo" \
+                           "$sb/modules/demo" "$sb/modules/still" "$sb/modules/lib/helper"
+    cp "$REPO_ROOT/dev/scripts/raise-module-floors.sh" "$REPO_ROOT/dev/scripts/bump-analysis-version.sh" \
+       "$REPO_ROOT/dev/scripts/check-analysis-versions.sh" "$sb/dev/scripts/"
+    printf '# Version: 1.0.0\nVERSION="1.0.0"\n' > "$sb/PoolSeqFlow"
+    printf 'frame {}\n' > "$sb/analysis/frame.config"
+    printf '20260101.001\n' > "$sb/analysis/frame.version"
+    printf 'def one() { 1 }\n' > "$sb/analysis/lib/nf/thing.nf"
+    printf '#!index-format: 1\n#!index-version: 20260101.001\n' > "$sb/modules/repo/index.tsv"
+    floor_manifest demo 20260101.001 1.0.0 > "$sb/modules/demo/manifest.json"
+    floor_manifest still 20260101.001 1.0.0 > "$sb/modules/still/manifest.json"
+    floor_manifest helper 20260101.001 1.0.0 library > "$sb/modules/lib/helper/manifest.json"
+    (cd "$sb" && git init -q . && git add -A && sandbox_commit base 2026-01-01 && git tag v1.0.0 \
+        && floor_manifest demo 20260102.001 1.0.0 > modules/demo/manifest.json \
+        && floor_manifest helper 20260102.001 1.0.0 library > modules/lib/helper/manifest.json \
+        && git add -A && sandbox_commit 'step 2 moves demo and helper' 2026-01-02) > /dev/null 2>&1 \
+        || { fail_case "could not build a repository to raise floors in"; return; }
+
+    printf '# Version: 1.1.0\nVERSION="1.1.0"\n' > "$sb/PoolSeqFlow"
+    out=$(cd "$sb" && bash dev/scripts/raise-module-floors.sh --dry-run 2>&1)
+    assert_contains "$out" "demo" "--dry-run names what it would raise:"$'\n'"$out"
+    assert_eq "" "$(git -C "$sb" status --porcelain -- modules)" "and writes nothing"
+
+    # A bump refused partway: the library's version sits at the day's 999th change, past which
+    # bump-analysis-version.sh refuses another. Its floor has to stay where it was, or the rerun
+    # would find it raised and never move the version. The day is read twice, here and by the
+    # bump, so a run straddling midnight UTC would fail this half.
+    floor_manifest helper "$(date -u +%Y%m%d).999" 1.0.0 library > "$sb/modules/lib/helper/manifest.json"
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/raise-module-floors.sh 2>&1) || status=$?
+    assert_status 1 "$status" "a refused version bump must stop it:"$'\n'"$out"
+    assert_contains "$out" "so its floor was left at 1.0.0" "saying the floor was left"
+    assert_contains "$(cat "$sb/modules/lib/helper/manifest.json")" '"environment": "1.0.0"' "and leaving it"
+    assert_contains "$out" "1.0.0 -> 1.1.0, version 20260102.001 -> " \
+        "while demo, before it, was raised and its version moved"
+
+    floor_manifest helper 20260102.001 1.0.0 library > "$sb/modules/lib/helper/manifest.json"
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/raise-module-floors.sh 2>&1) || status=$?
+    assert_status 0 "$status" "the rerun should finish the job:"$'\n'"$out"
+    assert_contains "$out" "already 1.1.0" "leaving demo as it was"
+    assert_contains "$out" "1 manifest(s) changed" "and counting the one it changed"
+    assert_contains "$(cat "$sb/modules/demo/manifest.json")" '"environment": "1.1.0"' "demo's floor is raised"
+    assert_not_contains "$(cat "$sb/modules/demo/manifest.json")" '"version": "20260102.001"' \
+        "and its version moved:"$'\n'"$out"
+    assert_contains "$(cat "$sb/modules/lib/helper/manifest.json")" '"environment": "1.1.0"' "the library's floor too"
+    assert_not_contains "$(cat "$sb/modules/lib/helper/manifest.json")" '"version": "20260102.001"' "and its version"
+    assert_eq "$(floor_manifest still 20260101.001 1.0.0)" "$(cat "$sb/modules/still/manifest.json")" \
+        "what was not republished is left alone"
+
+    (cd "$sb" && git add -A && sandbox_commit 'Version bump v1.1.0' 2026-01-03) > /dev/null 2>&1
+    status=0
+    out=$(cd "$sb" && bash dev/scripts/check-analysis-versions.sh --release 2>&1) || status=$?
+    assert_status 0 "$status" "the version-bump commit must pass the release gate:"$'\n'"$out"
+
+    out=$(cd "$sb" && bash dev/scripts/raise-module-floors.sh 2>&1) || true
+    assert_eq "" "$(git -C "$sb" status --porcelain -- modules)" "a second run moves nothing:"$'\n'"$out"
 }
 
 test_release_archive_carries_the_runtime() {
     local listing
     listing=$(working_tree_archive)
-    [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
+    [ -n "$listing" ] || { fail_case "git archive produced nothing"; return; }
     local needed
     for needed in "poolseqflow.nf" "nextflow.config" "parameters.config.template" \
                   "PoolSeqFlow" "analysis.nf" "metadata.csv.template" \
@@ -658,7 +1666,7 @@ test_release_archive_carries_the_manual() {
 
     local listing
     listing=$(working_tree_archive)
-    [ -n "$listing" ] || { skip_case "git archive produced nothing"; return; }
+    [ -n "$listing" ] || { fail_case "git archive produced nothing"; return; }
     assert_contains "$listing" "$manual" "release tarball must carry the manual"
 }
 
@@ -1755,6 +2763,33 @@ PY
     assert_eq "" "$out" "every module and library manifest declares what it runs on:"$'\n'"$out"
 }
 
+# A module's own report is knitted from its directory by name, and readManifest() refuses a
+# declared one that is not there - at the user's run, after publishing, which is too late to
+# learn it. The same two checks, on the source. Fails when no module declares one, because then
+# it checks nothing and a renamed key would pass it.
+test_every_declared_module_report_is_there() {
+    local out
+    out=$(cd "$REPO_ROOT" && python3 - <<'PY'
+import json, pathlib, re
+
+declared = 0
+for path in sorted(pathlib.Path("modules").glob("*/manifest.json")):
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    report = str(manifest.get("report", "")).strip()
+    if not report:
+        continue
+    declared += 1
+    if not re.fullmatch(r"[A-Za-z0-9._-]+\.Rmd", report):
+        print("%s: gives report as '%s', which is not an .Rmd name" % (path, report))
+    elif not (path.parent / report).is_file():
+        print("%s: declares report '%s', and %s has no such file" % (path, report, path.parent))
+if declared == 0:
+    print("no module declares a report, so this case checked nothing")
+PY
+)
+    assert_eq "" "$out" "every module's declared report is in its directory:"$'\n'"$out"
+}
+
 test_every_declared_manual_anchor_exists() {
     local out
     out=$(cd "$REPO_ROOT" && python3 - <<'PY'
@@ -1830,6 +2865,7 @@ test_the_completion_offers_the_subcommands_each_verb_takes() {
         printf "modules: %s\n" "$(reply 3 PoolSeqFlow analysis modules | sort | tr "\n" " ")"
         printf "init: %s\n" "$(reply 2 PoolSeqFlow init | sort | tr "\n" " ")"
         printf "uninstall: %s\n" "$(reply 2 PoolSeqFlow uninstall | sort | tr "\n" " ")"
+        printf "modules install: %s\n" "$(reply 4 PoolSeqFlow analysis modules install | sort | tr "\n" " ")"
         ' _ "$REPO_ROOT")
 
     assert_contains "$out" "check: install project " \
@@ -1838,5 +2874,9 @@ test_the_completion_offers_the_subcommands_each_verb_takes() {
         "analysis modules takes the four verbs its usage names"
     assert_contains "$out" "init: multi " "init takes the one word its usage names"
     assert_contains "$out" "uninstall: all " "uninstall takes the one word its usage names"
+    assert_contains "$out" "modules install: all " \
+        "modules install offers the one fixed word it takes, and no catalogue name"
+    assert_contains "$(cat "$REPO_ROOT/lib/_PoolSeqFlow")" "(all:every module published for this release)" \
+        "and zsh offers it too"
 }
 

@@ -254,7 +254,7 @@ The installer prints whichever of these applies to your shell:
     fpath=(~/.local/share/zsh/site-functions $fpath)
     ```
 
-Both complete every command, the two targets `check` takes, the analysis commands, and **the modules that installation has in its store**. `analysis modules install <TAB>` offers nothing on purpose: those names come from the catalogue over the network. The zsh one also shows what each command is for.
+Both complete every command, the two targets `check` takes, the analysis commands, and **the modules that installation has in its store**. `analysis modules install <TAB>` offers `all` and no module name, because those names come from the catalogue over the network. The zsh one also shows what each command is for.
 
 They go with the last installed version removed; another version left installed keeps them.
 
@@ -421,7 +421,7 @@ Tools, as this project configures them
 
 **Your files parse**: `parameters.config` through Nextflow itself, `metadata.csv` and the run table through the same parsers a run uses. It also reports whether the config was written for this release, which is the one thing that stops a run before anything else is read.
 
-**Your settings are checked by the same rules a run applies**, so a project is never told one thing here and another during the run. [What is checked](#parameter-checks) lists them. `NOTHING TO FLAG` is the healthy answer and the common one: a finding appears only when a setting would make the run produce nothing, or would quietly change what a published number means.
+**Your settings are checked by the same rules a run applies**, so a project is never told one thing here and another during the run. [What is checked](#parameter-checks) lists them. `NOTHING TO FLAG` is the healthy answer and the common one: a finding appears only when a setting would make the run produce nothing or stop it partway, or would quietly change what a published number means.
 
 **Every command, as *you* configured it.** The list comes from `params.software`, so a command [repointed at a system binary](#using-system-tools) is checked the way the run will call it, and the second column shows what will actually be invoked. That override is the setting most likely to be wrong and least likely to announce itself. If `params.software` cannot be read, no tool is checked and it says so.
 
@@ -540,7 +540,7 @@ storageDir/
     └── …
 ```
 
-`<name>` is `vcf.fileName`, which is `Test` until you change it.
+`<name>` is `vcf.fileName`, which follows `outputPrefix`, so it is `Test` until you change either.
 
 Start with `Output/Reports/Depth/` and `Output/run_parameters.txt`. The first says what depth ceiling each sample was given and why; the second is a read-only record of exactly which settings produced these files.
 
@@ -597,6 +597,7 @@ Naming a version matters most when removing one; see [Uninstalling](#uninstallin
 | `PoolSeqFlow analysis check` | Verify an existing analysis installation: tools, R packages, entry point |
 | `PoolSeqFlow analysis modules available` | List the modules published for this release's table contract |
 | `PoolSeqFlow analysis modules install <module> [version]` | Install one, newest readable version unless you name it. Also installs [what it runs on](#module-packages) |
+| `PoolSeqFlow analysis modules install all` | Install every module published for this release that is not installed yet. One that cannot be installed is named, and the rest still are |
 | `PoolSeqFlow analysis modules list` | List the modules installed for this release, and name any that are broken |
 | `PoolSeqFlow analysis modules uninstall <module>` | Remove one module, after confirmation. Results it produced are untouched |
 | `PoolSeqFlow analysis complete` | Move finished analyses and shared intermediates from `mainDir/Analysis/` to `storageDir/Analysis/`, after confirmation. A name already taken in permanent storage stops it with nothing moved |
@@ -631,6 +632,7 @@ Ask the old release what to reinstall, then install each into the new one:
 ```bash
 PoolSeqFlow-3.0.0 analysis modules list      # what the old release has
 PoolSeqFlow analysis modules install mds     # and again, into the new one
+PoolSeqFlow analysis modules install all     # or every module published for the new one
 ```
 
 Nothing is lost by this. A module installs the libraries it needs along with it, and the analyses it has already produced are results; no install or uninstall reaches them.
@@ -1391,8 +1393,7 @@ Two files are written to `Output/Frequencies/`, named after `vcf.fileName`:
 | `<name>_snp_depth.tsv` | The read counts those SNP frequencies were computed from |
 | `<name>_indel_depth.tsv` | The same, for indels |
 
-With the default `vcf.fileName = 'Test'` those are `Test_snp_freq.tsv`, `Test_indel_freq.tsv`
-and their two `_depth.tsv` counterparts.
+With the default `outputPrefix = 'Test'`, which `vcf.fileName` follows, those are `Test_snp_freq.tsv`, `Test_indel_freq.tsv` and their two `_depth.tsv` counterparts.
 
 #### Columns
 
@@ -2244,7 +2245,8 @@ Safe to tune between runs. Step 0 does not track them, precisely because they ca
 | `referenceFile`, `gffFile` | Input filenames within `mainDir/Reference` |
 | `metadataFile` | Name of the sample table, in `mainDir` |
 | `multiRun`, `multiRunFile` | Whether to read a run table, and what it is called |
-| `vcf.fileName` | Base name for the VCFs and frequency tables. See [Filtering & Frequency](#output-naming) |
+| `outputPrefix` | The start of the names your results carry: the VCFs and frequency tables through `vcf.fileName`, and every table, figure and report an analysis publishes. Recorded with your results, so a change after a run stops the next one. See [Filtering & Frequency](#output-naming) |
+| `vcf.fileName` | Base name for the VCFs and frequency tables; `outputPrefix` unless you write one. Recorded the same way. See [Filtering & Frequency](#output-naming) |
 | `dryRunDir` | Where `dryrun` builds its preview and where `dryclean` looks for one. See [Cleaning up](#cleaning-up) |
 
 #### Parameters that change a report, not a result
@@ -2263,7 +2265,7 @@ Some settings are wrong in a way that costs you a run and says nothing. `PoolSeq
 
 | Level | What happens |
 |---|---|
-| **FAIL** | The run stops at step 0. The setting would make it produce nothing at all |
+| **FAIL** | The run stops at step 0. The setting would make it produce nothing at all, or stop it partway |
 | **WARN** | The run continues. The setting works and costs you far more than it looks like it does |
 | **NOTE** | The run continues. The setting changes what a published number means, and you should know which |
 
@@ -2275,6 +2277,7 @@ What is checked today:
 | `filterFalsePositives.sampleThreshold` above 1 | FAIL | It is a fraction of your samples, so no site can satisfy it |
 | `ploidy` or `poolSize` below 1 | FAIL | Every detection limit is computed from their product |
 | `fastqc.memory` carrying a unit | FAIL | FastQC takes megabytes as a bare number and refuses `2G` |
+| `outputPrefix` or `vcf.fileName` empty, `null`, or anything but letters, digits, `.`, `_` and `-` starting with a letter or a digit | FAIL | Each starts the name of files the run writes: a `/` writes somewhere else, a space breaks the steps that hand the name to a shell, and a leading `.` hides the files. `null` is what the template's `vcf.fileName` line reads when the `outputPrefix` line is missing. A run table's cells are held to the same rule when the table is read |
 | `scaleMapQ` at or below 10 | WARN | No adjustment is applied at all, whatever you wrote |
 | `scaleMapQ` under twice `varQualMin` | WARN | It works, and at the boundary keeps 6% of the sites an unadjusted run called |
 | `sampleThreshold` at or below 0 | WARN | The cross-sample requirement asks for nothing |
@@ -2292,7 +2295,7 @@ What is checked today:
 
 #### Do not edit: derived values
 
-A large part of `parameters.config` is computed. The `cores` block derives every tool's thread count from `threads`; the `dir` block builds every path from `mainDir` and `storageDir`; `filterFalsePositives.sensitivity` is computed from `poolSize` and `ploidy`; `snpEff.db` is derived from `gffFile`.
+A large part of `parameters.config` is computed. The `cores` block derives every tool's thread count from `threads`; the `dir` block builds every path from `mainDir` and `storageDir`; `filterFalsePositives.sensitivity` is computed from `poolSize` and `ploidy`; `snpEff.db` is derived from `gffFile`; `vcf.fileName` follows `outputPrefix`.
 
 Beyond those, eight named values are assembled from the filenames and roots you set. They appear in the config as ordinary assignments, so they can be overridden, but each has an input that is the thing you actually mean to change:
 
@@ -2311,7 +2314,7 @@ The three `All_Runs` values are why a multi-run project does not scatter session
 
 Editing these by hand breaks the invariant that makes the pipeline predictable: one number sizes the run, and one pair of paths places everything. Change the input, not the derivation.
 
-Setting one is supported rather than forbidden, and how you do it depends on which: the `cores` block and the `options` strings ship commented out, so uncommenting a line is what pins it, while `filterFalsePositives.sensitivity`, `referenceFa` and `snpEff.db` are written out as formulas, so pinning one means replacing the formula with a value. Either way **a derived value you set by hand is used exactly as written, and nothing is derived from its inputs any more.** Pin `variantCall.mpileupOptions` and `variantCall.maxDepth` stops meaning anything for that run. That is a reasonable thing to want when you need full control of a command line; it is only a trap when it happens by accident.
+Setting one is supported rather than forbidden, and how you do it depends on which: the `cores` block and the `options` strings ship commented out, so uncommenting a line is what pins it, while `filterFalsePositives.sensitivity`, `referenceFa`, `snpEff.db` and `vcf.fileName` are written out as formulas, so pinning one means replacing the formula with a value. Either way **a derived value you set by hand is used exactly as written, and nothing is derived from its inputs any more.** Pin `variantCall.mpileupOptions` and `variantCall.maxDepth` stops meaning anything for that run. That is a reasonable thing to want when you need full control of a command line; it is only a trap when it happens by accident.
 
 **The paths are the exception, and a value written over one of them is replaced rather than used.** `referencePath`, `gffPath`, `metadataPath`, `multiRunPath` and the `dir` block are rebuilt for every run out of the roots and filenames that run holds. Under a run table `dir.outputs` and `dir.logs` carry the run's own name, and a pin there would send two runs to one directory. Change the root or the filename instead, which is what the table above names for each.
 
@@ -3198,7 +3201,7 @@ The order is fixed (stages 5 to 9 of [The Filter Chain](#the-chain-at-a-glance))
 | `vcffilter.minDP`, `vcffilter.minQUAL` | Remove whole sites that are too poorly called, or too shallow in any one sample unless `keepLowDepthAsZero` is on |
 | `vcffilter.keepLowDepthAsZero` | Off by default. On, a cell below `minDP` no longer removes its site: it is written as unread, and the site is kept if enough of its cells reach the floor |
 | `vcffilter.minSamples` | With `keepLowDepthAsZero` on, how many of a site's cells must reach `minDP` for it to be kept. 2 by default, from 1 to the number of pools with reads |
-| `vcf.fileName` | Removes nothing; it names the files this step writes |
+| `vcf.fileName` | Removes nothing; it names the files this step writes, after `outputPrefix` unless you give it a name of its own |
 
 `filterFalsePositives.sensitivity` is **computed** from `poolSize` and `ploidy` rather than set, and can be overridden per sample in `metadata.csv`; see [Metadata](#metadata) for the per-sample form.
 
@@ -3314,14 +3317,20 @@ If "every sample" is too strict for your design, turn on `keepLowDepthAsZero` ra
 ### Output naming
 
 ```groovy
+outputPrefix = 'Test'
+
 vcf {
-    fileName = 'Test'
+    fileName = "${params.outputPrefix}"
 }
 ```
 
-Base name for every VCF and frequency table. With the default, a finished run leaves `Test.vcf`, `Test_snp_freq.tsv`, `Test_indel_freq.tsv`, and `Test_annotated.vcf` if annotation ran. Worth setting to something descriptive, because it is the name your results carry from here on.
+**`outputPrefix` starts the names your results carry.** The VCFs and frequency tables take it through `vcf.fileName`: with the default, a finished run leaves `Test.vcf`, `Test_snp_freq.tsv`, `Test_indel_freq.tsv`, and `Test_annotated.vcf` if annotation ran. Every table, figure and report an analysis publishes starts with it too ([File names](#analysis-file-names)). Reads, BAMs and the per-sample reports keep their samples' names. Worth setting to something descriptive, because it is the name your results carry from here on. It may hold letters, digits, `.`, `_` and `-`, starting with a letter or a digit, and a run naming anything else is refused before it starts.
 
-Changing it after a run does not rename anything; it makes the resume checks look for files that do not exist, and the whole VCF and frequency branch runs again alongside the old files.
+**`vcf.fileName` can name the VCF on its own.** As the template writes it, it follows `outputPrefix`, and in a [run table](#multi-run) it follows each run's own. Write a name there instead, such as `fileName = 'calls_v2'`, and the VCF and its tables carry that while every analysis file keeps `outputPrefix`.
+
+**A run table that varies `outputPrefix` varies the VCF name with it**, and runs whose VCFs are named differently call their variants separately, from the same BAMs. To label each run's analyses and still call once, write a fixed `fileName` in `parameters.config`: the runs then share the calling, and each prefix gets its own filtering and tables.
+
+**Both are recorded with the rest of your parameters**, so changing either after a run stops the next run before it starts, the way any recorded change does, and nothing is renamed. Restore the name the results were produced under, or start again with `PoolSeqFlow reset`.
 
 ## Annotations
 <!--@ page: annotations -->
@@ -3398,6 +3407,7 @@ A module is installed with the **libraries** it declares: the shared arithmetic 
 PoolSeqFlow analysis modules available         # what is published for this release
 PoolSeqFlow analysis modules install mds       # install one
 PoolSeqFlow analysis modules install mds 1.2.0 # or pin the version
+PoolSeqFlow analysis modules install all       # every one published for this release
 PoolSeqFlow analysis modules list              # what is installed for this release
 PoolSeqFlow analysis modules uninstall mds     # remove one, after confirming
 ```
@@ -3405,6 +3415,8 @@ PoolSeqFlow analysis modules uninstall mds     # remove one, after confirming
 All of them read the installation rather than your project, so they work from anywhere and none needs a `parameters.config`. `list` and `available` need no environment. **`install` does**, because installing a module also installs what it runs on; `uninstall` uses the environment when it is there and says so when it is not.
 
 **`install` pins by name.** Without a version it takes the newest one this release can read; with one it takes exactly that. **Name the version in your methods section**, and install that version to reproduce the analysis. A module carries its own version precisely so it can move without the pipeline moving, which means two runs of "the same module" are not necessarily the same code. Every analysis prints the module version it ran in its header, and installing writes a `.source` file beside the module recording where it came from and the checksum it matched.
+
+**`install all` installs every module this release can run** that is not installed yet, each at the version `install <name>` would take. A module already installed is left at the version it has, and one this release cannot run is named with the reason `available` gives. A module that fails to install does not stop the others; the command names it at the end and exits with an error.
 
 **The same list is on the website**, at [Published modules](https://ozankiratli.github.io/PoolSeqFlow/modules-repo/). The page and the catalogue are generated from the same rows and published in the same deploy, so what it shows is what `available` will tell you.
 
@@ -4031,6 +4043,14 @@ Everything the analysis layer produces goes under `Analysis/`. That is on `mainD
 
 `Analysis/Results` holds one folder per analysis, named by [`folderName`](#analysis-folder-name).
 
+### File names { #analysis-file-names }
+
+**Every file an analysis computes is published under [`outputPrefix`](#output-naming).** A module writes `mds.tsv`, and under the template's prefix the folder holds `Test_mds.tsv`; a module's own page names its files as the module writes them. In a run table each results directory takes the prefix of the runs it holds, and runs with different prefixes never share one.
+
+**The code keeps its own name**: the script that produced the results and the sources it compiled, `mds.R` and `nei_distance.cpp` for `mds`. So do the files every folder carries whatever the module: `README.md`, `CITATIONS.md`, `references.bib` and the verification record, `0_verify_analysis.txt`. The `README.md` lists every file under the name the folder holds it by.
+
+**The report is `<prefix>_<module>_report_<date>-<time>.pdf`.** `Test_mds_report_20261007-103602.pdf` is `mds`'s, published at 10:36:02 on 7 October 2026 by the machine's local clock. It carries the module's name whatever the folder is called, so two `association` analyses in two folders both read `Test_association_report_…`, and the time tells two reports of one module apart once they sit side by side.
+
 ### The script that produced it { #analysis-script }
 
 **Every published analysis carries the script that produced it.** That is a guarantee of the layer rather than a convention module authors are asked to follow: an analysis handed over without one is refused, nothing is published, and the folder is left exactly as it was. So a result you find in `Analysis/Results` can always be regenerated, and the folder also holds the verification record that cleared it, which names the module, its version, the runs it covered and the configuration it was assembled from.
@@ -4042,7 +4062,7 @@ Everything the analysis layer produces goes under `Analysis/`. That is on `mainD
 ```markdown
 | File | What it is | Explained at |
 |---|---|---|
-| `design.tsv`             | one row per pool, the experimental design | [#the-experimental-design](...) |
+| `Test_design.tsv`        | one row per pool, the experimental design | [#the-experimental-design](...) |
 | `0_verify_analysis.txt`  | the checks that cleared this folder       | [#verification](...)           |
 | `CITATIONS.md`           | the software this analysis used           | [#citing-the-tools-it-runs](...) |
 ```
@@ -4053,11 +4073,11 @@ A module that declares a file and then does not publish it is refused, and a mod
 
 ### One PDF of the whole analysis { #analysis-report }
 
-**Every published folder also carries `report.pdf`: every result in it, in one document, each under the name of the file it came from.** Tables are rendered as tables, figures as figures, and the heading above each is the file name, so a number you want to work with can always be traced back to the file that holds it.
+**Every published folder also carries a PDF report, [named for the module and when it was published](#analysis-file-names): the results, laid out to be read.** It opens with what produced the folder (the release, the module and its version, the analysis frame) and with anything about your design to read before the numbers, the same notes the `README.md` carries.
 
-It is a **capability of the layer, not of any module**. A module already declares what it publishes and what each file is, because the `README.md` is built from those declarations; the report is built from the same ones. So a module gets a report without writing a line of code for it, and so does a module somebody else wrote.
+**A module that writes its own report lays its results out the way they are read**: tables grouped by what they answer, figures drawn from them, and every caption naming the file its numbers come from. [`basicstats`](#basicstats-report), [`association`](#association-report) and [`mds`](#mds-report) do. A module that writes none gets each table and figure it publishes, under the file's name, so a number you want to work with can still be traced back to the file that holds it.
 
-What it is not is a substitute for the files. A table longer than forty rows is shown to forty and says so, and the figures are the same images that sit beside it. **Everything in the report is in the folder; the folder is what you compute from.**
+What it is not is a substitute for the files. A table may be rearranged for reading, a long one is shortened and says so, and a figure may be drawn only in the report. **Everything in the report comes from a file in the folder; the folder is what you compute from.**
 
 **A report that cannot be built does not stop the analysis being published.** The reason is printed and the folder is complete without it; every number was already a file. That is the opposite of how the other publishing checks behave, and deliberately so: a missing script or an undeclared output means the analysis is not what it claims to be, where a missing report means only that a convenience is absent.
 
@@ -4110,7 +4130,7 @@ The cost of a working cycle is therefore one transfer, not two, which matters wh
 # Modules
 <!--@ section: modules | nav: Modules -->
 
-**Every module is installed separately**: none comes with the pipeline, and a fresh installation has an empty store. These are the ones published alongside this release, each on its own timetable and at its own version, installed with `PoolSeqFlow analysis modules install <name>` and documented here so you can read what one computes before deciding to install it.
+**Every module is installed separately**: none comes with the pipeline, and a fresh installation has an empty store. These are the ones published alongside this release, each on its own timetable and at its own version, installed with `PoolSeqFlow analysis modules install <name>`, or all at once with `install all`, and documented here so you can read what one computes before deciding to install it.
 
 | Module | What it computes | Needs |
 |---|---|---|
@@ -4312,6 +4332,14 @@ params {
 
 **It is depth, not coverage, and the axis says so.** Every point is a site that was *called*; the gaps between them are sites the pipeline did not call, which is not the same as sites with no reads. A run of thin points is a stretch where calling was sparse. Read it against `depth.tsv` for that sequence rather than as a coverage trace.
 
+### The report: the results laid out { #basicstats-report }
+
+The report reads the tables above and nothing else, in the order a reader takes them in. Gene diversity per pool comes first, with your experimental variables beside each pool. Then depth and effective sample size at the called sites and genome-wide side by side, with a library-by-library table when a pool merges several, and a figure of the pools against each other. Then depth and unmeasured sites by sequence with a figure, the called sites by sequence, any depth plots you named, and the design. **A merged pool's genome-wide figures are lower bounds**, marked `≥` in the table and drawn as a series of their own in the figure.
+
+**When more than twenty-one sequences carry a called site, the report names the twenty with the most called SNP sites**, in the order the tables give them, and adds the rest up in one row. Site counts add. A pool's harmonic depth over those sequences is recombined from each one's harmonic mean and the sites it was taken over, which is exact, so the row reads the same as a harmonic mean taken over those sites directly. `depth.tsv` and `sites.tsv` hold every sequence on its own.
+
+**The figure of depth by sequence draws up to eight pools as colored points, and more as a grid** with a sequence to a row and a pool to a column. Tables hold at most eight pools side by side and continue in further tables past that.
+
 ### What it can be set to { #basicstats-settings }
 
 ```groovy
@@ -4386,7 +4414,7 @@ That is worth unpacking, because it is where this module departs from what most 
 
 **One regression per allele.** A triallelic site gives three fits: reference against the phenotype, first alternate against it, second alternate against it. Each allele has its own frequency and therefore its own variance under assumption 1 above; the weights are the same for all of them, because a weight describes how deeply that unit was read at that site and depth is a property of the site.
 
-**The site statistic is the largest |t| among them.** Written `S` in [`association.tsv`](#association-sites).
+**The site statistic is the largest |t| among them.** Written `S` in [`association_<phenotype>.tsv`](#association-sites).
 
 **Why the reference row is not skipped.** A site's frequencies sum to 1, so the reference carries the negated sum of every alternate. When a phenotype pushes two alternates up together, neither is impressive alone and the reference falls by both, so the reference row is where that signal is, and an analysis that only looks at alternates cannot see it. Measured against a planted signal of exactly that shape, reading the alternates alone recovers **40% fewer** of the sites than reading every allele.
 
@@ -4412,17 +4440,19 @@ That is not an argument from first principles alone. Measured on null sites of t
 
 At three units the run says so in a sentence and the table is a **ranking of effect sizes, not a test**. That is a true statement about the experiment rather than a fault of the method, and it is the honest answer to a well-known failure of this kind of study: a modestly powered pool-seq scan read as though it were well powered produces scattered genome-wide significance from a single causal variant, which looks like a polygenic architecture and is noise [Long et al. 2026](#ref-long2026polygenicity). A floor is a structural refusal to draw that picture.
 
-A site read in fewer units than the design holds is rearranged among the units it was read in, so it has the floor of a design that size: a site read in three of six cannot reach 0.05 either. `n_observed` in [`association.tsv`](#association-sites) is that count, and the run says in a sentence how many tested sites it applies to.
+A site read in fewer units than the design holds is rearranged among the units it was read in, so it has the floor of a design that size: a site read in three of six cannot reach 0.05 either. `n_observed` in [`association_<phenotype>.tsv`](#association-sites) is that count, and the run says in a sentence how many tested sites it applies to.
 
 **Ties keep a site above the floor.** It is reached only by a site whose observed arrangement beats every other outright. Where every unit carries the same weight, as equal depths and pool sizes give, some arrangements always tie with the observed one: the reversal of a phenotype symmetric about its mean, and every reshuffle inside a level of a categorical one, with the swap of the two levels when they are the same size. Three cases against three controls read to equal depths cannot go below 0.1. `design_floor` in [`permutations.tsv`](#association-diagnostics) is `1 / n!`, and `floor` beside it is the smallest p this run could report, which differs only when the rearrangements were sampled.
 
-### `association.tsv`: one row per site { #association-sites }
+### `association_<phenotype>.tsv`: one row per site { #association-sites }
 
-Always complete: every site the module could read has a row, whether or not it produced a statistic.
+**One file per phenotype, named after it**: fitting `pt_wingspan` and `pt_resistant` publishes `association_pt_wingspan.tsv` and `association_pt_resistant.tsv`. A character in a phenotype's name other than a letter, a digit, `.`, `_` or `-` becomes `_` in its file name, and two phenotypes whose names would then be the same are refused. To compare phenotypes at a site, join their files on `kind`, `chrom` and `pos`.
+
+Always complete: every site the module could read on the sequences it fitted (every sequence, unless [`chromosomes`](#association-manhattan) names some) has a row, whether or not it produced a statistic.
 
 | Column | What |
 |---|---|
-| `phenotype`, `kind`, `chrom`, `pos` | which fit, which table, and where |
+| `kind`, `chrom`, `pos` | which table, and where |
 | `k` | how many alleles the site holds, the reference included |
 | `n_observed`, `n_units` | units read at this site, and units in the design. With fewer than three read, or none of them differing in the phenotype, the site has no statistic |
 | `S` | the site statistic: the largest \|t\| over **every** allele |
@@ -4434,11 +4464,11 @@ Always complete: every site the module could read has a row, whether or not it p
 
 **A flagged site's `S` is not comparable between implementations and must not be quoted.** Two alleles of a perfectly separated site are algebraically one test, and whether each lands on exactly zero residual or on 1e-32 decides between an infinite *t* and a merely enormous one. We have seen two builds of the same language disagree. `perm_p` is unaffected and remains the answer.
 
-### `association_alleles.tsv`: one row per allele { #association-alleles }
+### `alleles_<phenotype>.tsv`: one row per allele { #association-alleles }
 
-The effect sizes, for the sites `reportBelow` and `reportTop` select. **This table is a selection and the site table is not**: at a hundred million sites the allele rows are a twenty-gigabyte file, which is a data dump rather than a result.
+The effect sizes, one file per phenotype beside its [site table](#association-sites), for the sites `reportBelow` and `reportTop` select from that phenotype's: every site at a `perm_p` of `reportBelow` or under, and the first `reportTop` by `perm_p`, ties going to the larger `S` with a flagged site first. That is the order the [report](#association-report) ranks them in, so with `reportTop` at 20 or more every site it shows has its alleles. **This table is a selection and the site table is not**: at a hundred million sites the allele rows are a twenty-gigabyte file, which is a data dump rather than a result. The published `association.R` names the selection in its header.
 
-`b1` is the slope, `se` its standard error, and `t` and `p` the closed-form diagnostics. **`b1 > 0` means the allele is more frequent at the higher phenotype value** (for a categorical scale, at the level [`phenotype.tsv`](#association-phenotype) names as coded 1).
+`b1` is the slope, `se` its standard error, and `t` and `p` the closed-form diagnostics. **`b1 > 0` means the allele is more frequent at the higher phenotype value**: for a binary scale, in the units at the level [`phenotype.tsv`](#association-phenotype) names as coded 1, and for an ordinal one, further along its order, which is read as each level's place in it.
 
 The parametric `p` is a diagnostic and not the answer. It is well calibrated on an ordinary site and makes impossible claims on a degenerate one: six reads of evidence will produce a *p* of 1e-9 that no design of six pools can support.
 
@@ -4474,9 +4504,19 @@ Always drawn. A permutation p is discrete, so the points sit on a ladder rather 
 
 ### `manhattan_<sequence>.png`: association along a sequence { #association-manhattan }
 
-Drawn only for the sequences you name in `analysis.modules.association.chromosomes`, on the same rule `basicstats` follows: a genome has more sequences than anyone wants plots for.
+Drawn for each sequence you name in `analysis.modules.association.chromosomes`, **which also restricts the fit to those sequences**. A reference holding scaffolds, unplaced contigs or an organelle would otherwise put all of them in the test; naming the chromosomes keeps them out. A run that names none fits every sequence and draws no plot.
+
+Restricting changes the numbers, not only the plots. The dispersion is estimated from the named sequences' sites and `fdr_p` adjusts across them, so a site's `fdr_p` from a run over two chromosomes is not the one a run over the whole genome would give it.
 
 **A flat ceiling across one of these is your design's floor and not a feature of the data.**
+
+### The report: the results laid out { #association-report }
+
+The report reads the tables above and nothing else, in the order this page asks you to read them. [The phenotype as it was read](#association-phenotype) comes first, each pool's cell beside the number the fit used. Then what the design can show: for each phenotype, SNPs and indels apart, the units, the rearrangements, both floors, the sites read, tested and selected, and the diagnostics from [`permutations.tsv`](#association-diagnostics). **When the design's floor is above 0.05, the report says so in bold before any site is shown.** Every phenotype of a run shares that floor, because the units alone set it.
+
+Then the strongest sites of each phenotype: the twenty with the smallest permutation p, or every tested site when there are fewer, with ties going to the larger `S`. Beside each is the allele with the largest |*t*| and its slope, read from the phenotype's [`alleles_<phenotype>.tsv`](#association-alleles), so a site that table did not select shows `NA` there. The caption counts how many tested sites reach the smallest p the run could report. `qq.png` comes last, and after it any Manhattan plots in the order of the sequences they draw.
+
+**A flagged site prints `flagged` where its `S` would be**, and comes first among the sites it ties with. Its *t* is not comparable, so the allele named for it is the one with the steepest slope. **A biallelic site's two alleles carry one |*t*| with opposite slopes, and the report names the one whose slope is positive**: the allele that rises with the phenotype, more frequent at the level coded 1 of a binary scale or further along an ordinal one. An allele longer than 20 bases is shown by its first 12 and its length.
 
 ### What it can be set to { #association-settings }
 
@@ -4486,8 +4526,8 @@ Drawn only for the sequences you name in `analysis.modules.association.chromosom
 | `permutations` | 10000 | the budget. The set is enumerated whole while it fits inside this and the design has eight units or fewer, and sampled otherwise |
 | `fdr` | `BH` | anything `p.adjust` takes |
 | `dispersion` | estimated | the excess variance term. `0` weights by `n_eff` alone |
-| `reportBelow`, `reportTop` | 0.05, 1000 | which sites reach the allele table |
-| `chromosomes` | none | which sequences get a plot |
+| `reportBelow`, `reportTop` | 0.05, 1000 | which sites of each phenotype reach its allele table |
+| `chromosomes` | none | the sequences to fit, each drawn as a Manhattan plot; none fits every sequence and draws none |
 | `binSize`, `workers`, `usecpp` | 100000, task cpus, true | how the work is divided and which implementation does it |
 
 **Enumerating is a correctness requirement, not a speed one.** A sampled p is `(1 + reached) / (1 + draws)` [Phipson & Smyth 2010](#ref-phipson2010permutation), and sampling a set small enough to enumerate can return a p below the smallest value your design supports. Leave `permutations` above `n!` for small designs.
@@ -4575,7 +4615,7 @@ Two kinds of site drop out for a pair. One is an ordinary missing cell. The othe
 
 ### `eigenvalues.tsv`: how much each axis carries { #mds-eigenvalues }
 
-Every eigenvalue, with its share of the scatter under both denominators, the running totals, and which axes were plotted.
+Every eigenvalue, with its share of the scatter under both denominators, the running totals, and which axes were plotted. `plotted` marks the two axes `mds.png` draws, however many `dimensions` wrote to [`mds.tsv`](#mds-coordinates); a run that wrote one axis draws no plot and marks none.
 
 **Some eigenvalues can be negative, and they are published rather than dropped.** Classical scaling assumes the distances fit a flat Euclidean space; a real distance matrix need not, and the leftover shows up as negative eigenvalues. That creates a reporting trap worth knowing about: divide by the *signed* sum and the leading two axes can add up to more than 100%, which is not a typo but an artefact of the denominator. Divide by the sum of absolute values and they cannot. Both columns are here, the plot's axis labels use the second, and the eigenvalue column keeps its signs so you can see how much of the structure is not flat.
 
@@ -4585,7 +4625,9 @@ Negative eigenvalues carrying a few percent of the total are ordinary for pool-s
 
 ### `mds.png`: the pools on the leading two axes { #mds-plot }
 
-Points labeled by pool, on the leading two axes, with each axis label carrying its share of the absolute eigenvalue sum. When any pair rests on fewer than 30 sites, a line under the plot counts them; [`distance.tsv`](#mds-distance) says which.
+The pools as points on the leading two axes, with each axis label carrying its share of the absolute eigenvalue sum. When any pair rests on fewer than 30 sites, a line under the plot counts them; [`distance.tsv`](#mds-distance) says which.
+
+**Each point carries its pool's name unless `labels` is false.** The names are placed by `ggrepel` so that none sits on another name or on a point, and a name that had to move far from its point is joined to it by a line. Placing them is a fixed amount of work, so the plot is the same on every machine. That work grows with the square of the pool count: measured, it took 2 seconds at 12 pools, 6 at 24 and 35 at 48. It stops at one minute, which it reaches at about 65 pools, and past that the names can land differently from one machine to the next. Pools that cluster, or long pool names, can crowd the plot at any count. `labels = false` draws the points alone, and `mds.tsv` names every one of them, as does the coordinates table in the [report](#mds-report).
 
 **`colorBy` and `shapeBy` each take an `exp_` column, and they compose.** Coloring by the treatment and shaping by the timepoint puts both factors on one plot, which is usually the question (whether the pools group by the thing you set up, or by when you sampled them):
 
@@ -4612,6 +4654,12 @@ text(coords$dim1, coords$dim2, coords$pool, pos = 3, cex = 0.7)
 
 `mds.tsv` carries every axis `dimensions` asked for, not only the two that were drawn, so a third axis is a column away rather than another run.
 
+### The report: the results laid out { #mds-report }
+
+The report reads the three tables above and nothing else. The plot comes first, with every pool's coordinate on each axis the run wrote. Then how much each axis carries: both shares as a table, and the share of the absolute sum as bars, with a negative eigenvalue drawn in a color of its own. *n* pools place on at most *n* − 1 axes, so the last eigenvalue is zero give or take rounding, and the report counts it as zero whichever side of zero it lands. Then the corrected distances as a pool-by-pool matrix with a heatmap of it, blue below zero and red above, and last what each distance rests on: how many sites each pair shares, the pairs averaged over fewer than 30 sites, and every pair before and after the sampling correction, on axes that start at zero so the line of no correction is always drawn.
+
+**A matrix holds at most eight pools as columns** and continues in further tables past that, split as evenly as the count allows (25 pools make 7, 6, 6 and 6 columns), with every pool a row of each. The shared sites get a matrix of their own only when the pairs differ in them. When every pair rests on fewer than 30 sites, the report says so once rather than listing them.
+
 ### What it does not tell you { #mds-limits }
 
 **Six pools make six points, and six points always look like they have structure.** Nothing in this module says whether the arrangement is more than sampling noise. A block bootstrap over linkage blocks, with the replicate ordinations Procrustes-aligned, is what would give you a confidence region around each point; it is not in this release, and until it is, an `mds.png` is a description of the data and not evidence of grouping.
@@ -4627,8 +4675,9 @@ analysis {
     modules {
         mds {
             dimensions    = 2       // how many axes to write coordinates for
-            colorBy      = ''      // an exp_ column to color the points by; empty means one color
-            shapeBy       = ''      // an exp_ column to shape them by; at most six levels
+            colorBy       = ''      // an exp_ column to color the points by; empty means one color
+            shapeBy       = ''      // an exp_ column to shape them by; at most 26 levels
+            labels        = true    // each pool's name beside its point; false draws the points alone
             includeIndels = false   // read the SNP tables alone
             chromosomes   = []      // restrict to these sequences; empty means all
             binSize       = 100000  // sites parsed and accumulated at a time
@@ -5033,17 +5082,17 @@ Process requirement exceeds available CPUs -- req: 12; avail: 8
 
 `threads` is larger than the machine. Tasks reserve what they really use, so an oversized request fails at submission rather than quietly oversubscribing. Set `threads` to the cores you have. [Resources →](#resources)
 
-### `RUN PARAMETERS` names a setting that would produce nothing { #parameter-refusal }
+### `RUN PARAMETERS` names a setting that would waste the run { #parameter-refusal }
 
 ```text
 RUN PARAMETERS:        FAIL variantCall.scaleMapQ: DISCARDS EVERY READ (15 is below varQualMin 30)
 RUN PARAMETERS:            -C caps every read's mapping quality near 15 and -q then
 RUN PARAMETERS:            rejects anything under 30, so the pileup reaches bcftools
 RUN PARAMETERS:            call empty and the run produces no variants at all.
-RUN PARAMETERS:        A setting above would make this run produce nothing.
+RUN PARAMETERS:        A setting above would make this run produce nothing, or stop it partway.
 ```
 
-Not the change guard: nothing about your existing results is wrong. A setting in `parameters.config` would make the run produce no output at all, and it is being stopped now rather than after the hours of alignment and calling it would waste. The message names the parameter, both values where two interact, and what to change.
+Not the change guard: nothing about your existing results is wrong. A setting in `parameters.config` would make the run produce no output at all, or stop it partway, and it is being stopped now rather than after the hours of alignment and calling it would waste. The message names the parameter, both values where two interact, and what to change.
 
 **`WARN` and `NOTE` lines in the same section do not stop anything.** A warning means the setting works and costs more than it looks like it does; a note means it changes what a published number means. Only `FAIL` stops a run. [Every rule, and what each level means ->](#parameter-checks)
 

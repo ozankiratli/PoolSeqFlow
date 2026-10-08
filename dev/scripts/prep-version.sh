@@ -509,12 +509,15 @@ if [ "$TEST_STATUS" -ne 0 ]; then
     exit 1
 fi
 
-# Nothing to diagnose, so nothing to keep. --keep left these behind unconditionally.
+# Nothing to diagnose, so nothing to keep. --keep left these behind unconditionally, and the
+# suite's own "kept at" lines above are already in the log, so this says they are gone.
 if [ -n "$KEPT_TMP" ] && [ -d "$KEPT_TMP" ]; then
     rm -rf "$KEPT_TMP"
+    say "  removed the suite's working directory, $KEPT_TMP"
 fi
 if [ -n "$KEPT_XDEV" ] && [ -d "$KEPT_XDEV" ]; then
     rm -rf "$KEPT_XDEV"
+    say "  removed its second filesystem, $KEPT_XDEV"
 fi
 
 # ----------------------------------------------------------------------- export ---------

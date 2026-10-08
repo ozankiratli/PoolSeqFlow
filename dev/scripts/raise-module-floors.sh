@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Raise the `environment` floor of every module whose package pins this release moved.
+# Raise the `environment` floor of every module and library this release republishes, and move
+# the version of each one it raises.
 #
 # Usage:  dev/scripts/raise-module-floors.sh [version] [--dry-run]
 #           default: the version this working copy declares, which after the bump is the new one
@@ -8,8 +9,9 @@
 # RUN THIS AFTER dev/scripts/bump-version.sh AND BEFORE PUBLISHING. Both halves of that matter.
 #
 # `environment` is the oldest release whose analysis environment holds what a module needs, and
-# the wrapper compares it against the installed version: a module above it is reported as
-# "needs PoolSeqFlow <version>" instead of being installed. When step 2 moves a pin to a version
+# the wrapper compares it against the installed version: install takes the newest row a release
+# can run, and a module with no such row is reported as "needs PoolSeqFlow <version>" instead
+# of being installed. When step 2 moves a pin to a version
 # only this release's environment holds, that module requires this release, and the field has to
 # say so - otherwise a user on the previous release installs it, reaches conda, and is refused
 # with "already holds" having been told nothing.
@@ -43,8 +45,16 @@
 # itself moving must appear in the derived set, and a disagreement stops this rather than being
 # resolved silently.
 #
-# It does not bump a version. Step 2 bumped what it changed, and until the release is committed
-# the gate compares committed state, so one bump covers the pin and the floor together.
+# IT MOVES THE VERSION OF EVERY MANIFEST WHOSE FLOOR IT RAISES. The floor is part of what is
+# published, in the manifest and in the catalogue row, and check-analysis-versions.sh --release
+# refuses a commit that changes a module without moving its version. Step 2's bump does not
+# cover the floor: step 6 commits and merges it before this runs, so the floor lands in the
+# version-bump commit on its own. That is how the v3.3.0 tag failed release.yml on 2026-10-07,
+# with six manifests named. A floor already at the version is left alone, version and all, so
+# running this twice moves nothing the second time. That makes the order matter: the version is
+# moved first and the floor written after, so a run stopped by a refused bump leaves the floor
+# where it was, and the next run raises it and moves the version together. The other way round,
+# the next run found the floor raised and never moved the version.
 
 set -euo pipefail
 
@@ -158,14 +168,19 @@ for NAME in $MODULES; do
         continue
     fi
     if [ "$DRY" -eq 1 ]; then
-        printf '  %-20s %s -> %s   (--dry-run, not written)\n' "$NAME" "$WAS" "$VERSION"
+        printf '  %-20s %s -> %s, and its version moves   (--dry-run, not written)\n' \
+            "$NAME" "$WAS" "$VERSION"
         continue
     fi
+    BUMPED=$(bash "$ROOT/dev/scripts/bump-analysis-version.sh" module "$NAME") || {
+        echo "ERROR: could not move the version of $MANIFEST, so its floor was left at $WAS." >&2
+        exit 1; }
+    BUMPED=${BUMPED%%$'\n'*}
     sed -i -E "s|(\"environment\"[[:space:]]*:[[:space:]]*\")[^\"]*(\")|\1${VERSION}\2|" "$MANIFEST"
     IS=$(sed -n 's/.*"environment"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$MANIFEST" | head -1)
     [ "$IS" = "$VERSION" ] \
         || { echo "ERROR: could not write $MANIFEST (still '$IS')" >&2; exit 1; }
-    printf '  %-20s %s -> %s\n' "$NAME" "$WAS" "$VERSION"
+    printf '  %-20s %s -> %s, version %s\n' "$NAME" "$WAS" "$VERSION" "${BUMPED#*: }"
     CHANGED=$((CHANGED + 1))
 done
 
@@ -174,4 +189,5 @@ if [ "$DRY" -eq 1 ]; then
     echo "Nothing written. Drop --dry-run to apply."
     exit 0
 fi
-echo "$CHANGED manifest(s) changed, uncommitted. Each is republished with the release."
+echo "$CHANGED manifest(s) changed, floor and version, uncommitted. Each is republished with the"
+echo "release under its new version, which is the one the CHANGELOG names."

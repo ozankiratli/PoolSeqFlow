@@ -21,6 +21,142 @@
 # the pipeline, the pipeline may never read it - and cost nothing at all.
 ANALYSIS_SB=""
 
+# The release a published folder must name, read from the manifest in nextflow.config the way
+# releaseVersion() reads it. A separate read on purpose: the case is that the two agree.
+analysis_release() {
+    sed -n "s/^[[:space:]]*version[[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" \
+        "$REPO_ROOT/nextflow.config" | head -1
+}
+
+# The prefix analysis_render_report() publishes a folder under: the template's outputPrefix, so a
+# report built here names files as one published by a sandbox run does.
+ANALYSIS_REPORT_PREFIX="Test"
+
+# The report of a folder a module wrote, built the way reportShell builds it but without
+# Nextflow: the folder staged as InstallResults publishes it, at $2/folder, every file named
+# under ANALYSIS_REPORT_PREFIX but code, which keeps its name; then the frame's template knitted
+# with the working tree's report.R and, when $3 names one, a module's own report. report.md is
+# left beside report.pdf, and the PDF is not built when $4 is "md". Returns what the knit or
+# pandoc returned; the log is $2/report_knit.log.
+#
+# The staged files are links to the module's own, so a large table costs nothing. The rule for
+# which file is code is InstallResults' own, written out a second time: the cases that publish
+# through Nextflow are what hold the two together.
+#
+# A case asserting on report.md reads the typst the report was drawn with, which needs no PDF
+# tools; one asserting on the page needs pandoc, typst and pdftotext.
+analysis_render_report() {
+    local folder="$1" out="$2" child="${3:-}" stop="${4:-pdf}" bin f name
+    bin="$(dirname "$(analysis_rscript)")"
+    rm -rf "$out"; mkdir -p "$out/folder"
+    for f in "$folder"/*; do
+        [ -e "$f" ] || continue
+        name="${f##*/}"
+        case "$name" in
+            *.R|*.r|*.Rmd|*.rmd|*.sh|*.py|*.jl|*.cpp|*.c|*.h|*.hpp) ln -s "$f" "$out/folder/$name" ;;
+            *) ln -s "$f" "$out/folder/${ANALYSIS_REPORT_PREFIX}_$name" ;;
+        esac
+    done
+    printf '{"label":"Output","module":"probe","version":"0.1.0","release":"%s","frame":"%s","source":"%s","warnings":["a design note the reader needs first"],"library":"%s","child":"%s","outputs":[]}' \
+        "$(analysis_release)" "20990101.001" "$folder" "$REPO_ROOT/analysis/lib/rmd/report.R" \
+        "$child" > "$out/report_spec.json"
+    ( cd "$out" && PATH="$bin:$PATH" POOLSEQFLOW_REPORT_SPEC="$out/report_spec.json" \
+          POOLSEQFLOW_REPORT_FOLDER="$out/folder" POOLSEQFLOW_REPORT_PREFIX="$ANALYSIS_REPORT_PREFIX" \
+          "$bin/Rscript" --vanilla -e 'knitr::opts_knit$set(root.dir = getwd()); knitr::knit(commandArgs(TRUE)[1], "report.md", quiet = TRUE)' \
+          "$REPO_ROOT/analysis/lib/rmd/report.Rmd" > report_knit.log 2>&1 ) || return 1
+    [ "$stop" = "md" ] && return 0
+    ( cd "$out" && PATH="$bin:$PATH" pandoc report.md -o report.pdf --pdf-engine=typst \
+          >> report_knit.log 2>&1 )
+}
+
+# The report a published folder holds, <prefix>_<module>_report_<yyyyMMdd-HHmmss>.pdf, with the
+# prefix ANALYSIS_REPORT_PREFIX unless $3 names another. Prints its path when there is exactly
+# one, and nothing otherwise, so a case asserting on the path fails on none and on two alike.
+analysis_published_report() {
+    local folder="$1" module="$2" prefix="${3:-$ANALYSIS_REPORT_PREFIX}" found
+    found=$(find "$folder" -maxdepth 1 -name "${prefix}_${module}_report_*.pdf" 2>/dev/null)
+    [ -n "$found" ] && [ "$(printf '%s\n' "$found" | wc -l)" -eq 1 ] && printf '%s\n' "$found"
+    return 0
+}
+
+# awk functions printing a number as report_number() in analysis/lib/rmd/report.R prints it, written
+# apart from it so a case can say what a report's table should hold. Prepended to a case's own awk
+# program.
+#
+#   rnum(x, d)  NA, NaN, Inf and -Inf as themselves; a whole number whole with its thousands
+#               marked; below 1e-4 or from 1e15 in scientific notation; anything else to d
+#               significant digits, whole once those leave no decimals: 1234.5 is 1,230 at d = 3,
+#               where %#.3g would print 1.23e+03.
+#   rpct(x)     a fraction as a percentage to one place, 0.0 for anything that rounds to zero.
+REPORT_NUMBER_AWK='
+function commas(n,   sign, out) {
+    sign = ""; out = ""
+    if (substr(n, 1, 1) == "-") { sign = "-"; n = substr(n, 2) }
+    while (length(n) > 3) { out = "," substr(n, length(n) - 2) out; n = substr(n, 1, length(n) - 3) }
+    return sign n out
+}
+function magnitude(v) { return v < 0 ? -v : v }
+function rnum(x, d,   v, s) {
+    if (x == "NA" || x == "") return "NA"
+    if (x == "NaN" || x == "Inf" || x == "-Inf") return x
+    v = x + 0
+    if (v == 0) return "0"
+    if (v == int(v) && magnitude(v) < 1e15) return commas(sprintf("%.0f", v))
+    if (magnitude(v) < 1e-4 || magnitude(v) >= 1e15) return sprintf("%." (d - 1) "e", v)
+    s = sprintf("%." d "g", v) + 0
+    if (magnitude(s) >= 10 ^ (d - 1)) return commas(sprintf("%.0f", s))
+    return sprintf("%#." d "g", s)
+}
+function rpct(x,   s) {
+    s = sprintf("%.1f", 100 * x)
+    return (s == "-0.0" ? "0.0" : s) "%"
+}
+'
+
+# Every pair of words a PDF prints over each other, one line each: on the same line of text, with
+# their horizontal extents crossing. Empty for a clean page, and a line saying so for a PDF with no
+# words at all, which a missing or unreadable file is. What Z reported on 2026-10-07 was exactly
+# this, "the end of the first column renders on top of the beginning of second".
+#
+# TWO WORDS OVERPRINTED BY LESS THAN ABOUT HALF AN EM COME OUT OF pdftotext AS ONE WORD, so no
+# comparison of word boxes can see them: measured by a review on 2026-10-08, two 10pt words 3.5pt
+# over each other read "ChromosomesPloidy", and the split starts at 5.5pt. Z's own symptom,
+# "Chromosomes" 3.6pt over "Ploidy", sits inside that window. pdf_missing_words is the check that
+# sees it.
+pdf_overlapping_words() {
+    pdftotext -bbox "$1" - 2>/dev/null | python3 -c '
+import html, re, sys
+total = 0
+for page_no, page in enumerate(sys.stdin.read().split("<page ")[1:], 1):
+    words = [(float(a), float(b), float(c), float(d), html.unescape(w)) for a, b, c, d, w in
+             re.findall(r"<word xMin=\"([\d.]+)\" yMin=\"([\d.]+)\" xMax=\"([\d.]+)\" yMax=\"([\d.]+)\">(.*?)</word>", page)]
+    total += len(words)
+    for i, (x0, y0, x1, y1, w) in enumerate(words):
+        for a0, b0, a1, b1, v in words[i + 1:]:
+            same_line = min(y1, b1) - max(y0, b0) > 0.5 * min(y1 - y0, b1 - b0)
+            if same_line and min(x1, a1) - max(x0, a0) > 0.8:
+                print("page %d: %s over %s" % (page_no, w, v))
+if total == 0:
+    print("no words in %s" % sys.argv[1])
+' "$1"
+}
+
+# The words among $2... that a PDF does not print as words of their own, one a line, each as given:
+# a word printed into its neighbor comes out of pdftotext fused with it. Empty when every one stands
+# alone. Name words a layout never breaks: a header may wrap at a space, an underscore or a dot.
+pdf_missing_words() {
+    local pdf="$1" words word; shift
+    words=$(pdftotext -bbox "$pdf" - 2>/dev/null | sed -n 's/.*<word [^>]*>\(.*\)<\/word>.*/\1/p')
+    for word in "$@"; do
+        grep -qxF -- "$word" <<< "$words" || printf '%s\n' "$word"
+    done
+}
+
+# How many images a PDF places, a figure each in a report.
+pdf_figures() {
+    pdfimages -list "$1" 2>/dev/null | awk 'NR > 2 && $3 == "image" { n++ } END { print n + 0 }'
+}
+
 ANALYSIS_BASELINE_SINGLE=""
 
 ANALYSIS_BASELINE_MULTI=""
@@ -76,6 +212,84 @@ analysis_baseline_single() {
     status=$(run_verify_only "$sb")
     [ "$status" = "0" ] || return 1
     ANALYSIS_BASELINE_SINGLE="$sb"
+    return 0
+}
+
+# A single-run config whose outputPrefix and VCF name differ, so a published name shows which of
+# the two it was taken from. Rewritten into every copy of the baseline for the same reason as the
+# multi-run config above.
+analysis_write_prefixed_config() {
+    write_sandbox_config "$1" \
+        "s|^    outputPrefix .*|    outputPrefix    = 'Pfx'|" \
+        "s|^        fileName .*|        fileName        = 'Calls'|"
+}
+
+ANALYSIS_BASELINE_PREFIXED=""
+
+# A single-run project recorded under that config.
+analysis_baseline_prefixed() {
+    [ -n "$ANALYSIS_BASELINE_PREFIXED" ] && return 0
+    local sb status
+    sb=$(make_pipeline_sandbox "analysis-prefixed")
+    analysis_write_prefixed_config "$sb"
+    analysis_write_time_config "$sb"
+    status=$(run_verify_only "$sb")
+    [ "$status" = "0" ] || return 1
+    ANALYSIS_BASELINE_PREFIXED="$sb"
+    return 0
+}
+
+# A single-run config from before outputPrefix: no outputPrefix line, and the VCF named in
+# vcf.fileName. The pipeline gets its prefix from nextflow.config and a module from frame.config,
+# since a module is its own pipeline and reads no nextflow.config.
+analysis_write_legacy_config() {
+    write_sandbox_config "$1" '/^    outputPrefix /d' \
+        "s|^        fileName .*|        fileName        = 'Calls'|"
+}
+
+ANALYSIS_BASELINE_LEGACY=""
+
+analysis_baseline_legacy() {
+    [ -n "$ANALYSIS_BASELINE_LEGACY" ] && return 0
+    local sb status
+    sb=$(make_pipeline_sandbox "analysis-legacy")
+    analysis_write_legacy_config "$sb"
+    analysis_write_time_config "$sb"
+    status=$(run_verify_only "$sb")
+    [ "$status" = "0" ] || return 1
+    ANALYSIS_BASELINE_LEGACY="$sb"
+    return 0
+}
+
+# Two runs that differ in outputPrefix alone, with the VCF named in parameters.config, so they share
+# every step through variant calling and part at step 7, whose identity carries the prefix.
+analysis_write_prefix_runs_table() {
+    cat > "$1/main/runs.csv" <<'TABLE'
+RunID,outputPrefix
+alpha,Alpha
+beta,Beta
+TABLE
+}
+
+analysis_write_multiprefix_config() {
+    write_sandbox_config "$1" \
+        's|^    multiRun .*|    multiRun        = true|' \
+        "s|^    multiRunFile .*|    multiRunFile    = 'runs.csv'|" \
+        "s|^        fileName .*|        fileName        = 'Calls'|"
+}
+
+ANALYSIS_BASELINE_MULTIPREFIX=""
+
+analysis_baseline_multiprefix() {
+    [ -n "$ANALYSIS_BASELINE_MULTIPREFIX" ] && return 0
+    local sb status
+    sb=$(make_pipeline_sandbox "analysis-multiprefix")
+    analysis_write_prefix_runs_table "$sb"
+    analysis_write_multiprefix_config "$sb"
+    analysis_write_time_config "$sb"
+    status=$(run_verify_only "$sb")
+    [ "$status" = "0" ] || return 1
+    ANALYSIS_BASELINE_MULTIPREFIX="$sb"
     return 0
 }
 
@@ -178,9 +392,12 @@ analysis_ready() {
     if [ "${TEST_FAST:-0}" = "1" ]; then skip_case "--fast"; return 1; fi
 
     case "$which" in
-        single) analysis_baseline_single && baseline="$ANALYSIS_BASELINE_SINGLE" ;;
-        multi)  analysis_baseline_multi  && baseline="$ANALYSIS_BASELINE_MULTI" ;;
-        *)      fail_case "unknown baseline '$which'"; return 1 ;;
+        single)   analysis_baseline_single   && baseline="$ANALYSIS_BASELINE_SINGLE" ;;
+        multi)    analysis_baseline_multi    && baseline="$ANALYSIS_BASELINE_MULTI" ;;
+        prefixed) analysis_baseline_prefixed && baseline="$ANALYSIS_BASELINE_PREFIXED" ;;
+        legacy)   analysis_baseline_legacy   && baseline="$ANALYSIS_BASELINE_LEGACY" ;;
+        multiprefix) analysis_baseline_multiprefix && baseline="$ANALYSIS_BASELINE_MULTIPREFIX" ;;
+        *)        fail_case "unknown baseline '$which'"; return 1 ;;
     esac
     if [ -z "${baseline:-}" ]; then
         fail_case "the $which baseline could not be built; see $TEST_TMPDIR/analysis-$which/run.out"
@@ -190,11 +407,13 @@ analysis_ready() {
     ANALYSIS_SB=$(guard_path "$TEST_TMPDIR/analysis")
     rm -rf "$ANALYSIS_SB"
     cp -a "$baseline" "$ANALYSIS_SB"
-    if [ "$which" = "multi" ]; then
-        analysis_write_multi_config "$ANALYSIS_SB"
-    else
-        write_sandbox_config "$ANALYSIS_SB"
-    fi
+    case "$which" in
+        multi)       analysis_write_multi_config "$ANALYSIS_SB" ;;
+        prefixed)    analysis_write_prefixed_config "$ANALYSIS_SB" ;;
+        legacy)      analysis_write_legacy_config "$ANALYSIS_SB" ;;
+        multiprefix) analysis_write_multiprefix_config "$ANALYSIS_SB" ;;
+        *)           write_sandbox_config "$ANALYSIS_SB" ;;
+    esac
     return 0
 }
 

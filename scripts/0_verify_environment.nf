@@ -1100,7 +1100,7 @@ CURRENT_PARAMS
             done
         done < param_findings.txt
         if [ "\$PARAM_RULES" -ne 0 ]; then
-            log_message "RUN PARAMETERS:        A setting above would make this run produce nothing."
+            log_message "RUN PARAMETERS:        A setting above would make this run produce nothing, or stop it partway."
             log_message "RUN PARAMETERS:        Stopped here rather than after the compute it would waste."
             STATUS="FAIL"
         fi

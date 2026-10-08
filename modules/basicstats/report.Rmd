@@ -1,0 +1,296 @@
+```{r basicstats-tables}
+# basicstats' own report, knitted by the frame's report.Rmd with the functions of
+# analysis/lib/rmd/report.R. It reads the tables this module published and nothing else.
+#
+# Pools keep design.tsv's order and sequences the order sites.tsv gives them.
+design <- report_read("design.tsv")
+diversity <- report_read("diversity.tsv")
+neff <- report_read("neff.tsv")
+depth <- report_read("depth.tsv")
+sites <- report_read("sites.tsv")
+num <- function(x) suppressWarnings(as.numeric(x))
+
+# The names the tables are published under, as plain text and as markdown.
+design_tsv <- report_name("design.tsv")
+diversity_tsv <- report_name("diversity.tsv")
+neff_tsv <- report_name("neff.tsv")
+depth_tsv <- report_name("depth.tsv")
+sites_tsv <- report_name("sites.tsv")
+diversity_md <- report_text(diversity_tsv)
+neff_md <- report_text(neff_tsv)
+depth_md <- report_text(depth_tsv)
+
+pools <- design$pool
+fixed <- c("pool", "libraries", "n_libraries", "pool_size", "ploidy", "n_chrom",
+           "detection_limit")
+variables <- setdiff(names(design), fixed)
+div <- diversity[match(pools, diversity$pool), ]
+genome <- neff[neff$level == "pool" & neff$source == "histogram", ]
+genome <- genome[match(pools, genome$pool), ]
+
+sequences <- unique(sites$chrom)
+of_kind <- function(kind, column) {
+    rows <- sites$kind == kind
+    totals <- tapply(num(sites[[column]][rows]), factor(sites$chrom[rows], levels = sequences), sum)
+    counts <- stats::setNames(as.numeric(totals), sequences)
+    counts[is.na(counts)] <- 0
+    counts
+}
+snp_sites <- of_kind("snp", "sites")
+snp_alleles <- of_kind("snp", "alleles")
+indel_sites <- of_kind("indel", "sites")
+indel_alleles <- of_kind("indel", "alleles")
+
+# Named in the tables below: every sequence when there are few, otherwise the SHOWN with the most
+# called SNP sites, still in the tables' order. The rest are added up in one row.
+SHOWN <- 20
+named <- sequences
+if (length(sequences) > SHOWN + 1) {
+    named <- sequences[sequences %in% sequences[order(-snp_sites)][seq_len(SHOWN)]]
+}
+rest <- setdiff(sequences, named)
+rest_label <- sprintf("%d other sequences", length(rest))
+
+# One pool's column of depth.tsv, for the named sequences in their order.
+depth_key <- paste(depth$pool, depth$chrom, sep = "\r")
+depth_at <- function(pool, column) {
+    num(depth[[column]][match(paste(pool, named, sep = "\r"), depth_key)])
+}
+
+# Each pool's figures over the sequences added up in one row: its unmeasured sites summed, and its
+# harmonic mean depth recombined from each sequence's harmonic mean and the sites it was taken
+# over, n / sum(n_i / H_i).
+in_rest <- depth$chrom %in% rest
+read_n <- num(depth$sites) - num(depth$unmeasured)
+harmonic <- num(depth$depth_harmonic)
+counted <- in_rest & read_n > 0 & !is.na(harmonic) & harmonic > 0
+by_pool <- function(values, rows) {
+    totals <- tapply(values[rows], factor(depth$pool[rows], levels = pools), sum)
+    stats::setNames(as.numeric(totals), pools)
+}
+rest_harmonic <- by_pool(read_n, counted) / by_pool(read_n / harmonic, counted)
+rest_unmeasured <- by_pool(num(depth$unmeasured), in_rest)
+rest_unmeasured[is.na(rest_unmeasured)] <- 0
+```
+
+`r length(pools)` `r if (length(pools) == 1) "pool" else "pools"`, `r report_number(sum(snp_sites))` called SNP sites and `r report_number(sum(indel_sites))` indel sites, on `r length(sequences)` `r if (length(sequences) == 1) "sequence" else "sequences"`.
+
+## Gene diversity
+
+```{r basicstats-diversity, results = "asis"}
+table <- data.frame(Pool = pools, check.names = FALSE, stringsAsFactors = FALSE)
+for (v in variables) table[[v]] <- design[[v]]
+table[["Chromosomes"]] <- report_number(div$n_chrom)
+table[["Sites read"]] <- report_number(num(div$sites) - num(div$unmeasured))
+table[["Segregating"]] <- report_number(div$segregating)
+table[["h_sum"]] <- report_number(div$h_sum, decimals = 2)
+table[["\u03c0 per called site"]] <- report_number(div$pi_per_called_site, digits = 4)
+report_table(table, caption = paste0(
+    "Gene diversity over the ", report_number(sum(snp_sites)), " called SNP sites, each pool over ",
+    "the sites it was read at (", diversity_tsv, "). \u03c0 per called site leaves invariant sites out ",
+    "of its denominator and is an upper bound on \u03c0."))
+```
+
+## Depth and effective sample size
+
+```{r basicstats-neff, results = "asis"}
+bound <- !is.na(genome$estimate) & genome$estimate == "lower_bound"
+table <- data.frame(Pool = pools, check.names = FALSE, stringsAsFactors = FALSE)
+table[["Unmeasured"]] <- report_number(div$unmeasured)
+table[["Depth"]] <- report_number(div$depth_harmonic, decimals = 1)
+table[["n_eff"]] <- report_number(div$n_eff_harmonic, decimals = 1)
+table[["Positions"]] <- report_number(genome$positions)
+table[["Depth "]] <- paste0(ifelse(bound, "\u2265 ", ""), report_number(genome$depth_harmonic, decimals = 1))
+table[["n_eff "]] <- paste0(ifelse(bound, "\u2265 ", ""), report_number(genome$n_eff, decimals = 1))
+report_table(table,
+    groups = c("", "At the called SNP sites", "At the called SNP sites", "At the called SNP sites",
+               "Genome-wide", "Genome-wide", "Genome-wide"),
+    caption = paste0(
+        "Depth is the harmonic mean, which every n_eff is computed from. At the called SNP sites: ",
+        "over the sites each pool was read at (", diversity_tsv, "). Genome-wide: over every position ",
+        "its libraries covered, from the depth histograms (", neff_tsv, "); NA where a pool has none, ",
+        "and \u2265 where a merged pool's figure is a lower bound."))
+
+libraries <- neff[neff$level == "library", ]
+if (any(num(design$n_libraries) > 1) && nrow(libraries) > 0) {
+    table <- data.frame(Library = libraries$id, Pool = libraries$pool,
+                        Positions = report_number(libraries$positions),
+                        Depth = report_number(libraries$depth_harmonic, decimals = 1),
+                        n_eff = report_number(libraries$n_eff, decimals = 1),
+                        check.names = FALSE, stringsAsFactors = FALSE)
+    report_table(table, caption = paste0("Each library on its own, genome-wide (", neff_tsv, ")."))
+}
+```
+
+```{r basicstats-pools-figure, results = "asis"}
+# A merged pool's genome-wide figures are lower bounds and are drawn as their own series.
+genome_series <- ifelse(!is.na(genome$estimate) & genome$estimate == "lower_bound",
+                        "genome-wide, a lower bound", "genome-wide")
+panel <- function(metric, values, series) {
+    data.frame(metric = metric, pool = pools, value = num(values), series = series,
+               stringsAsFactors = FALSE)
+}
+long <- rbind(
+    panel("\u03c0 per called site", div$pi_per_called_site, "called SNP sites"),
+    panel("Segregating sites", div$segregating, "called SNP sites"),
+    panel("Depth (harmonic)", div$depth_harmonic, "called SNP sites"),
+    panel("Depth (harmonic)", genome$depth_harmonic, genome_series),
+    panel("n_eff", div$n_eff_harmonic, "called SNP sites"),
+    panel("n_eff", genome$n_eff, genome_series),
+    if (any(num(div$unmeasured) > 0)) panel("Unmeasured sites", div$unmeasured, "called SNP sites"))
+long <- long[!is.na(long$value), ]
+long$metric <- factor(long$metric, levels = unique(long$metric))
+long$pool <- factor(long$pool, levels = rev(pools))
+figure <- ggplot2::ggplot(long, ggplot2::aes(x = value, y = pool, shape = series)) +
+    ggplot2::geom_point(size = 2) +
+    ggplot2::facet_wrap(~ metric, scales = "free_x", nrow = 1) +
+    ggplot2::scale_shape_manual(values = c("called SNP sites" = 16, "genome-wide" = 1,
+                                           "genome-wide, a lower bound" = 2)) +
+    ggplot2::scale_x_continuous(n.breaks = 3) +
+    ggplot2::labs(x = NULL, y = NULL, shape = NULL) +
+    ggplot2::theme_bw(base_size = 9) +
+    ggplot2::theme(legend.position = "bottom", panel.spacing.x = ggplot2::unit(14, "pt"))
+report_plot(figure, "pools", width = 7.5, height = min(8.5, 0.22 * length(pools) + 1.6),
+            caption = paste0("The pools side by side, from ", diversity_md, " and ", neff_md,
+                             " as the two tables above give them."))
+```
+
+## Depth by sequence
+
+```{r basicstats-depth, results = "asis"}
+# The pools a table holds side by side, at most eight to a table.
+pool_groups <- report_columns(pools)
+ends <- cumsum(lengths(pool_groups))
+for (k in seq_along(pool_groups)) {
+    group <- pool_groups[[k]]
+    table <- data.frame(Sequence = named, check.names = FALSE, stringsAsFactors = FALSE)
+    table[["SNP sites"]] <- report_number(snp_sites[named])
+    for (pool in group) {
+        table[[pool]] <- report_number(depth_at(pool, "depth_harmonic"), decimals = 1)
+    }
+    if (length(rest) > 0) {
+        other <- c(rest_label, report_number(sum(snp_sites[rest])),
+                   report_number(rest_harmonic[group], decimals = 1))
+        table <- rbind(table, stats::setNames(as.list(other), names(table)))
+    }
+    which <- if (length(pool_groups) > 1) sprintf(" Pools %d to %d of %d.", ends[k] - length(group) + 1,
+                                                   ends[k], length(pools)) else ""
+    report_table(table, groups = c("", "", rep("Harmonic depth", length(group))),
+                 caption = paste0("Each pool's harmonic mean depth at the called SNP sites of each ",
+                                  "sequence it was read at (", depth_tsv, ").", which))
+}
+
+if (any(num(depth$unmeasured) > 0)) {
+    for (k in seq_along(pool_groups)) {
+        group <- pool_groups[[k]]
+        table <- data.frame(Sequence = named, check.names = FALSE, stringsAsFactors = FALSE)
+        table[["SNP sites"]] <- report_number(snp_sites[named])
+        for (pool in group) {
+            table[[pool]] <- report_number(depth_at(pool, "unmeasured"))
+        }
+        if (length(rest) > 0) {
+            other <- c(rest_label, report_number(sum(snp_sites[rest])),
+                       report_number(rest_unmeasured[group]))
+            table <- rbind(table, stats::setNames(as.list(other), names(table)))
+        }
+        report_table(table, groups = c("", "", rep("Unmeasured sites", length(group))),
+                     caption = paste0("The called SNP sites each pool has no reads at, which every ",
+                                      "depth above leaves out (", depth_tsv, ")."))
+    }
+}
+
+# Up to eight pools as colored points; past that a grid, a sequence to a row and a pool to a column.
+shown <- depth[depth$chrom %in% named, ]
+shown$value <- num(shown$depth_harmonic)
+shown <- shown[!is.na(shown$value), ]
+if (nrow(shown) > 0) {
+    shown$chrom <- factor(shown$chrom, levels = rev(named))
+    shown$pool <- factor(shown$pool, levels = pools)
+    if (length(pools) <= 8) {
+        figure <- ggplot2::ggplot(shown, ggplot2::aes(x = value, y = chrom, color = pool)) +
+            ggplot2::geom_point(size = 2, alpha = 0.85) +
+            ggplot2::scale_color_manual(values = report_palette(pools)) +
+            ggplot2::guides(color = ggplot2::guide_legend(
+                ncol = max(1, min(length(pools), floor(90 / max(nchar(pools))))))) +
+            ggplot2::labs(x = "Harmonic mean depth at the called SNP sites", y = NULL, color = NULL) +
+            ggplot2::theme_bw(base_size = 9) +
+            ggplot2::theme(legend.position = "bottom")
+        width <- 7
+    } else {
+        figure <- ggplot2::ggplot(shown, ggplot2::aes(x = pool, y = chrom, fill = value)) +
+            ggplot2::geom_tile(color = "white") +
+            ggplot2::scale_fill_gradient(low = "#deebf7", high = "#08306b",
+                                         name = "Harmonic mean depth\nat the called SNP sites") +
+            ggplot2::labs(x = NULL, y = NULL) +
+            ggplot2::theme_minimal(base_size = 9) +
+            # The left margin holds the first pool's name, leaning left at 60 degrees, at the
+            # length of the longest.
+            ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 60, hjust = 1),
+                           panel.grid = ggplot2::element_blank(),
+                           plot.margin = ggplot2::margin(5.5, 5.5, 5.5,
+                                                         max(5.5, 2 * max(nchar(pools)))))
+        width <- 7.5
+    }
+    report_plot(figure, "depth_by_sequence", width = width,
+                height = min(8.5, 0.2 * length(named) + 1.5 +
+                                  if (length(pools) > 8) 0.06 * max(nchar(pools)) else 0),
+                caption = paste0("Depth by sequence, from ", depth_md,
+                                 " as the first table of this section gives it."))
+}
+```
+
+## Called sites by sequence
+
+```{r basicstats-sites, results = "asis"}
+table <- data.frame(Sequence = named,
+                    a = report_number(snp_sites[named]), b = report_number(snp_alleles[named]),
+                    c = report_number(indel_sites[named]), d = report_number(indel_alleles[named]),
+                    stringsAsFactors = FALSE)
+if (length(rest) > 0) {
+    table <- rbind(table, data.frame(Sequence = rest_label,
+                                     a = report_number(sum(snp_sites[rest])),
+                                     b = report_number(sum(snp_alleles[rest])),
+                                     c = report_number(sum(indel_sites[rest])),
+                                     d = report_number(sum(indel_alleles[rest])),
+                                     stringsAsFactors = FALSE))
+}
+table <- rbind(table, data.frame(Sequence = "All sequences",
+                                 a = report_number(sum(snp_sites)), b = report_number(sum(snp_alleles)),
+                                 c = report_number(sum(indel_sites)), d = report_number(sum(indel_alleles)),
+                                 stringsAsFactors = FALSE))
+names(table) <- c("Sequence", "Sites", "Alleles", "Sites ", "Alleles ")
+report_table(table, groups = c("", "SNPs", "SNPs", "Indels", "Indels"),
+             caption = paste0("Sites are records of the depth table and alleles rows of the ",
+                              "frequency table, the reference included (", sites_tsv, ")."))
+```
+
+```{r basicstats-depth-plots, results = "asis"}
+# The depth plots in the order of the sequences they draw, each under the sequence's own name. A
+# plot's file name, the prefix taken off, carries the name with every character outside
+# [A-Za-z0-9._-] made _.
+plots <- report_files("depth_*.png")
+if (length(plots) > 0) {
+    cat("\n\n## Depth along a sequence\n\n")
+    drawn <- sub("^depth_(.*)[.]png$", "\\1", report_logical(basename(plots)))
+    which_sequence <- match(drawn, gsub("[^A-Za-z0-9._-]", "_", sequences))
+    for (i in order(which_sequence, drawn)) {
+        name <- if (is.na(which_sequence[i])) drawn[i] else sequences[which_sequence[i]]
+        report_image(plots[i], caption = paste0("Depth at the called SNP sites along ",
+                                                report_text(name), ", one panel per pool (",
+                                                report_text(basename(plots[i])), ")."))
+    }
+}
+```
+
+## Design
+
+```{r basicstats-design, results = "asis"}
+table <- data.frame(Pool = pools, Libraries = gsub(";", "\n", design$libraries),
+                    check.names = FALSE, stringsAsFactors = FALSE)
+for (v in variables) table[[v]] <- design[[v]]
+table[["Pool size"]] <- report_number(design$pool_size)
+table[["Ploidy"]] <- report_number(design$ploidy)
+table[["Chromosomes"]] <- report_number(design$n_chrom)
+table[["Detection limit"]] <- report_number(design$detection_limit, digits = 3)
+report_table(table, caption = paste0("The design the results were produced under (", design_tsv, ")."))
+```
