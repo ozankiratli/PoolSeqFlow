@@ -8,7 +8,7 @@
 
 nextflow.enable.dsl=2
 
-include { installDir } from './paths.nf'
+include { installDir; releaseVersion } from './paths.nf'
 include { moduleStore } from './modules.nf'
 
 // The entries citations/citations.json holds that an ANALYSIS run also invokes. It lists every
@@ -56,7 +56,7 @@ def citationShell(String module, String dest) {
     def json = groovy.json.JsonOutput.toJson(merged).replace("'", "'\\''")
     def packages = merged.findAll { _key, entry -> entry instanceof Map && entry.r_package }
                          .collect { key, entry -> "${key}=${entry.r_package}" }
-    def release = "${workflow.manifest.version ?: ''}"
+    def release = releaseVersion()
     def nextflowVersion = "${workflow.nextflow.version ?: ''}"
 
     def lines = []

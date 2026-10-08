@@ -41,12 +41,15 @@ def stepParameterMap() {
         // threshold from them, and a blank param_poolSize cell takes the run's poolSize. The
         // sensitivity derived from them cannot stand in for them - pinned by hand, it lets two
         // runs of different pool sizes share one results directory.
+        //
+        // `outputPrefix` starts the name of every file an analysis of these tables publishes, so
+        // runs that share the tables share it.
         7: [ artifact: ['vcffilter.minDP', 'vcffilter.minQUAL', 'vcffilter.keepLowDepthAsZero',
                         'vcffilter.minSamples',
                         'filterFalsePositives.sensitivity',
                         'filterFalsePositives.sampleThreshold',
                         'poolSize', 'ploidy',
-                        'vcf.fileName', 'dir.subpath.vcf', 'dir.subpath.freq'],
+                        'vcf.fileName', 'outputPrefix', 'dir.subpath.vcf', 'dir.subpath.freq'],
              publish : [] ],
 
         // `annotate` decides whether the step runs at all, so it belongs to step 8's identity.

@@ -1,7 +1,7 @@
 name: Documentation
 
-# Builds the MkDocs site and publishes it straight from main. No gh-pages branch: the
-# site is uploaded as an artifact and deployed by actions/deploy-pages.
+# Builds the MkDocs site, and deploys it only for a version that has been released. No
+# gh-pages branch: the site is uploaded as an artifact and deployed by actions/deploy-pages.
 #
 # One-time repository setting this depends on:
 #   Settings -> Pages -> Build and deployment -> Source: "GitHub Actions"
@@ -9,15 +9,17 @@ name: Documentation
 # It cannot be "Deploy from a branch -> main -> /docs", which serves the folder as-is;
 # docs/ holds Markdown, not finished HTML.
 #
-# Pull requests build with --strict but do not deploy.
+# It deploys in two cases: after release.yml publishes a release, built from the commit that
+# release was made from, and when run by hand on main (Actions -> Documentation -> Run
+# workflow), which is how a module published between releases reaches the site. Both refuse a
+# commit whose declared version has no published release. A push to main and a pull request
+# build with --strict and deploy nothing.
 
 on:
   push:
     branches: [main]
     paths:
       - "manual/**"
-      # The module repository is deployed with the site, so publishing a module is a change
-      # here. Without this line the catalogue would advertise a tarball no deploy had carried.
       - "modules/repo/**"
       - "mkdocs.yml"
       - "CHANGELOG.md"
@@ -31,6 +33,11 @@ on:
       - "CHANGELOG.md"
       - "dev/scripts/build_docs.py"
       - ".github/workflows/docs.yml"
+  # Runs from main's copy of this file whenever release.yml finishes; the build job decides
+  # whether that run published anything.
+  workflow_run:
+    workflows: ["Publish a release"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -45,9 +52,36 @@ concurrency:
 
 jobs:
   build:
+    # After release.yml, only a run that published: a pushed tag with every step green. Run by
+    # hand, release.yml checks a commit and publishes nothing.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.released.outputs.deploy }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      # The version this commit declares has to have a published release before its pages do.
+      - name: Check this version is released
+        id: released
+        if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          declared=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' PoolSeqFlow)
+          draft=$(gh release view "v$declared" --repo "$GITHUB_REPOSITORY" \
+                    --json isDraft --jq '.isDraft' 2>/dev/null || true)
+          if [ "$draft" != "false" ]; then
+            echo "This commit declares $declared, and v$declared has no published release," >&2
+            echo "so its pages are not deployed. The site deploys once release.yml publishes it." >&2
+            exit 1
+          fi
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
         with:
@@ -69,15 +103,15 @@ jobs:
 
       # Fails early and clearly if Pages is not enabled.
       - uses: actions/configure-pages@v6
-        if: github.event_name != 'pull_request'
+        if: steps.released.outputs.deploy == 'true'
 
       - uses: actions/upload-pages-artifact@v5
-        if: github.event_name != 'pull_request'
+        if: steps.released.outputs.deploy == 'true'
         with:
           path: site
 
   deploy:
-    if: github.event_name != 'pull_request'
+    if: needs.build.outputs.deploy == 'true'
     needs: build
     runs-on: ubuntu-latest
     environment:

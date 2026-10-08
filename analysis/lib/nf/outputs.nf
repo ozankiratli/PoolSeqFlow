@@ -9,7 +9,7 @@
 
 nextflow.enable.dsl=2
 
-include { installDir; verificationRecordName } from './paths.nf'
+include { installDir; releaseVersion; verificationRecordName } from './paths.nf'
 include { moduleEntry } from './modules.nf'
 
 // The manual this release ships, installed beside the code. Authoritative for this release; the
@@ -23,8 +23,27 @@ def manualSite() {
     return 'https://ozankiratli.github.io/PoolSeqFlow/'
 }
 
-// What every published analysis carries whichever module produced it.
-def frameOutputs() {
+// What counts as the script that produced a result, by extension: R, and the shell, Python and
+// Julia a module may drive it from.
+def scriptSuffixes() {
+    return ['R', 'r', 'Rmd', 'rmd', 'sh', 'py', 'jl']
+}
+
+// The code a result was produced by: a script, and a source a script compiles.
+def codeSuffixes() {
+    return scriptSuffixes() + ['cpp', 'c', 'h', 'hpp']
+}
+
+// The name a file a module produced is published under: the target's outputPrefix and an
+// underscore in front of it, and code under its own name. A glob gives a glob.
+def publishedName(Map target, String file) {
+    def code = codeSuffixes().any { suffix -> file.endsWith(".${suffix}") }
+    return (code ? file : "${target.prefix}_${file}").toString()
+}
+
+// What every published analysis carries whichever module produced it. `report` is the name its PDF
+// is published under.
+def frameOutputs(String report) {
     return [
         [ file   : verificationRecordName(),
           summary: 'the checks that cleared this folder, and what they were run against',
@@ -35,8 +54,8 @@ def frameOutputs() {
         [ file   : 'references.bib',
           summary: 'the same list as BibTeX',
           anchor : 'citing-the-tools-it-runs' ],
-        [ file    : 'report.pdf',
-          summary : 'every result in this folder in one document, each under its own file name',
+        [ file    : report,
+          summary : 'the results laid out to be read: the module\'s own layout where it has one, and each table and figure under its file\'s name where it does not',
           anchor  : 'analysis-report',
           optional: true ],
     ]
@@ -164,13 +183,14 @@ def readmeDesignLines(Map target) {
     return lines
 }
 
-// The README a published folder carries: every file in it, what it is, and where to read about
-// it. Rendered from the module's declarations and the frame's own, so no module writes its own.
-def readmeText(String module, Map target, List outputs) {
+// The README a published folder carries: every file in it under its published name, what it is,
+// and where to read about it. Rendered from the module's declarations and the frame's own, so no
+// module writes its own.
+def readmeText(String module, Map target, List outputs, String report) {
     def entry = moduleEntry(module)
     def lines = ["# ${target.label}: ${module}".toString(),
                  '',
-                 "Produced by PoolSeqFlow ${workflow.manifest.version ?: 'unknown'}, module " +
+                 "Produced by PoolSeqFlow ${releaseVersion()}, module " +
                  "${module} v${entry.version}, reading".toString(),
                  '',
                  "    ${target.dir}".toString(),
@@ -181,7 +201,8 @@ def readmeText(String module, Map target, List outputs) {
                  '|---|---|---|']
 
     // An optional output is named whether or not this run produced one, and its row says so.
-    (outputs + frameOutputs()).each { output ->
+    def published = outputs.collect { output -> output + [ file: publishedName(target, "${output.file}") ] }
+    (published + frameOutputs(report)).each { output ->
         def what = "${output.summary ?: ''}${output.optional ? ' *(only when the setting that produces it is set)*' : ''}"
         lines << "| `${output.file}` | ${what} | ${outputLink(output)} |".toString()
     }
@@ -195,10 +216,11 @@ def readmeText(String module, Map target, List outputs) {
 }
 
 // The shell that writes README.md into `dest`, and refuses a module that declared a file it did
-// not publish. Rendered into the task's own script, the way citationShell() is.
-def readmeShell(String module, Map target, String dest) {
+// not publish. Rendered into the task's own script, the way citationShell() is. `report` is the
+// name the PDF is published under.
+def readmeShell(String module, Map target, String dest, String report) {
     def outputs = moduleOutputs(module)
-    def text = readmeText(module, target, outputs).replace("'", "'\\''")
+    def text = readmeText(module, target, outputs, report).replace("'", "'\\''")
 
     def lines = []
     outputs.each { output ->
@@ -206,9 +228,10 @@ def readmeShell(String module, Map target, String dest) {
         // named, and none when you named none. Its absence is not a failure.
         if (output.optional) return
         // The declared name may be a glob, so the test counts what it matched.
-        lines << "MATCHED=\$(find \"${dest}\" -maxdepth 1 -name '${output.file}' | wc -l)"
+        def name = publishedName(target, "${output.file}")
+        lines << "MATCHED=\$(find \"${dest}\" -maxdepth 1 -name '${name}' | wc -l)"
         lines << "if [ \"\$MATCHED\" -eq 0 ]; then"
-        lines << "    echo \"PUBLISHING ${target.label}: ERROR: ${module} declares it publishes '${output.file}',\" >&2"
+        lines << "    echo \"PUBLISHING ${target.label}: ERROR: ${module} declares it publishes '${output.file}', here '${name}',\" >&2"
         lines << "    echo \"PUBLISHING ${target.label}: and this analysis produced nothing matching it.\" >&2"
         lines << "    echo \"PUBLISHING ${target.label}: What it produced:\" >&2"
         lines << "    find \"${dest}\" -mindepth 1 -maxdepth 1 | sed 's|.*/|  |' >&2"

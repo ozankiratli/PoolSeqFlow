@@ -275,3 +275,58 @@ test_the_new_parameter_note_is_absent_when_it_was_set() {
         "a config that already sets it saw no arrival"
     assert_eq "true" "$(migrated_value keepLowDepthAsZero)" "and its own value is carried"
 }
+
+# outputPrefix ARRIVES CARRYING THE OLD VCF NAME. A config from before it names its VCF in
+# vcf.fileName and has no prefix, and the template now derives the VCF name from the prefix. Given
+# the template's 'Test', the project's VCF and every table named after it would take a name its
+# results were not produced under, which step 0 refuses as a changed parameter until the old name
+# is restored or the project is reset.
+test_output_prefix_takes_the_old_vcf_name() {
+    migrate_config_with -e '/^    outputPrefix /d' \
+                        -e "s|^        fileName .*|        fileName        = 'MyRun'|"
+    assert_status 0 "$MIGRATE_STATUS" "migration should succeed"
+    assert_eq "MyRun" "$(migrated_value outputPrefix)" "the prefix takes the name the VCF had"
+    assert_eq '${params.outputPrefix}' "$(migrated_value fileName)" \
+        "and the VCF name follows the prefix, as the template writes it"
+    assert_contains "$MIGRATE_OUTPUT" "outputPrefix IS NEW, and it took your vcf.fileName, MyRun." \
+        "the arrival is called out"
+    assert_contains "$MIGRATE_OUTPUT" "MyRun_mds.tsv" "with what it does to an analysis's files"
+}
+
+# A config that already has outputPrefix chose it, and a VCF name written over the derived one is
+# a choice as well: the migration that brought outputPrefix in must not take either away the next
+# time it runs. The template's derived line would otherwise win over the written name, as it does
+# for every value the template computes.
+test_a_config_with_an_output_prefix_keeps_both_names() {
+    migrate_config_with -e "s|^    outputPrefix .*|    outputPrefix    = 'Mine'|" \
+                        -e "s|^        fileName .*|        fileName        = 'Calls'|"
+    assert_status 0 "$MIGRATE_STATUS" "migration should succeed"
+    assert_not_contains "$MIGRATE_OUTPUT" "outputPrefix IS NEW" "a config that sets it saw no arrival"
+    assert_eq "Mine" "$(migrated_value outputPrefix)" "its prefix is carried"
+    assert_eq "Calls" "$(migrated_value fileName)" "and so is the VCF name it wrote"
+    migrate_config_with -e "s|^    outputPrefix .*|    outputPrefix    = 'Mine'|"
+    assert_eq '${params.outputPrefix}' "$(migrated_value fileName)" \
+        "a VCF name left to follow the prefix still follows it"
+    # A name derived from the prefix in a way of its own is a choice too. Kept only when it was a
+    # literal, it was replaced by the template's line with nothing in the report.
+    migrate_config_with -e "s|^    outputPrefix .*|    outputPrefix    = 'Mine'|" \
+                        -e 's|^        fileName .*|        fileName        = "${params.outputPrefix}_v2"|'
+    assert_eq '${params.outputPrefix}_v2' "$(migrated_value fileName)" \
+        "and a name written as an expression is kept as written"
+    assert_contains "$MIGRATE_OUTPUT" '${params.outputPrefix}_v2' "and said to be"
+}
+
+# AN EXPRESSION CANNOT MOVE INTO outputPrefix. A config from before it whose VCF name was computed
+# from another parameter keeps that line, so the VCF keeps its name, and outputPrefix arrives as the
+# template's default, said so. Until this case the expression was replaced by the template's line
+# and the report said nothing at all, so the next run named the VCF Test.vcf.
+test_an_expression_vcf_name_stays_and_the_prefix_is_the_default() {
+    migrate_config_with -e '/^    outputPrefix /d' \
+                        -e 's|^        fileName .*|        fileName        = "${params.dataSource}_calls"|'
+    assert_status 0 "$MIGRATE_STATUS" "migration should succeed"
+    assert_eq '${params.dataSource}_calls' "$(migrated_value fileName)" "the VCF name is kept as written"
+    assert_eq "Test" "$(migrated_value outputPrefix)" "the prefix is the template's"
+    assert_contains "$MIGRATE_OUTPUT" "outputPrefix IS NEW, and your config now has the template's Test." \
+        "and the note says so"
+    assert_not_contains "$MIGRATE_OUTPUT" "it took your vcf.fileName" "rather than that it took the name"
+}

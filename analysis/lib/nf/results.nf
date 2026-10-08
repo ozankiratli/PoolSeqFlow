@@ -8,14 +8,8 @@ nextflow.enable.dsl=2
 
 include { verificationRecordName } from './paths.nf'
 include { citationShell } from './citations.nf'
-include { readmeShell } from './outputs.nf'
-include { reportShell } from './report.nf'
-
-// What counts as the script that produced a result, by extension: R, and the shell, Python and
-// Julia a module may drive it from.
-def scriptSuffixes() {
-    return ['R', 'r', 'Rmd', 'rmd', 'sh', 'py', 'jl']
-}
+include { readmeShell; scriptSuffixes; codeSuffixes } from './outputs.nf'
+include { reportShell; reportName } from './report.nf'
 
 // One results directory's analysis, moved into place.
 process InstallResults {
@@ -34,10 +28,15 @@ process InstallResults {
     // `find -name` tests, one per accepted extension, joined for a single walk of the stage.
     script_test = scriptSuffixes().collect { s -> "-name '*.${s}'" }.join(' -o ')
     script_list = scriptSuffixes().collect { s -> "*.${s}" }.join(', ')
+    // The code a module produced, as the patterns of a `case`.
+    code_case = codeSuffixes().collect { s -> "*.${s}" }.join('|')
+    // When the analysis is published, in local time, which the report's name carries.
+    stamp = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern('yyyyMMdd-HHmmss'))
+    report_name = reportName(target, stamp)
     // Written into the STAGE, so the citations arrive in the same rename as the analysis.
     citations = citationShell("${target.module}", '$STAGE')
-    readme = readmeShell("${target.module}", target, '$STAGE')
-    report = reportShell("${target.module}", target, '$STAGE')
+    readme = readmeShell("${target.module}", target, '$STAGE', report_name)
+    report = reportShell("${target.module}", target, '$STAGE', report_name)
     """
     set -eo pipefail
 
@@ -66,6 +65,17 @@ process InstallResults {
         echo "PUBLISHING ${target.label}: Nothing was published and the folder is untouched." >&2
         exit 1
     fi
+
+    # Every file and directory the module produced starts with the outputPrefix, and the code it
+    # was produced by keeps its own name. What a directory holds keeps its names.
+    for FILE in "\$STAGE"/*; do
+        [ -e "\$FILE" ] || continue
+        NAME=\$(basename "\$FILE")
+        case "\$NAME" in
+            ${code_case}) ;;
+            *) mv -- "\$FILE" "\$STAGE/${target.prefix}_\$NAME" ;;
+        esac
+    done
 
     # Every file the module said it would publish is here, or nothing is published.
     ${readme}

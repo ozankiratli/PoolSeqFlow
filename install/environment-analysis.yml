@@ -143,6 +143,7 @@ dependencies:
   - r-future.apply=1.20.2=r45hc72bb7e_0
   - r-getopt=1.21.1=r45ha770c72_0
   - r-ggplot2=4.0.3=r45h785f33e_0
+  - r-ggrepel=0.9.8=r45h3697838_0
   - r-globals=0.19.1=r45hc72bb7e_0
   - r-glue=1.8.1=r45h54b55ab_0
   - r-gtable=0.3.6=r45hc72bb7e_1

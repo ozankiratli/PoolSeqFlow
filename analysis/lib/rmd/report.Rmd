@@ -1,63 +1,66 @@
+---
+margin:
+  x: 1in
+  y: 1in
+---
+
 ```{r setup, include = FALSE}
-# The PDF the frame writes beside every published analysis: every result it holds, each under
-# the name of the file it came from.
+# The PDF the frame writes beside every published analysis.
 #
 # Knitted to markdown and handed to pandoc, never rendered by rmarkdown::pdf_document, which is
 # bound to LaTeX and ignores --pdf-engine.
 #
-# The spec is written by analysis/lib/nf/report.nf and names the published folder, what
-# produced it, and every file the module declared with the summary it declared. Nothing here
-# knows what any particular module computes.
-knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
-spec <- jsonlite::fromJSON(Sys.getenv("POOLSEQFLOW_REPORT_SPEC"), simplifyVector = FALSE)
-folder <- spec$folder
+# The spec is written by analysis/lib/nf/report.nf: what produced the folder, the warnings its
+# design carries, the module's own report if it declares one, and every file the module declared
+# with the summary it declared. The folder itself is POOLSEQFLOW_REPORT_FOLDER.
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, error = FALSE)
 
-# A table is shown in full up to this many rows. Past it the head is shown and the full row
-# count is printed with it.
-ROW_CAP <- 40
-```
-
-# `r spec$label`: `r spec$module`
-
-Produced by PoolSeqFlow `r spec$release`, module `r spec$module` v`r spec$version`,
-analysis frame `r spec$frame`, on `r format(Sys.time(), "%Y-%m-%d %H:%M")`.
-
-Read from `r spec$source`.
-
-```{r contents}
-rows <- do.call(rbind, lapply(spec$outputs, function(o) data.frame(
-    File = sprintf("`%s`", o$file), What = o$summary %||% "", stringsAsFactors = FALSE)))
-knitr::kable(rows, caption = "What this folder holds")
-```
-
-```{r results = "asis"}
-`%||%` <- function(a, b) if (is.null(a)) b else a
-
-for (output in spec$outputs) {
-    matched <- Sys.glob(file.path(folder, output$file))
-    if (length(matched) == 0) next          # an optional output this run did not produce
-    for (path in sort(matched)) {
-        name <- basename(path)
-        # A typst raw block, not \newpage: pandoc passes LaTeX commands only to LaTeX and
-        # drops this one in silence, so the report would run together with nothing to show it.
-        cat("\n\n```{=typst}\n#pagebreak()\n```\n\n## ", name, "\n\n", sep = "")
-        if (!is.null(output$summary)) cat("*", output$summary, "*\n\n", sep = "")
-
-        if (grepl("[.]tsv$", name)) {
-            table <- utils::read.delim(path, check.names = FALSE, colClasses = "character")
-            shown <- utils::head(table, ROW_CAP)
-            print(knitr::kable(shown))
-            if (nrow(table) > ROW_CAP) {
-                cat("\n\n", nrow(shown), " of ", nrow(table),
-                    " rows. The whole table is in `", name, "`.\n", sep = "")
-            }
-        } else if (grepl("[.]png$", name)) {
-            # Scaled to the text width, not placed at its own size: a figure sized for looking
-            # at on its own pushes the heading naming it onto the previous page.
-            cat("\n![](", path, "){width=90%}\n", sep = "")
-        } else {
-            cat("\nNot rendered here - read `", name, "` itself.\n", sep = "")
-        }
+# Characters are read and written as UTF-8 whatever locale the task inherited. Outside one, R
+# writes the report's own pi and its breaks as <U+03C0> and <U+200B>, and a name with an accent in
+# it as bytes.
+if (!isTRUE(l10n_info()[["UTF-8"]])) {
+    for (locale in c("C.UTF-8", "C.utf8", "en_US.UTF-8", "en_US.utf8")) {
+        if (nzchar(suppressWarnings(Sys.setlocale("LC_CTYPE", locale)))) break
+    }
+    if (!isTRUE(l10n_info()[["UTF-8"]])) {
+        stop("report: this machine has no UTF-8 locale (tried C.UTF-8, C.utf8, en_US.UTF-8 ",
+             "and en_US.utf8), and the report cannot print its own symbols or a pool name ",
+             "with an accent without one")
     }
 }
+
+spec <- jsonlite::fromJSON(Sys.getenv("POOLSEQFLOW_REPORT_SPEC"), simplifyVector = FALSE)
+source(spec$library)
 ```
+
+```{=typst}
+#set par(justify: false)
+#show figure.where(kind: table): set figure.caption(position: top)
+#show figure.where(kind: table): set block(breakable: true)
+#show figure.caption.where(kind: table): it => block(sticky: true, it)
+#show heading.where(level: 2): set block(above: 1.8em, below: 0.9em)
+```
+
+# `r spec$module`: `r spec$label`
+
+Produced by PoolSeqFlow `r spec$release`, module `r spec$module` v`r spec$version` and analysis frame `r spec$frame`, on `r format(Sys.time(), "%Y-%m-%d %H:%M")`.
+
+Read from `r paste0("\x60", spec$source, "\x60")`.
+
+```{r warnings, results = "asis"}
+if (length(spec$warnings) > 0) {
+    cat("\n## Read these before the numbers\n\n")
+    for (note in spec$warnings) cat("- ", note, "\n", sep = "")
+    cat("\n")
+}
+```
+
+```{r body, results = "asis"}
+if (nzchar(spec$child)) {
+    cat(knitr::knit_child(spec$child, quiet = TRUE), sep = "\n")
+} else {
+    report_declared(spec$outputs)
+}
+```
+
+Every number here is in a file in this folder, and `README.md` says which file holds what.

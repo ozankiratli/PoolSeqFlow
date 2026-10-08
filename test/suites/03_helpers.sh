@@ -325,6 +325,32 @@ a.fasta.gz
     assert_contains "$MR_ERR" "RunID" "the message should name the missing column"
 }
 
+# A RUN'S outputPrefix OR vcf.fileName BECOMES A FILE NAME BEFORE ANYTHING CHECKS IT. Step 0 judges
+# parameters.config's own values only, so a cell holding a space passed it, and the run broke at
+# variant calling, where `-o <name>.vcf` is unquoted: hours of trimming and alignment in. 'null' is
+# refused as it is in the config, where it is what a missing outputPrefix line reads as. A blank
+# cell inherits and is not judged here.
+test_multirun_refuses_a_file_name_cell_no_file_can_start_with() {
+    mr 'RunID,outputPrefix,vcf.fileName
+a,My run,
+b,,calls/v2
+c,null,
+d,.hidden,
+e,Run_2.v1-a,Calls
+'
+    assert_status 1 "$MR_STATUS" "a name no file can carry must stop the run"
+    assert_contains "$MR_ERR" "line 2: outputPrefix 'My run'" "a space, named with its line"
+    assert_contains "$MR_ERR" "line 3: vcf.fileName 'calls/v2'" "a slash, in either column"
+    assert_contains "$MR_ERR" "line 4: outputPrefix is 'null'" "the word null"
+    assert_contains "$MR_ERR" "line 5: outputPrefix '.hidden'" "and a leading dot"
+    assert_not_contains "$MR_ERR" "line 6" "letters, digits, '.', '_' and '-' make a name"
+    mr 'RunID,outputPrefix
+a,Alpha
+b,
+'
+    assert_status 0 "$MR_STATUS" "and a table of good names and a blank cell passes"
+}
+
 # The header is parameter names as parameters.config spells them. Writing params.poolSize is
 # the obvious mistake to make, so it gets its own message rather than "not a parameter name".
 test_multirun_rejects_the_params_prefix_by_name() {
@@ -2216,9 +2242,10 @@ test_major_allele_to_ref_refuses_a_vcf_without_format_ad() {
 # project cannot be told one thing before a run and another during it. 02_launcher asserts the
 # wiring through check_project.sh; these are the rules themselves, at static cost.
 #
-# WHAT BELONGS IN IT: a setting that makes the run produce NOTHING, or that silently changes what
-# a published number means. minDP 20 against minDP 5 is a scientific choice and is not its
-# business. Every threshold below was measured, not chosen.
+# WHAT BELONGS IN IT: a setting that makes the run produce NOTHING or stops it partway, or that
+# silently changes what a published number means. minDP 20 against minDP 5 is a scientific choice
+# and is not its business. Every threshold below was measured, not chosen; the file-name rule is a
+# rule about names and was not.
 
 # The shipped defaults, which every case starts from and mutates.
 cp_defaults() {
@@ -2233,6 +2260,8 @@ params.poolSize = 100
 params.capBAM.maxDepth = -1
 params.variantCall.maxDepth = 0
 params.fastqc.memory = 2048
+params.outputPrefix = 'Test'
+params.vcf.fileName = 'Test'
 FLAT
 }
 
@@ -2342,6 +2371,51 @@ test_check_parameters_survives_a_config_with_nothing_in_it() {
     assert_eq "" "$(cp_verdict ploidy)" "nor on ploidy"
     assert_eq "" "$(cp_verdict fastqc.memory)" "nor on fastqc.memory"
     assert_eq "" "$(cp_verdict filterFalsePositives.sampleThreshold)" "nor on the threshold"
+    # The name rule tells an absent key from an empty one, and only the empty one is a finding.
+    assert_eq "" "$(cp_verdict outputPrefix)" "nor on a prefix nobody set"
+    assert_eq "" "$(cp_verdict vcf.fileName)" "nor on a VCF name"
+}
+
+# outputPrefix and vcf.fileName each start the name of files the run writes: a '/' in one writes
+# somewhere else entirely, a space breaks the steps that hand the name to a shell, and an empty one
+# names the VCF .vcf. A leading '.' hides every file named with it, so the report's figures, found
+# by listing the folder, go missing with nothing said; a leading '-' reads as an option. 'null' is
+# what the template's `fileName = "${params.outputPrefix}"` holds when the outputPrefix line is
+# gone, so the run would carry null.vcf and null_mds.tsv. Letters, digits, '.', '_' and '-' make a
+# name, starting with a letter or a digit.
+test_check_parameters_refuses_a_name_no_file_can_start_with() {
+    helpers_sandbox
+    cp_check "params.outputPrefix='My run'"
+    assert_eq "FAIL NOT A FILE NAME" "$(cp_verdict outputPrefix)" "a space is refused"
+    assert_status 1 "$CP_RC" "and fails the check"
+    cp_check "params.vcf.fileName='calls/v2'"
+    assert_eq "FAIL NOT A FILE NAME" "$(cp_verdict vcf.fileName)" "and so is a slash, in either name"
+    cp_check "params.outputPrefix='.run1'"
+    assert_eq "FAIL NOT A FILE NAME" "$(cp_verdict outputPrefix)" "and a leading dot"
+    cp_check "params.vcf.fileName='-rf'"
+    assert_eq "FAIL NOT A FILE NAME" "$(cp_verdict vcf.fileName)" "and a leading dash"
+    cp_check "params.outputPrefix='null'"
+    assert_eq "FAIL NOT SET" "$(cp_verdict outputPrefix)" "and the null a missing line leaves"
+    cp_check "params.outputPrefix=''"
+    assert_eq "FAIL EMPTY" "$(cp_verdict outputPrefix)" "and an empty prefix"
+    cp_check "params.outputPrefix='Run_2.v1-a'" "params.vcf.fileName='2026'"
+    assert_eq "" "$(cp_verdict outputPrefix)$(cp_verdict vcf.fileName)" \
+        "letters, digits, '.', '_' and '-' make a name, and a digit may start one"
+    assert_status 0 "$CP_RC" "that passes"
+}
+
+# BOTH CALLERS READ A FINDING WITH `IFS=<tab> read`, where a tab is whitespace and two in a row are
+# one. A finding with an empty field in the middle shifted every field after it: the explanation
+# landed in the detail column and nothing was left to fold. The empty-name finding was the first
+# to have one.
+test_check_parameters_findings_survive_the_callers_read() {
+    helpers_sandbox
+    cp_check "params.outputPrefix=''"
+    local level label headline detail why
+    IFS=$'\t' read -r level label headline detail why <<< "$(printf '%s\n' "$CP_FIND" | grep $'\toutputPrefix\t')"
+    assert_eq "EMPTY" "$headline" "the verdict is where a caller reads it"
+    assert_eq "no name" "$detail" "and so is the detail"
+    assert_contains "$why" "named from nothing" "and the explanation"
 }
 
 # n_chrom is ploidy times poolSize. At 1 the unbiased diversity correction n_eff/(n_eff - 1) is

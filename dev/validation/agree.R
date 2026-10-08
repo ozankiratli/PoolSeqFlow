@@ -162,7 +162,7 @@ close_to <- function(a, b, tolerance) {
 # allele exhausted its residual: two builds of R disagree about an exhausted site, as the module's
 # own cases note, and zero_variance is compared everywhere instead.
 compare_association <- function(label, dir, mine) {
-    got <- read.delim(file.path(dir, "association.tsv"))
+    got <- read.delim(file.path(dir, "association_pt_y.tsv"))
     run <- read.delim(file.path(dir, "permutations.tsv"))
     own <- mine$sites
     cat(sprintf("%s: %d sites, the module tested %d, the estimator %d\n", label, nrow(got),
@@ -312,8 +312,11 @@ counts <- simulate_cells(draw_depth(1000L, mds_depths, 10), N_CHROM,
 masked_table <- mask_cells(counts, 20L, 1L)
 dir <- write_inputs("mds", masked_table$counts, rep("G", nrow(masked_table$counts[[1]])),
                     variables = TRUE)
-mds_options <- list(dimensions = 2, colorBy = "", shapeBy = "", includeIndels = FALSE,
-                    chromosomes = list(), binSize = 100000, workers = 1, usecpp = FALSE)
+# labels is FALSE: this compares tables, and it runs in association's suite, whose environment
+# need not hold ggrepel, which only mds declares.
+mds_options <- list(dimensions = 2, colorBy = "", shapeBy = "", labels = FALSE,
+                    includeIndels = FALSE, chromosomes = list(), binSize = 100000, workers = 1,
+                    usecpp = FALSE)
 mds_sources <- c("--cpp-frequencies", source_of("allele_frequencies"),
                  "--cpp-distance", source_of("nei_distance"))
 run_module(dir, "mds", mds_options, mds_sources)

@@ -258,6 +258,32 @@ test_a_module_without_citations_refuses() {
         "and refusing before anything is cleared or written"
 }
 
+# A module that declares a report of its own and does not carry it is a broken install, refused
+# where a missing main.nf is.
+test_a_module_declaring_a_report_it_lacks_refuses() {
+    analysis_ready single || return
+    analysis_install_module demo \
+        '{"name":"demo","version":"1.4.2","contract":"freq-1",'"$ANALYSIS_MANIFEST_FLOORS"',
+          "summary":"scaling over frequencies","report":"report.Rmd"}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a declared report that is not there must stop the run"
+    assert_contains "$(analysis_output)" "declares its report as 'report.Rmd'" \
+        "naming the file it looked for"
+}
+
+# The report is knitted from the module's own directory, and a name with a path in it would
+# reach outside that.
+test_a_report_named_by_a_path_refuses() {
+    analysis_ready single || return
+    analysis_install_module demo \
+        '{"name":"demo","version":"1.4.2","contract":"freq-1",'"$ANALYSIS_MANIFEST_FLOORS"',
+          "summary":"scaling over frequencies","report":"../shared/report.Rmd"}'
+    local status; status=$(run_analysis "$ANALYSIS_SB" verify)
+    assert_status 1 "$status" "a report named by a path must stop the run"
+    assert_contains "$(analysis_output)" "gives 'report' as '../shared/report.Rmd'" \
+        "quoting what it was given"
+}
+
 # Half-finished installs and stray directories are ordinary; only a manifest that exists and
 # cannot be used is an error.
 test_a_directory_without_a_manifest_is_ignored() {

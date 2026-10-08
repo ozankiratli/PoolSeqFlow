@@ -15,9 +15,9 @@
 #
 # Silence is the answer for a parameter set with nothing wrong with it.
 #
-# WHAT BELONGS HERE: a setting that makes the run produce NOTHING, or that silently changes what
-# a published number means. What does not: a setting that merely produces fewer sites. minDP 20
-# against minDP 5 is a scientific choice and this has no opinion on it.
+# WHAT BELONGS HERE: a setting that makes the run produce NOTHING or stops it partway, or that
+# silently changes what a published number means. What does not: a setting that merely produces
+# fewer sites. minDP 20 against minDP 5 is a scientific choice and this has no opinion on it.
 #
 # VALUES ARE READ FROM THE COMPOSED OPTION STRINGS WHERE THERE IS ONE. A project may pin
 # variantCall.mpileupOptions by hand, which makes scaleMapQ and varQualMin inert, so judging the
@@ -145,5 +145,26 @@ if [ -n "$fqmem" ] && ! is_int "$fqmem"; then
     say FAIL "fastqc.memory" "NOT A PLAIN NUMBER" "$fqmem" \
         "FastQC takes megabytes as a bare integer and refuses a value carrying a unit, so write 2048 rather than 2G."
 fi
+
+# ------------------------------------------------------------------- the names --
+#
+# outputPrefix and vcf.fileName each start file names: letters, digits, '.', '_' and '-', the
+# first a letter or a digit. 'null' is what the template's vcf.fileName line holds when the
+# config has no outputPrefix line. Judged only when the input carries the key: an absent key is
+# not an empty name.
+for key in outputPrefix vcf.fileName; do
+    [ -n "${P[$key]+set}" ] || continue
+    name=$(get "$key")
+    if [ -z "$name" ]; then
+        say FAIL "$key" "EMPTY" "no name" \
+            "It starts the name of the files it covers, so they would be named from nothing. Write a name: letters, digits, '.', '_' and '-', starting with a letter or a digit."
+    elif [ "$name" = "null" ]; then
+        say FAIL "$key" "NOT SET" "null" \
+            "null is what the template's vcf.fileName line reads when parameters.config has no outputPrefix line. Put the line back, or write a name."
+    elif ! printf '%s' "$name" | grep -qx '[A-Za-z0-9][A-Za-z0-9._-]*'; then
+        say FAIL "$key" "NOT A FILE NAME" "$name" \
+            "It starts the name of the files it covers, so it may hold letters, digits, '.', '_' and '-', and starts with a letter or a digit."
+    fi
+done
 
 exit "$FAILED"

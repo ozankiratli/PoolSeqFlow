@@ -2,10 +2,10 @@
 
 ```
 test/run_tests.sh --changed       the suites that cover what you have changed
-test/run_tests.sh --cost static   everything that needs nothing installed (~40 s)
+test/run_tests.sh --cost static   the suites that build nothing (~40 s)
 test/run_tests.sh --fast          skip what runs the pipeline (~2 min)
 test/run_tests.sh --suite guards --suite analysis_time   one or more, by name
-test/run_tests.sh --case citation only cases whose name matches
+test/run_tests.sh --case citation only cases whose function name matches
 test/run_tests.sh                 everything (~50 min, and the analysis layer is most of it)
 test/run_tests.sh --list          the suites, with what each costs
 test/run_tests.sh --keep          leave the working directories behind for inspection
@@ -20,8 +20,7 @@ Every run prints the scope it selected before it runs anything, so a narrowed ru
 mistaken for a full one. That matters more than it sounds: the failure this guards against is
 a green summary over a subset nobody chose.
 
-Exit status is 0 only when every case that ran passed; skips do not fail the run, so a
-machine without the conda environment can still check everything that does not need it.
+Exit status is 0 only when every selected case ran and passed. A case that cannot run, for want of an environment or a tool, fails the run, except under `--fast`, which exists to leave cases out and lists them as skipped instead. A skip used to leave a run green, so a summary reading PASS could stand over a case that never ran: the release gate read "0 skipped" off it by eye, and a fixture whose commit failed on a machine that signs by default skipped every case built on it. A fixture that cannot be built is a failure everywhere, and a `--case` that matches nothing stops the run. On a machine without the conda environment, `--cost static --fast` checks what does not need it.
 
 The suite is kept out of release downloads by `test/ export-ignore` in `.gitattributes`,
 the same arrangement `dev/` uses.
@@ -65,11 +64,11 @@ The analysis layer is nine suites rather than one. It runs **no** pipeline -- ar
 
 | class | what it promises | suites |
 |---|---|---|
-| `static` | completes with **nothing installed**; a case wanting a tool skips rather than building | `00_static` `01_migrate` `02_launcher` `03_helpers` `07_analysis_rlib` |
+| `static` | **builds nothing**; a case wanting a tool that is not installed fails, or skips under `--fast` | `00_static` `01_migrate` `02_launcher` `03_helpers` `07_analysis_rlib` |
 | `jvm` | starts Nextflow per case, against planted artifacts | `05_guards` `06_dryrun`, the other analysis suites, and a module's own |
 | `pipeline` | runs the pipeline itself against the fixture | `04_pipeline` |
 
-The line between `static` and `jvm` is whether a case **builds** something. Asking `have_tools` and skipping is static -- that is how `00_static` holds its `nextflow lint` case. Calling for a baseline or a pipeline run is not, and `00_static` refuses a suite that does both.
+The line between `static` and `jvm` is whether a case **builds** something. Asking `have_tools` is static -- that is how `00_static` holds its `nextflow lint` case. Calling for a baseline or a pipeline run is not, and `00_static` refuses a suite that does both.
 
 An undeclared suite reads as `pipeline`, so it can never slip into a cheap run by accident, and a static one that reaches for a builder is refused by name.
 
@@ -151,8 +150,7 @@ problem it has instead of only the first: `assert_eq`, `assert_contains`,
 `assert_not_contains`, `assert_status`, `assert_file`, `assert_no_file`, `assert_count`,
 plus `fail_case` and `skip_case`.
 
-Cases that need the pipeline start with `needs_run || return`, which skips them when there
-is no conda environment or `--fast` was given.
+Cases that need the pipeline start with `needs_run || return`, which skips them under `--fast` and, outside it, fails them when there is no conda environment.
 
 Two helpers in `lib/sandbox.sh` are worth knowing about before writing a new case:
 

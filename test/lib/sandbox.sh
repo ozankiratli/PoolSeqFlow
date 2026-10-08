@@ -231,6 +231,7 @@ def reportKeys() {
             'trim_galore.quality', 'trim_galore.options',
             'variantCall.maxDepth', 'variantCall.mpileupOptions',
             'threads', 'cores.bwa', 'referenceFile', 'referenceFa', 'reference', 'snpEff.db',
+            'outputPrefix', 'vcf.fileName',
             'storageDir', 'dir.utilized', 'dir.output.vcf', 'dir.dictionaries']
 }
 

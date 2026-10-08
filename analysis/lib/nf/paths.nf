@@ -236,6 +236,28 @@ def frameVersion() {
     return version
 }
 
+// The PoolSeqFlow release this installation is, from the manifest in its nextflow.config. A
+// module's own run has no workflow.manifest.version: Nextflow reads that file only for an entry
+// script beside it.
+def releaseVersion() {
+    def config = file("${installDir()}/nextflow.config")
+    def version = config.exists()
+        ? config.readLines().findResult { line ->
+              def hit = (line =~ /^\s*version\s*=\s*'([^']*)'/)
+              hit ? "${hit[0][1]}".toString() : null } ?: ''
+        : ''
+    if (!(version ==~ /\d+\.\d+\.\d+/)) {
+        throw new IllegalStateException(
+            "the installation does not say which release it is.\n" +
+            "    ${config}\n" +
+            "should carry the release as `version = 'X.Y.Z'` in its manifest" +
+            (version.isEmpty() ? ', and carries none' : ", and carries '${version}'") + ".\n" +
+            "Every published analysis names the release that produced it. Install this release " +
+            "again.")
+    }
+    return version
+}
+
 // The installation this invocation was launched from, and a refusal when it cannot be found. A
 // module is its own pipeline, so ${projectDir} is the module's own directory and nothing
 // Nextflow computes points at the installation. The wrapper exports POOLSEQFLOW_HOME.

@@ -103,10 +103,14 @@ _poolseqflow() {
                     fi
                     ;;
                 4)
-                    # `modules install <module>` offers nothing: the names come from the
-                    # catalogue, which is read over the network.
-                    [ "${COMP_WORDS[2]}" = modules ] && [ "${COMP_WORDS[3]}" = uninstall ] &&
-                        _poolseqflow_reply "$modules" "$cur"
+                    # `modules install` offers `all` and no module name: the names come from
+                    # the catalogue, which is read over the network.
+                    if [ "${COMP_WORDS[2]}" = modules ]; then
+                        case "${COMP_WORDS[3]}" in
+                            uninstall) _poolseqflow_reply "$modules" "$cur" ;;
+                            install)   _poolseqflow_reply "all" "$cur" ;;
+                        esac
+                    fi
                     ;;
             esac
             ;;

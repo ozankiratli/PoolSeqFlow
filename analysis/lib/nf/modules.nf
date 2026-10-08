@@ -176,6 +176,17 @@ def readManifest(Object dir) {
             "know them for a module published separately.\n" +
             "Install the module again, or remove the directory.")
     }
+    def report = "${parsed.report ?: ''}".trim()
+    if (!report.isEmpty() && !(report ==~ /[A-Za-z0-9._-]+\.Rmd/)) {
+        throw new IllegalStateException(
+            "${manifest} gives 'report' as '${report}'. It is the name of an .Rmd file in the " +
+            "module's own directory, which the frame knits into the published report.")
+    }
+    if (!report.isEmpty() && !file("${dir}/${report}").exists()) {
+        throw new IllegalStateException(
+            "${manifest} declares its report as '${report}', and ${dir} has no such file.\n" +
+            "Install the module again, or remove the directory.")
+    }
     return [ summary    : "${parsed.summary}".toString(),
              version    : "${parsed.version}".toString(),
              contract   : "${parsed.contract}".toString(),
@@ -187,6 +198,7 @@ def readManifest(Object dir) {
              gates      : parsed.gates ?: [],
              outputs    : parsed.outputs ?: [],
              packages   : (parsed.packages ?: []).collect { spec -> "${spec}".toString() },
+             report     : report.toString(),
              builtin    : false,
              dir        : "${dir}".toString(),
              entry      : "${entry}".toString() ]
