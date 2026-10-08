@@ -8,6 +8,14 @@ pairs <- report_read("distance.tsv")
 eigen <- report_read("eigenvalues.tsv")
 num <- function(x) suppressWarnings(as.numeric(x))
 
+# The names the three tables are published under, as plain text and as markdown.
+mds_tsv <- report_name("mds.tsv")
+distance_tsv <- report_name("distance.tsv")
+eigenvalues_tsv <- report_name("eigenvalues.tsv")
+mds_md <- report_text(mds_tsv)
+distance_md <- report_text(distance_tsv)
+eigenvalues_md <- report_text(eigenvalues_tsv)
+
 pools <- coords$pool
 axes <- grep("^dim[0-9]+$", names(coords), value = TRUE)
 variables <- setdiff(names(coords), c("pool", "unit", axes))
@@ -60,15 +68,17 @@ matrix_tables <- function(held, label, caption) {
 
 ```{r mds-plot, results = "asis"}
 for (path in report_files("mds.png")) {
-    report_image(path, caption = paste0("The pools on the leading two axes (mds.png, drawn from ",
-                                        "mds.tsv and eigenvalues.tsv)."))
+    report_image(path, caption = paste0("The pools on the leading two axes (",
+                                        report_text(basename(path)), ", drawn from ", mds_md,
+                                        " and ", eigenvalues_md, ")."))
 }
 table <- data.frame(Pool = pools, Unit = coords$unit, check.names = FALSE,
                     stringsAsFactors = FALSE)
 for (v in variables) table[[v]] <- coords[[v]]
 for (a in axes) table[[sub("^dim", "Axis ", a)]] <- report_number(coords[[a]], digits = 3)
-report_table(table, caption = paste0("Each pool's coordinate on every axis the run wrote (mds.tsv). ",
-                                     "Each axis is signed so that its largest coordinate is positive."))
+report_table(table, caption = paste0("Each pool's coordinate on every axis the run wrote (", mds_tsv,
+                                     "). Each axis is signed so that its largest coordinate is ",
+                                     "positive."))
 ```
 
 ## How much each axis carries
@@ -83,7 +93,7 @@ table <- data.frame(Axis = eigen$axis,
                     Drawn = ifelse(drawn, "yes", ""),
                     check.names = FALSE, stringsAsFactors = FALSE)
 report_table(table, caption = paste0(
-    "Every eigenvalue with its share of the scatter (eigenvalues.tsv, where the shares are ",
+    "Every eigenvalue with its share of the scatter (", eigenvalues_tsv, ", where the shares are ",
     "fractions). Share divides by the signed sum and Share of |sum| by the sum of absolute values, ",
     "which the plot's axis labels use. ",
     if (any(negative)) paste0("Negative eigenvalues carry ",
@@ -103,7 +113,7 @@ figure <- ggplot2::ggplot(scree, ggplot2::aes(x = axis, y = share, fill = sign))
     ggplot2::theme_bw(base_size = 9) +
     ggplot2::theme(legend.position = "bottom")
 report_plot(figure, "eigenvalues", width = 6, height = 2.8,
-            caption = "How much each axis carries, from eigenvalues.tsv.")
+            caption = paste0("How much each axis carries, from ", eigenvalues_md, "."))
 ```
 
 ## Distances between pools
@@ -111,7 +121,7 @@ report_plot(figure, "eigenvalues", width = 6, height = 2.8,
 ```{r mds-distances, results = "asis"}
 matrix_tables(pool_matrix("distance", digits = 3), "Corrected distance",
               paste0("Nei's minimum distance between every two pools, corrected for sampling ",
-                     "(distance.tsv). A negative entry reads as indistinguishable at this depth; ",
+                     "(", distance_tsv, "). A negative entry reads as indistinguishable at this depth; ",
                      "distances are not floored at zero."))
 
 grid <- data.frame(a = factor(c(pairs$pool_a, pairs$pool_b), levels = pools),
@@ -133,7 +143,8 @@ figure <- ggplot2::ggplot(grid, ggplot2::aes(x = a, y = b, fill = value)) +
 name_room <- 0.05 * max(nchar(pools))
 side <- min(7, 0.25 * length(pools) + 2.5)
 report_plot(figure, "distances", width = side + 1.2 + name_room, height = side + 0.87 * name_room,
-            caption = "The distance matrix above, from distance.tsv. Blue below zero, red above.")
+            caption = paste0("The distance matrix above, from ", distance_md,
+                             ". Blue below zero, red above."))
 ```
 
 ## What each distance rests on
@@ -143,30 +154,30 @@ few <- num(pairs$few_sites) == 1
 if (min(shared) == max(shared)) {
     if (all(few)) {
         cat("**Every pair is averaged over ", report_number(min(shared)), " sites, fewer than ",
-            "30** (few_sites is 1 throughout distance.tsv), so every distance here is rough ",
+            "30** (few_sites is 1 throughout ", distance_md, "), so every distance here is rough ",
             "rather than wrong.\n\n", sep = "")
     } else {
-        cat("Every pair is averaged over ", report_number(min(shared)), " sites (distance.tsv).\n\n",
-            sep = "")
+        cat("Every pair is averaged over ", report_number(min(shared)), " sites (", distance_md,
+            ").\n\n", sep = "")
     }
 } else {
     matrix_tables(pool_matrix("sites"), "Shared sites",
-                  paste0("How many sites each pair's distance is averaged over (distance.tsv). A ",
+                  paste0("How many sites each pair's distance is averaged over (", distance_tsv, "). A ",
                          "pair rests on the sites both of its pools were read at, so two pairs in ",
                          "one run can rest on different counts."))
 }
 
 if (min(shared) != max(shared) && all(few)) {
     cat("**Every pair is averaged over fewer than 30 sites** (few_sites is 1 throughout ",
-        "distance.tsv), so every distance here is rough rather than wrong.\n\n", sep = "")
+        distance_md, "), so every distance here is rough rather than wrong.\n\n", sep = "")
 } else if (!all(few) && any(few)) {
     table <- data.frame("Pool A" = pairs$pool_a[few], "Pool B" = pairs$pool_b[few],
                         Sites = report_number(pairs$sites[few]),
                         Distance = report_number(pairs$distance[few], digits = 3),
                         check.names = FALSE, stringsAsFactors = FALSE)
-    report_table(table, max_rows = 40, source = "distance.tsv",
+    report_table(table, max_rows = 40, source = distance_tsv,
                  caption = paste0("The pairs averaged over fewer than 30 sites (few_sites in ",
-                                  "distance.tsv). Their distances are rough rather than wrong."))
+                                  distance_tsv, "). Their distances are rough rather than wrong."))
 }
 
 before <- data.frame(raw = num(pairs$raw), corrected = num(pairs$distance),
@@ -186,6 +197,6 @@ figure <- ggplot2::ggplot(before, ggplot2::aes(x = raw, y = corrected, shape = s
     ggplot2::theme(legend.position = "bottom", plot.margin = ggplot2::margin(5.5, 16, 5.5, 5.5))
 report_plot(figure, "correction", width = 4.6, height = 5,
             caption = paste0("Every pair before and after the sampling correction, from the raw and ",
-                             "distance columns of distance.tsv. The dashed line is no correction; ",
+                             "distance columns of ", distance_md, ". The dashed line is no correction; ",
                              "how far a point sits below it is what the correction removed."))
 ```

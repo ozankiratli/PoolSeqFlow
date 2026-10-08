@@ -618,10 +618,11 @@ test_mds_runs_through_the_frame() {
     assert_status 0 "$status" "mds should run; see $ANALYSIS_SB/run.out"
 
     local dir="$ANALYSIS_SB/main/Analysis/Results/mds"
-    assert_file "$dir/distance.tsv" "the distances"
-    assert_file "$dir/eigenvalues.tsv" "the eigenvalues"
-    assert_file "$dir/mds.tsv" "the coordinates"
-    assert_file "$dir/mds.R" "the script that produced them"
+    assert_file "$dir/Test_distance.tsv" "the distances, under the outputPrefix"
+    assert_file "$dir/Test_eigenvalues.tsv" "the eigenvalues"
+    assert_file "$dir/Test_mds.tsv" "the coordinates"
+    assert_file "$dir/Test_mds.png" "the plot"
+    assert_file "$dir/mds.R" "the script that produced them, under its own name"
     assert_file "$dir/allele_frequencies.cpp" "the compiled parse, shipped either way"
     assert_file "$dir/nei_distance.cpp" "and the compiled distance"
     assert_contains "$(cat "$dir/mds.R")" "nei_distance <- function" \
@@ -642,15 +643,17 @@ test_mds_runs_through_the_frame() {
     if ! command -v pdftotext > /dev/null 2>&1 || ! command -v pdfimages > /dev/null 2>&1; then
         skip_case "no pdftotext and pdfimages to read the report back"; return
     fi
-    assert_file "$dir/report.pdf" "the report is built; see $ANALYSIS_SB/run.out"
-    local text section; text=$(pdf_text "$dir/report.pdf")
+    local report; report=$(analysis_published_report "$dir" mds)
+    [ -n "$report" ] || { fail_case "the report should be built; see $ANALYSIS_SB/run.out"; return; }
+    local text section; text=$(pdf_text "$report")
     for section in "The pools on the leading axes" "How much each axis carries" \
                    "Distances between pools" "What each distance rests on"; do
         assert_contains "$text" "$section" "the report has its '$section' section"
     done
-    assert_eq "4" "$(pdf_figures "$dir/report.pdf")" "mds.png and the report's own three figures"
-    assert_eq "" "$(pdf_overlapping_words "$dir/report.pdf")" "and no word is printed over another"
-    assert_eq "" "$(pdf_missing_words "$dir/report.pdf" Eigenvalue Cumulative Drawn Pool)" \
+    assert_contains "$text" "Test_distance.tsv" "and names the tables as they are published"
+    assert_eq "4" "$(pdf_figures "$report")" "mds.png and the report's own three figures"
+    assert_eq "" "$(pdf_overlapping_words "$report")" "and no word is printed over another"
+    assert_eq "" "$(pdf_missing_words "$report" Eigenvalue Cumulative Drawn Pool)" \
               "or into its neighbor"
 }
 
@@ -776,6 +779,11 @@ test_mds_report_reads_back_its_tables() {
         }' "$sb/run/mds.tsv")
     assert_eq "4" "$(grep -c '^!\[' <<< "$md")" \
         "mds.png and the report's own three figures are placed"
+    # A caption names the file as it is published: plain in a table's, which typst sets as text,
+    # and escaped in a figure's, which is markdown.
+    assert_contains "$md" "every axis the run wrote (Test_mds.tsv)." "a table's caption names its file"
+    assert_contains "$md" '(Test\_mds\.png, drawn from Test\_mds\.tsv and Test\_eigenvalues\.tsv)' \
+        "and so does a figure's"
 
     mds_wide_cohort "$sb/wide" 25
     mds_on_cohort "$sb/wide" "${MDS_OPTIONS/\"labels\":true/\"labels\":false}" "$sb/wide-run"

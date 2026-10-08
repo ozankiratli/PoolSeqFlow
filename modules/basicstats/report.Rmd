@@ -10,6 +10,16 @@ depth <- report_read("depth.tsv")
 sites <- report_read("sites.tsv")
 num <- function(x) suppressWarnings(as.numeric(x))
 
+# The names the tables are published under, as plain text and as markdown.
+design_tsv <- report_name("design.tsv")
+diversity_tsv <- report_name("diversity.tsv")
+neff_tsv <- report_name("neff.tsv")
+depth_tsv <- report_name("depth.tsv")
+sites_tsv <- report_name("sites.tsv")
+diversity_md <- report_text(diversity_tsv)
+neff_md <- report_text(neff_tsv)
+depth_md <- report_text(depth_tsv)
+
 pools <- design$pool
 fixed <- c("pool", "libraries", "n_libraries", "pool_size", "ploidy", "n_chrom",
            "detection_limit")
@@ -77,7 +87,7 @@ table[["h_sum"]] <- report_number(div$h_sum, decimals = 2)
 table[["\u03c0 per called site"]] <- report_number(div$pi_per_called_site, digits = 4)
 report_table(table, caption = paste0(
     "Gene diversity over the ", report_number(sum(snp_sites)), " called SNP sites, each pool over ",
-    "the sites it was read at (diversity.tsv). \u03c0 per called site leaves invariant sites out ",
+    "the sites it was read at (", diversity_tsv, "). \u03c0 per called site leaves invariant sites out ",
     "of its denominator and is an upper bound on \u03c0."))
 ```
 
@@ -97,8 +107,8 @@ report_table(table,
                "Genome-wide", "Genome-wide", "Genome-wide"),
     caption = paste0(
         "Depth is the harmonic mean, which every n_eff is computed from. At the called SNP sites: ",
-        "over the sites each pool was read at (diversity.tsv). Genome-wide: over every position ",
-        "its libraries covered, from the depth histograms (neff.tsv); NA where a pool has none, ",
+        "over the sites each pool was read at (", diversity_tsv, "). Genome-wide: over every position ",
+        "its libraries covered, from the depth histograms (", neff_tsv, "); NA where a pool has none, ",
         "and \u2265 where a merged pool's figure is a lower bound."))
 
 libraries <- neff[neff$level == "library", ]
@@ -108,7 +118,7 @@ if (any(num(design$n_libraries) > 1) && nrow(libraries) > 0) {
                         Depth = report_number(libraries$depth_harmonic, decimals = 1),
                         n_eff = report_number(libraries$n_eff, decimals = 1),
                         check.names = FALSE, stringsAsFactors = FALSE)
-    report_table(table, caption = "Each library on its own, genome-wide (neff.tsv).")
+    report_table(table, caption = paste0("Each library on its own, genome-wide (", neff_tsv, ")."))
 }
 ```
 
@@ -141,7 +151,8 @@ figure <- ggplot2::ggplot(long, ggplot2::aes(x = value, y = pool, shape = series
     ggplot2::theme_bw(base_size = 9) +
     ggplot2::theme(legend.position = "bottom", panel.spacing.x = ggplot2::unit(14, "pt"))
 report_plot(figure, "pools", width = 7.5, height = min(8.5, 0.22 * length(pools) + 1.6),
-            caption = "The pools side by side, from diversity.tsv and neff.tsv as the two tables above give them.")
+            caption = paste0("The pools side by side, from ", diversity_md, " and ", neff_md,
+                             " as the two tables above give them."))
 ```
 
 ## Depth by sequence
@@ -166,7 +177,7 @@ for (k in seq_along(pool_groups)) {
                                                    ends[k], length(pools)) else ""
     report_table(table, groups = c("", "", rep("Harmonic depth", length(group))),
                  caption = paste0("Each pool's harmonic mean depth at the called SNP sites of each ",
-                                  "sequence it was read at (depth.tsv).", which))
+                                  "sequence it was read at (", depth_tsv, ").", which))
 }
 
 if (any(num(depth$unmeasured) > 0)) {
@@ -184,7 +195,7 @@ if (any(num(depth$unmeasured) > 0)) {
         }
         report_table(table, groups = c("", "", rep("Unmeasured sites", length(group))),
                      caption = paste0("The called SNP sites each pool has no reads at, which every ",
-                                      "depth above leaves out (depth.tsv)."))
+                                      "depth above leaves out (", depth_tsv, ")."))
     }
 }
 
@@ -223,7 +234,8 @@ if (nrow(shown) > 0) {
     report_plot(figure, "depth_by_sequence", width = width,
                 height = min(8.5, 0.2 * length(named) + 1.5 +
                                   if (length(pools) > 8) 0.06 * max(nchar(pools)) else 0),
-                caption = "Depth by sequence, from depth.tsv as the first table of this section gives it.")
+                caption = paste0("Depth by sequence, from ", depth_md,
+                                 " as the first table of this section gives it."))
 }
 ```
 
@@ -249,21 +261,23 @@ table <- rbind(table, data.frame(Sequence = "All sequences",
 names(table) <- c("Sequence", "Sites", "Alleles", "Sites ", "Alleles ")
 report_table(table, groups = c("", "SNPs", "SNPs", "Indels", "Indels"),
              caption = paste0("Sites are records of the depth table and alleles rows of the ",
-                              "frequency table, the reference included (sites.tsv)."))
+                              "frequency table, the reference included (", sites_tsv, ")."))
 ```
 
 ```{r basicstats-depth-plots, results = "asis"}
 # The depth plots in the order of the sequences they draw, each under the sequence's own name. A
-# plot's file name carries the name with every character outside [A-Za-z0-9._-] made _.
+# plot's file name, the prefix taken off, carries the name with every character outside
+# [A-Za-z0-9._-] made _.
 plots <- report_files("depth_*.png")
 if (length(plots) > 0) {
     cat("\n\n## Depth along a sequence\n\n")
-    drawn <- sub("^depth_(.*)[.]png$", "\\1", basename(plots))
+    drawn <- sub("^depth_(.*)[.]png$", "\\1", report_logical(basename(plots)))
     which_sequence <- match(drawn, gsub("[^A-Za-z0-9._-]", "_", sequences))
     for (i in order(which_sequence, drawn)) {
         name <- if (is.na(which_sequence[i])) drawn[i] else sequences[which_sequence[i]]
-        report_image(plots[i], caption = paste0("Depth at the called SNP sites along ", name,
-                                                ", one panel per pool (", basename(plots[i]), ")."))
+        report_image(plots[i], caption = paste0("Depth at the called SNP sites along ",
+                                                report_text(name), ", one panel per pool (",
+                                                report_text(basename(plots[i])), ")."))
     }
 }
 ```
@@ -278,5 +292,5 @@ table[["Pool size"]] <- report_number(design$pool_size)
 table[["Ploidy"]] <- report_number(design$ploidy)
 table[["Chromosomes"]] <- report_number(design$n_chrom)
 table[["Detection limit"]] <- report_number(design$detection_limit, digits = 3)
-report_table(table, caption = "The design the results were produced under (design.tsv).")
+report_table(table, caption = paste0("The design the results were produced under (", design_tsv, ")."))
 ```

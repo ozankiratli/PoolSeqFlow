@@ -565,8 +565,8 @@ test_a_depth_table_of_one_site_is_fitted() {
     analysis_render_report "$sb/alone" "$sb/report" "$REPO_ROOT/modules/association/report.Rmd" md \
         || { fail_case "the report should knit: $(cat "$sb/report/report_knit.log")"; return; }
     local md; md=$(cat "$sb/report/report.md")
-    assert_contains "$md" "The one tested site of pt_wingspan (association_pt_wingspan.tsv)" \
-        "one tested site is the one, not all 1"
+    assert_contains "$md" "The one tested site of pt_wingspan (Test_association_pt_wingspan.tsv)" \
+        "one tested site is the one, not all 1, and its table is named as it is published"
     assert_contains "$md" "It does not reach the smallest p this run could report." \
         "and whether it reaches the floor is said of it alone"
 }
@@ -1061,14 +1061,15 @@ test_the_report_takes_the_paths_a_real_run_takes() {
               "and could report 1/101 where the design allows 1/720"
 
     assert_contains "$md" '"NA", "NA",' "a site the allele table does not hold shows NA"
-    assert_contains "$md" "NA is a site alleles_pt_wingspan.tsv holds no row for" \
+    assert_contains "$md" "NA is a site Test_alleles_pt_wingspan.tsv holds no row for" \
         "and the caption says what NA means"
 
+    # The sequence is read back out of the published name, the prefix taken off first.
     assert_contains "$md" "## Association along a sequence" "every named sequence is drawn"
     local at1 at2 at10
-    at1=$(grep -n -F 'Association along chr1 (manhattan\_chr1\.png)' <<< "$md" | cut -d: -f1)
-    at2=$(grep -n -F 'Association along chr2 (manhattan\_chr2\.png)' <<< "$md" | cut -d: -f1)
-    at10=$(grep -n -F 'Association along chr10 (manhattan\_chr10\.png)' <<< "$md" | cut -d: -f1)
+    at1=$(grep -n -F 'Association along chr1 (Test\_manhattan\_chr1\.png)' <<< "$md" | cut -d: -f1)
+    at2=$(grep -n -F 'Association along chr2 (Test\_manhattan\_chr2\.png)' <<< "$md" | cut -d: -f1)
+    at10=$(grep -n -F 'Association along chr10 (Test\_manhattan\_chr10\.png)' <<< "$md" | cut -d: -f1)
     if [ -z "$at1" ] || [ -z "$at2" ] || [ -z "$at10" ]; then
         fail_case "a Manhattan plot is missing its caption, the file name escaped: $at1 $at2 $at10"
     elif [ "$at1" -gt "$at2" ] || [ "$at2" -gt "$at10" ]; then
@@ -1177,11 +1178,13 @@ CFG
     assert_status 0 "$status" "association should run; see $ANALYSIS_SB/run.out"
 
     local dir="$ANALYSIS_SB/main/Analysis/Results/association"
-    assert_file "$dir/association_pt_wingspan.tsv" "the site table, named after its phenotype"
-    assert_file "$dir/alleles_pt_wingspan.tsv" "and its allele table"
-    assert_file "$dir/permutations.tsv" "the diagnostics that say what it assumed"
-    assert_file "$dir/phenotype.tsv" "the phenotype as it was fitted"
-    assert_file "$dir/association.R" "the script that produced them"
+    assert_file "$dir/Test_association_pt_wingspan.tsv" \
+        "the site table, named after its phenotype, under the outputPrefix"
+    assert_file "$dir/Test_alleles_pt_wingspan.tsv" "and its allele table"
+    assert_file "$dir/Test_permutations.tsv" "the diagnostics that say what it assumed"
+    assert_file "$dir/Test_phenotype.tsv" "the phenotype as it was fitted"
+    assert_file "$dir/Test_qq.png" "and the qq plot"
+    assert_file "$dir/association.R" "the script that produced them, under its own name"
     # The one the bug above destroyed: a compiled source is published whether or not the run used
     # it, so its absence is a broken process rather than a choice about the hot path.
     assert_file "$dir/allele_frequencies.cpp" "the compiled parse, published either way"
@@ -1195,17 +1198,19 @@ CFG
     if ! command -v pdftotext > /dev/null 2>&1 || ! command -v pdfimages > /dev/null 2>&1; then
         skip_case "no pdftotext and pdfimages to read the report back"; return
     fi
-    assert_file "$dir/report.pdf" "the report is built; see $ANALYSIS_SB/run.out"
-    local text section; text=$(pdf_text "$dir/report.pdf")
+    local report; report=$(analysis_published_report "$dir" association)
+    [ -n "$report" ] || { fail_case "the report should be built; see $ANALYSIS_SB/run.out"; return; }
+    local text section; text=$(pdf_text "$report")
     for section in "The phenotype as it was read" "What the design can show" "The strongest sites" \
                    "The p-values against the uniform"; do
         assert_contains "$text" "$section" "the report has its '$section' section"
     done
-    local floor; floor=$(published_cell "$dir/permutations.tsv" pt_wingspan design_floor)
+    local floor; floor=$(published_cell "$dir/Test_permutations.tsv" pt_wingspan design_floor)
     assert_contains "$text" "$(awk -v x="$floor" "$REPORT_NUMBER_AWK"'BEGIN { print rnum(x, 3) }')" \
         "the design's floor, $floor, is printed"
-    assert_eq "1" "$(pdf_figures "$dir/report.pdf")" "qq.png is placed, and no sequence was named"
-    assert_eq "" "$(pdf_overlapping_words "$dir/report.pdf")" "and no word is printed over another"
-    assert_eq "" "$(pdf_missing_words "$dir/report.pdf" Measure Leverage Sequence Position)" \
+    assert_contains "$text" "Test_permutations.tsv" "and the tables are named as they are published"
+    assert_eq "1" "$(pdf_figures "$report")" "qq.png is placed, and no sequence was named"
+    assert_eq "" "$(pdf_overlapping_words "$report")" "and no word is printed over another"
+    assert_eq "" "$(pdf_missing_words "$report" Measure Leverage Sequence Position)" \
               "or into its neighbor"
 }

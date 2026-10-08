@@ -14,8 +14,8 @@ phenotypes <- unique(runs$phenotype)
 stem <- function(p) gsub("[^A-Za-z0-9._-]", "_", p)
 site_rows <- as.data.frame(data.table::rbindlist(lapply(phenotypes, function(p) {
     sites <- data.table::fread(
-        file.path(report_folder(), paste0("association_", stem(p), ".tsv")), sep = "\t",
-        na.strings = "NA",
+        file.path(report_folder(), report_name(paste0("association_", stem(p), ".tsv"))),
+        sep = "\t", na.strings = "NA",
         select = c("kind", "chrom", "pos", "k", "n_observed", "S", "perm_p", "fdr_p",
                    "max_leverage", "zero_variance"),
         colClasses = list(character = c("kind", "chrom")), data.table = FALSE)
@@ -76,7 +76,7 @@ for (p in phenotypes) {
     } else ""
     report_table(table, caption = paste0(
         p, ", ", rows$kind[1], ", as each pool's cell was written and the number the fit used ",
-        "(phenotype.tsv)", scale, "."))
+        "(", report_name("phenotype.tsv"), ")", scale, "."))
 }
 ```
 
@@ -109,8 +109,9 @@ measures <- list(
 table <- data.frame(Measure = names(measures), check.names = FALSE, stringsAsFactors = FALSE)
 for (i in seq_along(labels)) table[[labels[i]]] <- vapply(measures, function(m) m[i], "")
 report_table(table, caption = paste0(
-    "What each fit assumed and absorbed (permutations.tsv). lambda_gc reads above 1 on a clean ",
-    "table: compare it with the units and alleles a site was read in, not with 1."))
+    "What each fit assumed and absorbed (", report_name("permutations.tsv"), "). lambda_gc reads ",
+    "above 1 on a clean table: compare it with the units and alleles a site was read in, not with ",
+    "1."))
 ```
 
 ## The strongest sites
@@ -167,15 +168,17 @@ for (p in phenotypes) {
                         check.names = FALSE, stringsAsFactors = FALSE)
     report_table(table, align = c("l", "r", "l", "r", "r", "r", "r", "r", "l", "r", "r"),
                  caption = paste0(
-        lead, " (association_", stem(p), ".tsv), with the allele of the largest |t| at each, or ",
-        "of the steepest slope at a flagged site, and its slope (alleles_", stem(p), ".tsv). A ",
+        lead, " (", report_name(paste0("association_", stem(p), ".tsv")), "), with the allele of ",
+        "the largest |t| at each, or of the steepest slope at a flagged site, and its slope (",
+        report_name(paste0("alleles_", stem(p), ".tsv")), "). A ",
         "positive slope means the allele is more frequent ", direction, ". ", reach, " the ",
         "smallest p this run could report.",
         if (any(flagged)) {
             " A flagged site's S is not comparable between implementations and is not printed."
         },
         if (anyNA(best$allele)) {
-            paste0(" NA is a site alleles_", stem(p), ".tsv holds no row for: reportBelow and ",
+            paste0(" NA is a site ", report_name(paste0("alleles_", stem(p), ".tsv")),
+                   " holds no row for: reportBelow and ",
                    "reportTop choose the sites it holds.")
         }))
 }
@@ -186,20 +189,22 @@ for (p in phenotypes) {
 ```{r association-qq, results = "asis"}
 for (path in report_files("qq.png")) {
     report_image(path, caption = paste0("Every tested site's permutation p against the uniform, ",
-                                        "a panel per phenotype (qq.png, drawn from the ",
-                                        "association\\_ tables). The points sit on a ladder whose ",
-                                        "ceiling is the design's floor."))
+                                        "a panel per phenotype (", report_text(basename(path)),
+                                        ", drawn from the ", report_text(report_name("association_")),
+                                        " tables). The points sit on a ladder whose ceiling is ",
+                                        "the design's floor."))
 }
 ```
 
 ```{r association-manhattan, results = "asis"}
 # The Manhattan plots in the order of the sequences they draw, each under the sequence's own
-# name. A plot's file name carries the name with every character outside [A-Za-z0-9._-] made _.
+# name. A plot's file name, the prefix taken off, carries the name with every character outside
+# [A-Za-z0-9._-] made _.
 plots <- report_files("manhattan_*.png")
 if (length(plots) > 0) {
     cat("\n\n## Association along a sequence\n\n")
     sequences <- unique(site_rows$chrom)
-    drawn <- sub("^manhattan_(.*)[.]png$", "\\1", basename(plots))
+    drawn <- sub("^manhattan_(.*)[.]png$", "\\1", report_logical(basename(plots)))
     which_sequence <- match(drawn, gsub("[^A-Za-z0-9._-]", "_", sequences))
     for (i in order(which_sequence, drawn)) {
         name <- if (is.na(which_sequence[i])) drawn[i] else sequences[which_sequence[i]]
