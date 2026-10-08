@@ -80,6 +80,88 @@ test_python_helpers_compile() {
     done < <(find "$REPO_ROOT/bin" "$REPO_ROOT/test/tools" -name '*.py' -type f 2>/dev/null)
 }
 
+# EVERY PYTHON THE SUITE RUNS IMPORTS THE STANDARD LIBRARY AND THE REPOSITORY'S OWN SCRIPTS, AND
+# NOTHING ELSE. The static suites run on whichever python3 the shell finds, which is the active
+# conda environment's when there is one, and neither PoolSeqFlow environment carries a Python
+# package the pipeline does not need. The site case imported PyYAML, passed every run made with
+# the system Python, which has it, and failed the 3.3.0 prep run on 2026-10-08, launched with the
+# analysis environment active; this is the case that would have caught it first.
+#
+# Read: every .py under bin/, test/tools/ and dev/scripts/, and the Python each suite and module
+# test hands python3 in a heredoc or with -c, in single or double quotes. A snippet the shell's
+# quoting leaves unparsable is read for its import lines instead of skipped. The scan is first shown
+# one planted import of each form, and has to find at least twenty snippets, so one that stopped
+# reading what it looks at fails here. The double-quoted form was missing until a review on
+# 2026-10-08 planted one and the case passed.
+test_every_python_the_suite_runs_imports_the_standard_library_alone() {
+    local out
+    out=$(cd "$REPO_ROOT" && python3 - 2>&1 <<'PY'
+import ast, glob, pathlib, re, sys
+
+if not hasattr(sys, "stdlib_module_names"):
+    print("python3 is %s, and the scan needs 3.10 or later" % sys.version.split()[0])
+    sys.exit(0)
+STANDARD = set(sys.stdlib_module_names)
+OWN = {p.stem for d in ("bin", "test/tools", "dev/scripts") for p in pathlib.Path(d).glob("*.py")}
+HEREDOC = re.compile(r"python3?\b[^\n]*<<-?\s*['\"]?(\w+)['\"]?\n(.*?)\n\s*\1\n", re.S)
+DASH_C = re.compile(r"python3?\s+-c\s+'([^']*)'", re.S)
+DASH_C_DOUBLE = re.compile(r'python3?\s+-c\s+"((?:[^"\\]|\\.)*)"', re.S)
+IMPORT_LINE = re.compile(r"^\s*(?:import\s+([\w.]+(?:\s*,\s*[\w.]+)*)|from\s+(\w+)[\w.]*\s+import\b)", re.M)
+
+def imports(source):
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        names = set()
+        for listed, origin in IMPORT_LINE.findall(source):
+            names |= {origin} if origin else {n.strip().split(".")[0] for n in listed.split(",")}
+        return names - STANDARD - OWN
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names |= {alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            names.add(node.module.split(".")[0])
+    return names - STANDARD - OWN
+
+def embedded(text):
+    for match in HEREDOC.finditer(text):
+        yield match.group(2)
+    for match in DASH_C.finditer(text):
+        yield match.group(1)
+    for match in DASH_C_DOUBLE.finditer(text):
+        yield match.group(1).replace('\\"', '"')
+
+# Spelled with a placeholder, or the scan of this very file would find the planted import in it.
+planted = ("x=$(PYTHON - <<'PY'\nimport yaml\nPY\n)\n"
+           "y=$(PYTHON -c 'from numpy import x; f(\"$z\")')\n"
+           "z=$(PYTHON -c \"import requests; print(\\\"$z\\\")\")\n").replace("PYTHON", "python3")
+seen = set()
+for source in embedded(planted):
+    seen |= imports(source)
+if seen != {"yaml", "numpy", "requests"}:
+    print("the scan found %s in three planted imports, not yaml, numpy and requests" % sorted(seen))
+    sys.exit(0)
+
+problems, snippets = [], 0
+for path in sorted(glob.glob("bin/*.py") + glob.glob("test/tools/*.py") + glob.glob("dev/scripts/*.py")):
+    for name in sorted(imports(open(path).read())):
+        problems.append("%s imports %s" % (path, name))
+for path in sorted(glob.glob("test/suites/*.sh") + glob.glob("test/lib/*.sh")
+                   + glob.glob("modules/*/test/*.sh")):
+    for source in embedded(open(path).read()):
+        snippets += 1
+        for name in sorted(imports(source)):
+            problems.append("%s runs Python importing %s" % (path, name))
+if snippets < 20:
+    problems.append("only %d Python snippets found in the suites; the scan has stopped reading them"
+                    % snippets)
+print("\n".join(problems) if problems else "OK")
+PY
+)
+    assert_eq "OK" "$out" "nothing the suite runs needs a Python package the environments lack"
+}
+
 # bin/__pycache__ was tracked, and shipped inside the release tarball, until it was caught.
 # Checked against the index rather than the archive, because test/ is export-ignore'd and
 # bytecode committed there would never show up in a tarball listing.
@@ -995,14 +1077,31 @@ test_publish_writes_nothing_it_cannot_finish() {
 # 2026-10-07 after the merge had already deployed its manual and CHANGELOG.
 #
 # Asked twice: of the workflow's structure, every path to the deploy; and of the release check's
-# own script, run against a stand-in gh answering published, draft and missing.
+# own script, run against a stand-in gh answering published, draft and missing, which also records
+# what it was asked. Every job is read for the Pages actions, not only the two named ones, and the
+# build's gate is compared whole. A review on 2026-10-08 found four edits this case passed: the
+# gate's && made ||, a second job deploying Pages ungated, the release looked up without its v,
+# and draft read from another field, so that a draft release would deploy.
+#
+# The workflows are read by test/tools/workflow_yaml.py and asked as JSON. This case imported
+# PyYAML until the 3.3.0 prep run on 2026-10-08, which failed it with ModuleNotFoundError: the
+# suite runs on whichever python3 the shell finds, that shell had the analysis environment active,
+# and neither PoolSeqFlow environment carries PyYAML. Every earlier run had used a system Python
+# that happened to have it.
 test_the_site_deploys_only_for_a_released_version() {
-    local out sb answer status
-    out=$(python3 - "$REPO_ROOT/.github/workflows/docs.yml" "$REPO_ROOT/.github/workflows/release.yml" 2>&1 <<'PY'
-import sys, yaml
-docs = yaml.safe_load(open(sys.argv[1]))
-release = yaml.safe_load(open(sys.argv[2]))
-on = docs.get(True, docs.get("on"))
+    local out sb answer status workflow
+    sb=$(guard_path "$TEST_TMPDIR/site-release-check")
+    rm -rf "$sb"; mkdir -p "$sb/bin" "$sb/tree"
+    for workflow in docs release; do
+        python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$REPO_ROOT/.github/workflows/$workflow.yml" \
+            > "$sb/$workflow.json" 2> "$sb/$workflow.err" \
+            || { fail_case "$workflow.yml could not be read: $(cat "$sb/$workflow.err")"; return; }
+    done
+    out=$(python3 - "$sb/docs.json" "$sb/release.json" 2>&1 <<'PY'
+import json, sys
+docs = json.load(open(sys.argv[1]))
+release = json.load(open(sys.argv[2]))
+on = docs["on"]
 build, deploy = docs["jobs"]["build"], docs["jobs"]["deploy"]
 problems = []
 def need(ok, message):
@@ -1010,6 +1109,7 @@ def need(ok, message):
         problems.append(message)
 need(deploy.get("if") == "needs.build.outputs.deploy == 'true'",
      "the deploy job runs on something besides the build's decision: %r" % deploy.get("if"))
+need(deploy.get("needs") == "build", "the deploy job does not wait for the build")
 need(build.get("outputs", {}).get("deploy") == "${{ steps.released.outputs.deploy }}",
      "the build's deploy output does not come from the release check")
 check = [s for s in build["steps"] if s.get("id") == "released"]
@@ -1017,13 +1117,17 @@ need(len(check) == 1, "no single step with id 'released'")
 if check:
     need(check[0].get("if") == "github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'",
          "the release check runs for other events: %r" % check[0].get("if"))
-for step in build["steps"]:
-    if str(step.get("uses", "")).startswith(("actions/upload-pages-artifact", "actions/configure-pages")):
-        need(step.get("if") == "steps.released.outputs.deploy == 'true'",
-             "%s runs without the release check" % step["uses"])
-gate = " ".join(build.get("if", "").split())
-need("github.event.workflow_run.conclusion == 'success'" in gate
-     and "github.event.workflow_run.event == 'push'" in gate,
+for name, job in docs["jobs"].items():
+    for step in job.get("steps") or []:
+        uses = str(step.get("uses", ""))
+        if uses.startswith("actions/deploy-pages"):
+            need(name == "deploy", "%s runs in the job %r, which is not the gated deploy" % (uses, name))
+        if uses.startswith(("actions/upload-pages-artifact", "actions/configure-pages")):
+            need(name == "build" and step.get("if") == "steps.released.outputs.deploy == 'true'",
+                 "%s runs in the job %r without the release check" % (uses, name))
+gate = " ".join((build.get("if") or "").split())
+need(gate == "github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == "
+             "'success' && github.event.workflow_run.event == 'push')",
      "a failed release.yml, or one run by hand, reaches the build: %r" % gate)
 need(on.get("workflow_run", {}).get("workflows") == [release["name"]],
      "workflow_run does not follow release.yml by its name, %r" % release["name"])
@@ -1032,19 +1136,22 @@ PY
 )
     assert_eq "OK" "$out" "every path to the deploy goes through the release check"
 
-    sb=$(guard_path "$TEST_TMPDIR/site-release-check")
-    rm -rf "$sb"; mkdir -p "$sb/bin" "$sb/tree"
-    python3 -c 'import sys, yaml
-steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["build"]["steps"]
+    python3 -c 'import json, sys
+steps = json.load(open(sys.argv[1]))["jobs"]["build"]["steps"]
 print([s for s in steps if s.get("id") == "released"][0]["run"])' \
-        "$REPO_ROOT/.github/workflows/docs.yml" > "$sb/check.sh" 2>&1
+        "$sb/docs.json" > "$sb/check.sh" 2>&1
     printf 'VERSION="9.9.9"\n' > "$sb/tree/PoolSeqFlow"
+    : > "$sb/gh.args"
     for answer in false true missing; do
-        if [ "$answer" = missing ]; then
-            printf '#!/usr/bin/env bash\necho "release not found" >&2\nexit 1\n' > "$sb/bin/gh"
-        else
-            printf '#!/usr/bin/env bash\necho %s\n' "$answer" > "$sb/bin/gh"
-        fi
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf 'printf "%%s\\n" "$*" >> %q\n' "$sb/gh.args"
+            if [ "$answer" = missing ]; then
+                printf 'echo "release not found" >&2\nexit 1\n'
+            else
+                printf 'echo %s\n' "$answer"
+            fi
+        } > "$sb/bin/gh"
         chmod +x "$sb/bin/gh"
         : > "$sb/output"
         status=0
@@ -1058,6 +1165,177 @@ print([s for s in steps if s.get("id") == "released"][0]["run"])' \
             assert_eq "" "$(cat "$sb/output")" "and says nothing to deploy"
         fi
     done
+    assert_eq "release view v9.9.9 --repo o/r --json isDraft --jq .isDraft" "$(sort -u "$sb/gh.args")" \
+        "every time, gh is asked whether this version's tag is a draft"
+}
+
+# THE READER THE CASE ABOVE RESTS ON. Every construct the workflows use, with the value each must
+# come back as: the folded `if:` with a line indented past the others, which keeps its line break;
+# a literal `run:` holding a blank line, a `#` line and a `: ` that are all script, ended by a
+# comment indented between the step's keys and the script; a sequence of mappings; a sequence at
+# its key's own indentation; flow sequences, empty and quoted; both quoted styles and a quoted key;
+# two keys with no value in a row; a comment after a value; an empty item and a block item; and a
+# folded block opening on an empty line and holding a line indented past the others. A second
+# file, written by printf so no line of this one ends in spaces an editor could strip, holds a
+# white-space-only line wider than its block, whose spaces past the block are text, and a block
+# ending the file with no line break, which gains none.
+#
+# The expected values are YAML's: PyYAML read both files the same way on 2026-10-08, as it read
+# all three workflow files. Then each kind of syntax the reader does not take, refused at the line
+# and for the reason named: a refusal for some other reason, or at another line, would hide that
+# the rule it names had stopped working.
+#
+# The first version of this case passed with 42 of the reader's own rules mutated away, among them
+# two keys in a row read as one inside the other and a comment after a value read into it; its
+# refusals asserted only that something was refused somewhere. A review found it on 2026-10-08.
+test_the_workflow_reader_reads_what_the_workflows_use_and_refuses_the_rest() {
+    local sb out want
+    sb=$(guard_path "$TEST_TMPDIR/workflow-reader")
+    rm -rf "$sb"; mkdir -p "$sb"
+    cat > "$sb/sample.yml" <<'YAML'
+# a comment
+name: Sample flow
+"quoted key": value
+escaped: "say \"hi\" \\ to a\/b\tand\n"
+empty: |
+on:
+  push:
+    branches: [main, "dev", 'v*']
+    tags: []
+  pull_request:
+  workflow_dispatch:
+jobs:
+  build:
+    if: >-
+      a ||
+      (b &&
+       c)
+    runs-on: ubuntu-latest   # a comment after a value
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - name: 'It''s quoted'
+        id: released
+        run: |
+          echo "a: b"   # not a comment
+
+          # a script comment
+          exit 0
+         # a comment between the step's keys and its script, which ends the script
+      - plain item
+      -
+      - |
+        a block item
+    list:
+    - same-indent item
+    strip: |-
+      no newline
+    folded: >
+
+      one
+      two
+        spaced
+
+      three
+YAML
+    out=$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$sb/sample.yml" 2>&1 \
+          | python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin), sort_keys=True))' 2>&1)
+    want=$(python3 -c 'import json; print(json.dumps({
+        "name": "Sample flow",
+        "quoted key": "value",
+        "escaped": "say \"hi\" \\ to a/b\tand\n",
+        "empty": "",
+        "on": {"push": {"branches": ["main", "dev", "v*"], "tags": []},
+               "pull_request": None, "workflow_dispatch": None},
+        "jobs": {"build": {
+            "if": "a || (b &&\n c)",
+            "runs-on": "ubuntu-latest",
+            "steps": [
+                {"uses": "actions/checkout@v7", "with": {"ref": "${{ github.sha }}"}},
+                {"name": "It'"'"'s quoted", "id": "released",
+                 "run": "echo \"a: b\"   # not a comment\n\n# a script comment\nexit 0\n"},
+                "plain item",
+                None,
+                "a block item\n"],
+            "list": ["same-indent item"],
+            "strip": "no newline",
+            "folded": "\none two\n  spaced\n\nthree\n"}}}, sort_keys=True))')
+    assert_eq "$want" "$out" "every construct the workflows use comes back as YAML reads it"
+
+    printf 'spaced: |\n    x\n      \n    y\nend: |\n    last' > "$sb/edges.yml"
+    out=$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$sb/edges.yml" 2>&1 \
+          | python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin), sort_keys=True))' 2>&1)
+    assert_eq '{"end": "last", "spaced": "x\n  \ny\n"}' "$out" \
+        "spaces past a block's indentation are text, and a block ending the file gains no line break"
+    printf 'a: |\n  x\n  ' > "$sb/edges.yml"
+    assert_eq '{"a": "x\n"}' "$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$sb/edges.yml" 2>&1 \
+          | python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin)))' 2>&1)" \
+        "a block whose text ended before a last line of spaces keeps its line break"
+    printf '# nothing but a comment\n' > "$sb/edges.yml"
+    assert_eq "null" "$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$sb/edges.yml" 2>&1)" \
+        "a document holding nothing is null"
+    out=$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" 2>&1); status=$?
+    assert_status 2 "$status" "no file to read is a usage mistake"
+    assert_contains "$out" "usage: workflow_yaml.py" "and says how to call it"
+
+    # what|line|the reason, as the refusal words it|the document, as printf %b writes it
+    local -a refused=(
+        "anchor|1|a value starting with '&'|a: &x 1"
+        "alias|1|a value starting with '*'|a: *x"
+        "tag|1|a value starting with '!'|a: !tag x"
+        "flow mapping|1|a value starting with '{'|a: {}"
+        "value starting with a dash|1|a value starting with '-'|needs: - build"
+        "tab in the indentation|2|a tab in the indentation|a:\n\tb: 1"
+        "tab on a white-space line of a block|3|a line of nothing but white space holding a tab|a: |\n  x\n\t\n  y"
+        "document marker|1|a document marker|---\na: 1"
+        "continued plain value|2|a value continued onto a second line|a: one\n  two"
+        "repeated key|2|the key 'a' given twice|a: 1\na: 2"
+        "keep chomping|1|a block scalar header this reader does not take|a: |+\n  x"
+        "indentation indicator|1|a block scalar header this reader does not take|a: |2\n  x"
+        "content after the document|2|content after the end of the document|- b\na: 1"
+        "block line indented less|3|a block scalar line indented less than its first line|a: >\n   a\n  b"
+        "sequence on one line|1|a sequence item holding a sequence on the same line|- - a"
+        "key among sequence items|3|indented further than the mapping it belongs to|a:\n  - x\n  b: 1"
+        "flow anchor|1|a flow sequence item starting with '&'|x: [&a b]"
+        "flow alias|1|a flow sequence item starting with '*'|paths: [*.md]"
+        "flow tag|1|a flow sequence item starting with '!'|paths: [!docs/**]"
+        "flow pair|1|a flow sequence item holding ': '|x: [a: b]"
+        "flow comment|1|a comment inside a flow sequence|x: [a #b, c]"
+        "flow trailing comma|1|an empty item in a flow sequence|x: [a, b,]"
+        "escape|1|an escape this reader does not take|a: \"\\\\z\""
+        "character outside ASCII|1|a character outside printable ASCII, U+00E9|a: caf\xc3\xa9"
+        "form feed|1|a character outside printable ASCII, U+000C|a: x\fy"
+        "key inside a plain value|1|a plain value holding ': '|a: b: c"
+        "unclosed quote|1|a quoted value that does not close on its line|a: \"x"
+        "text after a quoted value|1|text after a quoted value|a: \"x\" y"
+        "unclosed flow sequence|1|a flow sequence that does not close on its line|a: [x, "
+        "flow sequence in a flow sequence|1|a flow sequence holding a collection|a: [x, [y]]"
+        "flow item followed by text|1|a flow sequence item followed by something other than|a: [\"x\" y]"
+        "flow item starting with a block indicator|1|a flow sequence item starting with '>'|a: [>x]"
+        "line that is no key|2|expected a key|a: 1\nplain"
+        "item among a mapping's keys|2|a sequence item among the keys of a mapping|a: 1\n- b"
+        "item continued|2|a sequence item continued onto a second line|- a\n  b"
+        "line inside a sequence's items|2|indented further than the sequence it belongs to|- a: 1\n b: 2"
+        "wide white space before a block's text|2|a line of white space before the block scalar's first line|a: |\n      \n  x"
+        "indented document|1|the document starts indented|  a: 1"
+    )
+    local entry what line reason status
+    for entry in "${refused[@]}"; do
+        what=${entry%%|*}; entry=${entry#*|}
+        line=${entry%%|*}; entry=${entry#*|}
+        reason=${entry%%|*}
+        printf '%b\n' "${entry#*|}" > "$sb/refused.yml"
+        status=0
+        out=$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$sb/refused.yml" 2>&1 >/dev/null) || status=$?
+        assert_status 1 "$status" "a $what is refused"
+        assert_contains "$out" "refused.yml:$line: $reason" "at line $line, for what it is: $what"
+    done
+    printf '%b' 'name: caf\xe9\n' > "$sb/refused.yml"
+    status=0
+    out=$(python3 "$REPO_ROOT/test/tools/workflow_yaml.py" "$sb/refused.yml" 2>&1 >/dev/null) || status=$?
+    assert_status 1 "$status" "a file that is not UTF-8 is refused"
+    assert_contains "$out" "refused.yml: not UTF-8 text" "by name, not with a traceback"
 }
 
 # A case that could not run fails the run, except under --fast, which leaves cases out on purpose.
