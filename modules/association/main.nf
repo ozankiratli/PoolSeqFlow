@@ -96,6 +96,7 @@ process Analyze {
               "# ${useCompiled(settings) ? 'allele_frequencies.cpp, compiled at run time' : 'allele_frequencies(), vectorized R'}" +
               ", in bins of ${settings.binSize} sites over ${workers} worker(s)",
               "# phenotype ${settings.phenotypes.join(', ')}, up to ${settings.permutations} rearrangements, ${settings.fdr} across sites",
+              "# alleles_<phenotype>.tsv: the sites at perm_p ${settings.reportBelow} or under and the first ${settings.reportTop} by perm_p, for each phenotype",
               "# beta > 0 means the allele is more frequent at the higher phenotype value"].join('\n').replace("'", "'\\''")
 
     """

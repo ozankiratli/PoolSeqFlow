@@ -188,9 +188,11 @@ kinds <- vapply(depth_files, kind_of, "")
 # sort() would put chr10 before chr2 in every table below.
 chrom_levels <- unique(unlist(lapply(tables, function(dt) dt$CHROM), use.names = FALSE))
 
-# Site counts, per chromosome and per kind. A property of the tables, so they carry no pool.
+# Site counts, per chromosome and per kind. A property of the tables, so they carry no pool. A table
+# with no rows, as step 7 writes when no indel survived, adds none.
 site_rows <- do.call(rbind, lapply(seq_along(tables), function(i) {
     dt <- tables[[i]]
+    if (nrow(dt) == 0) return(NULL)
     alleles <- 1 + lengths(strsplit(dt$ALT, ",", fixed = TRUE))
     here <- intersect(chrom_levels, unique(dt$CHROM))
     data.frame(chrom = here, kind = unname(kinds[i]),

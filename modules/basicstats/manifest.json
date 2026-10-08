@@ -1,6 +1,6 @@
 {
   "name": "basicstats",
-  "version": "20261006.001",
+  "version": "20261008.001",
   "contract": "freq-1",
   "license": "GPL-3.0-or-later",
   "frame": "20260910.001",
@@ -25,8 +25,9 @@
     "A site is segregating for a pool when an allele other than that pool's OWN major one reaches max(detection limit, minReads / depth). The cohort's major allele is not used: a pool fixed for what the cohort calls alternate is not segregating.",
     "A pool of one chromosome is refused: the unbiased correction n_eff/(n_eff - 1) divides by zero there, and a single haploid genome has no segregating sites to measure.",
     "Pool sizes and ploidy come from the project's metadata as the frame resolved them, not from anything this module infers.",
-    "Nothing is plotted until a sequence is named. A genome has more sequences than anyone wants plots for, and which of them is worth looking at is not something this module guesses."
+    "No depth plot along a sequence is drawn until a sequence is named. A genome has more sequences than anyone wants plots for, and which of them is worth looking at is not something this module guesses."
   ],
+  "report": "report.Rmd",
   "outputs": [
     {
       "file": "design.tsv",

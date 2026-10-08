@@ -1,0 +1,211 @@
+```{r association-tables}
+# association's own report, knitted by the frame's report.Rmd with the functions of
+# analysis/lib/rmd/report.R. It reads the tables this module published and nothing else.
+#
+# Each phenotype's two tables are association_<stem>.tsv and alleles_<stem>.tsv, the stem its name
+# with every character outside [A-Za-z0-9._-] made _. They are read into one table each with the
+# phenotype as a column, the site tables by data.table and for the columns shown. Phenotypes keep
+# permutations.tsv's order.
+phenotype_rows <- report_read("phenotype.tsv")
+runs <- report_read("permutations.tsv")
+num <- function(x) suppressWarnings(as.numeric(x))
+
+phenotypes <- unique(runs$phenotype)
+stem <- function(p) gsub("[^A-Za-z0-9._-]", "_", p)
+site_rows <- as.data.frame(data.table::rbindlist(lapply(phenotypes, function(p) {
+    sites <- data.table::fread(
+        file.path(report_folder(), paste0("association_", stem(p), ".tsv")), sep = "\t",
+        na.strings = "NA",
+        select = c("kind", "chrom", "pos", "k", "n_observed", "S", "perm_p", "fdr_p",
+                   "max_leverage", "zero_variance"),
+        colClasses = list(character = c("kind", "chrom")), data.table = FALSE)
+    sites$phenotype <- rep(p, nrow(sites))
+    sites
+})))
+allele_rows <- do.call(rbind, lapply(phenotypes, function(p) {
+    alleles <- report_read(paste0("alleles_", stem(p), ".tsv"))
+    if (is.null(alleles) || nrow(alleles) == 0) return(NULL)
+    cbind(phenotype = p, alleles, stringsAsFactors = FALSE)
+}))
+if (is.null(allele_rows)) {
+    allele_rows <- data.frame(phenotype = character(0), kind = character(0),
+                              chrom = character(0), pos = character(0), allele = character(0),
+                              b1 = character(0), t = character(0), stringsAsFactors = FALSE)
+}
+units <- max(num(runs$units))
+SHOWN <- 20
+
+# The site each allele row belongs to, and per site the allele with the largest |t|, or with the
+# steepest slope at a flagged site, compared at six significant digits, where a biallelic site's
+# two |t| differ only by rounding. Between alleles that tie, the one whose slope is positive.
+site_key <- function(table) paste(table$phenotype, table$kind, table$chrom, table$pos, sep = "\r")
+flagged_sites <- site_key(site_rows)[!is.na(site_rows$zero_variance) & site_rows$zero_variance == 1]
+allele_key <- site_key(allele_rows)
+size <- ifelse(allele_key %in% flagged_sites, abs(num(allele_rows$b1)), abs(num(allele_rows$t)))
+strongest <- allele_rows[order(-signif(size, 6), num(allele_rows$b1) <= 0), , drop = FALSE]
+strongest <- strongest[!duplicated(site_key(strongest)), , drop = FALSE]
+
+# An ordinal phenotype's levels in the order its numbers give them, as phenotype.tsv wrote them.
+level_order <- function(p) {
+    rows <- phenotype_rows[phenotype_rows$phenotype == p & !is.na(num(phenotype_rows$value)), ,
+                           drop = FALSE]
+    paste(unique(rows$shown[order(num(rows$value))]), collapse = " < ")
+}
+# An allele longer than 20 bases, as its first 12 and its length.
+allele_text <- function(a) {
+    ifelse(is.na(a), "NA",
+           ifelse(nchar(a) > 20, paste0(substr(a, 1, 12), "... (", nchar(a), " bases)"), a))
+}
+```
+
+`r length(phenotypes)` `r if (length(phenotypes) == 1) "phenotype" else "phenotypes"` fitted over `r units` units: `r paste(report_text(phenotypes), collapse = ", ")`.
+
+## The phenotype as it was read
+
+```{r association-phenotype, results = "asis"}
+for (p in phenotypes) {
+    rows <- phenotype_rows[phenotype_rows$phenotype == p, , drop = FALSE]
+    coded <- unique(rows$coded_one[!is.na(rows$coded_one) & nzchar(rows$coded_one)])
+    table <- data.frame(Unit = rows$unit, Pool = rows$pool, "As written" = rows$shown,
+                        "Read as" = rows$value, Fitted = rows$fitted,
+                        check.names = FALSE, stringsAsFactors = FALSE)
+    scale <- if (identical(rows$kind[1], "binary") && length(coded) > 0) {
+        paste0(". The level coded 1 is ", coded[1])
+    } else if (identical(rows$kind[1], "ordinal")) {
+        paste0(". Each level is read as its place in the order ", level_order(p), ", from 0")
+    } else ""
+    report_table(table, caption = paste0(
+        p, ", ", rows$kind[1], ", as each pool's cell was written and the number the fit used ",
+        "(phenotype.tsv)", scale, "."))
+}
+```
+
+## What the design can show
+
+```{r association-design, results = "asis"}
+# Every fit in a run has the one design floor its units allow.
+limit <- suppressWarnings(min(num(runs$design_floor), na.rm = TRUE))
+if (is.finite(limit) && limit > 0.05) {
+    cat("**With ", units, " units, the smallest p any site can reach is ",
+        report_number(limit, digits = 3), ", above 0.05.** The sites below are a ranking of ",
+        "effect sizes and not a test.\n\n", sep = "")
+}
+labels <- paste0(runs$phenotype, ", ", ifelse(runs$kind == "snp", "SNPs",
+                                              ifelse(runs$kind == "indel", "indels", runs$kind)))
+measures <- list(
+    "Units" = report_number(runs$units),
+    "Rearrangements" = paste0(report_number(runs$permutations),
+                              ifelse(runs$exhaustive == "TRUE", ", every one", ", sampled")),
+    "Smallest p the design allows" = report_number(runs$design_floor, digits = 3),
+    "Smallest p this run could report" = report_number(runs$floor, digits = 3),
+    "Sites read" = report_number(runs$sites),
+    "Sites tested" = report_number(runs$tested),
+    "Selected, fdr_p \u2264 0.05" = report_number(runs$selected),
+    "dispersion" = report_number(runs$dispersion, digits = 3),
+    "depth_phenotype_cor" = report_number(runs$depth_phenotype_cor, digits = 3),
+    "lambda_gc" = report_number(runs$lambda_gc, digits = 3),
+    "Alleles a site, tested" = report_number(runs$arity_mean, digits = 3),
+    "Alleles a site, selected" = report_number(runs$arity_selected, digits = 3))
+table <- data.frame(Measure = names(measures), check.names = FALSE, stringsAsFactors = FALSE)
+for (i in seq_along(labels)) table[[labels[i]]] <- vapply(measures, function(m) m[i], "")
+report_table(table, caption = paste0(
+    "What each fit assumed and absorbed (permutations.tsv). lambda_gc reads above 1 on a clean ",
+    "table: compare it with the units and alleles a site was read in, not with 1."))
+```
+
+## The strongest sites
+
+```{r association-sites, results = "asis"}
+for (p in phenotypes) {
+    rows <- site_rows[site_rows$phenotype == p & !is.na(site_rows$perm_p), , drop = FALSE]
+    cat("\n\n### ", report_text(p), "\n\n", sep = "")
+    if (nrow(rows) == 0) {
+        cat("No site of ", report_text(p), " was tested: none was read in three units that ",
+            "differ in it.\n\n", sep = "")
+        next
+    }
+    # Ties in p go to the larger S, and every flagged site ahead of the rest in file order: its S
+    # is not comparable between implementations.
+    flagged_row <- !is.na(rows$zero_variance) & rows$zero_variance == 1
+    rows <- rows[order(rows$perm_p, -ifelse(flagged_row, Inf, abs(rows$S))), , drop = FALSE]
+    floor_p <- min(num(runs$floor[runs$phenotype == p]))
+    # At the floor: the next p a run can report is twice it.
+    at_floor <- sum(rows$perm_p <= 1.5 * floor_p)
+    shown <- utils::head(rows, SHOWN)
+    best <- strongest[match(site_key(shown), site_key(strongest)), , drop = FALSE]
+    flagged <- !is.na(shown$zero_variance) & shown$zero_variance == 1
+    kind <- phenotype_rows$kind[phenotype_rows$phenotype == p][1]
+    coded <- unique(phenotype_rows$coded_one[phenotype_rows$phenotype == p &
+                                             !is.na(phenotype_rows$coded_one) &
+                                             nzchar(phenotype_rows$coded_one)])
+    direction <- if (identical(kind, "binary") && length(coded) > 0) {
+        paste0("in the units coded ", coded[1])
+    } else if (identical(kind, "ordinal")) {
+        paste0("further along ", level_order(p))
+    } else "at the higher value"
+    lead <- if (nrow(rows) == 1) paste0("The one tested site of ", p)
+            else if (nrow(rows) <= SHOWN) paste0("All ", nrow(rows), " tested sites of ", p,
+                                                 ", smallest permutation p first, ties broken by ",
+                                                 "the larger S with a flagged site first")
+            else paste0("The ", SHOWN, " sites of ", p, " with the smallest permutation p, ties ",
+                        "broken by the larger S with a flagged site first")
+    reach <- if (nrow(rows) == 1) {
+        if (at_floor == 1) "It reaches" else "It does not reach"
+    } else {
+        paste(report_number(at_floor), "of the", report_number(nrow(rows)), "tested sites",
+              if (at_floor == 1) "reaches" else "reach")
+    }
+    table <- data.frame(Sequence = shown$chrom, Position = report_number(shown$pos),
+                        Kind = shown$kind, Alleles = report_number(shown$k),
+                        "Units read" = report_number(shown$n_observed),
+                        S = ifelse(flagged, "flagged", report_number(shown$S, digits = 3)),
+                        "perm_p" = report_number(shown$perm_p, digits = 3),
+                        "fdr_p" = report_number(shown$fdr_p, digits = 3),
+                        "Strongest allele" = allele_text(best$allele),
+                        "Its slope" = report_number(best$b1, digits = 3),
+                        "Leverage" = report_number(shown$max_leverage, digits = 2),
+                        check.names = FALSE, stringsAsFactors = FALSE)
+    report_table(table, align = c("l", "r", "l", "r", "r", "r", "r", "r", "l", "r", "r"),
+                 caption = paste0(
+        lead, " (association_", stem(p), ".tsv), with the allele of the largest |t| at each, or ",
+        "of the steepest slope at a flagged site, and its slope (alleles_", stem(p), ".tsv). A ",
+        "positive slope means the allele is more frequent ", direction, ". ", reach, " the ",
+        "smallest p this run could report.",
+        if (any(flagged)) {
+            " A flagged site's S is not comparable between implementations and is not printed."
+        },
+        if (anyNA(best$allele)) {
+            paste0(" NA is a site alleles_", stem(p), ".tsv holds no row for: reportBelow and ",
+                   "reportTop choose the sites it holds.")
+        }))
+}
+```
+
+## The p-values against the uniform
+
+```{r association-qq, results = "asis"}
+for (path in report_files("qq.png")) {
+    report_image(path, caption = paste0("Every tested site's permutation p against the uniform, ",
+                                        "a panel per phenotype (qq.png, drawn from the ",
+                                        "association\\_ tables). The points sit on a ladder whose ",
+                                        "ceiling is the design's floor."))
+}
+```
+
+```{r association-manhattan, results = "asis"}
+# The Manhattan plots in the order of the sequences they draw, each under the sequence's own
+# name. A plot's file name carries the name with every character outside [A-Za-z0-9._-] made _.
+plots <- report_files("manhattan_*.png")
+if (length(plots) > 0) {
+    cat("\n\n## Association along a sequence\n\n")
+    sequences <- unique(site_rows$chrom)
+    drawn <- sub("^manhattan_(.*)[.]png$", "\\1", basename(plots))
+    which_sequence <- match(drawn, gsub("[^A-Za-z0-9._-]", "_", sequences))
+    for (i in order(which_sequence, drawn)) {
+        name <- if (is.na(which_sequence[i])) drawn[i] else sequences[which_sequence[i]]
+        report_image(plots[i], caption = paste0(
+            "Association along ", report_text(name), " (", report_text(basename(plots[i])),
+            "). A flat ceiling is the design's floor and not the data."))
+    }
+}
+```

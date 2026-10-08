@@ -4,7 +4,7 @@ One directory per module, named exactly as the module is named. Each holds at le
 
 | File | What |
 |---|---|
-| `manifest.json` | `name`, `version`, `contract`, `summary`, `license`, `frame`, `environment`, and optionally `needs`, `gates`, `outputs` and `packages` |
+| `manifest.json` | `name`, `version`, `contract`, `summary`, `license`, `frame`, `environment`, and optionally `needs`, `gates`, `outputs`, `packages` and `report` |
 | `main.nf` | the module's own Nextflow pipeline |
 | `citations.json` | the methods and packages your module should be cited with |
 
@@ -118,6 +118,22 @@ Write a library when more than one module wants the same decision-free arithmeti
 
 15c. **Declare an `outputs` entry for every file you publish, and say where it is explained.** Each is `{"file": "design.tsv", "summary": "one row per pool", "anchor": "the-experimental-design"}` -- `file` may be a glob, `summary` is the one-line description the reader gets, and `anchor` names a heading of the manual this release ships. A module published separately has nowhere in that manual to point and gives `"url"` instead, in full. The frame renders one `README.md` from every module's declarations plus what every analysis carries anyway, so a folder found months later says how to read itself and no module invents its own way of saying it. Two things are checked for you: an `anchor` no heading answers to is refused before your module starts, and a `file` you declared and did not publish fails the publish with nothing written. **This is where a number that is not a measurement gets said to be one** -- a bound, an estimate with an assumption behind it, a figure whose meaning changes with a setting. A table cell cannot carry that sentence and a `summary` plus a link can.
 
+15d. **Lay out your own report by naming an `.Rmd` in your directory as `report`.** Every published folder carries `report.pdf`. Without a `report`, it holds each `.tsv` table and `.png` figure you declared, under its file's name, and leaves any other file out. With one, the frame knits your file under its own header, and what follows the header is yours: tables grouped by what they answer and figures drawn from them, the way `basicstats/report.Rmd`, `association/report.Rmd` and `mds/report.Rmd` do. Your chunks run in the task's directory, in a UTF-8 locale, with the functions of `analysis/lib/rmd/report.R` already loaded, and they read only what you published:
+
+| Function | What it does |
+|---|---|
+| `report_read(name)` | one of your published tables, every column as text, or `NULL` when you did not publish it |
+| `report_files(pattern)` | the published files a glob matches, in name order |
+| `report_number(x, digits, decimals)` | numbers as a table prints them: counts whole with thousands separated, anything else to `digits` significant digits or `decimals` places, a magnitude below 1e-4 in scientific notation, and `NA`, `NaN`, `Inf` and `-Inf` as themselves |
+| `report_table(table, caption, align, groups, size, max_rows, source, total)` | a table that runs across pages with its header repeated. Typst measures every cell and sets it at the largest of 10 to 7 points at which it fits; past that the headers wrap, and the size goes down to 4 points. A newline in a cell sets it on two lines and nothing else breaks a cell; `groups` prints a label once over a run of columns |
+| `report_text(x)` | a name as markdown that reads exactly as written; put every name you print outside a table through it, since a `*` or an `@` in one is otherwise emphasis or a citation |
+| `report_image(path, caption, width)` | a figure already on disk; at the full width a PNG is kept to 7.5 in tall |
+| `report_plot(plot, name, width, height, caption)` | a ggplot drawn for the report and placed like `report_image` |
+| `report_columns(items, most)` | items split into as few groups of at most `most` as hold them, sizes differing by at most one, for a table with a column per pool |
+| `report_palette(pools)` | one color per pool, in the order given |
+
+Call `report_table`, `report_image` and `report_plot` from a chunk with `results = "asis"`. A table of one row per site can run to millions of rows, which `report_read` would hold whole as text; read such a table with `data.table::fread` and only the columns you show, as `association/report.Rmd` does, and declare `r-data.table` in your `packages`. A chunk that fails stops the report rather than printing its error into it, and the analysis is published without a report and with the reason. **Say in each caption which file the numbers come from**, so a reader can always get from the report back to the file. A frame older than `20261008.001` ignores the key and lays out what you declared, file by file, so a module that adds a report still installs and runs on it.
+
 ### Sharing what you derive
 
 16. **Anything another module could want goes in `Analysis/Main`, through `publishIntermediate`.** It writes the provenance record and then the file, which is the invariant everything else reads: an intermediate that is there is one whose provenance can be read. It is one call rather than two so that the order is not yours to get wrong.
@@ -151,6 +167,7 @@ Write a library when more than one module wants the same decision-free arithmeti
 PoolSeqFlow analysis modules available            # what is published
 PoolSeqFlow analysis modules install <name>       # newest version this release can read
 PoolSeqFlow analysis modules install <name> 1.2.0 # or exactly that one
+PoolSeqFlow analysis modules install all          # every one this release can run
 PoolSeqFlow analysis modules list                 # what is installed here
 PoolSeqFlow analysis modules uninstall <name>     # remove one, after confirming
 ```
@@ -188,13 +205,15 @@ For a module in this repository, one command does all of it:
 dev/scripts/publish-module.sh <name> [ref]
 ```
 
-It builds the tarball into `modules-repo/`, reads `contract`, `frame`, `environment` and `summary` out of the module's own manifest at that ref, appends the row, and bumps `#!index-version`. It refuses to overwrite a version that is already published -- somebody may have installed it, and its checksum is in the catalogue -- so a change means bumping the module's version and publishing that.
+It builds the tarball into `modules/repo/`, reads `contract`, `frame`, `environment` and `summary` out of the module's own manifest at that ref, appends the row, and bumps `#!index-version`. It refuses to overwrite a version that is already published -- somebody may have installed it, and its checksum is in the catalogue -- so a change means bumping the module's version and publishing that.
 
-`dev/scripts/publish-module.sh --list` shows every module and library whose version the catalogue does not carry yet, and `--all-pending` publishes all of them from `HEAD`, one at a time through the same path. It refuses to start while any of them differs from `HEAD`.
+`dev/scripts/publish-module.sh --list` shows every module and library in the tree and whether the catalogue carries its version, and `--all-pending` publishes every one it does not, from `HEAD`, one at a time through the same path. Before writing anything it refuses a pending module that differs from `HEAD`, a manifest it cannot read, and a name two directories share.
 
 **The tarball is built from the extracted tree rather than piped straight out of `git archive`, and that is not fussiness.** `git archive <ref>:modules/<name>` reads a subtree, and `.gitattributes` patterns are anchored at the repository root -- so a rule written for `modules/` does not match `test/` inside that subtree, and the module's own cases would ship where a release tarball excludes them. Archiving a tree also stamps `mtime` as *now*, so two builds of one ref would not match. The script drops `test/` and repacks with the commit's timestamp, which makes republishing the same ref produce the same bytes.
 
 The tarballs are committed and served from the site alongside the catalogue, so **a published row and the file it names go out in one commit** -- otherwise the row advertises a download that 404s until the next deploy.
+
+The site deploys after a release, and otherwise only when the Documentation workflow is run by hand on `main` (Actions, Documentation, Run workflow), which is how a module published between releases goes live. A push to `main` deploys nothing. Either way it refuses while `main` declares a version that has no published release.
 
 Two rules the installer enforces, so build for them:
 

@@ -1,6 +1,6 @@
 {
   "name": "mds",
-  "version": "20261006.002",
+  "version": "20261008.001",
   "contract": "freq-1",
   "license": "GPL-3.0-or-later",
   "frame": "20260910.001",
@@ -33,6 +33,7 @@
     "bin/cap_depth.awk keeps reads in coordinate order until the cap rather than subsampling, so at a capped position the retained reads are biased toward those mapping earliest. That is an allele-frequency bias and not only a depth truncation.",
     "filterFalsePositives.sh admits an allele that clears half of one chromosome's frequency in a fraction of the samples, and MajorAlleleToRef.py re-polarizes on cohort totals. Both depend on which pools were in the run, so a distance from six pools is not the same quantity as one from twelve and the two are not comparable across targets."
   ],
+  "report": "report.Rmd",
   "outputs": [
     {
       "file": "mds.tsv",
@@ -51,7 +52,7 @@
     },
     {
       "file": "mds.png",
-      "summary": "the pools on the leading two axes, labeled and optionally colored by an experimental variable, and under it a count of the pairs averaged over fewer than 30 sites when there are any",
+      "summary": "the pools on the leading two axes, each named unless analysis.modules.mds.labels is false and optionally colored and shaped by experimental variables, and under it a count of the pairs averaged over fewer than 30 sites when there are any",
       "anchor": "mds-plot"
     },
     {
@@ -75,6 +76,7 @@
     "r-foreach=1.5.2",
     "r-future=1.76.0",
     "r-ggplot2=4.0.3",
+    "r-ggrepel=0.9.8",
     "r-jsonlite=2.0.0",
     "r-rcpp=1.1.2"
   ]

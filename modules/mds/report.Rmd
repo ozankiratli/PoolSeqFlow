@@ -1,0 +1,191 @@
+```{r mds-tables}
+# mds' own report, knitted by the frame's report.Rmd with the functions of
+# analysis/lib/rmd/report.R. It reads the tables this module published and nothing else.
+#
+# Pools keep mds.tsv's order.
+coords <- report_read("mds.tsv")
+pairs <- report_read("distance.tsv")
+eigen <- report_read("eigenvalues.tsv")
+num <- function(x) suppressWarnings(as.numeric(x))
+
+pools <- coords$pool
+axes <- grep("^dim[0-9]+$", names(coords), value = TRUE)
+variables <- setdiff(names(coords), c("pool", "unit", axes))
+units <- length(unique(coords$unit))
+shared <- num(pairs$sites)
+absolute <- num(eigen$share_absolute)
+drawn <- num(eigen$plotted) == 1
+carried <- if (any(drawn)) {
+    paste0("the two axes drawn carry ", report_number(100 * sum(absolute[drawn]), decimals = 1),
+           "% of the absolute eigenvalue sum")
+} else {
+    paste0("the one axis written carries ", report_number(100 * absolute[1], decimals = 1),
+           "% of the absolute eigenvalue sum, and one axis draws no plot")
+}
+# An eigenvalue within rounding of zero counts as zero: n pools have at most n - 1 axes, and the
+# last eigenvalue lands either side of zero.
+eigenvalues <- num(eigen$eigenvalue)
+negative <- !is.na(eigenvalues) & eigenvalues < -1e-10 * max(abs(eigenvalues), na.rm = TRUE)
+negative_share <- sum(abs(eigenvalues[negative])) / sum(abs(eigenvalues), na.rm = TRUE)
+
+# One pool-by-pool matrix out of the pair rows, from `column`, with the diagonal left empty.
+pool_matrix <- function(column, ...) {
+    held <- matrix("", length(pools), length(pools), dimnames = list(pools, pools))
+    values <- report_number(pairs[[column]], ...)
+    held[cbind(match(pairs$pool_a, pools), match(pairs$pool_b, pools))] <- values
+    held[cbind(match(pairs$pool_b, pools), match(pairs$pool_a, pools))] <- values
+    held
+}
+
+# The pools a matrix holds as columns, at most eight to a table.
+column_groups <- report_columns(pools)
+ends <- cumsum(lengths(column_groups))
+matrix_tables <- function(held, label, caption) {
+    for (k in seq_along(column_groups)) {
+        group <- column_groups[[k]]
+        table <- data.frame(Pool = pools, held[, group, drop = FALSE], check.names = FALSE,
+                            stringsAsFactors = FALSE)
+        which <- if (length(column_groups) > 1) sprintf(" Pools %d to %d of %d as columns.",
+                                                         ends[k] - length(group) + 1, ends[k],
+                                                         length(pools)) else ""
+        report_table(table, groups = c("", rep(label, length(group))),
+                     caption = paste0(caption, which))
+    }
+}
+```
+
+`r length(pools)` pools from `r units` `r if (units == 1) "unit" else "units"`. Each distance is averaged over the sites both of its pools were read at, `r if (min(shared) == max(shared)) paste(report_number(min(shared)), "a pair") else paste("from", report_number(min(shared)), "to", report_number(max(shared)), "a pair")`, and `r carried`.
+
+## The pools on the leading axes
+
+```{r mds-plot, results = "asis"}
+for (path in report_files("mds.png")) {
+    report_image(path, caption = paste0("The pools on the leading two axes (mds.png, drawn from ",
+                                        "mds.tsv and eigenvalues.tsv)."))
+}
+table <- data.frame(Pool = pools, Unit = coords$unit, check.names = FALSE,
+                    stringsAsFactors = FALSE)
+for (v in variables) table[[v]] <- coords[[v]]
+for (a in axes) table[[sub("^dim", "Axis ", a)]] <- report_number(coords[[a]], digits = 3)
+report_table(table, caption = paste0("Each pool's coordinate on every axis the run wrote (mds.tsv). ",
+                                     "Each axis is signed so that its largest coordinate is positive."))
+```
+
+## How much each axis carries
+
+```{r mds-eigenvalues, results = "asis"}
+percent <- function(x) paste0(report_number(100 * num(x), decimals = 1), "%")
+table <- data.frame(Axis = eigen$axis,
+                    Eigenvalue = report_number(eigen$eigenvalue, digits = 3),
+                    "Share" = percent(eigen$share),
+                    "Share of |sum|" = percent(eigen$share_absolute),
+                    "Cumulative |sum|" = percent(eigen$cumulative_absolute),
+                    Drawn = ifelse(drawn, "yes", ""),
+                    check.names = FALSE, stringsAsFactors = FALSE)
+report_table(table, caption = paste0(
+    "Every eigenvalue with its share of the scatter (eigenvalues.tsv, where the shares are ",
+    "fractions). Share divides by the signed sum and Share of |sum| by the sum of absolute values, ",
+    "which the plot's axis labels use. ",
+    if (any(negative)) paste0("Negative eigenvalues carry ",
+                              report_number(100 * negative_share, decimals = 1),
+                              "% of the absolute sum.")
+    else if (any(eigenvalues < 0, na.rm = TRUE))
+        paste0("No eigenvalue is negative beyond rounding: ",
+               report_number(min(eigenvalues, na.rm = TRUE), digits = 3), " is zero.")
+    else "No eigenvalue is negative."))
+
+scree <- data.frame(axis = factor(eigen$axis, levels = eigen$axis), share = 100 * absolute,
+                    sign = ifelse(negative, "negative", "positive"), stringsAsFactors = FALSE)
+figure <- ggplot2::ggplot(scree, ggplot2::aes(x = axis, y = share, fill = sign)) +
+    ggplot2::geom_col(width = 0.7) +
+    ggplot2::scale_fill_manual(values = c(positive = "#4d4d4d", negative = "#d6604d")) +
+    ggplot2::labs(x = "Axis", y = "% of the absolute sum", fill = NULL) +
+    ggplot2::theme_bw(base_size = 9) +
+    ggplot2::theme(legend.position = "bottom")
+report_plot(figure, "eigenvalues", width = 6, height = 2.8,
+            caption = "How much each axis carries, from eigenvalues.tsv.")
+```
+
+## Distances between pools
+
+```{r mds-distances, results = "asis"}
+matrix_tables(pool_matrix("distance", digits = 3), "Corrected distance",
+              paste0("Nei's minimum distance between every two pools, corrected for sampling ",
+                     "(distance.tsv). A negative entry reads as indistinguishable at this depth; ",
+                     "distances are not floored at zero."))
+
+grid <- data.frame(a = factor(c(pairs$pool_a, pairs$pool_b), levels = pools),
+                   b = factor(c(pairs$pool_b, pairs$pool_a), levels = rev(pools)),
+                   value = num(c(pairs$distance, pairs$distance)))
+figure <- ggplot2::ggplot(grid, ggplot2::aes(x = a, y = b, fill = value)) +
+    ggplot2::geom_tile(color = "white") +
+    ggplot2::scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b", midpoint = 0,
+                                  name = "Corrected\ndistance") +
+    ggplot2::labs(x = NULL, y = NULL) +
+    ggplot2::theme_minimal(base_size = 9) +
+    # The left margin holds the first pool's name, leaning left at 60 degrees, at the length of
+    # the longest.
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 60, hjust = 1),
+                   panel.grid = ggplot2::element_blank(),
+                   plot.margin = ggplot2::margin(5.5, 5.5, 5.5, max(5.5, 2 * max(nchar(pools)))))
+# The figure grows by the longest pool name, at about 0.05 in a character in its axes, so the
+# tiles keep their size.
+name_room <- 0.05 * max(nchar(pools))
+side <- min(7, 0.25 * length(pools) + 2.5)
+report_plot(figure, "distances", width = side + 1.2 + name_room, height = side + 0.87 * name_room,
+            caption = "The distance matrix above, from distance.tsv. Blue below zero, red above.")
+```
+
+## What each distance rests on
+
+```{r mds-sites, results = "asis"}
+few <- num(pairs$few_sites) == 1
+if (min(shared) == max(shared)) {
+    if (all(few)) {
+        cat("**Every pair is averaged over ", report_number(min(shared)), " sites, fewer than ",
+            "30** (few_sites is 1 throughout distance.tsv), so every distance here is rough ",
+            "rather than wrong.\n\n", sep = "")
+    } else {
+        cat("Every pair is averaged over ", report_number(min(shared)), " sites (distance.tsv).\n\n",
+            sep = "")
+    }
+} else {
+    matrix_tables(pool_matrix("sites"), "Shared sites",
+                  paste0("How many sites each pair's distance is averaged over (distance.tsv). A ",
+                         "pair rests on the sites both of its pools were read at, so two pairs in ",
+                         "one run can rest on different counts."))
+}
+
+if (min(shared) != max(shared) && all(few)) {
+    cat("**Every pair is averaged over fewer than 30 sites** (few_sites is 1 throughout ",
+        "distance.tsv), so every distance here is rough rather than wrong.\n\n", sep = "")
+} else if (!all(few) && any(few)) {
+    table <- data.frame("Pool A" = pairs$pool_a[few], "Pool B" = pairs$pool_b[few],
+                        Sites = report_number(pairs$sites[few]),
+                        Distance = report_number(pairs$distance[few], digits = 3),
+                        check.names = FALSE, stringsAsFactors = FALSE)
+    report_table(table, max_rows = 40, source = "distance.tsv",
+                 caption = paste0("The pairs averaged over fewer than 30 sites (few_sites in ",
+                                  "distance.tsv). Their distances are rough rather than wrong."))
+}
+
+before <- data.frame(raw = num(pairs$raw), corrected = num(pairs$distance),
+                     shared = ifelse(few, "fewer than 30 sites", "30 sites or more"))
+# Both axes on one scale from zero, so the line of no correction is on the panel however much the
+# correction removed.
+limits <- range(c(0, before$raw, before$corrected), na.rm = TRUE)
+figure <- ggplot2::ggplot(before, ggplot2::aes(x = raw, y = corrected, shape = shared)) +
+    ggplot2::geom_abline(slope = 1, intercept = 0, color = "gray60", linetype = "dashed") +
+    ggplot2::geom_hline(yintercept = 0, color = "gray80") +
+    ggplot2::geom_point(size = 2) +
+    ggplot2::scale_shape_manual(values = c("30 sites or more" = 16, "fewer than 30 sites" = 1)) +
+    ggplot2::coord_fixed(xlim = limits, ylim = limits) +
+    ggplot2::labs(x = "Uncorrected distance", y = "Corrected distance", shape = NULL) +
+    ggplot2::theme_bw(base_size = 9) +
+    # The right margin takes half of a tick label at the panel's edge.
+    ggplot2::theme(legend.position = "bottom", plot.margin = ggplot2::margin(5.5, 16, 5.5, 5.5))
+report_plot(figure, "correction", width = 4.6, height = 5,
+            caption = paste0("Every pair before and after the sampling correction, from the raw and ",
+                             "distance columns of distance.tsv. The dashed line is no correction; ",
+                             "how far a point sits below it is what the correction removed."))
+```
