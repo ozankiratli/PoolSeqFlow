@@ -10,6 +10,92 @@ In practice a version number says what upgrading will cost you: a third number i
 
 ---
 
+## [3.3.0] - 2026-10-08
+
+**The shallowest library no longer has to decide which sites the whole cohort keeps.** Until now one pool below `vcffilter.minDP` removed a site for every pool. `vcffilter.keepLowDepthAsZero` keeps the site instead and writes that pool's reads there as unread. It is off by default, so nothing changes until you turn it on. 
+
+**Three things to read before upgrading**, all under Changed: the default of `variantCall.scaleMapQ` moved from 50 to 100, and a migrated `parameters.config` keeps its 50; `init_multi` and `uninstall_all` are now two words; and every table, plot and report an analysis publishes is renamed, so anything that reads one by name needs the new name.
+
+As with every release, results belong to the release that produced them: 3.3.0 neither continues nor analyzes a project that 3.2.0 ran. Keep 3.2.0 installed beside it for such a project, or `reset` the project and run it again under 3.3.0.
+
+### Added
+
+- **`vcffilter.keepLowDepthAsZero` and `vcffilter.minSamples`.** With the switch on, every cell below `minDP` (one pool's reads at one site) is written as unread, which the depth table carries as zeros and the frequency table as `NA`, and a site is kept when at least `minSamples` of its cells reach `minDP`. `minSamples` defaults to 2 and runs from 1 to the number of pools with reads; anything else is refused before the run starts. Every read still counts toward deciding that an allele exists, because the false-positive filter runs first; only the cells at the floor count toward measuring its frequency. The manual's depth and quality filter section has the details, including what it does to `TOTAL_AD`.
+- **Settings that would make a run produce nothing are refused at step 0**, and `PoolSeqFlow check project` reports the same findings before you run. A `scaleMapQ` below `varQualMin` discards every read, a `sampleThreshold` above 1 removes every site, a `ploidy` or `poolSize` below 1 breaks every detection limit, and a `fastqc.memory` with a unit is refused by FastQC. Settings that work but cost more than they look, or change what a number means, are warned about and the run continues. The manual lists them all.
+- **Files saved on Windows.** A `metadata.csv` or `runs.csv` that Excel saved as "CSV UTF-8" is read as it is, and a UTF-16 one is refused with what to save it as instead. A `parameters.config` that begins with a byte-order mark is named by `check project`, with the command that removes it; Nextflow on its own refuses the file over a character nothing displays.
+- **Native zsh completion**, with a description beside each command. The installer prints the one line `~/.zshrc` needs.
+- **`PoolSeqFlow analysis modules install all`** installs every published module this release can run that you do not have yet. Every release starts with an empty module store, so this is how yours come back after an upgrade. A module that will not install is named and does not stop the others.
+
+### Changed
+
+- **`variantCall.scaleMapQ` defaults to 100, where it was 50.** It is the `-C` that lowers the mapping quality of reads with many mismatches. Measured on real pools, 100 removes the sites that are artifacts (Ti/Tv 0.848, nearly four times the soft-clip bias of the sites kept), while 50 removed five times as many and took real variants with them. 50 also lowered the frequencies it kept, by 0.035 on average against 0.008 at 100, and by 0.081 in pools between 0.50 and 0.75. **A migrated `parameters.config` keeps 50**: `migrate_config` carries your value across, as it does every setting that still exists, and reports it under `Kept your value`. Set it to 100 before the first run under 3.3.0. The manual has the full measurements.
+- **`init_multi` is `init multi`, and `uninstall_all` is `uninstall all`.** The old spellings stop with a message giving the new one.
+- **Every table, plot and report an analysis publishes begins with `outputPrefix`**, a new setting at the top of `parameters.config`. With `outputPrefix = 'Test'`, basicstats publishes `Test_depth.tsv` where it published `depth.tsv`. The scripts that produced a result keep their own names, as do `README.md`, `CITATIONS.md` and `references.bib`, and the report is `Test_basicstats_report_20261008-142233.pdf`, stamped with the local time it was published, where it was `report.pdf`. `vcf.fileName` follows `outputPrefix` unless you name the VCF yourself, and `migrate_config` sets `outputPrefix` to the VCF name your project already has, so nothing the pipeline publishes changes its name. Either name must begin with a letter or a digit and hold only letters, digits, `.`, `_` and `-`; anything else is refused before anything is computed, in `parameters.config` or in a run table. Choose the prefix before the first run: like `vcf.fileName`, it is recorded with the results, and step 0 refuses a change to it afterwards.
+- **A pool with no reads at a site is `NA` in the frequency table**, where it was 0, because a frequency over zero reads does not exist. By default no such cell reaches a table: the depth filter now also drops a site with an unread pool at `minDP` 0, which 3.2.0 kept and published as 0. With `keepLowDepthAsZero` on, `NA` is what an unread cell reads.
+- **Every step writes its log as it runs.** A step that fails, or is killed, leaves what it had reached in `Logs/`. Before this, a step copied its log there only at the end, so a failure lost exactly the log that would have explained it. Each attempt starts with a line naming the run, the session and the time.
+- **Capping is about seven times faster on real data**, with identical output.
+- **A call set or filter that leaves nothing stops the run** and says which settings to look at, instead of finishing as though it had succeeded. Nothing is published from it.
+- **The website follows releases.** It was rebuilt whenever the manual changed on `main`, so it could describe a version that had not been released. It now deploys when a release is published, and when a module is published between releases.
+- **Environments.** FastQC 0.12.1 to 0.13.0. In the analysis environment, Perl 5.32.1 to 5.44.0, pandoc 3.11 to 3.12.1, R's future and doFuture to their next minor versions, and ggrepel 0.9.8 added for mds. Patch updates beneath them in both. bwa, samtools, bcftools, cutadapt, Trim Galore and snpEff did not move.
+
+### Fixed
+
+- **Every analysis report from 3.0.0 to 3.2.0 was empty.** `report.pdf` held a header and a list of the folder's files: the report never found the folder it described, so it skipped every section. Each module now lays out its own, and basicstats, association and mds show their tables and plots. The report and the folder's `README.md` named the release as "unknown" and `CITATIONS.md` named none; all three name the one that ran.
+- **Installing a release again over itself took packages out of the analysis environment** whenever a module in the store declared them too, and every module declares several of the release's own: ggplot2, future and Rcpp among them. Only what a module added beyond the release's environment comes out now.
+- **A module whose install was refused left the libraries it brought in the store.** They now go with it.
+- **`uninstall all` said everything was removed even when an installation could not be**, and said there was nothing to do once no conda environment was left, whatever installations and wrappers remained. It removes those too, and names whatever it could not remove.
+
+### Analysis modules
+
+These versions need 3.3.0's analysis environment. On an earlier release, `analysis modules install` passes them over and installs the newest version that release can run.
+
+- **association `20261008.003`.** Two ways it published `perm_p` 0, which no permutation p can be. A site where any unit had no reads came out 0, and `fdr_p` with it; in 3.2.0 that took `minDP` 0. And the strongest sites in a table, far beyond any rearrangement, failed to count themselves and came out 0 too. Each site is now tested over the units it was read in, and not tested when fewer than three were read. `design_floor` is 1/n!, where it said 2/n!, so four units can reach 0.042. Each phenotype is published in two files of its own, `association_<phenotype>.tsv` and `alleles_<phenotype>.tsv`, where `association.tsv` and `association_alleles.tsv` held every phenotype beside a `phenotype` column. Anything but a letter, a digit, `.`, `_` or `-` in a phenotype's name becomes `_`, and two phenotypes that would share a file are refused before anything is fitted. `chromosomes` restricts the fit to the sequences it names, as it did in 3.2.0, where the manual said it only chose which get a Manhattan plot: a run that names some adjusts `fdr_p` over their sites alone. A depth table of a single site no longer stops it.
+- **mds `20261008.003`.** A pair of pools averaged over fewer than 30 shared sites is flagged, in `distance.tsv`, on the console and under the plot. In simulation, a distance near 0.02 measured over 30 shared sites is off by about half itself, and real sites are noisier. The pools' names on `mds.png` are placed clear of one another, where they could print on top of each other, and `analysis.modules.mds.labels = false` leaves them off.
+- **basicstats `20261008.003`.** A pool's depth summaries cover only the sites it was read at, and `depth.tsv` and `diversity.tsv` count the rest in a new `unmeasured` column. A site with no reads for a pool was averaged in as a depth of 0, and one such site was enough to turn that pool's harmonic depth into 0 and its effective sample size into NA; in 3.2.0 that took `minDP` 0. `unmeasured` is the fourth column of each, after `sites`, so a script reading them by position needs updating. A run whose indel table is empty no longer stops it.
+
+### Commits
+
+- (2a15aea) small change in releasing, test for linting
+- (b96bfca) zsh completion added
+- (c5bacb4) dos2unix for parameters, metadata, and runs files
+- (51b649c) manual and documents passes
+- (8d0447c) dropZeroDept toggle added
+- (b6e0ce6) Comments shortened
+- (ebd69af) Comments shortened
+- (eedf598) scaleMapQ decisions are recorded
+- (772db1f) Analysis modules are updated to be compatible with the zero depth sites change
+- (85eb380) cap_depth is fixed for performance
+- (bffc6a0) Empty vcf, depth, and freq files now produce error
+- (ad85fb1) Logging reworked
+- (aaeab55) Test suite for dropZeroDepth added
+- (6746280) major allele to ref tests
+- (f54a5ae) SampleID RG_Sample clarifications
+- (8e8a078) parameter checks added to step0
+- (9b80793) config migrate is updated after dropZeroDepth
+- (6127b53) Full release cycle rework
+- (b96b818) wrapper tidiness
+- (2b50c1c) Releasing improvements
+- (87edc97) releasing cycle streamlined further
+- (f2c8187) Manual rewrite
+- (998c307) prep version is rescoped
+- (1224341) Minor fix on how prep version works
+- (d76ba2f) Prep for v3.3.0
+- (7419281) module publishing in release cycle is handled with a script now
+- (1e36baf) mds site diversity limit established
+- (e87e742) factorial calculation fixed
+- (e04215b) dropZeroDepth replaced with keepLowDepthAsZero, and minSamples is added to vcfFilter
+- (30aa234) Prep for v3.3.0
+- (babb475) Version bump v3.3.0
+- (6550cb5) releasing issues found, publish module updated
+- (d8b7cee) Version bump reverted
+- (1b04cb1) module updates, association analysis improved, report.pdf now shows the reports
+- (86bb11b) Filename fixes for modules
+- (60d6000) Large commit on releasing, modules install all, and test suite prep for 3.3.0
+- (299d6e6) release fixes
+- (c22acdb) Release prep for 3.3.0: refreshed environments, six module versions bumped, bump-analysis-version.sh --pending, clean-release-scratch.sh
+
+---
+
 ## [3.2.0] - 2026-09-24
 
 **Your raw reads can stay where they were handed to you.** `Data/` no longer has to be one flat folder (one folder per sample, one per sequencing run, nested as deep as you like, or all together as before). Nothing you already have needs moving, not one pinned tool changed version, and no result is affected. As with every release, the new installation's module store starts empty and your modules are installed into it again.
@@ -20,7 +106,7 @@ In practice a version number says what upgrading will cost you: a third number i
 
 - **Reads may sit in subfolders of `Data/`.** However your facility handed them over is how you can leave them. A sample is named by its **file**, never by its folder -- `Sample1_R1.fq.gz` is sample `Sample1` wherever it lies -- so `metadata.csv` does not change, `readPattern` does not change, and the pipeline reads no meaning into the folders you use. A pair whose two mates are in *different* folders is still that pair. What does not work is the same file name in two places: that is one sample twice over, each copy would overwrite the other's results, and the run stops and names both directories.
 - **Hidden folders are skipped.** Anything beginning with a dot is not searched. `.snapshot` is the one that matters: NetApp exposes it read-only inside every directory on a great deal of shared storage, and it holds a copy of every file per snapshot, so searching it would find every sample many times over. If one of them does hold reads, step 0 names it, because a folder full of reads ignored in silence is how you lose samples without being told.
-- **Tab completion**, installed with the pipeline. It completes every command, the two targets `check` takes, the analysis commands, and the modules **you actually have installed** -- so `PoolSeqFlow analysis <TAB>` lists what is in your store rather than a fixed list. There is one for bash and a native one for zsh, which also shows what each command is for. bash finds its own in your next shell with nothing to do; zsh needs one line adding a directory to `$fpath`, which the installer prints. `PoolSeqFlow analysis modules install <TAB>` offers nothing on purpose: those names come from the catalogue over the network, and a keystroke should not make a network request.
+- **Tab completion**, installed with the pipeline. It completes every command, the two targets `check` takes, the analysis commands, and the modules **you actually have installed** -- so `PoolSeqFlow analysis <TAB>` lists what is in your store rather than a fixed list. bash finds it in your next shell with nothing to do; zsh needs two lines, which the installer prints. `PoolSeqFlow analysis modules install <TAB>` offers nothing on purpose: those names come from the catalogue over the network, and a keystroke should not make a network request.
 
 ### Changed
 
@@ -539,6 +625,7 @@ Major upgrade to **Nextflow 26** and **Trim Galore 2.x**. This release is not ba
 
 ---
 
+[3.3.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.3.0
 [3.2.0]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.2.0
 [3.1.2]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.1.2
 [3.1.1]: https://github.com/ozankiratli/PoolSeqFlow/releases/tag/v3.1.1
